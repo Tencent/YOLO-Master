@@ -52,7 +52,6 @@ Comprehensive experiments on five large-scale benchmarks demonstrate the superio
 
 <img width="400" alt="Radar chart comparing YOLO models on various datasets" src="https://github.com/user-attachments/assets/743fa632-659b-43b1-accf-f865c8b66754"/>
 
-
 <div align="center">
   <p><b>Table 1. Comparison with state-of-the-art Nano-scale detectors across five benchmarks.</b></p>
   <table style="border-collapse:collapse; width:100%; font-family:sans-serif; text-align:center; border-top:2px solid #000; border-bottom:2px solid #000; font-size:0.9em;">
@@ -83,7 +82,7 @@ Comprehensive experiments on five large-scale benchmarks demonstrate the superio
     </thead>
     <tbody>
       <tr>
-        <td style="padding:6px; text-align:left; border-right:1px solid #ddd;">YOLOv10-N [37]</td>
+        <td style="padding:6px; text-align:left; border-right:1px solid #ddd;">YOLOv10</td>
         <td>38.5</td><td style="border-right:1px solid #ddd;">53.8</td>
         <td>60.6</td><td style="border-right:1px solid #ddd;">80.3</td>
         <td>18.7</td><td style="border-right:1px solid #ddd;">32.4</td>
@@ -92,7 +91,7 @@ Comprehensive experiments on five large-scale benchmarks demonstrate the superio
         <td>1.84</td>
       </tr>
       <tr>
-        <td style="padding:6px; text-align:left; border-right:1px solid #ddd;">YOLOv11-N [16]</td>
+        <td style="padding:6px; text-align:left; border-right:1px solid #ddd;">YOLOv11-N</td>
         <td>39.4</td><td style="border-right:1px solid #ddd;">55.3</td>
         <td>61.0</td><td style="border-right:1px solid #ddd;">81.2</td>
         <td>18.5</td><td style="border-right:1px solid #ddd;">32.2</td>
@@ -101,7 +100,7 @@ Comprehensive experiments on five large-scale benchmarks demonstrate the superio
         <td>1.50</td>
       </tr>
       <tr>
-        <td style="padding:6px; text-align:left; border-right:1px solid #ddd;">YOLOv12-N [35]</td>
+        <td style="padding:6px; text-align:left; border-right:1px solid #ddd;">YOLOv12-N</td>
         <td>40.6</td><td style="border-right:1px solid #ddd;">56.7</td>
         <td>60.7</td><td style="border-right:1px solid #ddd;">80.8</td>
         <td>18.3</td><td style="border-right:1px solid #ddd;">31.7</td>
@@ -110,7 +109,7 @@ Comprehensive experiments on five large-scale benchmarks demonstrate the superio
         <td>1.64</td>
       </tr>
       <tr style="border-bottom:1px solid #000;">
-        <td style="padding:6px; text-align:left; border-right:1px solid #ddd;">YOLOv13-N [18]</td>
+        <td style="padding:6px; text-align:left; border-right:1px solid #ddd;">YOLOv13-N</td>
         <td>41.6</td><td style="border-right:1px solid #ddd;">57.8</td>
         <td>60.7</td><td style="border-right:1px solid #ddd;">80.3</td>
         <td>17.5</td><td style="border-right:1px solid #ddd;">30.6</td>
@@ -118,18 +117,19 @@ Comprehensive experiments on five large-scale benchmarks demonstrate the superio
         <td>57.5</td><td style="border-right:1px solid #ddd;">90.3</td>
         <td>1.97</td>
       </tr>
-      <tr style="background-color:#f9f9f9; font-weight:bold;">
-        <td style="padding:8px; text-align:left; border-right:1px solid #ddd;">YOLO-Master-N</td>
-        <td>42.4</td><td style="border-right:1px solid #ddd;">59.2</td>
-        <td>62.1</td><td style="border-right:1px solid #ddd;">81.9</td>
-        <td>19.6</td><td style="border-right:1px solid #ddd;">33.7</td>
-        <td>69.2</td><td style="border-right:1px solid #ddd;">91.3</td>
-        <td>58.2</td><td style="border-right:1px solid #ddd;">90.6</td>
-        <td>1.62</td>
+      <tr style="background-color:#f9f9f9;">
+        <td style="padding:8px; text-align:left; border-right:1px solid #ddd;"><b>YOLO-Master-N</b></td>
+        <td><b>42.4</b></td><td style="border-right:1px solid #ddd;"><b>59.2</b></td>
+        <td><b>62.1</b></td><td style="border-right:1px solid #ddd;"><b>81.9</b></td>
+        <td><b>19.6</b></td><td style="border-right:1px solid #ddd;"><b>33.7</b></td>
+        <td><b>69.2</b></td><td style="border-right:1px solid #ddd;"><b>91.3</b></td>
+        <td><b>58.2</b></td><td style="border-right:1px solid #ddd;"><b>90.6</b></td>
+        <td><b>1.62</b></td>
       </tr>
     </tbody>
   </table>
 </div>
+
 
 
 
