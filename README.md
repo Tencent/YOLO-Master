@@ -105,6 +105,7 @@ For a deep dive into the design philosophy of MoE modules, detailed routing mech
 
 
 ## 🚀 Updates (Latest First)
+- **2025/01/03**: Added Sparse SAHI Inference Mode: Introduced a content-adaptive sparse slicing mechanism guided by a global Objectness Mask, significantly accelerating small object detection in high-resolution images while optimizing GPU memory efficiency.
 - **2025/12/31**: Released the demo [YOLO-Master-WebUI-Demo](https://huggingface.co/spaces/gatilin/YOLO-Master-WebUI-Demo).
 - **2025/12/31**: Released YOLO-Master v0.1 with code, pre-trained weights, and documentation.
 - **2025/12/30**: arXiv paper published.
