@@ -334,7 +334,15 @@ class BasePredictor:
 
                 # Postprocess
                 with profilers[2]:
-                    self.results = self.postprocess(preds, im, im0s)
+                    if getattr(self.args, "sparse_sahi", False):
+                        global_results = self.postprocess(preds, im, im0s)
+                        final_results = []
+                        for i, res in enumerate(global_results):
+                            final_res = self._run_sparse_sahi_single(im0s[i], res, *args, **kwargs)
+                            final_results.append(final_res)
+                        self.results = final_results
+                    else:
+                        self.results = self.postprocess(preds, im, im0s)
                 self.run_callbacks("on_predict_postprocess_end")
 
                 # Visualize, save, write results
@@ -506,3 +514,149 @@ class BasePredictor:
     def add_callback(self, event: str, func: callable):
         """Add a callback function for a specific event."""
         self.callbacks[event].append(func)
+
+    def _pad_slice(self, slice_img, slice_h, slice_w):
+        """Pad slice to match slice_h and slice_w."""
+        h, w = slice_img.shape[:2]
+        if h == slice_h and w == slice_w:
+            return slice_img
+        pad_img = np.full((slice_h, slice_w, 3), 114, dtype=np.uint8)
+        pad_img[:h, :w] = slice_img
+        return pad_img
+
+    def _perform_batched_nms(self, boxes, scores, cls, iou_thres):
+        """Perform batched NMS using torchvision."""
+        from torchvision.ops import nms
+        if boxes.numel() == 0:
+            return torch.empty(0, dtype=torch.long, device=self.device)
+        max_coordinate = boxes.max()
+        offsets = cls.to(boxes) * (max_coordinate + 1)
+        boxes_for_nms = boxes + offsets[:, None]
+        return nms(boxes_for_nms, scores, iou_thres)
+
+    def _run_sparse_sahi_single(self, img, global_result, *args, **kwargs):
+        """Run Sparse SAHI on a single image."""
+        from ultralytics.engine.results import Boxes
+
+        slice_size = getattr(self.args, 'slice_size', 640)
+        overlap_ratio = getattr(self.args, 'overlap_ratio', 0.2)
+        slice_h = slice_w = slice_size
+        overlap = int(min(slice_h, slice_w) * overlap_ratio)
+        
+        img_h, img_w = img.shape[:2]
+        
+        # --- Step 1: Objectness Mask ---
+        mask_scale = 8
+        m_h, m_w = (img_h // mask_scale) + 1, (img_w // mask_scale) + 1
+        objectness_mask = np.zeros((m_h, m_w), dtype=np.float32)
+        
+        if len(global_result.boxes) > 0:
+            g_boxes = (global_result.boxes.xyxy.cpu().numpy() / mask_scale).astype(int)
+            g_scores = global_result.boxes.conf.cpu().numpy()
+            
+            for box, score in zip(g_boxes, g_scores):
+                x1, y1, x2, y2 = box
+                y1_i, y2_i = max(0, y1), min(m_h, y2)
+                x1_i, x2_i = max(0, x1), min(m_w, x2)
+                objectness_mask[y1_i:y2_i, x1_i:x2_i] = np.maximum(objectness_mask[y1_i:y2_i, x1_i:x2_i], score)
+        
+        # --- Step 2: Adaptive Sparse Slicing ---
+        active_slice_coords = []
+        step_y, step_x = slice_h - overlap, slice_w - overlap
+        
+        for y_min in range(0, img_h, step_y):
+            for x_min in range(0, img_w, step_x):
+                y_max, x_max = min(y_min + slice_h, img_h), min(x_min + slice_w, img_w)
+                
+                m_y1, m_x1 = y_min // mask_scale, x_min // mask_scale
+                m_y2, m_x2 = y_max // mask_scale, x_max // mask_scale
+                
+                # Activation threshold 0.15
+                if objectness_mask[m_y1:m_y2, m_x1:m_x2].max() > 0.15:
+                    active_slice_coords.append((x_min, y_min, x_max, y_max))
+
+        # Collect all boxes (Global + Slices)
+        all_boxes = []
+        all_scores = []
+        all_cls = []
+        all_sources = [] # Track sources: 0 for global, 1 for slice
+        
+        # Keep global boxes
+        if len(global_result.boxes) > 0:
+            all_boxes.append(global_result.boxes.xyxy)
+            all_scores.append(global_result.boxes.conf)
+            all_cls.append(global_result.boxes.cls)
+            all_sources.extend([0] * len(global_result.boxes))
+            
+        # --- Step 3: Batch Inference on Slices ---
+        if active_slice_coords:
+            batch_imgs = []
+            for (x1, y1, x2, y2) in active_slice_coords:
+                crop = img[y1:y2, x1:x2]
+                batch_imgs.append(self._pad_slice(crop, slice_h, slice_w))
+            
+            # Preprocess batch
+            # Note: preprocess handles tensor conversion, normalization, etc.
+            slice_tensor = self.preprocess(batch_imgs)
+            
+            # Inference
+            # We must use self.inference
+            slice_preds = self.inference(slice_tensor, *args, **kwargs)
+            
+            # Postprocess slices
+            # We pass batch_imgs as 'im0s' so postprocess scales boxes back to slice size (slice_size)
+            # This is crucial.
+            slice_results = self.postprocess(slice_preds, slice_tensor, batch_imgs)
+            
+            for res, (off_x, off_y, _, _) in zip(slice_results, active_slice_coords):
+                if len(res.boxes) > 0:
+                    boxes = res.boxes.xyxy.clone()
+                    boxes[:, [0, 2]] += off_x
+                    boxes[:, [1, 3]] += off_y
+                    all_boxes.append(boxes)
+                    all_scores.append(res.boxes.conf)
+                    all_cls.append(res.boxes.cls)
+                    all_sources.extend([1] * len(boxes))
+
+        # --- Step 4: Merge & NMS ---
+        if not all_boxes:
+             # No detections
+             global_result.sparse_sahi_metadata = {
+                 'objectness_map': objectness_mask,
+                 'slices': active_slice_coords,
+                 'final_sources': []
+             }
+             return global_result
+        
+        cat_boxes = torch.cat(all_boxes).to(self.device)
+        cat_scores = torch.cat(all_scores).to(self.device)
+        cat_cls = torch.cat(all_cls).to(self.device)
+        
+        # Batched NMS
+        keep = self._perform_batched_nms(cat_boxes, cat_scores, cat_cls, self.args.iou)
+        
+        final_boxes = cat_boxes[keep]
+        final_scores = cat_scores[keep]
+        final_cls = cat_cls[keep]
+        
+        # Filter sources
+        keep_indices = keep.cpu().numpy()
+        current_sources = np.array(all_sources)
+        final_sources = current_sources[keep_indices].tolist() if len(current_sources) > 0 else []
+
+        # Construct new Boxes object
+        if len(final_boxes) > 0:
+            det = torch.cat([final_boxes, final_scores.unsqueeze(1), final_cls.unsqueeze(1)], dim=1)
+        else:
+            det = torch.empty((0, 6), device=self.device)
+            
+        global_result.boxes = Boxes(det, global_result.orig_shape)
+        
+        # Attach Metadata
+        global_result.sparse_sahi_metadata = {
+            'objectness_map': objectness_mask,
+            'slices': active_slice_coords,
+            'final_sources': final_sources
+        }
+        
+        return global_result
