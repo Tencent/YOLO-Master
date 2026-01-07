@@ -105,6 +105,9 @@ For a deep dive into the design philosophy of MoE modules, detailed routing mech
 
 
 ## 🚀 Updates (Latest First)
+- **2026/01/07**: [TensorRT-YOLO](https://github.com/laugh12321/TensorRT-YOLO) accelerates YOLO-Master. Thanks to them!
+- **2026/01/07**: Add MoE loss explicitly into training.
+  > Epoch    GPU_mem   box_loss   cls_loss   dfl_loss   **moe_loss**  Instances  Size
 - **2026/01/04**: Split MoE script into modules
   > Split MoE script into separate modules (routers, experts)
 - **2026/01/03**: Added Sparse SAHI Inference Mode: Introduced a content-adaptive sparse slicing mechanism guided by a global Objectness Mask, significantly accelerating small object detection in high-resolution images while optimizing GPU memory efficiency.
