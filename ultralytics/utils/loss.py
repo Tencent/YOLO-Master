@@ -207,6 +207,7 @@ class v8DetectionLoss:
         self.no = m.nc + m.reg_max * 4
         self.reg_max = m.reg_max
         self.device = device
+        self.model = model
 
         self.use_dfl = m.reg_max > 1
 
@@ -242,7 +243,7 @@ class v8DetectionLoss:
 
     def __call__(self, preds: Any, batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
         """Calculate the sum of the loss for box, cls and dfl multiplied by batch size."""
-        loss = torch.zeros(3, device=self.device)  # box, cls, dfl
+        loss = torch.zeros(4, device=self.device)  # box, cls, dfl, moe
         feats = preds[1] if isinstance(preds, tuple) else preds
         pred_distri, pred_scores = torch.cat([xi.view(feats[0].shape[0], self.no, -1) for xi in feats], 2).split(
             (self.reg_max * 4, self.nc), 1
@@ -299,7 +300,15 @@ class v8DetectionLoss:
         loss[1] *= self.hyp.cls  # cls gain
         loss[2] *= self.hyp.dfl  # dfl gain
 
-        return loss * batch_size, loss.detach()  # loss(box, cls, dfl)
+        # MoE auxiliary loss
+        moe_loss = torch.tensor(0.0, device=self.device)
+        if hasattr(self, 'model'):
+             for m in self.model.modules():
+                 if hasattr(m, 'aux_loss'):
+                     moe_loss += m.aux_loss
+        loss[3] = moe_loss * self.hyp.moe
+
+        return loss * batch_size, loss.detach()  # loss(box, cls, dfl, moe)
 
 
 class v8SegmentationLoss(v8DetectionLoss):

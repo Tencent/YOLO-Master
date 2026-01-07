@@ -17,6 +17,7 @@ from .routers import (
     UltraEfficientRouter, EfficientSpatialRouter, LocalRoutingLayer, 
     AdaptiveRoutingLayer, DynamicRoutingLayer, AdvancedRoutingLayer
 )
+from .loss import MoELoss
 
 # ==========================================
 # Ultra-optimized MoE module
@@ -106,6 +107,7 @@ class UltraOptimizedMoE(nn.Module):
         self.last_aux_loss = 0.0
         self.last_balance_loss = 0.0
         self.last_z_loss = 0.0
+        self.aux_loss = torch.tensor(0.0) # Store tensor for backprop
         
     def _init_weights(self):
         """Improved initialization strategy"""
@@ -160,16 +162,14 @@ class UltraOptimizedMoE(nn.Module):
             importance_mean = importance / B
             balance_loss = self.num_experts * (importance_mean * usage_freq.detach()).sum()
             
-            aux_loss = (self.balance_loss_coeff * balance_loss) + (self.router_z_loss_coeff * z_loss_val)
+            self.aux_loss = (self.balance_loss_coeff * balance_loss) + (self.router_z_loss_coeff * z_loss_val)
             
             # Record statistics
-            self.last_aux_loss = aux_loss.detach().item()
+            self.last_aux_loss = self.aux_loss.detach().item()
             self.last_balance_loss = balance_loss.detach().item()
             self.last_z_loss = z_loss_val.detach().item()
             
-            return output, aux_loss
-        else:
-            return output
+        return output
 
     def get_gflops(self, input_shape: Tuple[int, int, int, int]) -> Dict[str, float]:
         """Compute GFLOPs"""
@@ -295,6 +295,7 @@ class ES_MOE(nn.Module):
         # Load-balancing loss (original design)
         self.register_buffer('load_balancing_loss', torch.tensor(0.0), persistent=False)
         self.register_buffer('expert_usage_counts', torch.zeros(num_experts), persistent=False)
+        self.aux_loss = torch.tensor(0.0)
         
     def forward(self, x):
         if not hasattr(self, "use_top_k"):
@@ -310,6 +311,7 @@ class ES_MOE(nn.Module):
         
         # Compute load-balancing loss
         self._compute_load_balancing_loss(routing_weights)
+        self.aux_loss = self.load_balancing_loss
         
         # Different forward strategies for train/infer
         if self.training or not self.use_top_k or not self.use_sparse_inference:
@@ -449,6 +451,8 @@ class OptimizedMOE(nn.Module):
         )
         
         self._init_weights()
+        self.aux_loss = torch.tensor(0.0)
+        self.moe_loss_fn = MoELoss(balance_loss_coeff, z_loss_coeff, num_experts, top_k)
 
     def _init_weights(self):
         for m in self.modules():
@@ -522,34 +526,10 @@ class OptimizedMOE(nn.Module):
         # -------------------------------------------
         # Step 4: auxiliary loss computation (train-time only)
         # -------------------------------------------
-        return final_output
+        if self.training and loss_info:
+             self.aux_loss = self.moe_loss_fn(loss_info['router_probs'], loss_info['router_logits'], loss_info['topk_indices'])
 
-    def _compute_aux_loss(self, info: Dict[str, torch.Tensor]) -> torch.Tensor:
-        """
-        Compute Load Balancing Loss and Z-Loss
-        """
-        probs = info['router_probs']   # [B, E]
-        indices = info['topk_indices'] # [B, k]
-        logits = info['router_logits'] # [B, E]
-        
-        # 1) Load Balancing Loss (Switch Transformer style)
-        # importance: probability distribution predicted by router (differentiable)
-        importance = probs.mean(dim=0) 
-        
-        # usage: which experts were actually selected (non-differentiable, detached)
-        usage_mask = torch.zeros_like(probs)
-        for k in range(self.top_k):
-            usage_mask.scatter_(1, indices[:, k].unsqueeze(1), 1.0)
-        usage = usage_mask.mean(dim=0)
-        
-        balance_loss = self.num_experts * torch.sum(importance * usage.detach())
-        
-        # 2) Z-Loss (numerical stability)
-        # Penalize square of log(sum(exp(logits))) to prevent logits from exploding.
-        # Use logsumexp for stability.
-        z_loss = torch.mean(torch.logsumexp(logits, dim=1)**2)
-        
-        return (self.balance_loss_coeff * balance_loss) + (self.z_loss_coeff * z_loss)
+        return final_output
 
     def get_gflops(self, input_shape: Tuple[int, int, int, int]) -> Dict[str, float]:
         """Compute GFLOPs"""
@@ -619,6 +599,8 @@ class OptimizedMOEImproved(nn.Module):
         )
         
         self._init_weights()
+        self.aux_loss = torch.tensor(0.0)
+        self.moe_loss_fn = MoELoss(balance_loss_coeff, router_z_loss_coeff, num_experts, top_k)
         
     def _init_weights(self):
         for m in self.modules():
@@ -674,30 +656,12 @@ class OptimizedMOEImproved(nn.Module):
         final_output = shared_out + expert_output
 
         # 4) Compute and return Loss during training
-        return final_output
+        if self.training and loss_dict:
+             self.aux_loss = self.moe_loss_fn(loss_dict['router_probs'], loss_dict['router_logits'], loss_dict['topk_indices'])
+        else:
+             pass
 
-    def _compute_aux_loss(self, loss_dict: Dict) -> torch.Tensor:
-        """
-        Unified auxiliary loss computation
-        """
-        if not loss_dict: return torch.tensor(0.0, device=self.shared_expert[0].weight.device)
-        
-        probs = loss_dict['router_probs']   # [B, E]
-        indices = loss_dict['topk_indices'] # [B, k]
-        logits = loss_dict['router_logits'] # [B, E]
-        
-        # Balance Loss
-        importance = probs.mean(dim=0)
-        usage_mask = torch.zeros_like(probs)
-        for k in range(self.top_k):
-            usage_mask.scatter_(1, indices[:, k].unsqueeze(1), 1.0)
-        usage = usage_mask.mean(dim=0)
-        balance_loss = self.num_experts * torch.sum(importance * usage.detach())
-        
-        # Z-Loss (logits numerical constraint)
-        z_loss = torch.mean(torch.logsumexp(logits, dim=1)**2)
-        
-        return (self.balance_loss_coeff * balance_loss) + (self.router_z_loss_coeff * z_loss)
+        return final_output
 
     def get_gflops(self, input_shape: Tuple[int, int, int, int]) -> Dict[str, float]:
         """Accurate GFLOPs calculation"""
