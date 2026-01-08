@@ -104,8 +104,7 @@ warmup_bias_lr: 0.1 # (float) bias learning rate during warmup
 #dfl: 1.5 # (float) distribution focal loss gain
 box: 7.5 # (float) box loss gain
 cls: 0.5 # (float) classification loss gain
-#dfl: 1.5 # (float) distribution focal loss
-dfl: 0 # (float) distribution focal loss(disabled,optional)
+dfl: 1.5 # (float) distribution focal loss
 moe: 1.5 # (float) moe loss gain
 pose: 12.0 # (float) pose loss gain (pose tasks)
 kobj: 1.0 # (float) keypoint objectness loss gain (pose tasks)
