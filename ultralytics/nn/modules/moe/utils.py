@@ -1,3 +1,4 @@
+# Please note that this file has been modified by Tencent on 2026/01/09. All Tencent Modifications are Copyright (C) 2026 Tencent.
 import torch
 import torch.nn as nn
 from typing import Tuple, Union, List
