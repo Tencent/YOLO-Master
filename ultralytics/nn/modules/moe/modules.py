@@ -1,3 +1,4 @@
+# Please note that this file has been modified by Tencent on 2026/01/09. All Tencent Modifications are Copyright (C) 2026 Tencent.
 """Mixture-of-Experts (MoE) modules, routing layers, and compatibility shims.
 
 This module provides several MoE variants and routers optimized for inference efficiency,
