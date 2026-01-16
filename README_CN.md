@@ -102,6 +102,10 @@
 - [引用](#-引用)
 
 ## 🚀 更新 (Latest First)
+- **2026/01/16**:  [featre] 新增 MoE 模型剪枝与分析工具。
+  > diagnose_model：可视化专家利用率与路由行为，用于识别冗余专家。
+  > prune_moe_model：物理切除冗余专家并重构路由，无需重训即可实现高效推理。
+- **2026/01/16**: 仓库[isLinXu/YOLO-Master](https://github.com/isLinXu/YOLO-Master) 迁移到 [Tencent](https://github.com/Tencent/YOLO-Master)组织下.
 - **2026/01/14**: [ncnn-YOLO-Master-android](https://github.com/mpj1234/ncnn-YOLO-Master-android)为YOLO-Master提供部署，感谢贡献！
 - **2026/01/09**: [feature] 新增Cluster-Weighted NMS (CW-NMS)来优化与平衡mAP和推理速度。
   > cluster: False # (bool) cluster NMS (MoE optimized)

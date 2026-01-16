@@ -1,4 +1,4 @@
-# Please note that this file has been modified by Tencent on 2026/01/09. All Tencent Modifications are Copyright (C) 2026 Tencent.
+# 🐧Please note that this file has been modified by Tencent on 2026/01/16. All Tencent Modifications are Copyright (C) 2026 Tencent.# 🐧Please note that this file has been modified by Tencent on 2026/01/09. All Tencent Modifications are Copyright (C) 2026 Tencent.
 """
 Mixture-of-Experts (MoE) modules, routing layers, and compatibility shims.
 
@@ -43,6 +43,9 @@ from .utils import (
     BatchedExpertComputation
 )
 
+from .analysis import ExpertUsageTracker, diagnose_model
+from .pruning import prune_moe_model
+
 __all__ = [
     "UltraOptimizedMoE",
     "AdaptiveCapacityMoE",
@@ -68,5 +71,9 @@ __all__ = [
     "DynamicRoutingLayer",
     "FlopsUtils",
     "get_safe_groups",
-    "BatchedExpertComputation"
+    "BatchedExpertComputation",
+    "ExpertUsageTracker",
+    "diagnose_model",
+    "prune_moe_model"
 ]
+

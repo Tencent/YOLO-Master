@@ -105,6 +105,10 @@ For a deep dive into the design philosophy of MoE modules, detailed routing mech
 
 
 ## 🚀 Updates (Latest First)
+- **2026/01/16**: [feature] Add pruning and analysis tools for MoE models.
+  > 1. diagnose_model: Visualize expert utilization and routing behavior to identify redundant experts.
+  > 2. prune_moe_model: Physically excise redundant experts and reconstruct routers for efficient inference without retraining.
+- **2026/01/16**: Repo[isLinXu/YOLO-Master](https://github.com/isLinXu/YOLO-Master) Transferred to [Tencent](https://github.com/Tencent/YOLO-Master).
 - **2026/01/14**: [ncnn-YOLO-Master-android](https://github.com/mpj1234/ncnn-YOLO-Master-android) support deploy YOLO-Master. Thanks to them!
 - **2026/01/09**: [feature] Add Cluster-Weighted NMS (CW-NMS) to trade mAP vs speed.
   > cluster: False # (bool) cluster NMS (MoE optimized)
