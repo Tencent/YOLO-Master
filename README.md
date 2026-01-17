@@ -370,7 +370,7 @@ If you use YOLO-Master in your research, please cite our paper:
 @article{lin2025yolomaster,
   title={{YOLO-Master}: MOE-Accelerated with Specialized Transformers for Enhanced Real-time Detection},
   author={Lin, Xu and Peng, Jinlong and Gan, Zhenye and Zhu, Jiawen and Liu, Jun},
-  journal={arXiv preprint arXiv:},
+  journal={arXiv preprint arXiv:2512.23273},
   year={2025}
 }
 ```
