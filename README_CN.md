@@ -9,6 +9,24 @@
   <a href="https://github.com/ultralytics/ultralytics"><img src="https://img.shields.io/badge/Ultralytics-YOLO-blue" alt="Ultralytics"></a>
 </p>
 
+<p align="center">
+  <b>YOLO-Master: <u>M</u>OE-<u>A</u>ccelerated with <u>S</u>pecialized <u>T</u>ransformers for <u>E</u>nhanced <u>R</u>eal-time Detection.</b>
+</p>
+
+<p align="center">
+  <a href="https://github.com/isLinXu">Xu Lin</a><sup>1*</sup>, 
+  <a href="https://pjl1995.github.io/">Jinlong Peng</a><sup>1*</sup>, 
+  <a href="https://scholar.google.com/citations?user=fa4NkScAAAAJ">Zhenye Gan</a><sup>1</sup>, 
+  <a href="https://scholar.google.com/citations?hl=en&user=cU0UfhwAAAAJ">Jiawen Zhu</a><sup>2</sup>, 
+  <a href="https://scholar.google.com/citations?user=JIKuf4AAAAAJ&hl=zh-TW">Jun Liu</a><sup>1</sup>
+  <br>
+  <sup>1</sup><b>Tencent Youtu Lab</b> &nbsp;&nbsp; <sup>2</sup><b>Singapore Management University</b>
+  <br>
+  <sup>*</sup>Equal Contribution
+</p>
+
+---
+
 <img
   width="224"
   alt="YOLO-Master Mascot"
