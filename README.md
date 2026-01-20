@@ -1,46 +1,49 @@
-<div align="center">
-  <h1>YOLO-MASTER</h1>
+<img width="960" height="180" alt="Image" src="https://github.com/user-attachments/assets/5d2ab671-cf2f-4697-9c1b-1dfe611111e3" />
 
+<p align="center">
+  <a href="https://huggingface.co/spaces/gatilin/YOLO-Master-WebUI-Demo"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-blue" alt="Hugging Face Spaces"></a>
+  <a href="https://colab.research.google.com/drive/1gTKkCsE4sXIOWpu1cdNBjdFHEahBoZD0?usp=sharing"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a>
+  <a href="https://arxiv.org/abs/2512.23273"><img src="https://img.shields.io/badge/arXiv-2512.23273-b31b1b.svg" alt="arXiv"></a>
+  <a href="https://github.com/isLinXu/YOLO-Master/releases"><img src="https://img.shields.io/badge/%F0%9F%93%A6-Model%20Zoo-orange" alt="Model Zoo"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/License-AGPL%203.0-blue.svg" alt="AGPL 3.0"></a>
+  <a href="https://github.com/ultralytics/ultralytics"><img src="https://img.shields.io/badge/Ultralytics-YOLO-blue" alt="Ultralytics"></a>
+</p>
 
-<p align="left"> <a href="https://huggingface.co/spaces/gatilin/YOLO-Master-WebUI-Demo"> <img src="https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-blue" alt="Hugging Face Spaces"> </a> <a href="https://colab.research.google.com/drive/1gTKkCsE4sXIOWpu1cdNBjdFHEahBoZD0?usp=sharing"> <img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"> </a> <a href="https://arxiv.org/abs/2512.23273"> <img src="https://img.shields.io/badge/arXiv-2512.23273-b31b1b.svg" alt="arXiv"> </a>  <a href="https://github.com/isLinXu/YOLO-Master/releases"> <img src="https://img.shields.io/badge/%F0%9F%93%A6-Model%20Zoo-orange" alt="Model Zoo"> </a> <a href="./LICENSE"> <img src="https://img.shields.io/badge/License-AGPL%203.0-blue.svg" alt="AGPL 3.0"> </a> <a href="https://github.com/ultralytics/ultralytics"> <img src="https://img.shields.io/badge/Ultralytics-YOLO-blue" alt="Ultralytics"> </a> </p>
+<p align="center">
+  <b>YOLO-Master: <u>M</u>OE-<u>A</u>ccelerated with <u>S</u>pecialized <u>T</u>ransformers for <u>E</u>nhanced <u>R</u>eal-time Detection.</b>
+</p>
 
+<p align="center">
+  <a href="https://github.com/isLinXu">Xu Lin</a><sup>1*</sup>, 
+  <a href="https://pjl1995.github.io/">Jinlong Peng</a><sup>1*</sup>, 
+  <a href="https://scholar.google.com/citations?user=fa4NkScAAAAJ">Zhenye Gan</a><sup>1</sup>, 
+  <a href="https://scholar.google.com/citations?hl=en&user=cU0UfhwAAAAJ">Jiawen Zhu</a><sup>2</sup>, 
+  <a href="https://scholar.google.com/citations?user=JIKuf4AAAAAJ&hl=zh-TW">Jun Liu</a><sup>1</sup>
+  <br>
+  <sup>1</sup><b>Tencent Youtu Lab</b> &nbsp;&nbsp; <sup>2</sup><b>Singapore Management University</b>
+  <br>
+  <sup>*</sup>Equal Contribution
+</p>
 
-  <p align="center">
-    YOLO-Master: 
-    <b><u>M</u></b>OE-<b><u>A</u></b>ccelerated with 
-    <b><u>S</u></b>pecialized <b><u>T</u></b>ransformers for 
-    <b><u>E</u></b>nhanced <b><u>R</u></b>eal-time Detection.
-  </p>
-</div>
+---
 
-<div align="center">
-  <div style="text-align: center; margin-bottom: 8px;">
-    <a href="https://github.com/isLinXu" style="text-decoration: none;"><b>Xu Lin</b></a><sup>1*</sup>&nbsp;&nbsp;
-    <a href="https://pjl1995.github.io/" style="text-decoration: none;"><b>Jinlong Peng</b></a><sup>1*</sup>&nbsp;&nbsp;
-    <a href="https://scholar.google.com/citations?user=fa4NkScAAAAJ" style="text-decoration: none;"><b>Zhenye Gan</b></a><sup>1</sup>&nbsp;&nbsp;
-    <a href="https://scholar.google.com/citations?hl=en&user=cU0UfhwAAAAJ" style="text-decoration: none;"><b>Jiawen Zhu</b></a><sup>2</sup>&nbsp;&nbsp;
-    <a href="https://scholar.google.com/citations?user=JIKuf4AAAAAJ&hl=zh-TW" style="text-decoration: none;"><b>Jun Liu</b></a><sup>1</sup>
-  </div>
+<img
+  width="224"
+  alt="YOLO-Master Mascot"
+  src="https://github.com/user-attachments/assets/bbf751ea-af27-465d-a8a9-7822db343638"
+  align="left"
+/>
 
-  <div style="text-align: center; margin-bottom: 4px; font-size: 0.95em;">
-    <sup>1</sup>Tencent Youtu Lab &nbsp;&nbsp;&nbsp;
-    <sup>2</sup>Singapore Management University
-  </div>
+`YOLO-Master` is a YOLO-style framework tailored for **Real-Time Object Detection (RTOD)**. It marks the first deep integration of **Mixture-of-Experts (MoE)** into the YOLO architecture for general datasets. By leveraging **Efficient Sparse MoE (ES-MoE)** and lightweight **Dynamic Routing**, the framework achieves **instance-conditional adaptive computation**. This "compute-on-demand" paradigm allows the model to allocate FLOPs based on scene complexity, reaching a superior Pareto frontier between high precision and ultra-low latency.
 
-  <div style="text-align: center; margin-bottom: 12px; font-size: 0.85em; color: #666; font-style: italic;">
-    <sup>*</sup>Equal Contribution
-  </div>
+**Key Highlights:**
+- **Methodological Innovation (ES-MoE + Dynamic Routing)**: Utilizes dynamic routing networks to guide expert specialization during training and activates only the most relevant experts during inference, significantly reducing redundant computation while boosting detection performance.
+- **Performance Validated (Accuracy × Latency)**: On MS COCO, YOLO-Master-N achieves **42.4% AP @ 1.62ms latency**, outperforming YOLOv13-N with a **+0.8% mAP gain while being 17.8% faster**.
+- **Compute-on-Demand Intuition**: Transitions from "static dense computation" to "input-adaptive compute allocation," yielding more pronounced gains in dense or challenging scenarios.
+- **Out-of-the-Box Pipeline**: Provides a complete end-to-end workflow including installation, validation, training, inference, and deployment (ONNX, TensorRT, etc.).
+- **Continuous Engineering Evolution**: Includes advanced utilities such as MoE pruning and diagnostic tools (`diagnose_model` / `prune_moe_model`), CW-NMS, and Sparse SAHI inference modes.
 
-  <div style="text-align: center;">
-    <div style="font-family: 'Courier New', Courier, monospace; font-size: 0.85em; background-color: #f6f8fa; padding: 10px; border-radius: 6px; display: inline-block; line-height: 1.4; text-align: left;">
-      {gatilin, jeromepeng, wingzygan, juliusliu}@tencent.com <br>
-      jwzhu.2022@phdcs.smu.edu.sg
-    </div>
-  </div>
-</div>
-<br>
-
-[English](README.md) | [简体中文](README_CN.md)
+<br clear="left" />
 
 ---
 
