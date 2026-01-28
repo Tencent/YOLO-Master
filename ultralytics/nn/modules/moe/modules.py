@@ -319,8 +319,7 @@ class ES_MOE(nn.Module):
         routing_weights = self.routing(x)
 
         # Compute load-balancing loss
-        self._compute_load_balancing_loss(routing_weights)
-        self.aux_loss = self.load_balancing_loss
+        self.aux_loss = self._compute_load_balancing_loss(routing_weights)
 
         # Different forward strategies for train/infer
         if self.training or not self.use_top_k or not self.use_sparse_inference:
