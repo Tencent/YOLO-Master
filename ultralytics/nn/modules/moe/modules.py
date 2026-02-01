@@ -16,6 +16,38 @@ from .utils import FlopsUtils, get_safe_groups, BatchedExpertComputation
 # Global registry to store auxiliary losses for MoE modules
 # This prevents storing non-leaf tensors in the module instance, avoiding deepcopy errors
 MOE_LOSS_REGISTRY = weakref.WeakKeyDictionary()
+
+def _robust_deepcopy(obj, memo):
+    """
+    Robust deepcopy helper that sanitizes the object's __dict__ to remove
+    any non-leaf tensors (which cause RuntimeError in deepcopy) before copying.
+    """
+    cls = obj.__class__
+    new_obj = cls.__new__(cls)
+    memo[id(obj)] = new_obj
+    
+    for k, v in obj.__dict__.items():
+        # Check for non-leaf tensor (has grad_fn)
+        if isinstance(v, torch.Tensor) and v.grad_fn is not None:
+            # Replace with a safe scalar zero (detached)
+            setattr(new_obj, k, torch.tensor(0.0))
+        else:
+            try:
+                setattr(new_obj, k, copy.deepcopy(v, memo))
+            except RuntimeError as e:
+                # Fallback: if deepcopy fails on a specific attribute, try to skip or reset it
+                if "Only Tensors created explicitly" in str(e):
+                    print(f"WARNING: Skipped deepcopy for attribute '{k}' in {cls.__name__} due to non-leaf tensor error.")
+                    setattr(new_obj, k, torch.tensor(0.0))
+                else:
+                    raise e
+            except Exception:
+                # Best effort copy for other errors (e.g. pickling issues)
+                # If it fails, we assume it's transient state and ignore it or shallow copy
+                setattr(new_obj, k, v) 
+                
+    return new_obj
+
 from .experts import (
     OptimizedSimpleExpert, FusedGhostExpert, SimpleExpert, GhostExpert,
     InvertedResidualExpert, EfficientExpertGroup
@@ -185,6 +217,9 @@ class UltraOptimizedMoE(nn.Module):
     def aux_loss(self):
         """Retrieve the auxiliary loss from the registry."""
         return MOE_LOSS_REGISTRY.get(self, torch.tensor(0.0))
+
+    def __deepcopy__(self, memo):
+        return _robust_deepcopy(self, memo)
 
     def get_gflops(self, input_shape: Tuple[int, int, int, int]) -> Dict[str, float]:
         """Compute GFLOPs"""
@@ -461,6 +496,9 @@ class ES_MOE(nn.Module):
         """Enable/disable sparse inference."""
         self.use_sparse_inference = enable
 
+    def __deepcopy__(self, memo):
+        return _robust_deepcopy(self, memo)
+
 
 class OptimizedMOE(nn.Module):
     """MoE variant using an efficient spatial router and a shared expert path."""
@@ -604,6 +642,9 @@ class OptimizedMOE(nn.Module):
         flops['total'] = flops['router'] + flops['shared'] + flops['sparse']
         return flops
 
+    def __deepcopy__(self, memo):
+        return _robust_deepcopy(self, memo)
+
 
 class OptimizedMOEImproved(nn.Module):
     """Improved MoE with pluggable routers/experts and a shared expert for stability."""
@@ -745,6 +786,9 @@ class OptimizedMOEImproved(nn.Module):
         flops['total_gflops'] = flops['router'] + flops['shared_expert'] + flops['sparse_experts']
 
         return flops
+
+    def __deepcopy__(self, memo):
+        return _robust_deepcopy(self, memo)
 
 
 # ---------------------------------------------------------------------------

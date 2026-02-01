@@ -73,7 +73,7 @@ class UltraEfficientRouter(nn.Module):
             logits.add_(torch.randn_like(logits).mul_(self.noise_std))
 
         # 5) Softmax + TopK (fused operation)
-        weights = self.softmax(logits / self.temperature)
+        weights = F.softmax((logits / self.temperature).float(), dim=1).type_as(x)
         pooled_weights = weights.mean(dim=[2, 3], keepdim=True)
 
         topk_vals, topk_indices = torch.topk(pooled_weights, self.top_k, dim=1)
@@ -129,7 +129,7 @@ class BaseRouter(nn.Module):
             logits = logits + torch.randn_like(logits) * noise_std
 
         # 2) Compute probabilities
-        probs = self.softmax(logits)
+        probs = F.softmax(logits.float(), dim=1).type_as(logits)
 
         # 3) Select Top-K
         topk_vals, topk_indices = torch.topk(probs, self.top_k, dim=1)
@@ -280,7 +280,7 @@ class AdvancedRoutingLayer(nn.Module):
                     self._proj = nn.Conv2d(C, expected_in, 1, bias=False)
                 pooled = self._proj(pooled)
         logits = self.router(pooled)
-        probs = self.softmax(logits)
+        probs = F.softmax(logits.float(), dim=1).type_as(logits)
         E = probs.shape[1]
         k = getattr(self, "top_k", E)
         k = max(1, min(k, E))
@@ -323,7 +323,7 @@ class DynamicRoutingLayer(nn.Module):
         # Choose strategy based on Top-K enablement and train/infer mode
         if not self.use_top_k:
             # No Top-K: direct Softmax
-            routing_weights = F.softmax(routing_logits, dim=1)
+            routing_weights = F.softmax(routing_logits.float(), dim=1).type_as(x)
         elif self.training:
             # Training: soft Top-K (keeps gradients flowing)
             routing_weights = self._soft_top_k(routing_logits)
@@ -339,7 +339,7 @@ class DynamicRoutingLayer(nn.Module):
         logits_flat = logits.view(B, E, -1)
 
         # Compute softmax
-        weights = F.softmax(logits_flat, dim=1)
+        weights = F.softmax(logits_flat.float(), dim=1).type_as(logits)
 
         # Find Top-K and build mask
         _, topk_indices = torch.topk(weights, self.top_k, dim=1)
@@ -362,7 +362,7 @@ class DynamicRoutingLayer(nn.Module):
         topk_values, topk_indices = torch.topk(logits_flat, self.top_k, dim=1)
 
         # Apply softmax to Top-K logits
-        topk_weights = F.softmax(topk_values, dim=1)
+        topk_weights = F.softmax(topk_values.float(), dim=1).type_as(logits)
 
         # Construct sparse weights
         idx = topk_indices.permute(0, 2, 1).contiguous()
