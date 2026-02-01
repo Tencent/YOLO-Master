@@ -8,8 +8,14 @@ All public class/function names are preserved; only comments/docstrings have bee
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import copy
+import weakref
 from typing import Tuple, Dict, Optional, Union
 from .utils import FlopsUtils, get_safe_groups, BatchedExpertComputation
+
+# Global registry to store auxiliary losses for MoE modules
+# This prevents storing non-leaf tensors in the module instance, avoiding deepcopy errors
+MOE_LOSS_REGISTRY = weakref.WeakKeyDictionary()
 from .experts import (
     OptimizedSimpleExpert, FusedGhostExpert, SimpleExpert, GhostExpert,
     InvertedResidualExpert, EfficientExpertGroup
@@ -110,7 +116,7 @@ class UltraOptimizedMoE(nn.Module):
         self.last_aux_loss = 0.0
         self.last_balance_loss = 0.0
         self.last_z_loss = 0.0
-        self.aux_loss = torch.tensor(0.0)  # Store tensor for backprop
+        # self.aux_loss is now managed via MOE_LOSS_REGISTRY property
 
     def _init_weights(self):
         """Improved initialization strategy"""
@@ -165,14 +171,20 @@ class UltraOptimizedMoE(nn.Module):
             importance_mean = importance / B
             balance_loss = self.num_experts * (importance_mean * usage_freq.detach()).sum()
 
-            self.aux_loss = (self.balance_loss_coeff * balance_loss) + (self.router_z_loss_coeff * z_loss_val)
+            aux_loss = (self.balance_loss_coeff * balance_loss) + (self.router_z_loss_coeff * z_loss_val)
+            MOE_LOSS_REGISTRY[self] = aux_loss
 
             # Record statistics
-            self.last_aux_loss = self.aux_loss.detach().item()
+            self.last_aux_loss = aux_loss.detach().item()
             self.last_balance_loss = balance_loss.detach().item()
             self.last_z_loss = z_loss_val.detach().item()
 
         return output
+
+    @property
+    def aux_loss(self):
+        """Retrieve the auxiliary loss from the registry."""
+        return MOE_LOSS_REGISTRY.get(self, torch.tensor(0.0))
 
     def get_gflops(self, input_shape: Tuple[int, int, int, int]) -> Dict[str, float]:
         """Compute GFLOPs"""
@@ -304,7 +316,6 @@ class ES_MOE(nn.Module):
         # Load-balancing loss (original design)
         self.register_buffer('load_balancing_loss', torch.tensor(0.0), persistent=False)
         self.register_buffer('expert_usage_counts', torch.zeros(num_experts), persistent=False)
-        self.aux_loss = torch.tensor(0.0)
 
     def forward(self, x):
         if not hasattr(self, "use_top_k"):
@@ -319,7 +330,7 @@ class ES_MOE(nn.Module):
         routing_weights = self.routing(x)
 
         # Compute load-balancing loss
-        self.aux_loss = self._compute_load_balancing_loss(routing_weights)
+        self._compute_load_balancing_loss(routing_weights)
 
         # Different forward strategies for train/infer
         if self.training or not self.use_top_k or not self.use_sparse_inference:
@@ -337,6 +348,11 @@ class ES_MOE(nn.Module):
         final_output = self.norm(final_output)
 
         return final_output
+
+    @property
+    def aux_loss(self):
+        """Retrieve the auxiliary loss from the registry."""
+        return MOE_LOSS_REGISTRY.get(self, torch.tensor(0.0))
 
     def _dense_forward(self, x, routing_weights):
         """Dense forward: compute all experts (used during training)."""
@@ -404,6 +420,10 @@ class ES_MOE(nn.Module):
             self.load_balancing_loss = self.load_balancing_loss.to(load_balance_loss.device).reshape(())
         self.load_balancing_loss.copy_(load_balance_loss.detach())
         self.expert_usage_counts.copy_(expert_usage.detach())
+        
+        # Store in registry
+        MOE_LOSS_REGISTRY[self] = load_balance_loss
+        
         return load_balance_loss
 
     def get_load_balancing_loss(self):
@@ -480,7 +500,6 @@ class OptimizedMOE(nn.Module):
         )
 
         self._init_weights()
-        self.aux_loss = torch.tensor(0.0)
         self.moe_loss_fn = MoELoss(balance_loss_coeff, z_loss_coeff, num_experts, top_k)
 
     def _init_weights(self):
@@ -556,10 +575,16 @@ class OptimizedMOE(nn.Module):
         # Step 4: auxiliary loss computation (train-time only)
         # -------------------------------------------
         if self.training and loss_info:
-            self.aux_loss = self.moe_loss_fn(loss_info['router_probs'], loss_info['router_logits'],
+            aux_loss = self.moe_loss_fn(loss_info['router_probs'], loss_info['router_logits'],
                                              loss_info['topk_indices'])
+            MOE_LOSS_REGISTRY[self] = aux_loss
 
         return final_output
+
+    @property
+    def aux_loss(self):
+        """Retrieve the auxiliary loss from the registry."""
+        return MOE_LOSS_REGISTRY.get(self, torch.tensor(0.0))
 
     def get_gflops(self, input_shape: Tuple[int, int, int, int]) -> Dict[str, float]:
         """Compute GFLOPs"""
@@ -631,7 +656,6 @@ class OptimizedMOEImproved(nn.Module):
         )
 
         self._init_weights()
-        self.aux_loss = torch.tensor(0.0)
         self.moe_loss_fn = MoELoss(balance_loss_coeff, router_z_loss_coeff, num_experts, top_k)
 
     def _init_weights(self):
@@ -689,12 +713,18 @@ class OptimizedMOEImproved(nn.Module):
 
         # 4) Compute and return Loss during training
         if self.training and loss_dict:
-            self.aux_loss = self.moe_loss_fn(loss_dict['router_probs'], loss_dict['router_logits'],
+            aux_loss = self.moe_loss_fn(loss_dict['router_probs'], loss_dict['router_logits'],
                                              loss_dict['topk_indices'])
+            MOE_LOSS_REGISTRY[self] = aux_loss
         else:
             pass
 
         return final_output
+
+    @property
+    def aux_loss(self):
+        """Retrieve the auxiliary loss from the registry."""
+        return MOE_LOSS_REGISTRY.get(self, torch.tensor(0.0))
 
     def get_gflops(self, input_shape: Tuple[int, int, int, int]) -> Dict[str, float]:
         """Accurate GFLOPs calculation"""
