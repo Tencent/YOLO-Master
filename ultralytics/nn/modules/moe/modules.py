@@ -1,4 +1,4 @@
-# 🐧Please note that this file has been modified by Tencent on 2026/01/16. All Tencent Modifications are Copyright (C) 2026 Tencent.
+# 🐧Please note that this file has been modified by Tencent on 2026/02/07. All Tencent Modifications are Copyright (C) 2026 Tencent.
 """Mixture-of-Experts (MoE) modules, routing layers, and compatibility shims.
 
 This module provides several MoE variants and routers optimized for inference efficiency,
@@ -1748,7 +1748,7 @@ ModularRouterExpertMoE = OptimizedMOEImproved
 
 # Aliases for safe loading
 if 'UltraOptimizedMoE' not in globals():
-    UltraOptimizedMoE = OptimizedMOEImproved  # Fallback if class def fails, but it's defined above.
+    UltraOptimizedMoE = UltimateOptimizedMoE  # Upgrade to the SOTA implementation
 
 if __name__ == '__main__':
     # 1. Define a demo model

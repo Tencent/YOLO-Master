@@ -1,4 +1,4 @@
-# 🐧Please note that this file has been modified by Tencent on 2026/01/18. All Tencent Modifications are Copyright (C) 2026 Tencent.
+# 🐧Please note that this file has been modified by Tencent on 2026/02/07. All Tencent Modifications are Copyright (C) 2026 Tencent.
 """Efficient routers for Mixture-of-Experts models"""
 import torch
 import torch.nn as nn

@@ -1,4 +1,4 @@
-# 🐧Please note that this file has been modified by Tencent on 2026/01/16. All Tencent Modifications are Copyright (C) 2026 Tencent.
+# 🐧Please note that this file has been modified by Tencent on 2026/02/07. All Tencent Modifications are Copyright (C) 2026 Tencent.
 """Expert modules for Mixture-of-Experts models"""
 import torch
 import torch.nn as nn
