@@ -70,16 +70,18 @@ class UltraEfficientRouter(nn.Module):
 
         # 4) Noise injection
         if self.training and self.noise_std > 0:
-            logits.add_(torch.randn_like(logits).mul_(self.noise_std))
+            logits = logits + torch.randn_like(logits).mul_(self.noise_std)
 
         # 5) Softmax + TopK (fused operation)
-        weights = F.softmax((logits / self.temperature).float(), dim=1).type_as(x)
+        # Clamp logits again before division to be safe
+        logits_clamped = logits.clamp(-30.0, 30.0)
+        weights = F.softmax((logits_clamped / self.temperature).float(), dim=1).type_as(x)
         pooled_weights = weights.mean(dim=[2, 3], keepdim=True)
-
+        
         topk_vals, topk_indices = torch.topk(pooled_weights, self.top_k, dim=1)
-
+        
         # In-place normalization
-        topk_vals.div_(topk_vals.sum(dim=1, keepdim=True).add_(1e-9))
+        topk_vals.div_(topk_vals.sum(dim=1, keepdim=True).add_(1e-6))
 
         if self.training:
             importance = pooled_weights.sum(dim=0).view(self.num_experts)
@@ -339,6 +341,8 @@ class DynamicRoutingLayer(nn.Module):
         logits_flat = logits.view(B, E, -1)
 
         # Compute softmax
+        # Fix: Clamp logits to avoid overflow
+        logits_flat = logits_flat.clamp(-30.0, 30.0)
         weights = F.softmax(logits_flat.float(), dim=1).type_as(logits)
 
         # Find Top-K and build mask
@@ -349,8 +353,8 @@ class DynamicRoutingLayer(nn.Module):
 
         # Apply mask and re-normalize
         weights = weights * mask_one_hot
-        weights = weights / (weights.sum(dim=1, keepdim=True) + 1e-8)
-
+        weights = weights / (weights.sum(dim=1, keepdim=True) + 1e-6)
+        
         return weights.view(B, E, H, W)
 
     def _hard_top_k(self, logits):
@@ -362,6 +366,8 @@ class DynamicRoutingLayer(nn.Module):
         topk_values, topk_indices = torch.topk(logits_flat, self.top_k, dim=1)
 
         # Apply softmax to Top-K logits
+        # Fix: Clamp values to avoid overflow before softmax
+        topk_values = topk_values.clamp(-30.0, 30.0)
         topk_weights = F.softmax(topk_values.float(), dim=1).type_as(logits)
 
         # Construct sparse weights

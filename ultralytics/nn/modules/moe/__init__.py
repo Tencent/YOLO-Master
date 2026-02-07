@@ -15,6 +15,10 @@ from .modules import (
     MOE,
     EfficientSpatialRouterMoE,
     ModularRouterExpertMoE,
+    HyperSplitMoE,
+    HyperFusedMoE,
+    HyperUltimateMoE,
+    UltimateOptimizedMoE,
 )
 
 from .experts import (
@@ -55,6 +59,10 @@ __all__ = [
     "MOE",
     "EfficientSpatialRouterMoE",
     "ModularRouterExpertMoE",
+    "HyperSplitMoE",
+    "HyperFusedMoE",
+    "HyperUltimateMoE",
+    "UltimateOptimizedMoE",
     "OptimizedSimpleExpert",
     "FusedGhostExpert",
     "SimpleExpert",
