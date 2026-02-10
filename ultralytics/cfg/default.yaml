@@ -137,3 +137,26 @@ cfg: # (str, optional) path to a config.yaml that overrides defaults
 
 # Tracker settings ------------------------------------------------------------------------------------------------------
 tracker: botsort.yaml # (str) tracker config file: botsort.yaml or bytetrack.yaml
+
+# LoRA settings ---------------------------------------------------------------------------------------------------------
+lora_r: 0 # (int) LoRA rank (0 to disable)
+lora_alpha: 16 # (int) LoRA alpha
+lora_dropout: 0.05 # (float) LoRA dropout
+lora_bias: "none" # (str) LoRA bias type: "none", "all", "lora_only"
+lora_target_modules: # (list[str], optional) LoRA target modules
+lora_save_adapters: True # (bool) Save LoRA adapters
+lora_adapter_dir: "lora_adapter" # (str) Directory name for adapters
+lora_auto_r_ratio: 0.0 # (float) Auto calculate LoRA rank based on params ratio
+lora_use_dora: False # (bool) Enable DoRA (Weight-Decomposed Low-Rank Adaptation)
+lora_type: "lora" # (str) PEFT type: "lora", "loha", "lokr"
+lora_quantization: "none" # (str) Quantization type: "none", "4bit", "8bit" (Requires bitsandbytes)
+lora_include_moe: True # (bool) Include MoE layers in auto-detection
+lora_include_attention: False # (bool) Include Attention layers in auto-detection
+lora_only_backbone: False # (bool) Only apply LoRA to backbone
+lora_exclude_modules: # (list[str], optional) Modules to exclude
+lora_last_n: # (int, optional) Only apply to last N layers
+lora_from_layer: # (int, optional) Start applying from layer index
+lora_to_layer: # (int, optional) Stop applying at layer index
+lora_allow_depthwise: False # (bool) Allow depthwise convolution
+lora_kernels: # (list[int], optional) Filter by kernel size
+lora_gradient_checkpointing: False # (bool) Enable gradient checkpointing for LoRA memory optimization
