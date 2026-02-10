@@ -289,7 +289,7 @@ class BaseTrainer:
             if any(x in k for x in freeze_layer_names):
                 LOGGER.info(f"Freezing layer '{k}'")
                 v.requires_grad = False
-            elif not v.requires_grad and v.dtype.is_floating_point:  # only floating point Tensor can require gradients
+            elif not v.requires_grad and v.dtype.is_floating_point and not (getattr(self.args, "lora_r", 0) > 0):  # only floating point Tensor can require gradients
                 LOGGER.warning(
                     f"setting 'requires_grad=True' for frozen layer '{k}'. "
                     "See ultralytics.engine.trainer for customization of frozen layers."
@@ -344,6 +344,7 @@ class BaseTrainer:
         self.accumulate = max(round(self.args.nbs / self.batch_size), 1)  # accumulate loss before optimizing
         weight_decay = self.args.weight_decay * self.batch_size * self.accumulate / self.args.nbs  # scale weight_decay
         iterations = math.ceil(len(self.train_loader.dataset) / max(self.batch_size, self.args.nbs)) * self.epochs
+        print(f"DEBUG: self.model type before build_optimizer: {type(self.model)}")
         self.optimizer = self.build_optimizer(
             model=self.model,
             name=self.args.optimizer,

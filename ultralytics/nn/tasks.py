@@ -189,12 +189,27 @@ class BaseModel(torch.nn.Module):
         y, dt, embeddings = [], [], []  # outputs
         embed = frozenset(embed) if embed is not None else {-1}
         max_idx = max(embed)
+        
+        # Check if gradient checkpointing is enabled
+        use_gc = getattr(self, 'use_gradient_checkpointing', False) and self.training
+
         for m in self.model:
             if m.f != -1:  # if not from previous layer
                 x = y[m.f] if isinstance(m.f, int) else [x if j == -1 else y[j] for j in m.f]  # from earlier layers
             if profile:
                 self._profile_one_layer(m, x, dt)
-            x = m(x)  # run
+            
+            # Gradient Checkpointing Logic
+            if use_gc and isinstance(x, torch.Tensor) and x.requires_grad:
+                # OPTIMIZATION: Checkpoint heavy blocks AND convolutions (to save fused BN/SiLU memory)
+                # We skip lightweight routing layers (Concat, Upsample)
+                if isinstance(m, (C2f, C3k2, C2PSA, C3, C3Ghost, C3x, BottleneckCSP, SPPF, SPP, ADown, SPPELAN, C2fPSA, C3k2UltraPro, C2fAttn, Conv, DWConv, GhostConv)):
+                    x = torch.utils.checkpoint.checkpoint(m, x, use_reentrant=False)
+                else:
+                    x = m(x)
+            else:
+                x = m(x)  # run
+            
             y.append(x if m.i in self.save else None)  # save output
             if visualize:
                 feature_visualization(x, m.type, m.i, save_dir=visualize)
