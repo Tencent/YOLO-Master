@@ -101,7 +101,14 @@ def update_markdown_files(md_filepath: Path):
 
         # Add frontmatter if missing
         if not content.strip().startswith("---\n"):
-            header = "---\ncomments: true\ndescription: TODO ADD DESCRIPTION\nkeywords: TODO ADD KEYWORDS\n---\n\n"
+            # Add default frontmatter with helpful description and keywords
+            header = (
+                "---\n"
+                "comments: true\n"
+                "description: Documentation page. Please update this description with specific details about the page content.\n"
+                "keywords: YOLO-Master, documentation\n"
+                "---\n\n"
+            )
             content = header + content
 
         # Ensure MkDocs admonitions "=== " lines are preceded and followed by empty newlines
