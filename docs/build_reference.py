@@ -141,7 +141,14 @@ def create_placeholder_markdown(py_filepath: Path, module_path: str, classes: li
             if len(parts) > 2:
                 header_content = f"---{parts[1]}---\n\n"
     if not header_content:
-        header_content = "---\ndescription: TODO ADD DESCRIPTION\nkeywords: TODO ADD KEYWORDS\n---\n\n"
+        # Add a default header with placeholders for developers to fill in
+        header_content = (
+            "---\n"
+            "description: API reference documentation. "
+            "Please update with specific details about this module's purpose.\n"
+            "keywords: YOLO-Master, reference, API\n"
+            "---\n\n"
+        )
 
     module_path_dots = module_path
     module_path_fs = module_path.replace(".", "/")
@@ -993,7 +1000,14 @@ def create_markdown(module: DocumentedModule) -> Path:
             if "description:" in part or "comments:" in part:
                 header_content += f"---{part}---\n\n"
     if not header_content:
-        header_content = "---\ndescription: TODO ADD DESCRIPTION\nkeywords: TODO ADD KEYWORDS\n---\n\n"
+        # Add a default header with helpful description for module documentation
+        header_content = (
+            "---\n"
+            "description: API reference documentation for this module. "
+            "Please update this description with specific details about the module's purpose and usage.\n"
+            "keywords: YOLO-Master, reference, API\n"
+            "---\n\n"
+        )
 
     module_path_fs = module.module_path.replace(".", "/")
     url = f"https://github.com/{GITHUB_REPO}/blob/main/{module_path_fs}.py"
