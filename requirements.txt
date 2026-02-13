@@ -16,3 +16,6 @@ ultralytics-thop>=2.0.18
 tqdm>=4.64.0
 pandas>=1.1.4
 seaborn>=0.11.0
+
+# LoRA dependencies
+peft>=0.11.0

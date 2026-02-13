@@ -108,6 +108,7 @@ For a deep dive into the design philosophy of MoE modules, detailed routing mech
 
 
 ## 🚀 Updates (Latest First)
+- **2026/02/13**: 🧨🚀add LoRA support for model training and release [v2026.02 version](https://github.com/Tencent/YOLO-Master/releases/tag/YOLO-Master-v26.02).[Happy New Year!]
 - **2026/01/16**: [feature] Add pruning and analysis tools for MoE models.
   > 1. diagnose_model: Visualize expert utilization and routing behavior to identify redundant experts.
   > 2. prune_moe_model: Physically excise redundant experts and reconstruct routers for efficient inference without retraining.
