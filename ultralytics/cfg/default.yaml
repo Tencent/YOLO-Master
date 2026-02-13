@@ -150,7 +150,7 @@ lora_auto_r_ratio: 0.0 # (float) Auto calculate LoRA rank based on params ratio
 lora_use_dora: False # (bool) Enable DoRA (Weight-Decomposed Low-Rank Adaptation)
 lora_type: "lora" # (str) PEFT type: "lora", "loha", "lokr"
 lora_quantization: "none" # (str) Quantization type: "none", "4bit", "8bit" (Requires bitsandbytes)
-lora_include_moe: True # (bool) Include MoE layers in auto-detection
+lora_include_moe: False # (bool) Include MoE layers in auto-detection
 lora_include_attention: False # (bool) Include Attention layers in auto-detection
 lora_only_backbone: False # (bool) Only apply LoRA to backbone
 lora_exclude_modules: # (list[str], optional) Modules to exclude
@@ -159,4 +159,4 @@ lora_from_layer: # (int, optional) Start applying from layer index
 lora_to_layer: # (int, optional) Stop applying at layer index
 lora_allow_depthwise: False # (bool) Allow depthwise convolution
 lora_kernels: # (list[int], optional) Filter by kernel size
-lora_gradient_checkpointing: False # (bool) Enable gradient checkpointing for LoRA memory optimization
+lora_gradient_checkpointing: True # (bool) Enable gradient checkpointing for LoRA memory optimization

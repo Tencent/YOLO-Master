@@ -200,13 +200,8 @@ class BaseModel(torch.nn.Module):
                 self._profile_one_layer(m, x, dt)
             
             # Gradient Checkpointing Logic
-            if use_gc and isinstance(x, torch.Tensor) and x.requires_grad:
-                # OPTIMIZATION: Checkpoint heavy blocks AND convolutions (to save fused BN/SiLU memory)
-                # We skip lightweight routing layers (Concat, Upsample)
-                if isinstance(m, (C2f, C3k2, C2PSA, C3, C3Ghost, C3x, BottleneckCSP, SPPF, SPP, ADown, SPPELAN, C2fPSA, C3k2UltraPro, C2fAttn, Conv, DWConv, GhostConv)):
-                    x = torch.utils.checkpoint.checkpoint(m, x, use_reentrant=False)
-                else:
-                    x = m(x)
+            if use_gc:
+                x = self._apply_checkpointing(m, x)
             else:
                 x = m(x)  # run
             
@@ -218,6 +213,53 @@ class BaseModel(torch.nn.Module):
                 if m.i == max_idx:
                     return torch.unbind(torch.cat(embeddings, 1), dim=0)
         return x
+
+    def _apply_checkpointing(self, m, x):
+        """
+        Applies gradient checkpointing to a module if conditions are met.
+        
+        Args:
+            m (nn.Module): The module to run.
+            x (torch.Tensor or list): The input tensor(s).
+            
+        Returns:
+            torch.Tensor: The output of the module.
+        """
+        # 1. Check if input requires grad (only check first tensor if input is list)
+        if isinstance(x, list):
+            requires_grad = any(t.requires_grad for t in x if isinstance(t, torch.Tensor))
+        elif isinstance(x, torch.Tensor):
+            requires_grad = x.requires_grad
+        else:
+            requires_grad = False
+            
+        if not requires_grad:
+            return m(x)
+
+        # 2. Check if module supports checkpointing (has state to save)
+        is_heavy = len(list(m.parameters())) > 0 
+        
+        # 3. Apply Checkpoint
+        if is_heavy:
+            # Note: use_reentrant=False is preferred for modern PyTorch
+            if isinstance(x, list):
+                # Handle list input (e.g. Detect layer) by unpacking/repacking
+                # This prevents in-place modification issues and ensures tensors are tracked
+                def wrapper(*args):
+                    x_list = list(args)
+                    out = m(x_list)
+                    if isinstance(out, list):
+                        return tuple(out) # Checkpoint expects tuple of tensors
+                    return out
+                
+                out = torch.utils.checkpoint.checkpoint(wrapper, *x, use_reentrant=False)
+                if isinstance(out, tuple):
+                    return list(out)
+                return out
+            else:
+                return torch.utils.checkpoint.checkpoint(m, x, use_reentrant=False)
+        else:
+            return m(x)
 
     def _predict_augment(self, x):
         """Perform augmentations on input image x and return augmented inference."""
@@ -835,12 +877,22 @@ class RTDETRDetectionModel(DetectionModel):
         y, dt, embeddings = [], [], []  # outputs
         embed = frozenset(embed) if embed is not None else {-1}
         max_idx = max(embed)
+        
+        # Check if gradient checkpointing is enabled
+        use_gc = getattr(self, 'use_gradient_checkpointing', False) and self.training
+
         for m in self.model[:-1]:  # except the head part
             if m.f != -1:  # if not from previous layer
                 x = y[m.f] if isinstance(m.f, int) else [x if j == -1 else y[j] for j in m.f]  # from earlier layers
             if profile:
                 self._profile_one_layer(m, x, dt)
-            x = m(x)  # run
+            
+            # Gradient Checkpointing Logic
+            if use_gc:
+                x = self._apply_checkpointing(m, x)
+            else:
+                x = m(x)  # run
+            
             y.append(x if m.i in self.save else None)  # save output
             if visualize:
                 feature_visualization(x, m.type, m.i, save_dir=visualize)

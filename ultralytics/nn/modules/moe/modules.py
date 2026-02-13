@@ -1,4 +1,4 @@
-# 🐧Please note that this file has been modified by Tencent on 2026/02/07. All Tencent Modifications are Copyright (C) 2026 Tencent.
+# 🐧Please note that this file has been modified by Tencent on 2026/02/13. All Tencent Modifications are Copyright (C) 2026 Tencent.
 """Mixture-of-Experts (MoE) modules, routing layers, and compatibility shims.
 
 This module provides several MoE variants and routers optimized for inference efficiency,
@@ -525,7 +525,12 @@ class OptimizedMOE(nn.Module):
         )
 
         self._init_weights()
-        self.moe_loss_fn = MoELoss(balance_loss_coeff, z_loss_coeff, num_experts, top_k)
+        self.moe_loss_fn = MoELoss(
+            balance_loss_coeff=balance_loss_coeff, 
+            z_loss_coeff=z_loss_coeff, 
+            num_experts=num_experts, 
+            top_k=top_k
+        )
 
     def _init_weights(self):
         for m in self.modules():
@@ -684,7 +689,12 @@ class OptimizedMOEImproved(nn.Module):
         )
 
         self._init_weights()
-        self.moe_loss_fn = MoELoss(balance_loss_coeff, router_z_loss_coeff, num_experts, top_k)
+        self.moe_loss_fn = MoELoss(
+            balance_loss_coeff=balance_loss_coeff, 
+            z_loss_coeff=router_z_loss_coeff, 
+            num_experts=num_experts, 
+            top_k=top_k
+        )
 
     def _init_weights(self):
         for m in self.modules():
@@ -840,7 +850,12 @@ class HyperSplitMoE(nn.Module):
         ])
 
         # Auxiliary loss function
-        self.moe_loss_fn = MoELoss(balance_loss_coeff, router_z_loss_coeff, num_experts, top_k)
+        self.moe_loss_fn = MoELoss(
+            balance_loss_coeff=balance_loss_coeff, 
+            z_loss_coeff=router_z_loss_coeff, 
+            num_experts=num_experts, 
+            top_k=top_k
+        )
         
         # Final fusion layer (1x1 Conv)
         self.proj = nn.Conv2d(out_channels, out_channels, 1, bias=False)

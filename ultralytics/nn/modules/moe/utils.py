@@ -69,8 +69,17 @@ class BatchedExpertComputation:
             0].out_channels
 
         # Flatten indices and weights
-        indices_flat = routing_indices.view(B, top_k).squeeze(-1).squeeze(-1)  # [B, top_k]
-        weights_flat = routing_weights.view(B, top_k).squeeze(-1).squeeze(-1)  # [B, top_k]
+        # Handle cases where top_k might have changed dynamically
+        current_top_k = routing_indices.shape[1]
+        indices_flat = routing_indices.view(B, current_top_k)  # [B, top_k]
+        weights_flat = routing_weights.view(B, current_top_k)  # [B, top_k]
+        
+        # Squeeze logic handled by view if shapes align, otherwise explicit squeeze if needed
+        # But indices from router are usually [B, k], sometimes [B, k, 1, 1] if spatial
+        if routing_indices.dim() > 2:
+             indices_flat = indices_flat.squeeze(-1).squeeze(-1)
+        if routing_weights.dim() > 2:
+             weights_flat = weights_flat.squeeze(-1).squeeze(-1)
 
         # Plan A: conditional computation (skip low-weight experts)
         # Threshold is tunable (accuracy vs speed)
@@ -90,14 +99,29 @@ class BatchedExpertComputation:
                 continue
 
             # Get batch indices and corresponding weights
-            batch_indices, k_indices = torch.where(expert_mask)
+            where_res = torch.where(expert_mask)
+            if len(where_res) == 1:
+                batch_indices = where_res[0]
+                k_indices = torch.zeros_like(batch_indices)
+            else:
+                batch_indices, k_indices = where_res
 
             # Batched forward pass
             expert_input = x[batch_indices]
             expert_out = experts[expert_idx](expert_input)
 
             # Apply weights
-            weights = weights_flat[batch_indices, k_indices].view(-1, 1, 1, 1)
+            if weights_flat.dim() == 1:
+                 # Flattened weights [B*top_k] or just [B] if k=1
+                 # If batch_indices is used to index, we assume weights_flat aligns with flattened indices
+                 # But wait, weights_flat is [B, top_k] flattened.
+                 # If expert_mask is 1D [B], then weights_flat should be 1D [B] too.
+                 weights = weights_flat[batch_indices].view(-1, 1, 1, 1)
+            elif weights_flat.dim() == 0:
+                 # Scalar tensor, maybe from some reduction? Should not happen in normal flow.
+                 weights = weights_flat.view(-1, 1, 1, 1)
+            else:
+                 weights = weights_flat[batch_indices, k_indices].view(-1, 1, 1, 1)
             weighted_out = expert_out * weights
 
             # Accumulate outputs (efficient index_add_)

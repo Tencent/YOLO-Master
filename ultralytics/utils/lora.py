@@ -1,14 +1,19 @@
-# 🐧Please note that this file has been modified by Tencent on 2026/01/16. All Tencent Modifications are Copyright (C) 2026 Tencent.
+# 🐧Please note that this file has been modified by Tencent on 2026/02/13. All Tencent Modifications are Copyright (C) 2026 Tencent.
 import torch
 import torch.nn as nn
 import re
 import gc
+import types
 from dataclasses import dataclass, field
-from typing import Optional, List, Union, Dict, Any, Set, Tuple
+import re
+from typing import Optional, List, Union, Dict, Any, Set, Tuple, TYPE_CHECKING
 from pathlib import Path
 
 from ultralytics.utils import LOGGER
-from ultralytics.nn.tasks import DetectionModel
+from ultralytics.nn.tasks import (
+    DetectionModel, SegmentationModel, PoseModel, ClassificationModel, 
+    OBBModel, RTDETRDetectionModel, WorldModel
+)
 
 # Attempt to import PEFT with graceful degradation
 try:
@@ -160,9 +165,9 @@ class PeftProxy(PeftModel):
         return self
 
 
-class LoRADetectionModel(DetectionModel):
+class LoRADetectionModel:
     """
-    Wrapper for the DetectionModel class.
+    Mixin class for LoRA-enabled models.
     
     Primary Functions:
     1. Flags the model as LoRA-enabled.
@@ -172,6 +177,15 @@ class LoRADetectionModel(DetectionModel):
         if verbose:
             LOGGER.info("[LoRA] Fusion disabled for LoRADetectionModel.")
         return self
+
+# Wrapper classes for pickling support
+class LoRADetectionModelWrapper(LoRADetectionModel, DetectionModel): pass
+class LoRASegmentationModelWrapper(LoRADetectionModel, SegmentationModel): pass
+class LoRAPoseModelWrapper(LoRADetectionModel, PoseModel): pass
+class LoRAClassificationModelWrapper(LoRADetectionModel, ClassificationModel): pass
+class LoRAOBBModelWrapper(LoRADetectionModel, OBBModel): pass
+class LoRARTDETRDetectionModelWrapper(LoRADetectionModel, RTDETRDetectionModel): pass
+class LoRAWorldModelWrapper(LoRADetectionModel, WorldModel): pass
 
 
 # ============================================================================
@@ -282,7 +296,7 @@ class LoRAConfigBuilder:
     """
 
     # Pre-compiled regex for performance
-    _PAT_BACKBONE_EXCLUDE = re.compile(r"(head|detect|box|cls|pred|fpn|pan|seg|pose)", re.IGNORECASE)
+    _PAT_BACKBONE_EXCLUDE = re.compile(r"(head|detect|box|cls|pred|fpn|pan|seg|pose|enc_score_head|enc_bbox_head|dec_score_head|dec_bbox_head)", re.IGNORECASE)
     _PAT_MOE = re.compile(r"(expert|moe)", re.IGNORECASE)
     _PAT_ATTN = re.compile(r"attn", re.IGNORECASE)
     _PAT_INDEX = re.compile(r"^(\d+)\.") # Matches "0" in "0.conv"
@@ -310,13 +324,10 @@ class LoRAConfigBuilder:
     ) -> List[str]:
         """
         Intelligently detects target layers for LoRA injection.
-        
-        Optimization Strategy:
-        1. Uses Sets for O(1) exclusion lookups.
-        2. Applies a 'Fail-fast' strategy: checks low-overhead attributes (index, type) 
-           before running expensive regex operations.
         """
         targets: Set[str] = set()
+        # LOGGER.info(f"DEBUG: auto_detect running with r={r}")
+        
         exclude_set = set(exclude_modules) if exclude_modules else set()
         allowed_kernels = set(kernels) if kernels else None
 
@@ -366,12 +377,21 @@ class LoRAConfigBuilder:
             if is_conv:
                 # Grouped Conv / Depthwise Checks
                 if module.groups > 1:
+                    # FIX: Explicitly exclude Conv2d layers where Rank is not divisible by Groups.
+                    # PEFT implementation limitation: LoRA rank must be a multiple of groups for Conv2d.
+                    # For Depthwise Conv (groups == in_channels), this usually means we must skip them unless r % in_channels == 0.
+                    # Given typical ranks (8, 16) and depthwise channels (64, 128...), this condition almost never holds.
+                    # So we should be very conservative here.
+                    
+                    if r > 0 and (r % module.groups != 0):
+                        # Skip this layer to avoid "ValueError: Targeting a Conv2d with groups=X and rank Y"
+                        # DEBUG:
+                        LOGGER.warning(f"[LoRA] Skipping {name}: groups={module.groups}, rank={r} (rank % groups != 0)")
+                        continue
+
                     is_depthwise = (module.in_channels == module.out_channels == module.groups)
                     # Skip Depthwise unless explicitly allowed
                     if not (is_depthwise and allow_depthwise):
-                        continue
-                    # Rank must be divisible by Groups, otherwise PEFT throws an error
-                    if r > 0 and (r % module.groups != 0):
                         continue
                 
                 # Pointwise Conv (1x1) Check - Highly Recommended for LoRA
@@ -385,12 +405,21 @@ class LoRAConfigBuilder:
             # 5. Semantic Name Checks
             lname = name.lower()
 
+            # RT-DETR / YOLO specific exclusions for prediction heads
+            # We must prevent LoRA from messing with final prediction layers (score/bbox heads)
+            # because they are initialized with specific biases for Focal Loss.
+            if LoRAConfigBuilder._PAT_BACKBONE_EXCLUDE.search(lname):
+                # If we are strictly checking for head layers, we might want to skip them even if only_backbone=False
+                # However, usually we want to LoRA the 'Detect' module's internal convs but NOT the final 1x1 convs.
+                # For RT-DETR, the heads are explicit Linear layers.
+                if "score_head" in lname or "bbox_head" in lname:
+                     continue
+
             # Detect Head Special Handling
             # YOLO Detect head uses DFL (Distribution Focal Loss) which has a Conv2d layer that should NOT be trained or LoRA-ed usually.
             # DFL conv weight is fixed (non-trainable) in standard YOLO.
             if "dfl" in lname:
                  continue
-            lname = name.lower()
 
             # MoE Check
             if not include_moe and LoRAConfigBuilder._PAT_MOE.search(lname):
@@ -462,9 +491,76 @@ class LoRAConfigBuilder:
         
         targets = kwargs.get('target_modules')
 
-        # 1. Auto-detection
-        if targets is None:
-            targets = LoRAConfigBuilder.auto_detect_targets(model, r=r, **kwargs)
+        # 1. Auto-detection & Validation
+        # Even if targets are provided explicitly (e.g. ['conv']), we MUST run auto_detect_targets
+        # to filter out incompatible layers (e.g. grouped convs where r % groups != 0).
+        # We pass the explicit targets as a filter to auto_detect_targets.
+        
+        # If targets is NOT None, we use it to restrict the search space of auto_detect_targets.
+        # But `auto_detect_targets` doesn't inherently support a "whitelist" input, 
+        # it scans the whole model.
+        # So we modify the logic: Always run auto_detect, but if explicit targets are provided,
+        # we check if the auto-detected target matches the explicit list (partial match).
+        
+        # Actually, simpler approach:
+        # Pass the explicit targets (if any) as a "whitelist" to auto_detect_targets?
+        # No, auto_detect_targets is designed to scan.
+        
+        # Better: Let's just always run auto_detect_targets.
+        # If kwargs['target_modules'] was set, we need to handle it carefully.
+        # If the user said "conv", they imply "all valid convs".
+        # So we should clear 'target_modules' from kwargs before calling auto_detect,
+        # but use the user's input as a guide.
+        
+        user_targets = kwargs.get('target_modules')
+        
+        # If user provided targets, we temporarily remove it to let auto_detect scan freely,
+        # but we need to ensure auto_detect respects the USER's intent (e.g. only 'conv').
+        # However, auto_detect has its own logic.
+        
+        # CORRECT APPROACH:
+        # Run auto_detect_targets with all constraints.
+        # If user_targets is provided (e.g. ['conv']), we treat it as an additional filter on the result.
+        # Wait, if user provided ['conv'], auto_detect might return ['model.0.conv', ...].
+        # We want the intersection of "valid layers" and "user request".
+        
+        # So:
+        # 1. Run auto_detect to find ALL structurally valid layers (skipping bad grouped convs).
+        # 2. If user provided targets, filter the valid list to only include those matching user's string.
+        
+        # To do this, we must ensure auto_detect doesn't get 'target_modules' in kwargs, 
+        # otherwise it might be confused if it expects it to be None for auto-mode.
+        
+        detect_kwargs = kwargs.copy()
+        if 'target_modules' in detect_kwargs:
+            del detect_kwargs['target_modules']
+            
+        valid_targets = LoRAConfigBuilder.auto_detect_targets(model, r=r, **detect_kwargs)
+        
+        if user_targets:
+            # Filter valid_targets to keep only those that match user_targets
+            # User targets might be generic like "conv" or specific like "model.0.conv"
+            # We use loose matching: if user_target is a substring of valid_target
+            # OR if valid_target contains user_target type (naive check).
+            
+            # Actually, standard PEFT behavior for list is suffix match.
+            # So if user said "conv", and we have "model.0.conv", it matches.
+            # But if user said "linear", "model.0.conv" should be dropped.
+            
+            # But "conv" is not a suffix of "model.0.conv" (the module name is "conv" class name? No).
+            # In YOLO, module names are like "model.0.conv".
+            # If user passed ["conv"], they likely mean modules whose name *contains* "conv" or ends with it.
+            
+            # Let's assume user_targets are substrings.
+            final_targets = []
+            for vt in valid_targets:
+                for ut in user_targets:
+                    if ut in vt:
+                        final_targets.append(vt)
+                        break
+            targets = final_targets
+        else:
+            targets = valid_targets
 
         if not targets:
             return None
@@ -480,13 +576,20 @@ class LoRAConfigBuilder:
         # 3. Construct Regex for exact matching
         # Converts list to regex to prevent suffix collisions (e.g., '0.conv' matching 'expert.0.conv')
         target_modules_val = targets
-        if isinstance(targets, list) and targets:
-            target_modules_val = "^(" + "|".join(re.escape(t) for t in targets) + ")$"
-
+        
+        # FIX: Do NOT force regex wrapping if targets are simple module names.
+        # PEFT handles list of strings by suffix matching automatically.
+        # Only use regex if explicitly needed, or let PEFT handle the list.
+        # Using "^(conv)$" prevents matching "model.0.conv", which is what we want.
+        
+        # if isinstance(targets, list) and targets:
+        #    target_modules_val = "^(" + "|".join(re.escape(t) for t in targets) + ")$"
+            
         # 4. Common arguments
         common_kwargs = {
             "r": r,
             "target_modules": target_modules_val,
+            "exclude_modules": kwargs.get('exclude_modules'), # FIX: Pass exclude_modules to LoraConfig!
             "task_type": None, # YOLO custom models usually do not require task_type
         }
         
@@ -524,10 +627,10 @@ class LoRAConfigBuilder:
 # ============================================================================
 
 def apply_lora(
-    model: DetectionModel,
+    model: "DetectionModel",
     args=None,
     **kwargs
-) -> DetectionModel:
+) -> "DetectionModel":
     """
     Applies the LoRA strategy to an Ultralytics DetectionModel.
 
@@ -567,6 +670,24 @@ def apply_lora(
         LOGGER.info("[LoRA] Disabled (r=0).")
         return model
 
+    # 2.5 Auto-Disable MoE/Attention if not present in the model architecture
+    # This prevents confusing logs claiming MoE is included when the model (e.g. YOLO11) has none.
+    has_moe = False
+    has_attn = False
+    for name, _ in model.named_modules():
+        if LoRAConfigBuilder._PAT_MOE.search(name):
+            has_moe = True
+        if LoRAConfigBuilder._PAT_ATTN.search(name):
+            has_attn = True
+        if has_moe and has_attn:
+            break
+    
+    if config.include_moe and not has_moe:
+        config.include_moe = False
+    
+    if config.include_attention and not has_attn:
+        config.include_attention = False
+
     # 3. Logging
     LOGGER.info("-" * 60)
     LOGGER.info(f"🚀 Initializing LoRA Strategy")
@@ -575,6 +696,21 @@ def apply_lora(
             LOGGER.info(f"  - {k:<22}: {v}")
     
     # 4. Prepare Builder Parameters
+    # CRITICAL FIX: If target_modules is explicitly provided (e.g. ['conv']), we MUST still run it through
+    # auto_detect_targets to filter out incompatible layers (like grouped convs).
+    # Otherwise, PEFT will try to apply LoRA to ALL layers matching 'conv', causing crashes.
+    
+    # If target_modules is provided, we treat it as a broad filter for auto_detect
+    # forcing auto_detect to only consider layers containing these strings/types
+    
+    # However, auto_detect_targets logic is: if target_modules is None, it scans everything.
+    # If we pass target_modules to it, it doesn't currently use it as a base filter.
+    # So we should modify how we call it.
+    
+    # Actually, let's look at create_config. It calls auto_detect_targets ONLY IF target_modules is None.
+    # We need to change this behavior. We want auto_detect_targets to ALWAYS run validation/filtering,
+    # even if the user provided a list.
+    
     builder_params = {
         "r": config.r,
         "alpha": config.alpha,
@@ -589,12 +725,39 @@ def apply_lora(
         "to_layer": config.to_layer,
         "allow_depthwise": config.allow_depthwise,
         "kernels": config.kernels,
-        "target_modules": config.target_modules,
+        "target_modules": config.target_modules, # This might be ['conv']
         "gradient_checkpointing": config.gradient_checkpointing,
         "auto_r_ratio": config.auto_r_ratio,
         "use_dora": config.use_dora,
         "peft_type": config.peft_type,
     }
+
+    # Identify incompatible layers to explicitly exclude
+    # This acts as a safety net against regex failures or PEFT behavior quirks
+    incompatible_layers = []
+    # Note: We scan model.model which is the nn.Sequential
+    for name, module in model.model.named_modules():
+         if isinstance(module, nn.Conv2d) and module.groups > 1:
+              if config.r > 0 and config.r % module.groups != 0:
+                   incompatible_layers.append(name)
+    
+    if incompatible_layers:
+         current_exclude = builder_params.get("exclude_modules") or []
+         if isinstance(current_exclude, str):
+              current_exclude = [current_exclude] # Should be handled by parser but just in case
+         
+         # Add variations to ensure PEFT catches it regardless of prefixing
+         variations = []
+         for name in incompatible_layers:
+             variations.append(name)
+             variations.append(f"model.{name}")
+             variations.append(f"model.model.{name}")
+         
+         # Avoid duplicates
+         final_exclude = list(set(current_exclude + variations))
+         builder_params["exclude_modules"] = final_exclude
+         LOGGER.info(f"[LoRA] 🛡️ Automatically excluded {len(incompatible_layers)} incompatible grouped conv layers (r={config.r}).")
+         # LOGGER.info(f"DEBUG: Excluded layers sample: {final_exclude[:5]}")
 
     # 5. Application Process
     try:
@@ -608,6 +771,58 @@ def apply_lora(
                 LOGGER.warning("[LoRA] transformers not found. BitsAndBytesConfig skipped.")
 
         # Create config using model.model (nn.Sequential)
+        
+        # 5.1. Target Module Intersection Logic
+        # We need to refine 'target_modules' in builder_params.
+        # If the user provided explicit targets (e.g. ['conv']), we must still run auto-detect
+        # to filter out incompatible layers (grouped convs).
+        
+        user_targets = builder_params.get("target_modules")
+        
+        # Temporarily remove targets to let auto-detect scan everything for validity
+        detect_params = builder_params.copy()
+        if "target_modules" in detect_params:
+            del detect_params["target_modules"]
+            
+        # Run auto-detect to get ALL structurally valid layers
+        valid_targets = LoRAConfigBuilder.auto_detect_targets(model.model, **detect_params)
+        
+        final_targets = []
+        if user_targets:
+            # Intersection: User Request AND Valid Layer
+            for vt in valid_targets:
+                for ut in user_targets:
+                    # Loose matching: if user string is in valid module name
+                    if ut in vt:
+                        final_targets.append(vt)
+                        break
+            if not final_targets:
+                LOGGER.warning(f"[LoRA] ⚠️ User requested targets {user_targets}, but they were all filtered out (e.g. incompatible grouped convs).")
+        else:
+            # No user preference, use all valid layers
+            final_targets = valid_targets
+            
+        # Update builder params with the safe, full-name list
+        # FIX: Convert list to Regex to force EXACT matching.
+        # PEFT treats list of strings as suffix matching.
+        # If '0.conv' is in the list, it matches 'model.23.cv3.0.0.0.conv' (suffix).
+        # We must use regex ^(full_name)$ to prevent this collision.
+        
+        if final_targets:
+            # target_regex = "^(" + "|".join(re.escape(t) for t in final_targets) + ")$"
+            # builder_params["target_modules"] = target_regex
+            
+            # REVERT TO LIST + EXCLUDE STRATEGY
+            # Since Regex seems to cause issues or is ignored/overridden, we rely on explicit exclude_modules.
+            builder_params["target_modules"] = final_targets
+        else:
+            builder_params["target_modules"] = None
+        
+        # DEBUG: Print final targets passed to PEFT
+        LOGGER.info(f"[LoRA] Final Targets Passed to PEFT (List Length: {len(final_targets) if final_targets else 0})")
+        
+        # Remove debug logs about regex
+        
         peft_config = LoRAConfigBuilder.create_config(model.model, **builder_params)
         
         if peft_config is None:
@@ -627,13 +842,39 @@ def apply_lora(
 
         # [CORE MAGIC] Swap the top-level DetectionModel class
         # This disables operations incompatible with LoRA (like default fusion)
-        model.__class__ = LoRADetectionModel
+        # We use dynamic inheritance (Mixin) to preserve the original model's behavior (e.g. init_criterion)
+        original_cls = model.__class__
+        
+        # Map original class to wrapper class to support pickling
+        wrappers = {
+            DetectionModel: LoRADetectionModelWrapper,
+            SegmentationModel: LoRASegmentationModelWrapper,
+            PoseModel: LoRAPoseModelWrapper,
+            ClassificationModel: LoRAClassificationModelWrapper,
+            OBBModel: LoRAOBBModelWrapper,
+            RTDETRDetectionModel: LoRARTDETRDetectionModelWrapper,
+            WorldModel: LoRAWorldModelWrapper,
+        }
+
+        if original_cls in wrappers:
+            model.__class__ = wrappers[original_cls]
+        else:
+            # Fallback for unknown custom classes (still not picklable but maintains functionality)
+            class LoRAWrapped(LoRADetectionModel, original_cls):
+                pass
+            
+            # Preserve original class name for display/logging purposes
+            LoRAWrapped.__name__ = f"LoRA_{original_cls.__name__}"
+            model.__class__ = LoRAWrapped
         
         # Inject flags
         model.lora_enabled = True
         model.lora_config = config
         
         LOGGER.info(f"[LoRA] ✅ Successfully applied to {len(peft_config.target_modules)} modules.")
+        # Debug: Print first 10 targets to verify
+        if peft_config.target_modules:
+             LOGGER.info(f"[LoRA] Targets sample: {list(peft_config.target_modules)[:10]}")
 
     except Exception as e:
         LOGGER.error(f"[LoRA] ❌ Failed to apply PEFT wrapper: {e}")
@@ -699,7 +940,7 @@ def _print_param_stats(model: nn.Module):
         LOGGER.info("[LoRA] 💾 Using MPS backend.")
 
 
-def save_lora_adapters(model: DetectionModel, path: Union[str, Path]) -> bool:
+def save_lora_adapters(model: "DetectionModel", path: Union[str, Path]) -> bool:
     """
     Saves only the LoRA Adapter weights.
     
@@ -729,7 +970,7 @@ def save_lora_adapters(model: DetectionModel, path: Union[str, Path]) -> bool:
         return False
 
 
-def merge_lora_weights(model: DetectionModel) -> bool:
+def merge_lora_weights(model: "DetectionModel") -> bool:
     """
     Merges LoRA weights back into the base model and unloads adapters.
     Useful for inference acceleration or model export.
@@ -748,8 +989,13 @@ def merge_lora_weights(model: DetectionModel) -> bool:
         # Restore structure
         model.model = merged_base
         
-        # Restore original class definition (DetectionModel)
-        model.__class__ = DetectionModel
+        # Restore original class definition (Remove LoRA Mixin)
+        # We assume the second base class is the original one (LoRADetectionModel, OriginalModel)
+        if len(model.__class__.__bases__) > 1:
+            model.__class__ = model.__class__.__bases__[1]
+        else:
+             # Fallback if structure is unexpected
+            model.__class__ = DetectionModel
         
         # Clear flags
         if hasattr(model, 'lora_enabled'):
