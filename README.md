@@ -4,6 +4,7 @@
   <a href="https://huggingface.co/spaces/gatilin/YOLO-Master-WebUI-Demo"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-blue" alt="Hugging Face Spaces"></a>
   <a href="https://colab.research.google.com/drive/1gTKkCsE4sXIOWpu1cdNBjdFHEahBoZD0?usp=sharing"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a>
   <a href="https://arxiv.org/abs/2512.23273"><img src="https://img.shields.io/badge/arXiv-2512.23273-b31b1b.svg" alt="arXiv"></a>
+  <a href="#-citation"><img src="https://img.shields.io/badge/CVPR-2026-6420AA.svg" alt="CVPR 2026"></a>
   <a href="https://github.com/Tencent/YOLO-Master/releases/tag/YOLO-Master-v26.02"><img src="https://img.shields.io/badge/%F0%9F%93%A6-Model%20Zoo-orange" alt="Model Zoo"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-AGPL%203.0-blue.svg" alt="AGPL 3.0"></a>
   <a href="https://github.com/ultralytics/ultralytics"><img src="https://img.shields.io/badge/Ultralytics-YOLO-blue" alt="Ultralytics"></a>
@@ -65,7 +66,7 @@ Existing Real-Time Object Detection (RTOD) methods commonly adopt YOLO-like arch
 
 To overcome this limitation, we propose YOLO-Master, a novel YOLO-like framework that introduces instance-conditional adaptive computation for RTOD. This is achieved through an Efficient Sparse Mixture-of-Experts (ES-MoE) block that dynamically allocates computational resources to each input according to its scene complexity. At its core, a lightweight dynamic routing network guides expert specialization during training through a diversity enhancing objective, encouraging complementary expertise among experts. Additionally, the routing network adaptively learns to activate only the most relevant experts, thereby improving detection performance while minimizing computational overhead during inference.
 
-Comprehensive experiments on five large-scale benchmarks demonstrate the superiority of YOLO-Master. On MS COCO, our model achieves 42.4\% AP with 1.62ms latency, outperforming YOLOv13-N by +0.8\% mAP and 17.8\% faster inference. Notably, the gains are most pronounced on challenging dense scenes, while the model preserves efficiency on typical inputs and maintains real-time inference speed. Code: [isLinXu/YOLO-Master](https://github.com/isLinXu/YOLO-Master)
+Comprehensive experiments on five large-scale benchmarks demonstrate the superiority of YOLO-Master. On MS COCO, our model achieves 42.4\% AP with 1.62ms latency, outperforming YOLOv13-N by +0.8\% mAP and 17.8\% faster inference. Notably, the gains are most pronounced on challenging dense scenes, while the model preserves efficiency on typical inputs and maintains real-time inference speed. Code: [Tencent/YOLO-Master](https://github.com/Tencent/YOLO-Master)
 </details>
 
 ---
@@ -87,10 +88,16 @@ For a deep dive into the design philosophy of MoE modules, detailed routing mech
 - [A Humble Beginning](#-a-humble-beginning-introduction)
 - [Architecture](#-architecture)
 - [Updates](#-updates-latest-first)
+- [New Features (v2026.02)](#-new-features-v202602)
+  - [Mixture of Experts (MoE)](#1%EF%B8%8F⃣-mixture-of-experts-moe-support)
+  - [LoRA Fine-Tuning](#2%EF%B8%8F⃣-lora-support---parameter-efficient-fine-tuning)
+  - [Sparse SAHI](#3%EF%B8%8F⃣-sparse-sahi-mode)
+  - [Cluster-Weighted NMS](#4%EF%B8%8F⃣-cluster-weighted-nms-cw-nms)
 - [Main Results](#-main-results)
   - [Detection](#detection)
   - [Segmentation](#segmentation)
   - [Classification](#classification)
+- [Model Zoo](#-model-zoo--benchmarks)
 - [Detection Examples](#-detection-examples)
 - [Supported Tasks](#-supported-tasks)
 - [Quick Start](#-quick-start)
@@ -108,11 +115,12 @@ For a deep dive into the design philosophy of MoE modules, detailed routing mech
 
 
 ## 🚀 Updates (Latest First)
+- **2026/02/21**: 🎉🎉 **Our paper has been accepted by CVPR 2026!** Thank you to all the contributors and community members for your support!
 - **2026/02/13**: 🧨🚀add LoRA support for model training and release [v2026.02 version](https://github.com/Tencent/YOLO-Master/releases/tag/YOLO-Master-v26.02).[Happy New Year!]
 - **2026/01/16**: [feature] Add pruning and analysis tools for MoE models.
   > 1. diagnose_model: Visualize expert utilization and routing behavior to identify redundant experts.
   > 2. prune_moe_model: Physically excise redundant experts and reconstruct routers for efficient inference without retraining.
-- **2026/01/16**: Repo[isLinXu/YOLO-Master](https://github.com/isLinXu/YOLO-Master) Transferred to [Tencent](https://github.com/Tencent/YOLO-Master).
+- **2026/01/16**: Repo [isLinXu/YOLO-Master](https://github.com/isLinXu/YOLO-Master) transferred to [Tencent](https://github.com/Tencent/YOLO-Master).
 - **2026/01/14**: [ncnn-YOLO-Master-android](https://github.com/mpj1234/ncnn-YOLO-Master-android) support deploy YOLO-Master. Thanks to them!
 - **2026/01/09**: [feature] Add Cluster-Weighted NMS (CW-NMS) to trade mAP vs speed.
   > cluster: False # (bool) cluster NMS (MoE optimized)
@@ -126,6 +134,198 @@ For a deep dive into the design philosophy of MoE modules, detailed routing mech
 - **2025/12/31**: Released YOLO-Master v0.1 with code, pre-trained weights, and documentation.
 - **2025/12/30**: arXiv paper published.
 
+
+## 🔥 New Features (v2026.02)
+
+### 1️⃣ Mixture of Experts (MoE) Support
+
+YOLO-Master introduces the first deep integration of Mixture-of-Experts into the YOLO architecture, enabling instance-conditional adaptive computation.
+
+<div align="center">
+  <img width="90%" alt="MoE Architecture" src="https://github.com/user-attachments/assets/5c51a886-e81d-43a4-bf4d-d37991e35cd2" />
+  <img width="90%" alt="MoE Module Details" src="https://github.com/user-attachments/assets/0c2d2689-72c2-47fb-97c6-002fefa99c73" />
+</div>
+
+**Core Components:**
+
+| Component | Description | Implementation |
+|:----------|:-----------|:--------------|
+| **MoE Loss (MoELoss)** | Load balancing loss + Z-Loss for stable training | `ultralytics/nn/modules/moe/loss.py` |
+| **MoE Pruning (MoEPruner)** | Auto-prune low-utilization experts (20-30% speedup) | `ultralytics/nn/modules/moe/pruning.py` |
+| **Modular Architecture** | Decoupled routers, experts, and gating mechanisms | `ultralytics/nn/modules/moe/` |
+
+**Usage:**
+
+```python
+from ultralytics import YOLO
+
+# Load MoE configuration
+model = YOLO("ultralytics/cfg/models/master/v0_1/det/yolo-master-n.yaml")
+
+# Training with MoE
+results = model.train(
+    data="coco8.yaml",
+    epochs=100,
+    imgsz=640,
+    batch=16,
+    moe_num_experts=8,      # Number of experts
+    moe_top_k=2,            # Experts activated per token
+    moe_balance_loss=0.01,  # Load balancing loss weight
+)
+
+# Expert utilization analysis & pruning
+model.prune_experts(threshold=0.15)
+```
+
+---
+
+### 2️⃣ LoRA Support - Parameter-Efficient Fine-Tuning
+
+Architecture-agnostic LoRA adaptation with **zero architectural overhead** — enabled purely through configuration, no model surgery required.
+
+<div align="center">
+  <img width="90%" alt="LoRA Training Comparison" src="https://github.com/user-attachments/assets/98c6cada-ddc7-4723-877d-59d16ee0fdb2" />
+  <p><i>LoRA vs Full SFT vs DoRA vs LoHa: Training curves comparison on YOLOv11-s (COCO val2017, 300 epochs)</i></p>
+</div>
+
+**Key Advantages:**
+- 🎯 Using ~10% trainable parameters to achieve **95-98%** of full fine-tuning performance
+- ⚡ **40-60%** training speedup with **70%** memory reduction
+- 📦 Ultra-compact adapters (e.g., YOLO11x: 14.1 MB adapter vs 114.6 MB full model)
+
+**Supported Models:**
+
+| Model Family | Architecture Type | LoRA Integration | Changes Required |
+|:------------|:-----------------|:----------------|:----------------|
+| YOLOv3 / v5 / v6 | CNN | Configuration-only | None ✅ |
+| YOLOv8 / v9 / v10 | CNN | Configuration-only | None ✅ |
+| YOLO11 / YOLO12 | CNN / Hybrid | Configuration-only | None ✅ |
+| RT-DETR | Transformer-based | Configuration-only | None ✅ |
+| YOLO-World | Multi-modal | Configuration-only | None ✅ |
+| YOLO-Master | MoE | Configuration-only | None ✅ |
+
+**Usage:**
+
+```python
+from ultralytics import YOLO
+
+model = YOLO("yolo11s.pt")
+
+# LoRA training (one-click activation)
+results = model.train(
+    data="coco8.yaml",
+    epochs=300,
+    imgsz=640,
+    batch=32,
+    lora_r=16,                # rank=16, best cost-effectiveness
+    lora_alpha=32,            # alpha = 2×r
+    lora_dropout=0.1,
+    lora_gradient_checkpointing=True,
+)
+
+# Save only LoRA adapter (~4.1MB for YOLO11s)
+model.save_lora_only("yolo11s_lora_r16.pt")
+```
+
+<details>
+<summary><b>📊 GPU Memory & Storage Benchmarks (Click to expand)</b></summary>
+
+**YOLO11 Series (LoRA rank=8):**
+
+| Model | Base Params (M) | LoRA Params | Base Size (MB) | Adapter Size (MB) | Param Ratio (%) |
+|:------|:---------------|:-----------|:--------------|:-----------------|:---------------|
+| YOLO11n | 2.6 | 527,536 | 5.6 | 2.1 | 20.29% |
+| YOLO11s | 9.4 | 1,016,240 | 19.3 | 4.1 | 10.81% |
+| YOLO11m | 20.1 | 1,639,856 | 40.7 | 6.6 | 8.16% |
+| YOLO11l | 25.3 | 2,350,512 | 51.4 | 9.4 | 9.29% |
+| YOLO11x | 56.9 | 3,525,552 | 114.6 | 14.1 | 6.20% |
+
+**YOLO12 Series (LoRA rank=8):**
+
+| Model | Base Params (M) | LoRA Params | Base Size (MB) | Adapter Size (MB) | Param Ratio (%) |
+|:------|:---------------|:-----------|:--------------|:-----------------|:---------------|
+| YOLO12n | 2.6 | 632,752 | 5.6 | 2.3 | 24.34% |
+| YOLO12s | 9.3 | 1,077,680 | 19.0 | 4.3 | 11.59% |
+| YOLO12m | 20.2 | 1,684,912 | 40.9 | 6.8 | 8.34% |
+| YOLO12l | 26.4 | 2,442,160 | 53.7 | 9.8 | 9.25% |
+| YOLO12x | 59.1 | 3,662,768 | 119.3 | 14.7 | 6.20% |
+
+**Practical Deployment Significance (YOLO11-X):**
+- 🚀 **Cloud**: Save ~87.7% storage by deploying 14.1 MB adapter instead of 114.6 MB full model
+- 📱 **Edge**: 1 base model + N lightweight adapters for multi-scenario switching
+- 🔄 **Version Control**: 14.1 MB adapters are far easier to manage via Git
+- 💡 **Multi-Task**: 10 tasks require only 255.6 MB (1×base + 10×adapters) vs 1,146 MB traditional
+
+</details>
+
+---
+
+### 3️⃣ Sparse SAHI Mode
+
+**Sparse Slicing Aided Hyper-Inference** — a revolutionary optimization for ultra-large image (4K/8K) detection, achieving **3-5x speedup** by intelligently skipping blank regions.
+
+<div align="center">
+  <img width="90%" alt="Sparse SAHI Pipeline" src="https://github.com/user-attachments/assets/f86a1f41-7538-4168-b4b4-112dafcd80d5" />
+  <p><i>Sparse SAHI pipeline: Objectness Mask → Adaptive Slicing → High-Resolution Inference → CW-NMS Merging</i></p>
+</div>
+
+<div align="center">
+  <img width="45%" alt="Skip Ratio Analysis" src="https://github.com/user-attachments/assets/0aece4ee-f693-40bd-8164-2c7bcd954fd5" />
+  <img width="45%" alt="Sparse SAHI Real-world Example" src="https://github.com/user-attachments/assets/7d41de53-7e58-472a-a6ad-15830b8744c6" />
+  <p><i>Left: Skip ratio analysis across different scenes. Right: Real-world detection example.</i></p>
+</div>
+
+**How it works:**
+1. 🗺️ Low-resolution full-image inference generates an objectness heatmap
+2. ✂️ Adaptive slicing skips regions with objectness < 0.15
+3. 🎯 High-resolution inference only on regions of interest
+4. 🔗 Multi-slice results merged via CW-NMS
+
+**Usage:**
+
+```python
+from ultralytics import YOLO
+
+model = YOLO("yolov8n.pt")
+
+results = model.predict(
+    source="large_aerial_image.jpg",
+    sparse_sahi=True,
+    slice_size=640,
+    overlap_ratio=0.2,
+    objectness_threshold=0.15,
+)
+```
+
+---
+
+### 4️⃣ Cluster-Weighted NMS (CW-NMS)
+
+Cluster-based detection box fusion algorithm using **Gaussian-weighted averaging** instead of hard suppression, significantly improving localization accuracy.
+
+<div align="center">
+  <img width="90%" alt="CW-NMS Performance Comparison" src="https://github.com/user-attachments/assets/93d9252c-506a-4cf4-a0f1-ff864e0d721b" />
+  <p><i>CW-NMS vs Traditional NMS vs Soft-NMS: Performance comparison on dense scenes</i></p>
+</div>
+
+| Method | Strategy | Pros | Cons |
+|:-------|:---------|:-----|:-----|
+| Traditional NMS | Direct discard | Fast | May lose accurate localization |
+| Soft-NMS | Confidence decay | Preserves candidates | Parameter-sensitive |
+| **CW-NMS** | **Gaussian-weighted fusion** | **High accuracy, robust** | Slight computational increase |
+
+```python
+from ultralytics import YOLO
+
+model = YOLO("yolov8n.pt")
+results = model.predict(
+    source="dense_objects.jpg",
+    cluster=True,     # Enable CW-NMS
+    sigma=0.1,        # Gaussian weight σ
+)
+```
+
+---
 
 ## 📊 Main Results
 ### Detection
@@ -228,6 +428,37 @@ For a deep dive into the design philosophy of MoE modules, detailed routing mech
 | YOLOv12-cls-N         | ImageNet     | 224            | 71.7              | 90.5              | +1.7% Top-1       |
 | **YOLO-Master-cls-N** | **ImageNet** | **224**        | **76.6**          | **93.4**          | **+4.9% Top-1** 🔥 |
 
+## 📦 Model Zoo & Benchmarks
+
+<div align="center">
+  <img width="45%" alt="Model Performance 1" src="https://github.com/user-attachments/assets/9bd46c20-f4e3-4680-ad59-fcbab4b870f5" />
+  <img width="45%" alt="Model Performance 2" src="https://github.com/user-attachments/assets/6f1b13c2-651f-4579-8a34-833c4753322a" />
+</div>
+<div align="center">
+  <img width="45%" alt="Model Performance 3" src="https://github.com/user-attachments/assets/b6680e38-b206-438f-b693-4c7f858fb8b7" />
+  <img width="45%" alt="Model Performance 4" src="https://github.com/user-attachments/assets/9f17ac3e-f839-4950-8661-76a5d4714443" />
+</div>
+
+### YOLO-Master-EsMoE Series
+
+| Model | Params(M) | GFLOPs(G) | Box(P) | R | mAP50 | mAP50-95 | Speed (4090 TRT) FPS |
+|:------|:---------|:---------|:------|:--|:------|:---------|:--------------------|
+| YOLO-Master-EsMoE-N | 2.68 | 8.7 | 0.684 | 0.536 | 0.587 | 0.427 | 640.18 |
+| YOLO-Master-EsMoE-S | 9.69 | 29.1 | 0.699 | 0.603 | 0.603 | 0.489 | 423.87 |
+| YOLO-Master-EsMoE-M | 34.88 | 97.4 | 0.737 | 0.640 | 0.697 | 0.530 | 243.79 |
+| YOLO-Master-EsMoE-L | 🔥training | TBD | TBD | TBD | TBD | TBD | TBD |
+| YOLO-Master-EsMoE-X | 🔥training | TBD | TBD | TBD | TBD | TBD | TBD |
+
+### YOLO-Master-v0.1 Series
+
+| Model | Params(M) | GFLOPs(G) | Box(P) | R | mAP50 | mAP50-95 | Speed (4090 TRT) FPS |
+|:------|:---------|:---------|:------|:--|:------|:---------|:--------------------|
+| YOLO-Master-v0.1-N | 7.54 | 10.1 | 0.684 | 0.542 | 0.592 | 0.429 | 528.84 |
+| YOLO-Master-v0.1-S | 29.15 | 36.0 | 0.724 | 0.607 | 0.662 | 0.489 | 345.24 |
+| YOLO-Master-v0.1-M | 52.17 | 116.7 | 0.729 | 0.641 | 0.696 | 0.528 | 170.72 |
+| YOLO-Master-v0.1-L | 58.41 | 138.1 | 0.739 | 0.646 | 0.705 | 0.539 | 149.86 |
+| YOLO-Master-v0.1-X | 🔥training | TBD | TBD | TBD | TBD | TBD | TBD |
+
 ## 🖼️ Detection Examples
 
 <div align="center">
@@ -261,7 +492,7 @@ conda create -n yolo_master python=3.11 -y
 conda activate yolo_master
 
 # 2. Clone the repository
-git clone https://github.com/isLinXu/YOLO-Master
+git clone https://github.com/Tencent/YOLO-Master
 cd YOLO-Master
 
 # 3. Install dependencies
@@ -355,7 +586,7 @@ python app.py
 
 We welcome contributions! Please check out our [Contribution Guidelines](CONTRIBUTING.md) for details on how to get involved.
 
-- **Issues**: Report bugs or request features [here](https://github.com/isLinXu/YOLO-Master/issues).
+- **Issues**: Report bugs or request features [here](https://github.com/Tencent/YOLO-Master/issues).
 - **Pull Requests**: Submit your improvements.
 
 ## 📄 License
@@ -371,11 +602,11 @@ This work builds upon the excellent [Ultralytics](https://github.com/ultralytics
 If you use YOLO-Master in your research, please cite our paper:
 
 ```bibtex
-@article{lin2025yolomaster,
+@inproceedings{lin2026yolomaster,
   title={{YOLO-Master}: MOE-Accelerated with Specialized Transformers for Enhanced Real-time Detection},
   author={Lin, Xu and Peng, Jinlong and Gan, Zhenye and Zhu, Jiawen and Liu, Jun},
-  journal={arXiv preprint arXiv:2512.23273},
-  year={2025}
+  booktitle={Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
+  year={2026}
 }
 ```
 
