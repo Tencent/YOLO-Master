@@ -26,6 +26,10 @@
   <sup>*</sup>Equal Contribution
 </p>
 
+<div align="center">
+<h5>🎉 Accepted by CVPR 2026</h5>
+</div>
+
 ---
 
 <img
