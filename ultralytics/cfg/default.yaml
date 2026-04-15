@@ -160,6 +160,14 @@ lora_to_layer: # (int, optional) Stop applying at layer index
 lora_allow_depthwise: False # (bool) Allow depthwise convolution
 lora_kernels: # (list[int], optional) Filter by kernel size
 lora_gradient_checkpointing: True # (bool) Enable gradient checkpointing for LoRA memory optimization
+lora_lr_mult: 1.0 # (float) Learning rate multiplier for LoRA params vs base
+
+# LoRA Training Strategies (advanced)
+lora_layer_decay: 0.0 # (float) Layer-wise LR decay rate (0=disabled, 0.85~0.95 typical)
+lora_alpha_warmup: 0 # (int) Alpha cosine warmup epochs (0=disabled)
+lora_ortho_weight: 0.0 # (float) Orthogonal regularization weight (0=disabled, 1e-5~1e-3 typical)
+lora_dropout_end: 0.15 # (float) Final dropout for dynamic schedule (must be >= lora_dropout)
+lora_dropout_start_ratio: 0.3 # (float) When to start increasing dropout (fraction of total epochs)
 
 # MoE (Mixture-of-Experts) settings -----------------------------------------------------------------------------------------
 moe_num_experts: 4 # (int) Number of experts in MoE layers (0 to use model config)
