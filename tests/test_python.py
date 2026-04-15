@@ -5,6 +5,7 @@ import csv
 import urllib
 from copy import copy
 from pathlib import Path
+from unittest import mock
 
 import cv2
 import numpy as np
@@ -63,6 +64,26 @@ def test_model_methods():
     _ = model.device
     _ = model.transforms
     _ = model.task_map
+
+
+def test_save_lora_only_uses_live_trainer_model(tmp_path):
+    """Test that LoRA adapter export uses the live trainer model when available."""
+    model = YOLO(MODEL)
+    model.trainer = mock.Mock()
+    model.trainer.model = mock.Mock(lora_enabled=True)
+
+    with mock.patch("ultralytics.utils.lora.save_lora_adapters", return_value=True) as save_mock:
+        assert model.save_lora_only(tmp_path / "lora_adapter")
+        save_mock.assert_called_once_with(model.trainer.model, tmp_path / "lora_adapter")
+
+
+def test_load_lora_delegates_to_adapter_loader(tmp_path):
+    """Test that LoRA adapter loading is delegated to the shared utility."""
+    model = YOLO(MODEL)
+
+    with mock.patch("ultralytics.utils.lora.load_lora_adapters", return_value=True) as load_mock:
+        assert model.load_lora(tmp_path / "lora_adapter")
+        load_mock.assert_called_once_with(model.model, tmp_path / "lora_adapter", merge=False)
 
 
 def test_model_profile():

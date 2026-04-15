@@ -403,6 +403,73 @@ class Model(torch.nn.Module):
         }
         torch.save({**self.ckpt, **updates}, filename)
 
+    def save_lora_only(self, path: str | Path) -> bool:
+        """Save only LoRA adapter weights for the active model.
+
+        This method prefers the trainer-side model after training because `self.model` is reloaded from the best/last
+        checkpoint, which may no longer retain the live PEFT wrapper required for adapter export.
+
+        Args:
+            path (str | Path): Directory where the adapter files will be saved.
+
+        Returns:
+            (bool): True if adapters were saved successfully, otherwise False.
+        """
+        self._check_is_pytorch_model()
+        from ultralytics.utils import LOGGER
+        from ultralytics.utils.lora import save_lora_adapters
+
+        for candidate in (getattr(self.trainer, "model", None), self.model):
+            if candidate is None:
+                continue
+            base_candidate = getattr(candidate, "module", candidate)
+            if getattr(base_candidate, "lora_enabled", False):
+                return save_lora_adapters(candidate, path)
+
+        LOGGER.warning("[LoRA] Save skipped: no active LoRA adapters found on trainer.model or model.")
+        return False
+
+    def merge_lora(self) -> bool:
+        """Merge active LoRA adapters into the base model in-place.
+
+        Returns:
+            (bool): True if the merge succeeded, otherwise False.
+        """
+        self._check_is_pytorch_model()
+        from ultralytics.utils import LOGGER
+        from ultralytics.utils.lora import merge_lora_weights
+
+        for candidate in (getattr(self.trainer, "model", None), self.model):
+            if candidate is None:
+                continue
+            base_candidate = getattr(candidate, "module", candidate)
+            if getattr(base_candidate, "lora_enabled", False) or hasattr(getattr(base_candidate, "model", None), "merge_and_unload"):
+                ok = merge_lora_weights(candidate)
+                if ok and candidate is not self.model:
+                    self.model = getattr(candidate, "module", candidate)
+                return ok
+
+        LOGGER.warning("[LoRA] Merge skipped: no active LoRA adapters found on trainer.model or model.")
+        return False
+
+    def load_lora(self, path: str | Path, merge: bool = False) -> bool:
+        """Load LoRA adapters from a saved adapter directory.
+
+        Args:
+            path (str | Path): Directory containing the saved adapter files.
+            merge (bool): If True, merge the adapters into the base model immediately after loading.
+
+        Returns:
+            (bool): True if adapters were loaded successfully, otherwise False.
+        """
+        self._check_is_pytorch_model()
+        from ultralytics.utils.lora import load_lora_adapters
+
+        ok = load_lora_adapters(self.model, path, merge=merge)
+        if ok and getattr(self.trainer, "model", None) is not None:
+            self.trainer.model = self.model
+        return ok
+
     def info(self, detailed: bool = False, verbose: bool = True):
         """Display model information.
 

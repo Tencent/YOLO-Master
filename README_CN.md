@@ -221,8 +221,8 @@ results = model.train(
     lora_gradient_checkpointing=True,
 )
 
-# 仅保存 LoRA 适配器（YOLO11s 约 4.1MB）
-model.save_lora_only("yolo11s_lora_r16.pt")
+# 仅保存 LoRA 适配器到目录（YOLO11s 约 4.1MB）
+model.save_lora_only("yolo11s_lora_r16")
 ```
 
 <details>

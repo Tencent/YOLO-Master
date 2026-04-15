@@ -963,7 +963,11 @@ class BaseTrainer:
         Returns:
             (torch.optim.Optimizer): The constructed optimizer.
         """
-        g = [], [], [], []  # optimizer parameter groups
+        # LoRA-aware parameter group separation
+        lora_lr_mult = getattr(self.args, "lora_lr_mult", 1.0)
+        has_lora_param = any("lora_" in n for n, _ in model.named_parameters())
+        
+        g = [], [], [], [], []  # 5 groups: [base_wt, bn_wt, bias, router, lora]
         bn = tuple(v for k, v in nn.__dict__.items() if "Norm" in k)  # normalization layers, i.e. BatchNorm2d()
         if name == "auto":
             LOGGER.info(
@@ -981,6 +985,8 @@ class BaseTrainer:
                 fullname = f"{module_name}.{param_name}" if module_name else param_name
                 if "routing" in fullname or "router" in fullname:  # MoE Router parameters
                     g[3].append(param)
+                elif "lora_" in fullname:  # LoRA adapter params -> separate group
+                    g[4].append(param)
                 elif "bias" in fullname:  # bias (no decay)
                     g[2].append(param)
                 elif isinstance(module, bn) or "logit_scale" in fullname:  # weight (no decay)
@@ -1006,9 +1012,23 @@ class BaseTrainer:
         optimizer.add_param_group({"params": g[0], "weight_decay": decay})  # add g0 with weight_decay
         optimizer.add_param_group({"params": g[1], "weight_decay": 0.0})  # add g1 (BatchNorm2d weights)
         optimizer.add_param_group({"params": g[3], "weight_decay": decay, "lr": lr * 0.1})  # add g3 (MoE Router) with 0.1x lr
+        
+        # Add LoRA parameter group with configurable LR multiplier
+        lora_log = ""
+        if g[4]:
+            lora_lr = lr * lora_lr_mult
+            optimizer.add_param_group({
+                "params": g[4],
+                "weight_decay": 0.0,
+                "lr": lora_lr,
+            })
+            lora_log = f", {len(g[4])} LoRA(lr={lora_lr:.6f}, mult={lora_lr_mult})"
+        elif has_lora_param and lora_lr_mult != 1.0:
+            lora_log = " [WARN] lora_lr_mult set but no LoRA params found"
+            
         LOGGER.info(
             f"{colorstr('optimizer:')} {type(optimizer).__name__}(lr={lr}, momentum={momentum}) with parameter groups "
-            f"{len(g[1])} weight(decay=0.0), {len(g[0])} weight(decay={decay}), {len(g[2])} bias(decay=0.0), "
-            f"{len(g[3])} router(lr=0.1x)"
+            f"{len(g[1])} bn(decay=0), {len(g[0])} wt(decay={decay}), {len(g[2])} bias(decay=0), "
+            f"{len(g[3])} router(lr=0.1x){lora_log}"
         )
         return optimizer
