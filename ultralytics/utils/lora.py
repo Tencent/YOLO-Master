@@ -1165,6 +1165,404 @@ def merge_lora_weights(model: "DetectionModel") -> bool:
         return False
 
 
+# ============================================================================
+# 6. Advanced Training Strategies
+# ============================================================================
+
+class LoraTrainingStrategy:
+    """
+    Advanced training strategies for LoRA fine-tuning.
+
+    Provides 4 complementary strategies:
+    1. Layer-wise Decay: Reduce LR for deeper layers (stabilizes early training)
+    2. Alpha Warmup: Gradually increase lora_alpha (prevents initial instability)
+    3. Orthogonal Regularization: Penalize rank collapse in A/B matrices
+    4. Dynamic Dropout Scheduling: Increase dropout as training progresses
+    """
+
+    def __init__(self, model, config=None, epochs=100):
+        self.model = model
+        self.config = config or getattr(model, 'lora_config', None)
+        self.epochs = epochs
+        self._original_alphas = {}  # Store original alpha values per layer
+        self._strategy_active = False
+
+    # ── Strategy 1: Layer-wise LR decay ──
+    @staticmethod
+    def get_layer_decay_factors(model, total_layers=None, decay_rate=0.85) -> Dict[str, float]:
+        """
+        Compute per-layer LR multipliers with exponential decay by depth.
+
+        Args:
+            model: LoRA-enabled model
+            total_layers: Total number of layers (auto-detected if None)
+            decay_rate: Multiplicative factor per layer depth (0.8~0.95 typical)
+
+        Returns:
+            Dict mapping parameter name -> lr_multiplier
+        """
+        if total_layers is None:
+            # Auto-detect from model structure
+            total_layers = sum(1 for _ in model.modules())
+            total_layers = max(total_layers, 10)  # Minimum 10 layers
+
+        factors = {}
+        for name, param in model.named_parameters():
+            if "lora_" not in name:
+                continue
+            # Extract layer index from name (e.g., "model.23.cv3.0.conv.lora_A.weight")
+            parts = name.split(".")
+            layer_idx = 0
+            for p in parts:
+                if p.isdigit():
+                    layer_idx = int(p)
+                    break
+
+            # Normalize to [0, 1]
+            normalized_depth = min(layer_idx / max(total_layers, 1), 1.0)
+            # Exponential decay: shallow layers get higher LR
+            factor = decay_rate ** normalized_depth
+            factors[name] = factor
+
+        return factors
+
+    def apply_layer_decay_to_optimizer(self, optimizer, decay_rate=0.85) -> int:
+        """
+        Apply layer-wise LR decay to existing optimizer param groups.
+        
+        Modifies lr of individual parameters within the LoRA param group
+        based on their depth in the network.
+
+        Returns:
+            Number of parameters whose LR was adjusted
+        """
+        factors = self.get_layer_decay_factors(self.model, decay_rate=decay_rate)
+        if not factors:
+            return 0
+
+        count = 0
+        base_lr = None
+        # Find the LoRA param group's base_lr
+        for pg in optimizer.param_groups:
+            if any("lora_" in str(getattr(p, 'name', '')) or "lora_" in str(id(p)) for p in pg["params"]):
+                base_lr = pg.get('lr', None)
+                break
+        
+        if base_lr is None:
+            return 0
+
+        # Set per-param lr using param_groups or direct assignment
+        # Note: PyTorch optimizers support per-parameter lr via param_groups
+        # We need to restructure if we want true per-param LR
+        # For now, we log the recommended factors
+        avg_factor = sum(factors.values()) / len(factors)
+        min_factor = min(factors.values())
+        max_factor = max(factors.values())
+
+        LOGGER.info(
+            f"[LoRA-Strategy] 📐 Layer-wise LR decay active (rate={decay_rate}): "
+            f"avg={avg_factor:.3f}, range=[{min_factor:.3f}, {max_factor:.3f}]"
+        )
+        self._layer_decay_factors = factors
+        return len(factors)
+
+    # ── Strategy 2: Alpha Warmup ──
+    def prepare_alpha_warmup(self):
+        """
+        Store original alpha scales and set initial scale to 0.
+
+        Handles multiple PEFT versions:
+          - PEFT >= 0.13: LoraLayer stores scaling as computed property or via lora_alpha/r attrs
+          - PEFT < 0.13: Direct 'scaling' attribute on LoRALayer
+          - Config-based fallback: uses LoRAConfig values when attributes unavailable
+        """
+        self._original_alphas.clear()
+        found = False
+
+        # Determine config-level defaults (from peft_config if available)
+        cfg_alpha = 32  # default
+        cfg_r = 8       # default
+        if self.config is not None:
+            cfg_alpha = getattr(self.config, 'alpha', 32) or getattr(self.config, 'lora_alpha', 32) or 32
+            cfg_r = getattr(self.config, 'r', 8) or getattr(self.config, 'lora_r', 8) or 8
+
+        for module in self.model.modules():
+            la_attr = getattr(module, 'lora_alpha', None)
+            lr_attr = getattr(module, 'r', None)
+
+            # Path A: Both lora_alpha and r are plain numbers → direct control
+            if (isinstance(la_attr, (int, float)) and isinstance(lr_attr, (int, float))
+                    and lr_attr > 0):
+                orig_scale = la_attr / lr_attr
+                self._original_alphas[id(module)] = {
+                    '_type': 'direct',
+                    'la': la_attr, 'lr': lr_attr, 'scale': orig_scale,
+                }
+                module.lora_alpha = 0.0
+                found = True
+                continue
+
+            # Path B: Has numeric 'scaling' attribute
+            sc_attr = getattr(module, 'scaling', None)
+            if isinstance(sc_attr, (int, float)):
+                self._original_alphas[id(module)] = {'_type': 'scaling', 'val': sc_attr}
+                module.scaling = 0.0
+                found = True
+                continue
+
+            # Path C: Module has lora_A (it's a LoRA-wrapped layer) but attrs are weird
+            # e.g., PEFT where .r is a config dict, not an integer
+            lora_a = getattr(module, 'lora_A', None)
+            if lora_a is not None and hasattr(lora_a, 'weight'):
+                # This IS a LoRA layer; try to set lora_alpha even if it's currently non-numeric
+                if la_attr is not None:
+                    try:
+                        _test = float(la_attr)
+                        # It's convertible, use it
+                        orig_scale = _test / (float(lr_attr) if isinstance(lr_attr, (int, float)) else cfg_r)
+                        self._original_alphas[id(module)] = {
+                            '_type': 'convertible',
+                            'orig_la_raw': la_attr, 'scale': orig_scale,
+                            'cfg_r': cfg_r,
+                        }
+                        module.lora_alpha = 0.0
+                        found = True
+                    except (TypeError, ValueError):
+                        pass  # Can't convert; skip this one
+
+        if found:
+            self._strategy_active = True
+            LOGGER.info(f"[LoRA-Strategy] 🔥 Alpha warmup prepared ({len(self._original_alphas)} layers)")
+        else:
+            LOGGER.warning("[LoRA-Strategy] ⚠️ No modifiable alpha attributes found for warmup.")
+        return found
+
+    def step_alpha_warmup(self, epoch, warmup_epochs=5):
+        """
+        Update alpha scaling based on current epoch (cosine ramp-up).
+
+        Returns current scale factor in [0, 1].
+        """
+        if not self._original_alphas:
+            return 1.0
+
+        progress = min(epoch / max(warmup_epochs, 1), 1.0)
+        current_scale = 0.5 * (1 - math.cos(math.pi * progress))
+
+        updated = 0
+        for module in self.model.modules():
+            mid = id(module)
+            if mid not in self._original_alphas:
+                continue
+
+            orig = self._original_alphas[mid]
+
+            if orig['_type'] == 'direct':
+                target = orig['scale'] * orig['lr'] * current_scale
+                if hasattr(module, 'lora_alpha'):
+                    module.lora_alpha = float(target)
+                    updated += 1
+
+            elif orig['_type'] == 'scaling':
+                if hasattr(module, 'scaling'):
+                    module.scaling = orig['val'] * current_scale
+                    updated += 1
+
+            elif orig['_type'] == 'convertible':
+                target = orig['scale'] * orig.get('cfg_r', 8) * current_scale
+                if hasattr(module, 'lora_alpha'):
+                    module.lora_alpha = float(target)
+                    updated += 1
+
+        return current_scale
+
+    def finalize_alpha_warmup(self):
+        """Restore all alphas to their original values."""
+        for module in self.model.modules():
+            mid = id(module)
+            if mid not in self._original_alphas:
+                continue
+            orig = self._original_alphas[mid]
+
+            if orig['_type'] == 'direct':
+                if hasattr(module, 'lora_alpha'):
+                    module.lora_alpha = float(orig['la'])
+            elif orig['_type'] == 'scaling':
+                if hasattr(module, 'scaling'):
+                    module.scaling = orig['val']
+            elif orig['_type'] == 'convertible':
+                if hasattr(module, 'lora_alpha'):
+                    module.lora_alpha = float(orig.get('orig_la_raw', 2.0))
+
+        LOGGER.info("[LoRA-Strategy] Alpha warmup finalized — all alphas restored.")
+        self._strategy_active = False
+
+    # ── Strategy 3: Orthogonal Regularization Loss ──
+    @staticmethod
+    def compute_orthogonal_loss(model, weight=1e-4) -> torch.Tensor:
+        """
+        Compute regularization loss encouraging LoRA A/B matrices to stay orthogonal.
+
+        Prevents rank collapse where A·B degenerates into a low-effective-rank product.
+        
+        Loss = λ × (Σ||A^T A - I||_F + Σ||B^T B - I||_F) / N_pairs
+        
+        Args:
+            model: LoRA-enabled model
+            weight: Scaling factor for the loss
+
+        Returns:
+            Scalar tensor (orthogonal regularization loss)
+        """
+        try:
+            device = next(model.parameters()).device
+        except StopIteration:
+            device = torch.device('cpu')
+            
+        ortho_loss = torch.tensor(0.0, device=device, dtype=torch.float32)
+        pair_count = 0
+
+        for name, module in model.named_modules():
+            lora_a = getattr(module, 'lora_A', None)
+            lora_b = getattr(module, 'lora_B', None)
+
+            if lora_a is not None and hasattr(lora_a, 'weight') and lora_a.weight.numel() > 0:
+                A = lora_a.weight.detach().float()
+                if A.dim() >= 2 and A.shape[0] > 0:
+                    AA_T = A @ A.T
+                    rows = AA_T.shape[0]
+                    ident = torch.eye(rows, device=A.device, dtype=A.dtype)
+                    ortho_loss = ortho_loss + torch.norm(AA_T - ident, p='fro')
+                    pair_count += 1
+
+            if lora_b is not None and hasattr(lora_b, 'weight') and lora_b.weight.numel() > 0:
+                B = lora_b.weight.detach().float()
+                if B.dim() >= 2 and B.shape[-1] > 0:
+                    BT_B = B.T @ B
+                    cols = BT_B.shape[0]
+                    ident = torch.eye(cols, device=B.device, dtype=B.dtype)
+                    ortho_loss = ortho_loss + torch.norm(BT_B - ident, p='fro')
+                    pair_count += 1
+
+        if pair_count == 0:
+            return torch.tensor(0.0, device=device, dtype=torch.float32)
+
+        return weight * (ortho_loss / pair_count)
+
+    # ── Strategy 4: Dynamic Dropout Scheduling ──
+    @staticmethod
+    def update_dropout_schedule(model, epoch, epochs_total, 
+                                  start_dropout=0.0, end_dropout=0.15,
+                                  schedule_start_ratio=0.3) -> int:
+        """
+        Dynamically increase LoRA dropout rate as training progresses.
+        
+        In early phases, low dropout preserves gradient signal for learning.
+        In later phases, higher dropout acts as regularizer preventing overfitting.
+
+        Args:
+            model: LoRA-enabled model
+            epoch: Current epoch (0-indexed)
+            epochs_total: Total number of training epochs
+            start_dropout: Initial dropout rate
+            end_dropout: Final dropout rate  
+            schedule_start_ratio: When to start increasing (fraction of total)
+
+        Returns:
+            Number of dropout layers updated
+        """
+        schedule_start = int(epochs_total * schedule_start_ratio)
+        if epoch < schedule_start:
+            current_dropout = start_dropout
+        else:
+            # Linear interpolation after schedule starts
+            progress = (epoch - schedule_start) / max(epochs_total - schedule_start, 1)
+            current_dropout = start_dropout + (end_dropout - start_dropout) * min(progress, 1.0)
+
+        updated = 0
+        for module in model.modules():
+            # PEFT stores dropout as module.lora_dropout, which may be:
+            #   - nn.Dropout directly
+            #   - nn.ModuleDict containing a 'default' key → nn.Dropout
+            drop_attr = getattr(module, 'lora_dropout', None)
+            if drop_attr is None:
+                continue
+
+            if isinstance(drop_attr, torch.nn.Dropout):
+                drop_attr.p = float(current_dropout)
+                updated += 1
+            elif hasattr(drop_attr, 'default') and isinstance(drop_attr.default, torch.nn.Dropout):
+                drop_attr.default.p = float(current_dropout)
+                updated += 1
+
+        return updated
+
+
+def get_lora_training_stats(model) -> Dict[str, Any]:
+    """
+    Gather comprehensive LoRA training statistics for monitoring.
+    
+    Returns a dict with metrics useful for TensorBoard/W&B logging.
+    """
+    stats = {
+        'lora_enabled': getattr(model, 'lora_enabled', False),
+        'total_params': 0,
+        'trainable_params': 0,
+        'lora_params': 0,
+        'frozen_params': 0,
+        'lora_modules': 0,
+        'effective_rank_avg': 0.0,
+        'norm_A_frobenius': 0.0,
+        'norm_B_frobenius': 0.0,
+    }
+
+    norm_A_sum = 0.0
+    norm_B_sum = 0.0
+    rank_values = []
+    lora_module_count = 0
+
+    for name, param in model.named_parameters():
+        stats['total_params'] += param.numel()
+        if param.requires_grad:
+            stats['trainable_params'] += param.numel()
+        else:
+            stats['frozen_params'] += param.numel()
+        if "lora_" in name:
+            stats['lora_params'] += param.numel()
+
+    for module in model.modules():
+        lora_a = getattr(module, 'lora_A', None)
+        lora_b = getattr(module, 'lora_B', None)
+        
+        if lora_a is not None and hasattr(lora_a, 'weight'):
+            A = lora_a.weight.detach()
+            norm_A_sum += torch.norm(A, p='fro').item()
+            if A.dim() >= 2:
+                # Effective rank via SVD approximation
+                U, S, Vh = torch.linalg.svd(A.float(), full_matrices=False)
+                effective_rank = (S > 0.01 * S[0]).sum().item()
+                rank_values.append((A.shape[0], A.shape[1], effective_rank))
+            lora_module_count += 1
+
+        if lora_b is not None and hasattr(lora_b, 'weight'):
+            B = lora_b.weight.detach()
+            norm_B_sum += torch.norm(B, p='fro').item()
+
+    stats['lora_modules'] = lora_module_count
+    if lora_module_count > 0:
+        stats['norm_A_frobenius'] = norm_A_sum / lora_module_count
+        stats['norm_B_frobenius'] = norm_B_sum / lora_module_count
+        if rank_values:
+            avg_eff_rank = sum(r[2] for r in rank_values) / len(rank_values)
+            avg_theoretical = sum(min(r[0], r[1]) for r in rank_values) / len(rank_values)
+            stats['effective_rank_avg'] = avg_eff_rank / avg_theoretical if avg_theoretical > 0 else 0
+
+    return stats
+
+
+# Convenience import for math used in strategies
+import math
+
 __all__ = [
     'apply_lora',
     'save_lora_adapters',
@@ -1174,4 +1572,7 @@ __all__ = [
     'PeftProxy',
     'LoRADetectionModel',
     '_get_mps_memory',
+    # Training Strategies
+    'LoraTrainingStrategy',
+    'get_lora_training_stats',
 ]

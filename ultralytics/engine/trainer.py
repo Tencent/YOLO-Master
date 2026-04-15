@@ -41,7 +41,7 @@ from ultralytics.utils import (
     emojis,
 )
 from ultralytics.utils.autobatch import check_train_batch_size
-from ultralytics.utils.lora import apply_lora, save_lora_adapters
+from ultralytics.utils.lora import apply_lora, save_lora_adapters, LoraTrainingStrategy, get_lora_training_stats
 from ultralytics.utils.checks import check_amp, check_file, check_imgsz, check_model_file_from_stem, print_args
 from ultralytics.utils.dist import ddp_cleanup, generate_ddp_command
 from ultralytics.utils.files import get_latest_run
@@ -355,6 +355,44 @@ class BaseTrainer:
         # Scheduler
         self._setup_scheduler()
         self.stopper, self.stop = EarlyStopping(patience=self.args.patience), False
+        
+        # ── LoRA Training Strategy Engine ──
+        self.lora_strategy = None
+        if getattr(self.args, 'lora_r', 0) > 0:
+            has_lora = getattr(self.model, 'lora_enabled', False)
+            if has_lora:
+                self.lora_strategy = LoraTrainingStrategy(
+                    model=self.model,
+                    config=getattr(self.model, 'lora_config', None),
+                    epochs=self.epochs,
+                )
+                # Strategy 1: Layer-wise LR decay (apply to optimizer)
+                lora_layer_decay = getattr(self.args, 'lora_layer_decay', 0.0)
+                if lora_layer_decay > 0:
+                    self.lora_strategy.apply_layer_decay_to_optimizer(
+                        self.optimizer, decay_rate=lora_layer_decay
+                    )
+                
+                # Strategy 2: Alpha warmup preparation
+                lora_alpha_warmup = getattr(self.args, 'lora_alpha_warmup', 0)
+                if lora_alpha_warmup > 0:
+                    self.lora_strategy.prepare_alpha_warmup()
+                
+                # Strategy 4: Dynamic dropout scheduling params
+                self.lora_dropout_end = getattr(self.args, 'lora_dropout_end', 0.15)
+                self.lora_dropout_start_ratio = getattr(self.args, 'lora_dropout_start_ratio', 0.3)
+                
+                # Strategy 3: Orthogonal regularization weight
+                self.lora_ortho_weight = getattr(self.args, 'lora_ortho_weight', 0.0)
+                
+                LOGGER.info(
+                    f"[LoRA] 🎯 Training Strategy Engine initialized | "
+                    f"layer_decay={lora_layer_decay}, "
+                    f"alpha_warmup={lora_alpha_warmup}ep, "
+                    f"ortho_weight={self.lora_ortho_weight}, "
+                    f"dropout_schedule=[0→{self.lora_dropout_end}]"
+                )
+        
         self.resume_training(ckpt)
         self.scheduler.last_epoch = self.start_epoch - 1  # do not move
         self.run_callbacks("on_pretrain_routine_end")
@@ -413,6 +451,23 @@ class BaseTrainer:
                 elif hasattr(self.model, 'args') and hasattr(self.model.args, 'moe'):
                     self.model.args.moe = moe_gain
 
+            # ── LoRA Training Strategies (per-epoch) ──
+            if self.lora_strategy is not None:
+                # Strategy 2: Alpha warmup (gradually ramp up scaling)
+                alpha_warmup_ep = getattr(self.args, 'lora_alpha_warmup', 0)
+                if alpha_warmup_ep > 0 and epoch < alpha_warmup_ep:
+                    scale = self.lora_strategy.step_alpha_warmup(epoch, warmup_epochs=alpha_warmup_ep)
+                    LOGGER.debug(f"[LoRA] Alpha warmup: epoch={epoch}, scale={scale:.4f}")
+                elif alpha_warmup_ep > 0 and epoch == alpha_warmup_ep:
+                    self.lora_strategy.finalize_alpha_warmup()
+                
+                # Strategy 4: Dynamic dropout schedule
+                self.lora_strategy.update_dropout_schedule(
+                    self.model, epoch=epoch, epochs_total=self.epochs,
+                    end_dropout=self.lora_dropout_end,
+                    schedule_start_ratio=self.lora_dropout_start_ratio,
+                )
+
             self._model_train()
             if RANK != -1:
                 self.train_loader.sampler.set_epoch(epoch)
@@ -450,6 +505,14 @@ class BaseTrainer:
                         loss, self.loss_items = unwrap_model(self.model).loss(batch, preds)
                     else:
                         loss, self.loss_items = self.model(batch)
+                    
+                    # ── LoRA Orthogonal Regularization (Strategy 3) ──
+                    if self.lora_strategy is not None and self.lora_ortho_weight > 0:
+                        ortho_loss = LoraTrainingStrategy.compute_orthogonal_loss(
+                            self.model, weight=self.lora_ortho_weight
+                        )
+                        loss = loss + ortho_loss
+                    
                     self.loss = loss.sum()
                     if RANK != -1:
                         self.loss *= self.world_size
@@ -491,6 +554,18 @@ class BaseTrainer:
                 self.run_callbacks("on_train_batch_end")
 
             self.lr = {f"lr/pg{ir}": x["lr"] for ir, x in enumerate(self.optimizer.param_groups)}  # for loggers
+
+            # ── LoRA Training Stats (per-epoch logging) ──
+            if self.lora_strategy is not None and RANK in {-1, 0} and (epoch % 5 == 0 or epoch == self.epochs - 1):
+                lora_stats = get_lora_training_stats(self.model)
+                if lora_stats['lora_modules'] > 0:
+                    LOGGER.info(
+                        f"[LoRA] 📊 Epoch {epoch+1} stats: "
+                        f"modules={lora_stats['lora_modules']}, "
+                        f"eff_rank={lora_stats['effective_rank_avg']:.2%}, "
+                        f"|A|_F={lora_stats['norm_A_frobenius']:.4f}, "
+                        f"|B|_F={lora_stats['norm_B_frobenius']:.4f}"
+                    )
 
             self.run_callbacks("on_train_epoch_end")
             if RANK in {-1, 0}:
