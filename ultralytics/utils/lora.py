@@ -407,22 +407,31 @@ class LoRAConfigBuilder:
             if is_conv:
                 # Grouped Conv / Depthwise Checks
                 if module.groups > 1:
-                    # FIX: Explicitly exclude Conv2d layers where Rank is not divisible by Groups.
-                    # PEFT implementation limitation: LoRA rank must be a multiple of groups for Conv2d.
-                    # For Depthwise Conv (groups == in_channels), this usually means we must skip them unless r % in_channels == 0.
-                    # Given typical ranks (8, 16) and depthwise channels (64, 128...), this condition almost never holds.
-                    # So we should be very conservative here.
+                    # FIX: Properly handle grouped convolutions.
+                    # PEFT requires: LoRA rank must be a multiple of groups for Conv2d.
+                    # 
+                    # Key distinction:
+                    # - Depthwise: groups == in_channels == out_channels (extremely sparse, usually skip)
+                    # - Standard grouped conv: groups < in_channels (e.g., C3k2 uses groups=4, 8)
+                    #   These should be INCLUDED if r % groups == 0.
                     
-                    if r > 0 and (r % module.groups != 0):
-                        # Skip this layer to avoid "ValueError: Targeting a Conv2d with groups=X and rank Y"
-                        # DEBUG:
-                        LOGGER.warning(f"[LoRA] Skipping {name}: groups={module.groups}, rank={r} (rank % groups != 0)")
-                        continue
-
                     is_depthwise = (module.in_channels == module.out_channels == module.groups)
-                    # Skip Depthwise unless explicitly allowed
-                    if not (is_depthwise and allow_depthwise):
+                    
+                    # Check rank divisibility first
+                    if r > 0 and (r % module.groups != 0):
+                        # Skip to avoid PEFT ValueError
+                        LOGGER.debug(f"[LoRA] Skipping {name}: groups={module.groups}, rank={r} (rank % groups != 0)")
                         continue
+                    
+                    # Handle depthwise specifically
+                    if is_depthwise:
+                        # Only include depthwise if explicitly allowed
+                        if not allow_depthwise:
+                            LOGGER.debug(f"[LoRA] Skipping depthwise {name}: {module.in_channels} channels")
+                            continue
+                        # Even if allowed, warn as depthwise LoRA is often ineffective
+                        LOGGER.info(f"[LoRA] Including depthwise layer {name} (allow_depthwise=True)")
+                    # else: standard grouped conv (groups < in_channels) -> ALLOW through
                 
                 # Pointwise Conv (1x1) Check - Highly Recommended for LoRA
                 # Standard Conv (3x3) Check - Supported
@@ -1230,8 +1239,11 @@ class LoraTrainingStrategy:
         """
         Apply layer-wise LR decay to existing optimizer param groups.
         
-        Modifies lr of individual parameters within the LoRA param group
-        based on their depth in the network.
+        This function REPLACES the single LoRA param group with multiple
+        param groups, each with a different LR based on layer depth.
+        
+        PyTorch optimizer requires one param_group per unique LR, so we group
+        parameters by their layer index and create one param_group per layer.
 
         Returns:
             Number of parameters whose LR was adjusted
@@ -1240,28 +1252,79 @@ class LoraTrainingStrategy:
         if not factors:
             return 0
 
-        count = 0
+        # Find the LoRA param group index and its base_lr
+        lora_pg_idx = None
         base_lr = None
-        # Find the LoRA param group's base_lr
-        for pg in optimizer.param_groups:
-            if any("lora_" in str(getattr(p, 'name', '')) or "lora_" in str(id(p)) for p in pg["params"]):
-                base_lr = pg.get('lr', None)
-                break
+        lora_params_in_pg = []
         
-        if base_lr is None:
+        for idx, pg in enumerate(optimizer.param_groups):
+            # Check if this param group contains LoRA parameters
+            pg_has_lora = False
+            for p in pg.get("params", []):
+                # Find parameter name from model.named_parameters()
+                for name, mp in self.model.named_parameters():
+                    if mp is p and "lora_" in name:
+                        pg_has_lora = True
+                        lora_params_in_pg.append((name, p, idx))
+                        break
+                if pg_has_lora:
+                    break
+            
+            if pg_has_lora and base_lr is None:
+                base_lr = pg.get('lr', None)
+                lora_pg_idx = idx
+        
+        if base_lr is None or lora_pg_idx is None:
+            LOGGER.warning("[LoRA-Strategy] No LoRA param group found for layer decay.")
             return 0
 
-        # Set per-param lr using param_groups or direct assignment
-        # Note: PyTorch optimizers support per-parameter lr via param_groups
-        # We need to restructure if we want true per-param LR
-        # For now, we log the recommended factors
+        # Group LoRA params by layer index for efficient param_group creation
+        from collections import defaultdict
+        layer_groups = defaultdict(list)
+        
+        for name, param, _ in lora_params_in_pg:
+            factor = factors.get(name, 1.0)
+            # Round factor to reduce number of param groups (avoid 100+ groups)
+            # Use 2 decimal precision to bucket similar decay rates
+            rounded_factor = round(factor, 2)
+            layer_groups[rounded_factor].append(param)
+        
+        # Remove the original LoRA param group (remove from end to keep indices stable)
+        # We need to rebuild param_groups since PyTorch doesn't support deletion
+        original_groups = optimizer.param_groups.copy()
+        
+        # Create new param_groups list
+        new_param_groups = []
+        for idx, pg in enumerate(original_groups):
+            if idx == lora_pg_idx:
+                # Replace with multiple layer-specific groups
+                for factor, params in sorted(layer_groups.items(), reverse=True):
+                    new_lr = base_lr * factor
+                    # Start with a copy of the original param_group
+                    new_pg = {k: v for k, v in pg.items() if k != "params"}
+                    new_pg["params"] = params
+                    new_pg["lr"] = new_lr
+                    new_pg["initial_lr"] = new_lr  # for warmup scheduler
+                    new_param_groups.append(new_pg)
+            else:
+                new_param_groups.append(pg)
+        
+        # Replace optimizer's param_groups
+        optimizer.param_groups = new_param_groups
+        
+        # Also rebuild state if necessary (state is keyed by parameter object, so it remains valid)
+        # But we need to update the optimizer's internal _param_group map if it exists
+        if hasattr(optimizer, '_param_groups'):
+            optimizer._param_groups = optimizer.param_groups
+        
         avg_factor = sum(factors.values()) / len(factors)
         min_factor = min(factors.values())
         max_factor = max(factors.values())
 
         LOGGER.info(
-            f"[LoRA-Strategy] 📐 Layer-wise LR decay active (rate={decay_rate}): "
-            f"avg={avg_factor:.3f}, range=[{min_factor:.3f}, {max_factor:.3f}]"
+            f"[LoRA-Strategy] 📐 Layer-wise LR decay applied (rate={decay_rate}): "
+            f"{len(layer_groups)} LR groups, "
+            f"avg_factor={avg_factor:.3f}, range=[{min_factor:.3f}, {max_factor:.3f}]"
         )
         self._layer_decay_factors = factors
         return len(factors)
@@ -1271,15 +1334,17 @@ class LoraTrainingStrategy:
         """
         Store original alpha scales and set initial scale to 0.
 
-        Handles multiple PEFT versions:
-          - PEFT >= 0.13: LoraLayer stores scaling as computed property or via lora_alpha/r attrs
-          - PEFT < 0.13: Direct 'scaling' attribute on LoRALayer
-          - Config-based fallback: uses LoRAConfig values when attributes unavailable
+        PEFT LoRA scaling = alpha / r. This function stores the target alpha value
+        for each LoRA layer and temporarily sets effective alpha to 0.
+
+        Handles multiple PEFT internal structures:
+          - PEFT >= 0.13: LoraLayer with lora_alpha property (may be property or stored in peft_config dict)
+          - PEFT < 0.13: Direct 'scaling' attribute
         """
         self._original_alphas.clear()
         found = False
 
-        # Determine config-level defaults (from peft_config if available)
+        # Determine config-level defaults
         cfg_alpha = 32  # default
         cfg_r = 8       # default
         if self.config is not None:
@@ -1287,48 +1352,76 @@ class LoraTrainingStrategy:
             cfg_r = getattr(self.config, 'r', 8) or getattr(self.config, 'lora_r', 8) or 8
 
         for module in self.model.modules():
+            lora_a = getattr(module, 'lora_A', None)
+            # Only process actual LoRA layers
+            if lora_a is None or not hasattr(lora_a, 'weight'):
+                continue
+
+            # Strategy: detect how to control scaling for this PEFT version
             la_attr = getattr(module, 'lora_alpha', None)
             lr_attr = getattr(module, 'r', None)
 
-            # Path A: Both lora_alpha and r are plain numbers → direct control
+            # Path A: Both lora_alpha and r are directly writable numbers
             if (isinstance(la_attr, (int, float)) and isinstance(lr_attr, (int, float))
                     and lr_attr > 0):
-                orig_scale = la_attr / lr_attr
+                orig_alpha = float(la_attr)
                 self._original_alphas[id(module)] = {
                     '_type': 'direct',
-                    'la': la_attr, 'lr': lr_attr, 'scale': orig_scale,
+                    'orig_alpha': orig_alpha,
+                    'r': float(lr_attr),
                 }
+                # Set alpha to 0 (scaling becomes 0)
                 module.lora_alpha = 0.0
                 found = True
                 continue
 
-            # Path B: Has numeric 'scaling' attribute
+            # Path B: lora_alpha might be a property in newer PEFT, but we can try to set it
+            # If setting doesn't stick, we'll detect it in step_alpha_warmup
+            if la_attr is not None:
+                try:
+                    _orig_alpha = float(la_attr)
+                    _r = float(lr_attr) if isinstance(lr_attr, (int, float)) else float(cfg_r)
+                    self._original_alphas[id(module)] = {
+                        '_type': 'property',
+                        'orig_alpha': _orig_alpha,
+                        'r': _r,
+                    }
+                    # Attempt to set; we'll verify in step
+                    module.lora_alpha = 0.0
+                    found = True
+                    continue
+                except (TypeError, ValueError, AttributeError):
+                    pass
+
+            # Path C: Has numeric 'scaling' attribute (older PEFT or custom)
             sc_attr = getattr(module, 'scaling', None)
-            if isinstance(sc_attr, (int, float)):
-                self._original_alphas[id(module)] = {'_type': 'scaling', 'val': sc_attr}
+            if isinstance(sc_attr, (int, float)) and sc_attr > 0:
+                self._original_alphas[id(module)] = {
+                    '_type': 'scaling',
+                    'orig_scaling': float(sc_attr),
+                }
                 module.scaling = 0.0
                 found = True
                 continue
 
-            # Path C: Module has lora_A (it's a LoRA-wrapped layer) but attrs are weird
-            # e.g., PEFT where .r is a config dict, not an integer
-            lora_a = getattr(module, 'lora_A', None)
-            if lora_a is not None and hasattr(lora_a, 'weight'):
-                # This IS a LoRA layer; try to set lora_alpha even if it's currently non-numeric
-                if la_attr is not None:
-                    try:
-                        _test = float(la_attr)
-                        # It's convertible, use it
-                        orig_scale = _test / (float(lr_attr) if isinstance(lr_attr, (int, float)) else cfg_r)
+            # Path D: Fallback - try to use peft_config dict if available
+            peft_config = getattr(module, 'peft_config', None)
+            if peft_config is not None:
+                try:
+                    if isinstance(peft_config, dict) and 'lora_alpha' in peft_config:
+                        _orig_alpha = float(peft_config['lora_alpha'])
+                        _r = float(peft_config.get('r', cfg_r))
                         self._original_alphas[id(module)] = {
-                            '_type': 'convertible',
-                            'orig_la_raw': la_attr, 'scale': orig_scale,
-                            'cfg_r': cfg_r,
+                            '_type': 'config_dict',
+                            'orig_alpha': _orig_alpha,
+                            'r': _r,
+                            'module_ref': module,  # store ref to update dict
                         }
-                        module.lora_alpha = 0.0
+                        peft_config['lora_alpha'] = 0.0
                         found = True
-                    except (TypeError, ValueError):
-                        pass  # Can't convert; skip this one
+                        continue
+                except (TypeError, ValueError):
+                    pass
 
         if found:
             self._strategy_active = True
@@ -1347,6 +1440,7 @@ class LoraTrainingStrategy:
             return 1.0
 
         progress = min(epoch / max(warmup_epochs, 1), 1.0)
+        # Cosine ease-in: starts at 0, ends at 1
         current_scale = 0.5 * (1 - math.cos(math.pi * progress))
 
         updated = 0
@@ -1356,45 +1450,84 @@ class LoraTrainingStrategy:
                 continue
 
             orig = self._original_alphas[mid]
+            _type = orig['_type']
 
-            if orig['_type'] == 'direct':
-                target = orig['scale'] * orig['lr'] * current_scale
-                if hasattr(module, 'lora_alpha'):
-                    module.lora_alpha = float(target)
-                    updated += 1
+            try:
+                if _type == 'direct':
+                    target_alpha = orig['orig_alpha'] * current_scale
+                    if hasattr(module, 'lora_alpha'):
+                        module.lora_alpha = float(target_alpha)
+                        updated += 1
 
-            elif orig['_type'] == 'scaling':
-                if hasattr(module, 'scaling'):
-                    module.scaling = orig['val'] * current_scale
-                    updated += 1
+                elif _type == 'property':
+                    target_alpha = orig['orig_alpha'] * current_scale
+                    if hasattr(module, 'lora_alpha'):
+                        module.lora_alpha = float(target_alpha)
+                        # Verify the write actually stuck
+                        actual = getattr(module, 'lora_alpha', None)
+                        if actual is not None and abs(float(actual) - target_alpha) < 0.01:
+                            updated += 1
+                        else:
+                            # Property is read-only, try scaling attribute as fallback
+                            if hasattr(module, 'scaling'):
+                                orig_scaling = orig['orig_alpha'] / orig['r']
+                                module.scaling = orig_scaling * current_scale
+                                updated += 1
+                                # Update type for future steps
+                                orig['_type'] = 'scaling_fallback'
+                                orig['orig_scaling'] = orig_scaling
 
-            elif orig['_type'] == 'convertible':
-                target = orig['scale'] * orig.get('cfg_r', 8) * current_scale
-                if hasattr(module, 'lora_alpha'):
-                    module.lora_alpha = float(target)
-                    updated += 1
+                elif _type == 'scaling' or _type == 'scaling_fallback':
+                    orig_scaling = orig.get('orig_scaling', orig.get('orig_alpha', 1.0) / orig.get('r', 1.0))
+                    if hasattr(module, 'scaling'):
+                        module.scaling = orig_scaling * current_scale
+                        updated += 1
+
+                elif _type == 'config_dict':
+                    target_alpha = orig['orig_alpha'] * current_scale
+                    peft_config = getattr(module, 'peft_config', None)
+                    if isinstance(peft_config, dict):
+                        peft_config['lora_alpha'] = float(target_alpha)
+                        updated += 1
+
+            except Exception as e:
+                LOGGER.debug(f"[LoRA-Strategy] Alpha warmup step failed for module {mid}: {e}")
+                continue
 
         return current_scale
 
     def finalize_alpha_warmup(self):
         """Restore all alphas to their original values."""
+        restored = 0
         for module in self.model.modules():
             mid = id(module)
             if mid not in self._original_alphas:
                 continue
             orig = self._original_alphas[mid]
+            _type = orig['_type']
 
-            if orig['_type'] == 'direct':
-                if hasattr(module, 'lora_alpha'):
-                    module.lora_alpha = float(orig['la'])
-            elif orig['_type'] == 'scaling':
-                if hasattr(module, 'scaling'):
-                    module.scaling = orig['val']
-            elif orig['_type'] == 'convertible':
-                if hasattr(module, 'lora_alpha'):
-                    module.lora_alpha = float(orig.get('orig_la_raw', 2.0))
+            try:
+                if _type in ('direct', 'property'):
+                    if hasattr(module, 'lora_alpha'):
+                        module.lora_alpha = float(orig['orig_alpha'])
+                        restored += 1
 
-        LOGGER.info("[LoRA-Strategy] Alpha warmup finalized — all alphas restored.")
+                elif _type in ('scaling', 'scaling_fallback'):
+                    if hasattr(module, 'scaling'):
+                        module.scaling = float(orig.get('orig_scaling', orig.get('orig_alpha', 1.0) / orig.get('r', 1.0)))
+                        restored += 1
+
+                elif _type == 'config_dict':
+                    peft_config = getattr(module, 'peft_config', None)
+                    if isinstance(peft_config, dict):
+                        peft_config['lora_alpha'] = float(orig['orig_alpha'])
+                        restored += 1
+
+            except Exception as e:
+                LOGGER.debug(f"[LoRA-Strategy] Alpha warmup finalize failed for module {mid}: {e}")
+                continue
+
+        LOGGER.info(f"[LoRA-Strategy] Alpha warmup finalized — {restored}/{len(self._original_alphas)} alphas restored.")
         self._strategy_active = False
 
     # ── Strategy 3: Orthogonal Regularization Loss ──
