@@ -140,7 +140,7 @@ tracker: botsort.yaml # (str) tracker config file: botsort.yaml or bytetrack.yam
 
 # LoRA settings ---------------------------------------------------------------------------------------------------------
 lora_r: 0 # (int) LoRA rank (0 to disable)
-lora_alpha: 16 # (int) LoRA alpha
+lora_alpha: 32 # (int) LoRA alpha (recommended: 2 * r)
 lora_dropout: 0.05 # (float) LoRA dropout
 lora_bias: "none" # (str) LoRA bias type: "none", "all", "lora_only"
 lora_target_modules: # (list[str], optional) LoRA target modules
@@ -160,7 +160,7 @@ lora_to_layer: # (int, optional) Stop applying at layer index
 lora_allow_depthwise: False # (bool) Allow depthwise convolution
 lora_kernels: # (list[int], optional) Filter by kernel size
 lora_gradient_checkpointing: True # (bool) Enable gradient checkpointing for LoRA memory optimization
-lora_lr_mult: 1.0 # (float) Learning rate multiplier for LoRA params vs base
+lora_lr_mult: 2.0 # (float) Learning rate multiplier for LoRA params vs base (2.0 recommended)
 
 # LoRA Training Strategies (advanced)
 lora_layer_decay: 0.0 # (float) Layer-wise LR decay rate (0=disabled, 0.85~0.95 typical)

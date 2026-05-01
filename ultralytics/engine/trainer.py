@@ -1084,9 +1084,9 @@ class BaseTrainer:
                 "Request support for addition optimizers at https://github.com/ultralytics/ultralytics."
             )
 
-        optimizer.add_param_group({"params": g[0], "weight_decay": decay})  # add g0 with weight_decay
-        optimizer.add_param_group({"params": g[1], "weight_decay": 0.0})  # add g1 (BatchNorm2d weights)
-        optimizer.add_param_group({"params": g[3], "weight_decay": decay, "lr": lr * 0.1})  # add g3 (MoE Router) with 0.1x lr
+        optimizer.add_param_group({"params": g[0], "weight_decay": decay, "initial_lr": lr})  # add g0 with weight_decay
+        optimizer.add_param_group({"params": g[1], "weight_decay": 0.0, "initial_lr": lr})  # add g1 (BatchNorm2d weights)
+        optimizer.add_param_group({"params": g[3], "weight_decay": decay, "lr": lr * 0.1, "initial_lr": lr * 0.1})  # add g3 (MoE Router) with 0.1x lr
         
         # Add LoRA parameter group with configurable LR multiplier
         lora_log = ""
@@ -1096,6 +1096,7 @@ class BaseTrainer:
                 "params": g[4],
                 "weight_decay": 0.0,
                 "lr": lora_lr,
+                "initial_lr": lora_lr,
             })
             lora_log = f", {len(g[4])} LoRA(lr={lora_lr:.6f}, mult={lora_lr_mult})"
         elif has_lora_param and lora_lr_mult != 1.0:
