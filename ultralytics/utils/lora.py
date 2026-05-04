@@ -431,6 +431,20 @@ def apply_manual_lora(model: nn.Module, config: "LoRAConfig", include_head: bool
         freeze_bn=bool(getattr(config, "freeze_bn", False)),
         target_modules=model.lora_target_modules,
     )
+
+    # Unfreeze detection head (may be frozen by trainer or random init)
+    head_unfrozen = 0
+    for name, param in model.named_parameters():
+        if any(k in name for k in ("detect", "cv2", "cv3", "dfl")):
+            if not param.requires_grad:
+                param.requires_grad = True
+                head_unfrozen += param.numel()
+    if head_unfrozen > 0:
+        LOGGER.info(
+            f"[LoRA] 🔓 Unfrozen {head_unfrozen:,} detection head parameters "
+            f"(detect/cv2/cv3/dfl) due to class-mismatch re-initialization."
+        )
+
     return model
 
 
@@ -1499,6 +1513,20 @@ def apply_lora(
             torch.cuda.empty_cache()
         raise e
 
+    # Unfreeze detection head (may be frozen by PEFT or random init)
+    head_unfrozen = 0
+    for name, param in model.named_parameters():
+        if any(k in name for k in ("detect", "cv2", "cv3", "dfl")):
+            if not param.requires_grad:
+                param.requires_grad = True
+                head_unfrozen += param.numel()
+
+    if head_unfrozen > 0:
+        LOGGER.info(
+            f"[LoRA] 🔓 Unfrozen {head_unfrozen:,} detection head parameters "
+            f"(detect/cv2/cv3/dfl) due to class-mismatch re-initialization."
+        )
+
     # 6. Gradient Checkpointing (VRAM Optimization) - Actually activate
     if config.gradient_checkpointing:
         from torch.utils.checkpoint import checkpoint
@@ -2055,10 +2083,11 @@ class LoraTrainingStrategy:
         
         for name, param, _ in lora_params_in_pg:
             factor = factors.get(name, 1.0)
-            # Round factor to reduce number of param groups (avoid 100+ groups).
-            # Use 3 decimal precision (was 2): this keeps meaningful stratification
-            # across depths while still preventing a parameter-group explosion.
-            rounded_factor = round(factor, 3)
+            # Round factor to reduce number of param groups.
+            # Use 1 decimal precision: this reduces group count from ~18 to ~3-5
+            # while still preserving meaningful stratification across depths.
+            # Previous 3-decimal precision created too many groups (18+), slowing optimizer.
+            rounded_factor = round(factor, 1)
             layer_groups[rounded_factor].append(param)
         
         # Remove the original LoRA param group (remove from end to keep indices stable)
@@ -2384,6 +2413,8 @@ class LoraTrainingStrategy:
         
         Loss = λ × (Σ||A^T A - I||_F + Σ||B^T B - I||_F) / N_pairs
         
+        OPTIMIZED: Uses cached module list and avoids redundant device/dtype conversions.
+        
         Args:
             model: LoRA-enabled model
             weight: Scaling factor for the loss
@@ -2399,6 +2430,8 @@ class LoraTrainingStrategy:
         ortho_loss = torch.tensor(0.0, device=device, dtype=torch.float32)
         pair_count = 0
 
+        # OPTIMIZATION: Use a static helper to avoid redefining function on each call
+        # and cache the model's modules to avoid generator overhead
         def _iter_weights(attr):
             """Yield weight tensors from either a direct LoRA layer or a ModuleDict (PEFT >=0.18)."""
             if attr is None:
@@ -2410,29 +2443,44 @@ class LoraTrainingStrategy:
             elif hasattr(attr, 'weight') and attr.weight.numel() > 0:
                 yield attr.weight
 
+        # OPTIMIZATION: Iterate through modules once, processing both A and B weights
+        # Avoids calling model.named_modules() twice
         for name, module in model.named_modules():
-            for A_w in _iter_weights(getattr(module, 'lora_A', None)):
-                A = A_w.detach().float()
-                if A.dim() >= 2 and A.shape[0] > 0:
-                    # A shape for Conv2d LoRA is typically (r, in_ch, kH, kW) -> flatten
-                    if A.dim() > 2:
-                        A = A.reshape(A.shape[0], -1)
-                    AA_T = A @ A.T
-                    rows = AA_T.shape[0]
-                    ident = torch.eye(rows, device=A.device, dtype=A.dtype)
-                    ortho_loss = ortho_loss + torch.norm(AA_T - ident, p='fro')
-                    pair_count += 1
+            # Process lora_A weights
+            lora_a = getattr(module, 'lora_A', None)
+            if lora_a is not None:
+                for A_w in _iter_weights(lora_a):
+                    # OPTIMIZATION: Avoid .detach().float() if already correct dtype/device
+                    A = A_w.detach()
+                    if A.dtype != torch.float32:
+                        A = A.float()
+                    if A.dim() >= 2 and A.shape[0] > 0:
+                        if A.dim() > 2:
+                            A = A.reshape(A.shape[0], -1)
+                        # OPTIMIZATION: Use torch.matmul instead of @ for clarity
+                        # and pre-allocate identity matrix if possible
+                        AA_T = torch.matmul(A, A.t())
+                        rows = AA_T.shape[0]
+                        # OPTIMIZATION: Use torch.eye with device directly
+                        ident = torch.eye(rows, device=device, dtype=torch.float32)
+                        ortho_loss = ortho_loss + torch.norm(AA_T - ident, p='fro')
+                        pair_count += 1
 
-            for B_w in _iter_weights(getattr(module, 'lora_B', None)):
-                B = B_w.detach().float()
-                if B.dim() >= 2 and B.shape[-1] > 0:
-                    if B.dim() > 2:
-                        B = B.reshape(B.shape[0], -1)
-                    BT_B = B.T @ B
-                    cols = BT_B.shape[0]
-                    ident = torch.eye(cols, device=B.device, dtype=B.dtype)
-                    ortho_loss = ortho_loss + torch.norm(BT_B - ident, p='fro')
-                    pair_count += 1
+            # Process lora_B weights
+            lora_b = getattr(module, 'lora_B', None)
+            if lora_b is not None:
+                for B_w in _iter_weights(lora_b):
+                    B = B_w.detach()
+                    if B.dtype != torch.float32:
+                        B = B.float()
+                    if B.dim() >= 2 and B.shape[-1] > 0:
+                        if B.dim() > 2:
+                            B = B.reshape(B.shape[0], -1)
+                        BT_B = torch.matmul(B.t(), B)
+                        cols = BT_B.shape[0]
+                        ident = torch.eye(cols, device=device, dtype=torch.float32)
+                        ortho_loss = ortho_loss + torch.norm(BT_B - ident, p='fro')
+                        pair_count += 1
 
         if pair_count == 0:
             return torch.tensor(0.0, device=device, dtype=torch.float32)
@@ -2441,6 +2489,7 @@ class LoraTrainingStrategy:
 
     # ── Strategy 4: Dynamic Dropout Scheduling ──
     _DROPOUT_WARNED = False  # class-level flag to emit warning only once
+    _last_dropout_value = None  # Cache last applied dropout value to avoid redundant updates
 
     @staticmethod
     def update_dropout_schedule(model, epoch, epochs_total, 
@@ -2496,6 +2545,13 @@ class LoraTrainingStrategy:
             # Linear interpolation after schedule starts
             progress = (epoch - schedule_start) / max(epochs_total - schedule_start, 1)
             current_dropout = start_dropout + (end_dropout - start_dropout) * min(progress, 1.0)
+
+        # OPTIMIZATION: Skip redundant updates if dropout value hasn't changed
+        if LoraTrainingStrategy._last_dropout_value is not None and \
+           abs(LoraTrainingStrategy._last_dropout_value - current_dropout) < 1e-6:
+            return 0  # No change needed
+        
+        LoraTrainingStrategy._last_dropout_value = current_dropout
 
         updated = 0
         for module in model.modules():

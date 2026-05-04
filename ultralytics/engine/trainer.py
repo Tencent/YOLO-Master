@@ -356,20 +356,35 @@ class BaseTrainer:
             if isinstance(self.args.freeze, int)
             else []
         )
-        always_freeze_names = [".dfl"]  # always freeze these layers
+        # Do not freeze .dfl in LoRA mode (random init when class mismatch)
+        is_lora = getattr(self.args, "lora_r", 0) > 0
+        always_freeze_names = [] if is_lora else [".dfl"]
         freeze_layer_names = [f"model.{x}." for x in freeze_list] + always_freeze_names
         self.freeze_layer_names = freeze_layer_names
         for k, v in self.model.named_parameters():
-            # v.register_hook(lambda x: torch.nan_to_num(x))  # NaN to 0 (commented for erratic training results)
             if any(x in k for x in freeze_layer_names):
                 LOGGER.info(f"Freezing layer '{k}'")
                 v.requires_grad = False
-            elif not v.requires_grad and v.dtype.is_floating_point and not (getattr(self.args, "lora_r", 0) > 0):  # only floating point Tensor can require gradients
+            elif not v.requires_grad and v.dtype.is_floating_point and not is_lora:
                 LOGGER.warning(
                     f"setting 'requires_grad=True' for frozen layer '{k}'. "
                     "See ultralytics.engine.trainer for customization of frozen layers."
                 )
                 v.requires_grad = True
+
+        # Unfreeze detection head in LoRA mode (PEFT freezes all by default)
+        if is_lora:
+            head_unfrozen = 0
+            for name, param in self.model.named_parameters():
+                if any(k in name for k in ("detect", "cv2", "cv3", "dfl")):
+                    if not param.requires_grad:
+                        param.requires_grad = True
+                        head_unfrozen += param.numel()
+            if head_unfrozen > 0:
+                LOGGER.info(
+                    f"[LoRA] 🔓 Unfrozen {head_unfrozen:,} detection head parameters "
+                    f"(detect/cv2/cv3/dfl) due to class-mismatch re-initialization."
+                )
 
         # Check AMP
         self.amp = torch.tensor(self.args.amp).to(self.device)  # True or False
@@ -435,12 +450,15 @@ class BaseTrainer:
                 
                 # Strategy 3: Orthogonal regularization weight
                 self.lora_ortho_weight = getattr(self.args, 'lora_ortho_weight', 0.0)
+                self.lora_ortho_frequency = getattr(self.args, 'lora_ortho_frequency', 10)
+                self.lora_ortho_batch_counter = 0  # Batch counter for orthogonal loss computation
                 
                 LOGGER.info(
                     f"[LoRA] 🎯 Training Strategy Engine initialized | "
                     f"layer_decay={lora_layer_decay}, "
                     f"alpha_warmup={lora_alpha_warmup}ep, "
                     f"ortho_weight={self.lora_ortho_weight}, "
+                    f"ortho_freq={self.lora_ortho_frequency}, "
                     f"dropout_schedule=[0→{self.lora_dropout_end}]"
                 )
         
@@ -558,11 +576,14 @@ class BaseTrainer:
                         loss, self.loss_items = self.model(batch)
                     
                     # ── LoRA Orthogonal Regularization (Strategy 3) ──
+                    # Optimized: compute every N batches instead of every batch
                     if self.lora_strategy is not None and self.lora_ortho_weight > 0:
-                        ortho_loss = LoraTrainingStrategy.compute_orthogonal_loss(
-                            self.model, weight=self.lora_ortho_weight
-                        )
-                        loss = loss + ortho_loss
+                        self.lora_ortho_batch_counter += 1
+                        if self.lora_ortho_batch_counter % self.lora_ortho_frequency == 0:
+                            ortho_loss = LoraTrainingStrategy.compute_orthogonal_loss(
+                                self.model, weight=self.lora_ortho_weight
+                            )
+                            loss = loss + ortho_loss
                     
                     self.loss = loss.sum()
                     if RANK != -1:

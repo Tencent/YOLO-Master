@@ -182,6 +182,7 @@ lora_total_step: 0 # (int) AdaLoRA total training steps; 0 lets trainer auto-res
 lora_layer_decay: 0.0 # (float) Layer-wise LR decay rate (0=disabled, 0.85~0.95 typical)
 lora_alpha_warmup: 0 # (int) Alpha cosine warmup epochs (0=disabled)
 lora_ortho_weight: 0.0 # (float) Orthogonal regularization weight (0=disabled, 1e-5~1e-3 typical)
+lora_ortho_frequency: 10 # (int) Compute orthogonal loss every N batches (1=every batch, 10=every 10 batches)
 lora_dropout_end: 0.15 # (float) Final dropout for dynamic schedule (must be >= lora_dropout)
 lora_dropout_start_ratio: 0.3 # (float) When to start increasing dropout (fraction of total epochs)
 
