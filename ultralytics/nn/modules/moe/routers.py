@@ -323,15 +323,18 @@ class DynamicRoutingLayer(nn.Module):
         routing_logits = self.routing_network(pooled)  # [B, num_experts, 1, 1]
 
         # Choose strategy based on Top-K enablement and train/infer mode
+        # Note: Use unified path for ONNX export compatibility.
+        # The soft/hard Top-K split via `if self.training` breaks ONNX tracing
+        # because the control flow isn't fixed at export time.
+        # Solution: always use soft Top-K (differentiable), which works for
+        # both training and inference. Hard Top-K is only marginally faster
+        # at inference but creates export incompatibility.
         if not self.use_top_k:
             # No Top-K: direct Softmax
             routing_weights = F.softmax(routing_logits.float(), dim=1).type_as(x)
-        elif self.training:
-            # Training: soft Top-K (keeps gradients flowing)
-            routing_weights = self._soft_top_k(routing_logits)
         else:
-            # Inference: hard Top-K (truly sparse)
-            routing_weights = self._hard_top_k(routing_logits)
+            # Unified soft Top-K (ONNX-safe, gradient-friendly)
+            routing_weights = self._soft_top_k(routing_logits)
 
         return routing_weights.repeat(1, 1, x.size(2), x.size(3))
 

@@ -145,9 +145,9 @@ class UltraOptimizedMoE(nn.Module):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
 
-        # Router-specific init (small variance to avoid early collapse)
+        # Router-specific init (enough variance for input-dependent routing)
         if hasattr(self.routing.router[-1], 'weight'):
-            nn.init.normal_(self.routing.router[-1].weight, std=0.01)
+            nn.init.normal_(self.routing.router[-1].weight, std=0.05)
             if self.routing.router[-1].bias is not None:
                 nn.init.constant_(self.routing.router[-1].bias, 0)
 
@@ -350,13 +350,11 @@ class ES_MOE(nn.Module):
         # Compute load-balancing loss
         self._compute_load_balancing_loss(routing_weights)
 
-        # Different forward strategies for train/infer
-        if self.training or not self.use_top_k or not self.use_sparse_inference:
-            # Train mode or no Top-K or no sparse inference: dense compute
-            final_output = self._dense_forward(x, routing_weights)
-        else:
-            # Infer mode + Top-K + sparse inference: compute Top-K experts only
-            final_output = self._sparse_forward(x, routing_weights.detach())
+        # Always use dense forward for ONNX export compatibility.
+        # The train/infer split with conditional sparse computation breaks
+        # ONNX tracing. Dense compute is marginally slower at inference
+        # but guarantees export correctness.
+        final_output = self._dense_forward(x, routing_weights)
 
         if not hasattr(self, "norm"):
             self.norm = nn.Sequential(
@@ -542,10 +540,10 @@ class OptimizedMOE(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
         # [Key] Router init:
-        # Initialize the last conv with very small std (0.01) to keep expert probabilities near-uniform
-        # initially, avoiding early starvation of non-selected experts.
+        # Initialize with moderate std (0.05) for input-dependent routing
+        # while keeping initial probabilities reasonably uniform.
         if isinstance(self.router.router[-2], nn.Conv2d):
-            nn.init.normal_(self.router.router[-2].weight, std=0.01)
+            nn.init.normal_(self.router.router[-2].weight, std=0.05)
 
     def forward(self, x):
         B, C, H, W = x.shape
@@ -721,12 +719,13 @@ class OptimizedMOEImproved(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
         # Robust router init: find the last Conv layer to initialize
-        # Keep initial expert probabilities nearly uniform
+        # Keep initial expert probabilities nearly uniform but with enough
+        # variance to produce input-dependent routing (std=0.05, was 0.01)
         for m in self.routing.router.modules():
             if isinstance(m, nn.Conv2d):
                 last_conv = m
         if last_conv:
-            nn.init.normal_(last_conv.weight, mean=0, std=0.01)
+            nn.init.normal_(last_conv.weight, mean=0, std=0.05)
             if last_conv.bias is not None:
                 nn.init.constant_(last_conv.bias, 0)
 
@@ -801,6 +800,11 @@ class OptimizedMOEImproved(nn.Module):
             pass
 
         return final_output
+
+    @property
+    def aux_loss(self):
+        """Retrieve the auxiliary loss from the registry."""
+        return MOE_LOSS_REGISTRY.get(self, torch.tensor(0.0))
 
 
 class ABlockMoE(ABlock):
@@ -978,7 +982,7 @@ class HyperSplitMoE(nn.Module):
                 nn.init.constant_(m.bias, 0)
         # Router initialization: Maintain initial balance
         if hasattr(self.router[-1], 'weight'):
-            nn.init.normal_(self.router[-1].weight, std=0.01)
+            nn.init.normal_(self.router[-1].weight, std=0.05)
 
     def forward(self, x):
         B, C, H, W = x.shape
@@ -1230,8 +1234,8 @@ class ZeroCostRouter(nn.Module):
             nn.Softmax(dim=1)
         )
         
-        # Initialize to approximately uniform distribution
-        nn.init.normal_(self.router[0].weight, std=0.01)
+        # Initialize with moderate variance for input-dependent routing
+        nn.init.normal_(self.router[0].weight, std=0.05)
     
     def forward(self, x):
         B, C, H, W = x.shape
@@ -1570,7 +1574,7 @@ class HyperUltimateMoE(nn.Module):
         
         # Router Small Variance Initialization
         if hasattr(self.routing.router[-1], 'weight'):
-            nn.init.normal_(self.routing.router[-1].weight, std=0.01)
+            nn.init.normal_(self.routing.router[-1].weight, std=0.05)
     
     def _update_sparsity(self):
         """Progressive Sparsity Scheduling"""
@@ -1768,7 +1772,7 @@ class UltimateOptimizedMoE(nn.Module):
         
         # Router Small Std + Slight Noise Diversity
         if hasattr(self.routing.router[-1], 'weight'):
-            nn.init.normal_(self.routing.router[-1].weight, std=0.01)
+            nn.init.normal_(self.routing.router[-1].weight, std=0.05)
             self.routing.router[-1].weight.data += torch.randn_like(self.routing.router[-1].weight.data) * 0.001  # New: Slight noise
     
     def _update_sparsity_and_temperature(self):
