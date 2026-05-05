@@ -47,6 +47,26 @@ Change the `data` argument to point to your dataset YAML:
 yolo train cfg=examples/lora_examples/rtdetr_lora.yaml data=/path/to/custom_dataset.yaml
 ```
 
+### 4. AdaLoRA on RT-DETR
+`AdaLoRA` is supported in this repository, but the current PEFT implementation only works on `nn.Linear` targets. In practice this makes `RT-DETR` the recommended family for AdaLoRA, while conv-heavy YOLO backbones should continue using standard `LoRA` or `RS-LoRA`.
+
+```bash
+PYTORCH_ENABLE_MPS_FALLBACK=1 yolo train \
+  cfg=examples/lora_examples/rtdetr_lora.yaml \
+  model=rtdetr-l.pt \
+  data=coco128.yaml \
+  lora_type=adalora \
+  lora_target_modules=linear \
+  lora_include_attention=True \
+  lora_target_r=4 \
+  lora_init_r=6
+```
+
+Notes:
+- `lora_total_step` can be left at `0`; the trainer will resolve it from the run iterations and persist the resolved value into `args.yaml`.
+- On Apple Silicon, `PYTORCH_ENABLE_MPS_FALLBACK=1` avoids MPS backward kernel gaps during RT-DETR training.
+- If all requested targets are non-linear layers, AdaLoRA target selection will be filtered to an empty set and adapter creation will stop.
+
 ---
 
 ## 🛠️ Configuration Guide
@@ -64,9 +84,21 @@ Each `.yaml` file follows the standard Ultralytics configuration structure, divi
 | :--- | :--- | :--- | :--- |
 | `lora_r` | Rank of the update matrices. | 16 - 32 | 8 - 16 |
 | `lora_alpha` | Scaling factor. | 2x `lora_r` | 2x `lora_r` |
+| `lora_use_rslora` | Use `alpha / sqrt(r)` scaling for better high-rank stability. | **True** | **True** |
+| `lora_init_lora_weights` | Adapter initialization strategy. | `"pissa"` | `"pissa"` |
 | `lora_gradient_checkpointing` | Enables gradient checkpointing. | **True** (Critical) | **True** (Critical) |
 | `lora_include_attention` | Target Attention layers. | False | **True** |
 | `lora_target_modules` | Regex for modules to target. | `["conv"]` | `["linear", "conv"]` |
+| `lora_only_3x3` | Skip `1x1` convs during auto target detection. | **True** | False |
+| `lora_total_step` | AdaLoRA total steps. `0` lets the trainer auto-resolve it. | N/A | `0` |
+
+## Backend Behavior
+
+- Requested backend: the backend requested by the user, for example `auto`, `peft`, or `fallback`.
+- Effective backend: the backend that actually ran after capability checks.
+- Requested init: the init mode requested by the user, such as `pissa`.
+- Effective init: the init mode that actually ran after compatibility downgrade.
+- In `auto` mode, the repository prefers `PEFT` first and uses the in-repo fallback path only when the request is unsupported on the active PEFT path.
 
 ## 🔄 Incremental Learning & Inference
 
