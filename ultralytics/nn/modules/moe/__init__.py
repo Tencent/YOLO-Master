@@ -50,6 +50,8 @@ from .utils import (
 )
 
 from .analysis import ExpertUsageTracker, diagnose_model, RoutingCollapseDetector
+from .diagnostics import MoELayerDiagnostic, collect_moe_diagnostics, diagnostics_to_dict, format_moe_diagnostics
+from .history import MoEDiagnosticsRecorder, export_moe_history_plots
 from .pruning import prune_moe_model
 
 __all__ = [
@@ -87,6 +89,11 @@ __all__ = [
     "ExpertUsageTracker",
     "RoutingCollapseDetector",
     "diagnose_model",
+    "MoELayerDiagnostic",
+    "collect_moe_diagnostics",
+    "diagnostics_to_dict",
+    "format_moe_diagnostics",
+    "MoEDiagnosticsRecorder",
+    "export_moe_history_plots",
     "prune_moe_model"
 ]
-

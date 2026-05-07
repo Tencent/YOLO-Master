@@ -28,6 +28,75 @@ from .loss import MoELoss
 # This prevents storing non-leaf tensors in the module instance, avoiding deepcopy errors
 MOE_LOSS_REGISTRY = weakref.WeakKeyDictionary()
 
+
+def _flatten_moe_topk(topk_tensor: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
+    """Normalize Top-K tensors to `[N, K]` for lightweight diagnostics."""
+    if topk_tensor is None:
+        return None
+    if topk_tensor.dim() == 4:
+        return topk_tensor.permute(0, 2, 3, 1).reshape(-1, topk_tensor.shape[1])
+    if topk_tensor.dim() == 2:
+        return topk_tensor
+    return topk_tensor.reshape(topk_tensor.shape[0], -1)
+
+
+def _compute_usage_from_topk(topk_indices: Optional[torch.Tensor], num_experts: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Return normalized usage share and raw hit counts from Top-K indices."""
+    if topk_indices is None or num_experts <= 0:
+        zero = torch.zeros(max(num_experts, 0), dtype=torch.float32)
+        return zero, zero
+
+    flat_indices = _flatten_moe_topk(topk_indices)
+    if flat_indices is None or flat_indices.numel() == 0:
+        zero = torch.zeros(num_experts, dtype=torch.float32)
+        return zero, zero
+
+    counts = torch.bincount(flat_indices.reshape(-1).to(torch.long).cpu(), minlength=num_experts).to(torch.float32)
+    total = counts.sum().clamp_min(1.0)
+    return counts / total, counts
+
+
+def _record_moe_snapshot(
+    module: nn.Module,
+    *,
+    expert_usage: Optional[torch.Tensor] = None,
+    topk_indices: Optional[torch.Tensor] = None,
+    topk_weights: Optional[torch.Tensor] = None,
+    router_probs: Optional[torch.Tensor] = None,
+    aux_loss: Optional[torch.Tensor] = None,
+) -> None:
+    """Store a compact, detached routing snapshot for later diagnostics."""
+    usage_tensor = expert_usage.detach().float().cpu() if isinstance(expert_usage, torch.Tensor) else None
+    counts_tensor = None
+    if topk_indices is not None:
+        usage_tensor, counts_tensor = _compute_usage_from_topk(topk_indices, getattr(module, "num_experts", 0))
+
+    mean_probs = None
+    if isinstance(router_probs, torch.Tensor):
+        probs = router_probs.detach().float().cpu()
+        if probs.dim() == 4:
+            mean_probs = probs.mean(dim=(0, 2, 3))
+        elif probs.dim() == 2:
+            mean_probs = probs.mean(dim=0)
+        else:
+            mean_probs = probs.reshape(probs.shape[0], -1).mean(dim=0)
+
+    snapshot = {
+        "num_experts": int(getattr(module, "num_experts", 0)),
+        "top_k": int(_flatten_moe_topk(topk_indices).shape[1]) if isinstance(topk_indices, torch.Tensor) else int(getattr(module, "top_k", 0)),
+        "expert_usage": usage_tensor,
+        "topk_counts": counts_tensor,
+        "mean_router_probs": mean_probs,
+        "aux_loss": float(aux_loss.detach().item()) if isinstance(aux_loss, torch.Tensor) else float(aux_loss or 0.0),
+    }
+
+    if isinstance(topk_weights, torch.Tensor):
+        weights = _flatten_moe_topk(topk_weights.detach().float().cpu())
+        if weights is not None and weights.numel():
+            snapshot["mean_topk_weight"] = weights.mean(dim=0)
+
+    module.last_routing_snapshot = snapshot
+
 def _robust_deepcopy(obj, memo):
     """
     Robust deepcopy helper that sanitizes the object's __dict__ to remove
@@ -131,6 +200,7 @@ class UltraOptimizedMoE(nn.Module):
         self.last_aux_loss = 0.0
         self.last_balance_loss = 0.0
         self.last_z_loss = 0.0
+        self.last_routing_snapshot = {}
         # self.aux_loss is now managed via MOE_LOSS_REGISTRY property
 
     def _init_weights(self):
@@ -188,6 +258,13 @@ class UltraOptimizedMoE(nn.Module):
 
             aux_loss = (self.balance_loss_coeff * balance_loss) + (self.router_z_loss_coeff * z_loss_val)
             MOE_LOSS_REGISTRY[self] = aux_loss
+            _record_moe_snapshot(
+                self,
+                expert_usage=usage_freq,
+                topk_indices=routing_indices,
+                topk_weights=routing_weights,
+                aux_loss=aux_loss,
+            )
 
             # Record statistics
             self.last_aux_loss = aux_loss.detach().item()
@@ -709,6 +786,7 @@ class OptimizedMOEImproved(nn.Module):
             num_experts=num_experts, 
             top_k=top_k
         )
+        self.last_routing_snapshot = {}
 
     def _init_weights(self):
         for m in self.modules():
@@ -796,6 +874,14 @@ class OptimizedMOEImproved(nn.Module):
             aux_loss = self.moe_loss_fn(loss_dict['router_probs'], loss_dict['router_logits'],
                                              loss_dict['topk_indices'])
             MOE_LOSS_REGISTRY[self] = aux_loss
+            _record_moe_snapshot(
+                self,
+                expert_usage=loss_dict.get('router_probs').detach().mean(dim=0) if isinstance(loss_dict.get('router_probs'), torch.Tensor) else None,
+                topk_indices=loss_dict.get('topk_indices'),
+                topk_weights=routing_weights,
+                router_probs=loss_dict.get('router_probs'),
+                aux_loss=aux_loss,
+            )
         else:
             pass
 
