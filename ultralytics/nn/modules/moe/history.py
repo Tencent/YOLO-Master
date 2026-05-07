@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .diagnostics import MoELayerDiagnostic
+from ultralytics.utils import LOGGER
 
 
 def _sanitize_layer_name(name: str) -> str:
@@ -112,34 +113,40 @@ class MoEDiagnosticsRecorder:
         }
 
     def _append_jsonl(self, path: Path, payload: dict[str, Any]) -> None:
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(payload, ensure_ascii=True) + "\n")
+        try:
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload, ensure_ascii=True) + "\n")
+        except OSError as exc:
+            LOGGER.warning(f"[MoE] Failed to write diagnostic JSONL: {exc}")
 
     def _append_csv_rows(self, payload: dict[str, Any]) -> None:
-        needs_header = not self.history_csv.exists() or self.history_csv.stat().st_size == 0
-        with self.history_csv.open("a", encoding="utf-8", newline="") as handle:
-            writer = csv.DictWriter(handle, fieldnames=self.csv_fieldnames)
-            if needs_header:
-                writer.writeheader()
-            for expert_id, usage in enumerate(payload["usage"]):
-                writer.writerow(
-                    {
-                        "stage": payload["stage"],
-                        "step": payload["step"],
-                        "epoch": payload["epoch"],
-                        "layer_name": payload["layer_name"],
-                        "module_type": payload["module_type"],
-                        "num_experts": payload["num_experts"],
-                        "top_k": payload["top_k"],
-                        "expert_id": expert_id,
-                        "usage": usage,
-                        "count": payload["counts"][expert_id] if expert_id < len(payload["counts"]) else 0.0,
-                        "dominant_expert": payload["dominant_expert"],
-                        "dominant_share": payload["dominant_share"],
-                        "aux_loss": payload["aux_loss"],
-                        "collapse_flag": payload["collapse_flag"],
-                    }
-                )
+        try:
+            needs_header = not self.history_csv.exists() or self.history_csv.stat().st_size == 0
+            with self.history_csv.open("a", encoding="utf-8", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=self.csv_fieldnames)
+                if needs_header:
+                    writer.writeheader()
+                for expert_id, usage in enumerate(payload["usage"]):
+                    writer.writerow(
+                        {
+                            "stage": payload["stage"],
+                            "step": payload["step"],
+                            "epoch": payload["epoch"],
+                            "layer_name": payload["layer_name"],
+                            "module_type": payload["module_type"],
+                            "num_experts": payload["num_experts"],
+                            "top_k": payload["top_k"],
+                            "expert_id": expert_id,
+                            "usage": usage,
+                            "count": payload["counts"][expert_id] if expert_id < len(payload["counts"]) else 0.0,
+                            "dominant_expert": payload["dominant_expert"],
+                            "dominant_share": payload["dominant_share"],
+                            "aux_loss": payload["aux_loss"],
+                            "collapse_flag": payload["collapse_flag"],
+                        }
+                    )
+        except OSError as exc:
+            LOGGER.warning(f"[MoE] Failed to write diagnostic CSV: {exc}")
 
     def _evaluate_alerts(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
         history = self._rolling_history[payload["layer_name"]]
@@ -229,8 +236,24 @@ def export_moe_history_plots(save_dir: str | Path) -> list[Path]:
     if not history_path.exists() or history_path.stat().st_size == 0:
         return []
 
-    records = [json.loads(line) for line in history_path.read_text(encoding="utf-8").splitlines() if line.strip()]
-    if not records:
+    # Stream-read to avoid loading large files into memory
+    by_layer: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    try:
+        with history_path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                by_layer[record.get("layer_name", "unknown")].append(record)
+    except OSError as exc:
+        LOGGER.warning(f"[MoE] Failed to read history for plots: {exc}")
+        return []
+
+    if not by_layer:
         return []
 
     import matplotlib
@@ -241,10 +264,6 @@ def export_moe_history_plots(save_dir: str | Path) -> list[Path]:
     plot_dir = save_dir / "plots"
     plot_dir.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
-
-    by_layer: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for record in records:
-        by_layer[record["layer_name"]].append(record)
 
     for layer_name, layer_records in by_layer.items():
         layer_records.sort(key=lambda item: item["step"])

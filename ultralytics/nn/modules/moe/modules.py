@@ -30,13 +30,25 @@ MOE_LOSS_REGISTRY = weakref.WeakKeyDictionary()
 
 
 def _flatten_moe_topk(topk_tensor: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
-    """Normalize Top-K tensors to `[N, K]` for lightweight diagnostics."""
+    """Normalize Top-K tensors to `[N, K]` for lightweight diagnostics.
+
+    Supports shapes:
+      - 2D: `[N, K]` — already flat, return as-is
+      - 4D: `[B, K, H, W]` — spatial top-k (permute + reshape)
+      - 4D: `[B, H, W, K]` — NHWC top-k (reshape only)
+      - Other: flatten first dim, treat second dim as K
+    """
     if topk_tensor is None:
         return None
-    if topk_tensor.dim() == 4:
-        return topk_tensor.permute(0, 2, 3, 1).reshape(-1, topk_tensor.shape[1])
     if topk_tensor.dim() == 2:
         return topk_tensor
+    if topk_tensor.dim() == 4:
+        # Heuristic: if dim 1 is small (<= top_k max, usually <=8), assume [B, K, H, W]
+        # Otherwise assume [B, H, W, K]
+        if topk_tensor.shape[1] <= 8:
+            return topk_tensor.permute(0, 2, 3, 1).reshape(-1, topk_tensor.shape[1])
+        else:
+            return topk_tensor.reshape(-1, topk_tensor.shape[3])
     return topk_tensor.reshape(topk_tensor.shape[0], -1)
 
 
@@ -65,11 +77,21 @@ def _record_moe_snapshot(
     router_probs: Optional[torch.Tensor] = None,
     aux_loss: Optional[torch.Tensor] = None,
 ) -> None:
-    """Store a compact, detached routing snapshot for later diagnostics."""
-    usage_tensor = expert_usage.detach().float().cpu() if isinstance(expert_usage, torch.Tensor) else None
-    counts_tensor = None
-    if topk_indices is not None:
+    """Store a compact, detached routing snapshot for later diagnostics.
+
+    If both `expert_usage` and `topk_indices` are provided, `expert_usage` takes
+    precedence because it reflects the router's actual computed usage frequencies.
+    `topk_indices` is only used as a fallback to derive usage counts.
+    """
+    # Prefer expert_usage when available; fallback to topk_indices-derived counts
+    if isinstance(expert_usage, torch.Tensor):
+        usage_tensor = expert_usage.detach().float().cpu()
+        counts_tensor = None
+    elif topk_indices is not None:
         usage_tensor, counts_tensor = _compute_usage_from_topk(topk_indices, getattr(module, "num_experts", 0))
+    else:
+        usage_tensor = None
+        counts_tensor = None
 
     mean_probs = None
     if isinstance(router_probs, torch.Tensor):
@@ -411,6 +433,7 @@ class ES_MOE(nn.Module):
         # Load-balancing loss (original design)
         self.register_buffer('load_balancing_loss', torch.tensor(0.0), persistent=False)
         self.register_buffer('expert_usage_counts', torch.zeros(num_experts), persistent=False)
+        self.last_routing_snapshot = {}
 
     def forward(self, x):
         if not hasattr(self, "use_top_k"):
@@ -425,7 +448,16 @@ class ES_MOE(nn.Module):
         routing_weights = self.routing(x)
 
         # Compute load-balancing loss
-        self._compute_load_balancing_loss(routing_weights)
+        load_balance_loss = self._compute_load_balancing_loss(routing_weights)
+
+        # Record routing snapshot for diagnostics (training only)
+        if self.training:
+            _record_moe_snapshot(
+                self,
+                expert_usage=routing_weights.mean(dim=(0, 2, 3)),
+                router_probs=routing_weights,
+                aux_loss=load_balance_loss,
+            )
 
         # Always use dense forward for ONNX export compatibility.
         # The train/infer split with conditional sparse computation breaks
@@ -607,6 +639,7 @@ class OptimizedMOE(nn.Module):
             num_experts=num_experts, 
             top_k=top_k
         )
+        self.last_routing_snapshot = {}
 
     def _init_weights(self):
         for m in self.modules():
@@ -684,6 +717,14 @@ class OptimizedMOE(nn.Module):
             aux_loss = self.moe_loss_fn(loss_info['router_probs'], loss_info['router_logits'],
                                              loss_info['topk_indices'])
             MOE_LOSS_REGISTRY[self] = aux_loss
+            _record_moe_snapshot(
+                self,
+                expert_usage=loss_info['router_probs'].detach().mean(dim=0) if isinstance(loss_info.get('router_probs'), torch.Tensor) else None,
+                topk_indices=loss_info.get('topk_indices'),
+                topk_weights=routing_weights,
+                router_probs=loss_info.get('router_probs'),
+                aux_loss=aux_loss,
+            )
 
         return final_output
 
@@ -911,18 +952,12 @@ class ABlockMoE(ABlock):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = x + self.attn(x)
-        return self.mlp(x) # MLP handles residual internally if in==out, but ABlock expects + MLP(x).
-                           # Wait, OptimizedMOEImproved handles residual internally if in==out.
-                           # ABlock original: return x + self.mlp(x)
-                           # OptimizedMOEImproved: return shared + experts + x (if residual)
-                           # So if I call self.mlp(x), it returns x + delta.
-                           # If I do x + self.mlp(x), I get x + (x + delta) = 2x + delta.
-                           # This is wrong.
-                           # I should just return self.mlp(x) since it already adds x.
-                           # BUT, wait. ABlock original: x = x + attn(x). Then return x + mlp(x).
-                           # My new forward: x = x + attn(x). return self.mlp(x).
-                           # This is correct if OptimizedMOEImproved adds residual.
-                           # OptimizedMOEImproved adds residual if in==out. Here dim==dim, so yes.
+        return self.mlp(x)
+
+    @property
+    def aux_loss(self):
+        """Delegate to the inner MoE MLP."""
+        return self.mlp.aux_loss
 
 
 class A2C2fMoE(A2C2f):
