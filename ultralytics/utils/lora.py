@@ -2370,9 +2370,27 @@ def apply_lora(
         LOGGER.info("[LoRA]   Tip: Use lora_r=4~16 on MPS to avoid OOM. Larger ranks increase memory linearly.")
 
     # 7. Print Statistics
-    _print_param_stats(model)
+    _print_param_stats(model, peft_type=str(config.peft_type))
+
+    # 8. Performance warning for slow PEFT variants
+    _warn_slow_peft_variant(str(config.peft_type))
 
     return model
+
+
+def _warn_slow_peft_variant(peft_type: str):
+    """Warn about PEFT variants with known performance issues."""
+    peft_type = peft_type.lower()
+    if peft_type == "hra":
+        LOGGER.warning(
+            "[LoRA] ⚠️  HRA uses Gram-Schmidt orthogonalization in Python loops during forward. "
+            "Training speed may be 3-10x slower than LoRA. Consider LoRA/LoHa for faster training."
+        )
+    elif peft_type == "oft":
+        LOGGER.warning(
+            "[LoRA] ⚠️  OFT uses dense orthogonal rotations (high activation memory). "
+            "If OOM occurs, reduce batch size or use LoRA/LoHa/LoKr instead."
+        )
 
 
 def _activate_gradient_checkpointing(module: nn.Module):
@@ -2429,7 +2447,7 @@ def _get_mps_memory() -> tuple:
     return None, None
 
 
-def _print_param_stats(model: nn.Module):
+def _print_param_stats(model: nn.Module, peft_type: str = ""):
     """Prints detailed parameter statistics."""
     s = _compute_param_stats(model)
 
@@ -2445,7 +2463,7 @@ def _print_param_stats(model: nn.Module):
         LOGGER.warning(
             "[LoRA] ⚠️  ALL parameters are trainable. Check if LoRA adapters were applied correctly."
         )
-    
+
     # Memory monitoring - GPU/CUDA
     if torch.cuda.is_available():
         try:
