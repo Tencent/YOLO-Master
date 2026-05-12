@@ -418,13 +418,14 @@ class Model(torch.nn.Module):
         self._check_is_pytorch_model()
         from ultralytics.utils import LOGGER
         from ultralytics.utils.lora import save_lora_adapters
+        from ultralytics.utils.torch_utils import unwrap_model
 
         for candidate in (getattr(self.trainer, "model", None), self.model):
             if candidate is None:
                 continue
-            base_candidate = getattr(candidate, "module", candidate)
+            base_candidate = unwrap_model(candidate)
             if getattr(base_candidate, "lora_enabled", False):
-                return save_lora_adapters(candidate, path)
+                return save_lora_adapters(base_candidate, path)
 
         LOGGER.warning("[LoRA] Save skipped: no active LoRA adapters found on trainer.model or model.")
         return False
@@ -438,15 +439,18 @@ class Model(torch.nn.Module):
         self._check_is_pytorch_model()
         from ultralytics.utils import LOGGER
         from ultralytics.utils.lora import merge_lora_weights
+        from ultralytics.utils.torch_utils import unwrap_model
 
         for candidate in (getattr(self.trainer, "model", None), self.model):
             if candidate is None:
                 continue
-            base_candidate = getattr(candidate, "module", candidate)
+            base_candidate = unwrap_model(candidate)
             if getattr(base_candidate, "lora_enabled", False) or hasattr(getattr(base_candidate, "model", None), "merge_and_unload"):
-                ok = merge_lora_weights(candidate)
-                if ok and candidate is not self.model:
-                    self.model = getattr(candidate, "module", candidate)
+                ok = merge_lora_weights(base_candidate)
+                if ok and base_candidate is not self.model:
+                    self.model = base_candidate
+                    if getattr(self.trainer, "model", None) is not None:
+                        self.trainer.model = self.model
                 return ok
 
         LOGGER.warning("[LoRA] Merge skipped: no active LoRA adapters found on trainer.model or model.")
@@ -464,8 +468,12 @@ class Model(torch.nn.Module):
         """
         self._check_is_pytorch_model()
         from ultralytics.utils.lora import load_lora_adapters
+        from ultralytics.utils.torch_utils import unwrap_model
 
-        ok = load_lora_adapters(self.model, path, merge=merge)
+        base_model = unwrap_model(self.model)
+        ok = load_lora_adapters(base_model, path, merge=merge)
+        if ok and base_model is not self.model:
+            self.model = base_model
         if ok and getattr(self.trainer, "model", None) is not None:
             self.trainer.model = self.model
         return ok

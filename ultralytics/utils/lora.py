@@ -54,6 +54,14 @@ def _is_adapter_param(name: str) -> bool:
     return any(p in name for p in _PEFT_ADAPTER_PREFIXES)
 
 
+def _effective_peft_variant(config: Any) -> str:
+    """Return the adapter variant that is actually dispatched to PEFT."""
+    peft_type = str(getattr(config, "peft_type", getattr(config, "variant", "lora"))).lower()
+    if peft_type == "lora" and bool(getattr(config, "use_dora", False)):
+        return "dora"
+    return peft_type
+
+
 @dataclass
 class ParamStats:
     """Immutable parameter statistics for a model."""
@@ -92,7 +100,7 @@ def _compute_param_stats(model: nn.Module) -> ParamStats:
 
 
 def _unfreeze_detection_head(model: nn.Module) -> int:
-    """Unfreeze detection head parameters for YOLO (detect/cv2/cv3/dfl) and RT-DETR (decoder/score_head/bbox_head/etc.).
+    """Unfreeze only real detection-head parameters for adapter fine-tuning.
     
     RT-DETR uses RTDETRDecoder with parameter names like decoder.layers, dec_score_head,
     dec_bbox_head, enc_score_head, enc_bbox_head, input_proj, query_pos_head, 
@@ -102,19 +110,25 @@ def _unfreeze_detection_head(model: nn.Module) -> int:
     
     Returns count of unfrozen params.
     """
+    try:
+        from ultralytics.nn.modules.head import Detect, RTDETRDecoder
+        head_types = (Detect, RTDETRDecoder)
+    except Exception:
+        head_types = ()
+
+    head_prefixes = []
+    if head_types:
+        for module_name, module in model.named_modules():
+            if isinstance(module, head_types):
+                head_prefixes.append(module_name)
+
+    if not head_prefixes:
+        LOGGER.debug("[LoRA] Detection head unfreeze skipped: no known head module found.")
+        return 0
+
     head_unfrozen = 0
-    # YOLO-series head keywords
-    yolo_keys = ("detect", "cv2", "cv3", "dfl")
-    # RT-DETR head keywords (model.28.xxx)
-    rtdetr_keys = (
-        "decoder", "dec_score_head", "dec_bbox_head",
-        "enc_score_head", "enc_bbox_head", "input_proj",
-        "query_pos_head", "denoising_class_embed", "enc_output",
-    )
-    head_keys = yolo_keys + rtdetr_keys
-    
     for name, param in model.named_parameters():
-        if any(k in name for k in head_keys):
+        if any(name == prefix or name.startswith(f"{prefix}.") for prefix in head_prefixes):
             if not param.requires_grad:
                 param.requires_grad = True
                 head_unfrozen += param.numel()
@@ -614,18 +628,18 @@ class ManualLoRAConv(nn.Module):
 
 def supports_peft_request(config: "LoRAConfig") -> bool:
     """Return whether the PEFT backend can satisfy the requested variant in principle."""
-    variant = str(getattr(config, "variant", getattr(config, "peft_type", "lora"))).lower()
+    variant = _effective_peft_variant(config)
     if variant == "dora":
         return bool(PEFT_AVAILABLE and getattr(config, "use_dora", False))
     return bool(PEFT_AVAILABLE and variant in {
         "lora", "adalora", "loha", "lokr",
-        "ia3", "oft", "boft",
+        "ia3", "oft", "boft", "hra",
     })
 
 
 def supports_fallback_request(config: "LoRAConfig") -> bool:
     """Return whether the in-repo fallback backend can satisfy the requested variant."""
-    return getattr(config, "r", 0) > 0 and str(getattr(config, "variant", "lora")).lower() == "lora"
+    return getattr(config, "r", 0) > 0 and _effective_peft_variant(config) == "lora"
 
 
 def _is_head_like_module(module_name: str) -> bool:
@@ -2115,7 +2129,7 @@ def apply_lora(
         LOGGER.info("[LoRA] Disabled (r=0).")
         return model
 
-    variant = str(getattr(config, "variant", config.peft_type)).lower()
+    variant = _effective_peft_variant(config)
     if variant == "loha" and str(config.backend).lower() == "fallback":
         raise ValueError("Fallback variants other than LoRA remain experimental.")
 
@@ -2383,7 +2397,7 @@ def apply_lora(
         # [CORE MAGIC] Swap the top-level DetectionModel class to a LoRA-aware wrapper.
         _wrap_top_level_lora_model(model, config)
         model.lora_backend = "peft"
-        model.lora_variant = config.variant
+        model.lora_variant = variant
         model.lora_include_head = config.include_head
         model.lora_freeze_bn = bool(getattr(config, "freeze_bn", False))
         model.lora_target_modules = sorted(final_targets)
@@ -2391,7 +2405,8 @@ def apply_lora(
             requested_backend=config.backend,
             effective_backend="peft",
             requested_variant=config.variant,
-            effective_variant=config.variant,
+            effective_variant=variant,
+            peft_type=config.peft_type,
             requested_init_lora_weights=config.init_lora_weights,
             effective_init_lora_weights=config.init_lora_weights,
             include_head=config.include_head,

@@ -99,6 +99,12 @@ def update_args_with_lora_runtime_metadata(args, model) -> None:
         args.requested_lora_backend = metadata["requested_backend"]
     if "effective_backend" in metadata:
         args.effective_lora_backend = metadata["effective_backend"]
+    if "requested_variant" in metadata:
+        args.requested_lora_variant = metadata["requested_variant"]
+    if "effective_variant" in metadata:
+        args.effective_lora_variant = metadata["effective_variant"]
+    if "peft_type" in metadata:
+        args.effective_lora_type = metadata["peft_type"]
     if "requested_init_lora_weights" in metadata:
         args.requested_lora_init_lora_weights = metadata["requested_init_lora_weights"]
     if "effective_init_lora_weights" in metadata:
@@ -438,6 +444,7 @@ class BaseTrainer:
 
         # Compile model
         self.model = attempt_compile(self.model, device=self.device, mode=self.args.compile)
+        lora_model = unwrap_model(self.model)
 
         # Freeze layers
         freeze_list = (
@@ -447,8 +454,8 @@ class BaseTrainer:
             if isinstance(self.args.freeze, int)
             else []
         )
-        # Do not freeze .dfl in LoRA mode (random init when class mismatch)
-        is_lora = getattr(self.args, "lora_r", 0) > 0
+        # Do not freeze .dfl in adapter mode (random init when class mismatch)
+        is_lora = getattr(lora_model, "lora_enabled", False)
         always_freeze_names = [] if is_lora else [".dfl"]
         freeze_layer_names = [f"model.{x}." for x in freeze_list] + always_freeze_names
         self.freeze_layer_names = freeze_layer_names
@@ -463,7 +470,7 @@ class BaseTrainer:
                 )
                 v.requires_grad = True
 
-        # Unfreeze detection head in LoRA mode (PEFT freezes all by default)
+        # Unfreeze detection head in adapter mode (PEFT freezes all by default)
         if is_lora:
             _unfreeze_detection_head(self.model)
 
@@ -497,8 +504,8 @@ class BaseTrainer:
         
         # ── LoRA Training Strategy Engine ──
         self.lora_strategy = None
-        if getattr(self.args, 'lora_r', 0) > 0:
-            has_lora = getattr(self.model, 'lora_enabled', False)
+        if is_lora:
+            has_lora = getattr(unwrap_model(self.model), 'lora_enabled', False)
             if has_lora:
                 self.lora_strategy = LoraTrainingStrategy(
                     model=self.model,
@@ -523,7 +530,12 @@ class BaseTrainer:
                 # Strategy 2: Alpha warmup preparation
                 lora_alpha_warmup = getattr(self.args, 'lora_alpha_warmup', 0)
                 if lora_alpha_warmup > 0:
-                    self.lora_strategy.prepare_alpha_warmup()
+                    if any(hasattr(m, "lora_A") for m in self.model.modules()):
+                        self.lora_strategy.prepare_alpha_warmup()
+                    else:
+                        LOGGER.info("[LoRA] Alpha warmup skipped: active adapter type has no LoRA alpha layers.")
+                        lora_alpha_warmup = 0
+                        self.args.lora_alpha_warmup = 0
                 
                 # Strategy 4: Dynamic dropout scheduling params
                 self.lora_dropout_end = getattr(self.args, 'lora_dropout_end', 0.15)
@@ -1052,14 +1064,15 @@ class BaseTrainer:
             self.best.write_bytes(serialized_ckpt)  # save best.pt
         
         # Save LoRA adapters if enabled
-        if hasattr(self.args, 'lora_r') and self.args.lora_r > 0 and getattr(self.args, 'lora_save_adapters', True):
+        lora_model = unwrap_model(self.model)
+        if getattr(lora_model, "lora_enabled", False) and getattr(self.args, 'lora_save_adapters', True):
             adapter_dir = self.wdir / (getattr(self.args, 'lora_adapter_dir', 'lora_adapter') + f"_epoch{self.epoch}")
             if self.best_fitness == self.fitness:
                 best_adapter_dir = self.wdir / (getattr(self.args, 'lora_adapter_dir', 'lora_adapter') + "_best")
-                save_lora_adapters(self.model, best_adapter_dir)
+                save_lora_adapters(lora_model, best_adapter_dir)
             
             if (self.save_period > 0) and (self.epoch % self.save_period == 0):
-                save_lora_adapters(self.model, adapter_dir)
+                save_lora_adapters(lora_model, adapter_dir)
 
         if (self.save_period > 0) and (self.epoch % self.save_period == 0):
             (self.wdir / f"epoch{self.epoch}.pt").write_bytes(serialized_ckpt)  # save epoch, i.e. 'epoch3.pt'
