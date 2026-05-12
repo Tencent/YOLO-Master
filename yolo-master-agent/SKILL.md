@@ -23,7 +23,7 @@ First make sure the local Ultralytics framework is installed and the `yolo` CLI 
 ```bash
 python -m pip install -e .
 yolo version
-python agents/yolo-master-agent/scripts/run_yolo_master_skill.py --json '{"skill":"yolo.train","inputs":{"model":"yolo11n.pt","data":"coco8.yaml"},"params":{"epochs":1,"imgsz":32}}'
+python yolo-master-agent/scripts/run_yolo_master_skill.py --json '{"skill":"yolo.train","inputs":{"model":"yolo11n.pt","data":"coco8.yaml"},"params":{"epochs":1,"imgsz":32}}'
 ```
 
 On Apple Silicon hosts with PyTorch MPS support, the dispatcher now defaults heavy compute modes such as `train`, `val`, `benchmark`, `predict`, and `track` to `device=mps` when no explicit device is provided. Override with `runtime.device` or `params.device` if needed.
@@ -33,7 +33,7 @@ If the CLI run is auto-selected onto MPS/CUDA and fails for a device-level runti
 When you need fast coverage across many skills or requests, use the AutoTrain-style validator first:
 
 ```bash
-python agents/yolo-master-agent/scripts/validate_yolo_master_skill.py --suite all --pretty
+python yolo-master-agent/scripts/validate_yolo_master_skill.py --suite all --pretty
 ```
 
 `all` skips cases marked `manual_only`, so the default loop stays quick enough for everyday skill evolution.
@@ -41,12 +41,12 @@ python agents/yolo-master-agent/scripts/validate_yolo_master_skill.py --suite al
 For quick regression checks, prefer the tiered suites:
 
 ```bash
-python agents/yolo-master-agent/scripts/validate_yolo_master_skill.py --suite fast-smoke --pretty --summary-only
-python agents/yolo-master-agent/scripts/validate_yolo_master_skill.py --suite cli-smoke --pretty --summary-only
-python agents/yolo-master-agent/scripts/validate_yolo_master_skill.py --suite deep-smoke --pretty --summary-only
-python agents/yolo-master-agent/scripts/validate_yolo_master_skill.py --suite extended --pretty --summary-only
-python agents/yolo-master-agent/scripts/validate_yolo_master_skill.py --suite dry-run --pretty --summary-only
-python agents/yolo-master-agent/scripts/validate_yolo_master_skill.py --suite contract --pretty --summary-only
+python yolo-master-agent/scripts/validate_yolo_master_skill.py --suite fast-smoke --pretty --summary-only
+python yolo-master-agent/scripts/validate_yolo_master_skill.py --suite cli-smoke --pretty --summary-only
+python yolo-master-agent/scripts/validate_yolo_master_skill.py --suite deep-smoke --pretty --summary-only
+python yolo-master-agent/scripts/validate_yolo_master_skill.py --suite extended --pretty --summary-only
+python yolo-master-agent/scripts/validate_yolo_master_skill.py --suite dry-run --pretty --summary-only
+python yolo-master-agent/scripts/validate_yolo_master_skill.py --suite contract --pretty --summary-only
 ```
 
 ## Workflow
@@ -88,31 +88,31 @@ Use these when you want stronger confidence than the default smoke suites withou
 Environment doctor and adaptive install probe:
 
 ```bash
-python agents/yolo-master-agent/scripts/run_yolo_master_skill.py --json '{"skill":"yolo.system","action":"doctor","params":{"ensure_cli":true}}' --pretty
+python yolo-master-agent/scripts/run_yolo_master_skill.py --json '{"skill":"yolo.system","action":"doctor","params":{"ensure_cli":true}}' --pretty
 ```
 
 Real CLI training and validation probes on the bundled mini dataset:
 
 ```bash
-python agents/yolo-master-agent/scripts/validate_yolo_master_skill.py --suite extended --pretty --summary-only
+python yolo-master-agent/scripts/validate_yolo_master_skill.py --suite extended --pretty --summary-only
 ```
 
 Equivalent direct CLI train command:
 
 ```bash
-yolo train model=scripts/peft_validation/yolo11n.pt data=agents/yolo-master-agent/assets/mini-detect/mini_detect.yaml imgsz=64 epochs=1 batch=1 device=mps workers=0 plots=False verbose=False patience=1 project=runs/agent name=train-mini-mps-manual
+yolo train model=scripts/peft_validation/yolo11n.pt data=yolo-master-agent/assets/mini-detect/mini_detect.yaml imgsz=64 epochs=1 batch=1 device=mps workers=0 plots=False verbose=False patience=1 project=runs/agent name=train-mini-mps-manual
 ```
 
 Equivalent direct CLI val command:
 
 ```bash
-yolo val model=scripts/peft_validation/yolo11n.pt data=agents/yolo-master-agent/assets/mini-detect/mini_detect.yaml imgsz=16 batch=1 device=mps workers=0 plots=False verbose=False project=runs/agent name=val-mini-mps-manual
+yolo val model=scripts/peft_validation/yolo11n.pt data=yolo-master-agent/assets/mini-detect/mini_detect.yaml imgsz=16 batch=1 device=mps workers=0 plots=False verbose=False project=runs/agent name=val-mini-mps-manual
 ```
 
 Structured dispatcher example with automatic MPS selection:
 
 ```bash
-python agents/yolo-master-agent/scripts/run_yolo_master_skill.py --json '{"skill":"yolo.train","runtime":{"prefer_cli":true,"prefer_mps":true},"inputs":{"model":"scripts/peft_validation/yolo11n.pt","data":"agents/yolo-master-agent/assets/mini-detect/mini_detect.yaml"},"params":{"epochs":1,"imgsz":64,"batch":1,"workers":0,"plots":false,"verbose":false,"patience":1},"artifacts":{},"policy":{"dry_run":false}}' --pretty
+python yolo-master-agent/scripts/run_yolo_master_skill.py --json '{"skill":"yolo.train","runtime":{"prefer_cli":true,"prefer_mps":true},"inputs":{"model":"scripts/peft_validation/yolo11n.pt","data":"yolo-master-agent/assets/mini-detect/mini_detect.yaml"},"params":{"epochs":1,"imgsz":64,"batch":1,"workers":0,"plots":false,"verbose":false,"patience":1},"artifacts":{},"policy":{"dry_run":false}}' --pretty
 ```
 
 ## References

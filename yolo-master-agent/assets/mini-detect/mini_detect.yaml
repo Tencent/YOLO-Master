@@ -1,4 +1,4 @@
-path: agents/yolo-master-agent/assets/mini-detect
+path: yolo-master-agent/assets/mini-detect
 train: images/train
 val: images/val
 names:

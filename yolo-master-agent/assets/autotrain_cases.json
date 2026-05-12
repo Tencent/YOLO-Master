@@ -162,7 +162,7 @@
       "skill": "yolo.train",
       "inputs": {
         "model": "scripts/peft_validation/yolo11n.pt",
-        "data": "agents/yolo-master-agent/assets/mini-detect/mini_detect.yaml"
+        "data": "yolo-master-agent/assets/mini-detect/mini_detect.yaml"
       },
       "params": {
         "imgsz": 64,
@@ -195,7 +195,7 @@
       "skill": "yolo.val",
       "inputs": {
         "model": "scripts/peft_validation/yolo11n.pt",
-        "data": "agents/yolo-master-agent/assets/mini-detect/mini_detect.yaml"
+        "data": "yolo-master-agent/assets/mini-detect/mini_detect.yaml"
       },
       "params": {
         "imgsz": 16,

@@ -21,7 +21,7 @@ from uuid import uuid4
 
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
-REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 LOG_DIR = SKILL_ROOT / "logs"
 DEFAULT_MANIFEST_DIR = REPO_ROOT / "runs" / "agent"
 MODULE_CACHE: dict[str, Any] = {}

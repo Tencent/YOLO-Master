@@ -12,7 +12,7 @@ from typing import Any
 
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
-REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 DISPATCHER = SKILL_ROOT / "scripts" / "run_yolo_master_skill.py"
 DEFAULT_CASES = SKILL_ROOT / "assets" / "autotrain_cases.json"
 REPORT_DIR = SKILL_ROOT / "logs"
