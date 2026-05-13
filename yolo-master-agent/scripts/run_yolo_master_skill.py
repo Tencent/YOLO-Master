@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import sysconfig
+import time
 import traceback
 from copy import deepcopy
 from pathlib import Path
@@ -29,6 +30,8 @@ ULTRALYTICS_INIT = REPO_ROOT / "ultralytics" / "__init__.py"
 DEFAULT_CFG_FILE = REPO_ROOT / "ultralytics" / "cfg" / "default.yaml"
 DATASET_CFG_DIR = REPO_ROOT / "ultralytics" / "cfg" / "datasets"
 ANSI_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
+RUNTIME_CACHE_FILE = LOG_DIR / "runtime-cache.json"
+RUNTIME_CACHE_TTL_SEC = 600
 
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -102,8 +105,46 @@ def get_ultralytics_module_info() -> dict[str, Any]:
     return cached("ultralytics_module_info", _loader)
 
 
+def runtime_cache_enabled() -> bool:
+    return os.environ.get("YOLO_MASTER_AGENT_RUNTIME_CACHE", "").lower() in {"1", "true", "yes"}
+
+
+def read_torch_runtime_cache() -> dict[str, Any] | None:
+    if not runtime_cache_enabled() or not RUNTIME_CACHE_FILE.exists():
+        return None
+    try:
+        if time.time() - RUNTIME_CACHE_FILE.stat().st_mtime > RUNTIME_CACHE_TTL_SEC:
+            return None
+        payload = json.loads(RUNTIME_CACHE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if payload.get("python") != sys.executable or payload.get("platform") != sys.platform:
+        return None
+    data = payload.get("torch")
+    return data if isinstance(data, dict) else None
+
+
+def write_torch_runtime_cache(info: dict[str, Any]) -> None:
+    if not runtime_cache_enabled():
+        return
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        RUNTIME_CACHE_FILE.write_text(
+            json.dumps(
+                {"python": sys.executable, "platform": sys.platform, "torch": json_safe(info)},
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+
 def get_torch_runtime() -> dict[str, Any]:
     def _loader():
+        cached_info = read_torch_runtime_cache()
+        if cached_info is not None:
+            return cached_info
         info: dict[str, Any] = {
             "installed": False,
             "version": None,
@@ -113,6 +154,7 @@ def get_torch_runtime() -> dict[str, Any]:
         try:
             torch = importlib.import_module("torch")
         except Exception:
+            write_torch_runtime_cache(info)
             return info
 
         info["installed"] = True
@@ -138,6 +180,7 @@ def get_torch_runtime() -> dict[str, Any]:
             }
         except Exception:
             info["mps"] = {"built": False, "available": False}
+        write_torch_runtime_cache(info)
         return info
 
     return cached("torch_runtime", _loader)

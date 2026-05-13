@@ -33,20 +33,22 @@ If the CLI run is auto-selected onto MPS/CUDA and fails for a device-level runti
 When you need fast coverage across many skills or requests, use the AutoTrain-style validator first:
 
 ```bash
-python yolo-master-agent/scripts/validate_yolo_master_skill.py --suite all --pretty
+python yolo-master-agent/scripts/validate_yolo_master_skill.py --suite quick --pretty --summary-only
 ```
 
-`all` skips cases marked `manual_only`, so the default loop stays quick enough for everyday skill evolution.
+`quick` is the default agent loop. It combines `fast-smoke`, `dry-run`, and `contract` so agents can iterate without waiting on real model inspection or CLI cold-start probes. Use `all` only when you explicitly want the slower full non-manual regression pass.
 
 For quick regression checks, prefer the tiered suites:
 
 ```bash
+python yolo-master-agent/scripts/validate_yolo_master_skill.py --suite quick --pretty --summary-only
 python yolo-master-agent/scripts/validate_yolo_master_skill.py --suite fast-smoke --pretty --summary-only
 python yolo-master-agent/scripts/validate_yolo_master_skill.py --suite cli-smoke --pretty --summary-only
 python yolo-master-agent/scripts/validate_yolo_master_skill.py --suite deep-smoke --pretty --summary-only
 python yolo-master-agent/scripts/validate_yolo_master_skill.py --suite extended --pretty --summary-only
 python yolo-master-agent/scripts/validate_yolo_master_skill.py --suite dry-run --pretty --summary-only
 python yolo-master-agent/scripts/validate_yolo_master_skill.py --suite contract --pretty --summary-only
+python yolo-master-agent/scripts/validate_yolo_master_skill.py --suite all --pretty --summary-only
 ```
 
 ## Workflow
@@ -71,9 +73,12 @@ Use the bundled validator and case pack to keep this skill honest:
 - bootstrap: `python -m pip install -e .`
 - dispatcher supports `policy.dry_run=true` for cheap coverage before real runs
 - `yolo` CLI is the preferred execution surface for supported actions
+- `quick` is the default iteration suite: `fast-smoke` + `dry-run` + `contract`
+- the validator enables a short-lived runtime cache for Torch/MPS detection so repeated subprocess cases do not re-import the stack
 - `fast-smoke` protects bootstrap and planning paths with tight timing budgets
 - `cli-smoke` validates real `yolo` CLI cold-start execution
 - `deep-smoke` holds heavyweight real-model inspection and local `.pt` inference checks
+- `all` runs every non-manual case, including slower `cli-smoke` and `deep-smoke`
 - `extended-cli` carries slower real CLI validation probes such as mini-dataset `yolo train` and `yolo val` on `mps`, and is marked `manual_only`
 - `contract` verifies failure-path behavior and manifest emission
 - `contract` now also includes in-process recovery probes so auto device fallback semantics stay covered without adding test-only hooks to the dispatcher

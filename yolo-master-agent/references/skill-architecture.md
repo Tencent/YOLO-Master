@@ -1146,13 +1146,17 @@ result = model.train(**params)
 
 为了让 Skill 的回归验证既稳定又能覆盖真实 CLI 行为, 建议固定使用以下分层:
 
+- `quick`: 默认 agent 迭代套件, 等价于 `fast-smoke + dry-run + contract`
 - `fast-smoke`: 安装与 dry-run 规划路径
 - `cli-smoke`: 真实 `yolo` CLI 轻量命令
 - `deep-smoke`: 模型 inspect 与本地 `.pt` 预测
+- `all`: 所有非 `manual_only` 用例, 会包含较慢的 `cli-smoke` 和 `deep-smoke`
 - `extended-cli`: 真实 mini-dataset `yolo val`, 默认标记为 `manual_only`
 - manual train soak: 只保留为人工探针, 不纳入默认 AutoTrain
 
-这样代理在日常自检时可以优先跑 `all` 或 `smoke`, 在需要更强把握时再显式触发 `extended-cli`。
+这样代理在日常自检时应优先跑 `quick`, 在需要真实 CLI 冷启动或模型加载把握时再显式触发 `cli-smoke`, `deep-smoke`, `all` 或 `extended-cli`。
+
+Validator 子进程会设置 `YOLO_MASTER_AGENT_RUNTIME_CACHE=1`, 让 Torch/MPS 运行时探测在短 TTL 内复用 `yolo-master-agent/logs/runtime-cache.json`。普通 dispatcher/doctor 调用默认不启用该缓存, 以保持环境检查结果尽量实时。
 
 ### 9.2 Job Manifest
 

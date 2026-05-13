@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import time
@@ -17,6 +18,7 @@ DISPATCHER = SKILL_ROOT / "scripts" / "run_yolo_master_skill.py"
 DEFAULT_CASES = SKILL_ROOT / "assets" / "autotrain_cases.json"
 REPORT_DIR = SKILL_ROOT / "logs"
 SUITE_ALIASES = {
+    "quick": {"fast-smoke", "dry-run", "contract"},
     "smoke": {"fast-smoke", "cli-smoke", "deep-smoke"},
     "extended": {"extended-cli"},
 }
@@ -130,8 +132,10 @@ def build_result(
 def run_dispatcher_case(case: dict[str, Any]) -> dict[str, Any]:
     request = dict(case["request"])
     cmd = [sys.executable, str(DISPATCHER), "--json", json.dumps(request, ensure_ascii=False)]
+    env = os.environ.copy()
+    env["YOLO_MASTER_AGENT_RUNTIME_CACHE"] = "1"
     start = time.perf_counter()
-    proc = subprocess.run(cmd, capture_output=True, text=True, cwd=REPO_ROOT)
+    proc = subprocess.run(cmd, capture_output=True, text=True, cwd=REPO_ROOT, env=env)
     elapsed = time.perf_counter() - start
     stdout = proc.stdout.strip()
     stderr = proc.stderr.strip()
@@ -311,10 +315,11 @@ def main() -> int:
     parser.add_argument("--cases", default=str(DEFAULT_CASES), help="Path to autotrain case JSON.")
     parser.add_argument(
         "--suite",
-        default="all",
+        default="quick",
         help=(
-            "Case suite to run: all, smoke, extended, fast-smoke, cli-smoke, deep-smoke, dry-run, "
-            "contract, or any suite present in the case file. `all` skips cases marked manual_only."
+            "Case suite to run: quick, all, smoke, extended, fast-smoke, cli-smoke, deep-smoke, dry-run, "
+            "contract, or any suite present in the case file. `quick` is the default agent loop; "
+            "`all` skips cases marked manual_only but can take minutes because it includes deep-smoke."
         ),
     )
     parser.add_argument("--out", default=str(REPORT_DIR / "autotrain-report.json"), help="Output report path.")
