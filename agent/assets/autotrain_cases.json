@@ -162,7 +162,7 @@
       "skill": "yolo.train",
       "inputs": {
         "model": "scripts/peft_validation/yolo11n.pt",
-        "data": "yolo-master-agent/assets/mini-detect/mini_detect.yaml"
+        "data": "agent/assets/mini-detect/mini_detect.yaml"
       },
       "params": {
         "imgsz": 64,
@@ -195,7 +195,7 @@
       "skill": "yolo.val",
       "inputs": {
         "model": "scripts/peft_validation/yolo11n.pt",
-        "data": "yolo-master-agent/assets/mini-detect/mini_detect.yaml"
+        "data": "agent/assets/mini-detect/mini_detect.yaml"
       },
       "params": {
         "imgsz": 16,
@@ -268,6 +268,37 @@
       },
       "contains": {
         "plan.params.cmd": "source="
+      },
+      "path_exists": ["manifest"]
+    }
+  },
+  {
+    "name": "track_dry_run",
+    "suite": "dry-run",
+    "request": {
+      "skill": "yolo.track",
+      "inputs": {
+        "model": "ultralytics/cfg/models/master/v0_1/det/yolo-master-n.yaml",
+        "source": "ultralytics/assets/bus.jpg"
+      },
+      "params": {
+        "imgsz": 32,
+        "conf": 0.25
+      },
+      "artifacts": {},
+      "policy": {
+        "dry_run": true
+      }
+    },
+    "expect": {
+      "status": "ok",
+      "paths": ["dry_run", "plan.target", "plan.inputs.source", "auto_completed.device"],
+      "equals": {
+        "plan.target": "yolo",
+        "environment.references.source.exists": true
+      },
+      "contains": {
+        "plan.params.cmd": "track"
       },
       "path_exists": ["manifest"]
     }
@@ -354,6 +385,120 @@
         "multimodal.thinking_with_image": true,
         "multimodal.api_key_env": "OPENAI_API_KEY"
       },
+      "path_exists": ["manifest"]
+    }
+  },
+  {
+    "name": "multimodal_open_world_qwen_compact_dry_run",
+    "suite": "dry-run",
+    "request": {
+      "skill": "yolo.multimodal.infer",
+      "inputs": {
+        "model": "ultralytics/cfg/models/master/v0_1/det/yolo-master-n.yaml",
+        "source": "ultralytics/assets/bus.jpg",
+        "prompt": "Discover visible objects outside COCO and preserve them for open-world reasoning."
+      },
+      "params": {
+        "thinking_with_image": true,
+        "structured_output": true,
+        "prompt_template": "vlm_open_world_detection",
+        "fusion_policy": "open_world_assist",
+        "vlm_model": "qwen-vl-plus",
+        "openai_api_mode": "chat.completions"
+      },
+      "artifacts": {},
+      "policy": {
+        "dry_run": true
+      }
+    },
+    "expect": {
+      "status": "ok",
+      "equals": {
+        "multimodal.prompt_template": "vlm_open_world_detect_classify_compact",
+        "plan.params.stages.1.prompt_template": "vlm_open_world_detect_classify_compact",
+        "plan.params.stages.1.marked_image": true
+      },
+      "paths": [
+        "dry_run",
+        "plan.params.stages.1.model",
+        "multimodal.vlm_model"
+      ],
+      "path_exists": ["manifest"]
+    }
+  },
+  {
+    "name": "multimodal_open_world_qwen_caption_misses_dry_run",
+    "suite": "dry-run",
+    "request": {
+      "skill": "yolo.multimodal.infer",
+      "inputs": {
+        "model": "ultralytics/cfg/models/master/v0_1/det/yolo-master-n.yaml",
+        "source": "ultralytics/assets/bus.jpg",
+        "prompt": "Caption the scene and highlight the most important missed objects outside COCO."
+      },
+      "params": {
+        "thinking_with_image": true,
+        "structured_output": true,
+        "prompt_template": "vlm_open_world_detection",
+        "fusion_policy": "open_world_assist",
+        "vlm_model": "qwen-vl-plus",
+        "openai_api_mode": "chat.completions"
+      },
+      "artifacts": {},
+      "policy": {
+        "dry_run": true
+      }
+    },
+    "expect": {
+      "status": "ok",
+      "equals": {
+        "multimodal.prompt_template": "vlm_open_world_caption_misses_compact",
+        "plan.params.stages.1.prompt_template": "vlm_open_world_caption_misses_compact"
+      },
+      "paths": [
+        "dry_run",
+        "plan.params.stages.1.model"
+      ],
+      "path_exists": ["manifest"]
+    }
+  },
+  {
+    "name": "multimodal_open_world_exploratory_profile_dry_run",
+    "suite": "dry-run",
+    "request": {
+      "skill": "yolo.multimodal.infer",
+      "inputs": {
+        "model": "ultralytics/cfg/models/master/v0_1/det/yolo-master-n.yaml",
+        "source": "ultralytics/assets/bus.jpg",
+        "prompt": "Discover visible objects outside COCO and keep exploratory open-world candidates for downstream reasoning."
+      },
+      "params": {
+        "thinking_with_image": true,
+        "structured_output": true,
+        "prompt_template": "vlm_open_world_detection",
+        "fusion_policy": "open_world_assist",
+        "open_world_assist_profile": "exploratory",
+        "vlm_model": "qwen-vl-plus",
+        "openai_api_mode": "chat.completions"
+      },
+      "artifacts": {},
+      "policy": {
+        "dry_run": true
+      }
+    },
+    "expect": {
+      "status": "ok",
+      "equals": {
+        "multimodal.open_world_assist_profile": "exploratory",
+        "multimodal.open_world_filters.taxonomy_min_score": 20,
+        "multimodal.open_world_filters.taxonomy_require_exact_for_generic": false,
+        "multimodal.open_world_filters.filter_unmatched_taxonomy": false,
+        "multimodal.open_world_filters.filter_generic_labels": false
+      },
+      "paths": [
+        "dry_run",
+        "plan.params.stages.1.prompt_template"
+      ],
       "path_exists": ["manifest"]
     }
   },
@@ -746,6 +891,7 @@
         "enable_llm_refine": true,
         "vlm_model": "gpt-4.1-mini",
         "llm_model": "gpt-4.1-mini",
+        "prompt_template": "vlm_coco_multitask",
         "openai_base_url": "https://example.invalid/v1",
         "openai_api_mode": "chat.completions",
         "detections": [
@@ -777,20 +923,151 @@
         "data.vlm.status": "ok",
         "data.llm_refine.status": "ok",
         "data.image.kind": "local_file",
-        "data.image.attached": true
+        "data.image.attached": true,
+        "payload.multimodal.fusion.strategy": "metric_safe_v1",
+        "payload.multimodal.fusion.summary.fused_boxes": 1
       },
       "contains": {
         "data.vlm.text": "vlm answer",
-        "data.llm_refine.text": "refined answer"
+        "data.llm_refine.text": "refined answer",
+        "data.calls.0.body.messages.1.content.0.text": "vlm_detections"
       },
       "paths": [
         "data.vlm.verdict.answer",
         "data.llm_refine.verdict.yolo_cross_check.confirmed",
         "data.calls.0.body.messages.1.content.1.image_url.url",
         "data.calls.1.body.messages.1.content.0.text",
+        "payload.multimodal.provider.base_url",
+        "payload.multimodal.image.marked.path",
+        "payload.multimodal.image.reasoning_input",
+        "payload.multimodal.fusion.coco_predictions_preview"
+      ],
+      "path_exists": ["payload.manifest", "payload.multimodal.image.marked.path", "payload.artifacts.0.path", "payload.artifacts.1.path"]
+    }
+  },
+  {
+    "name": "multimodal_open_world_stub_probe",
+    "suite": "contract",
+    "executor": "probe",
+    "request": {
+      "skill": "yolo.multimodal.infer",
+      "inputs": {
+        "model": "ultralytics/cfg/models/master/v0_1/det/yolo-master-n.yaml",
+        "source": "ultralytics/assets/bus.jpg",
+        "prompt": "Discover visible objects, including novel categories outside COCO, and preserve them for open-world reasoning."
+      },
+      "params": {
+        "skip_yolo": true,
+        "thinking_with_image": true,
+        "enable_llm_refine": true,
+        "vlm_model": "gpt-4.1-mini",
+        "llm_model": "gpt-4.1-mini",
+        "prompt_template": "vlm_open_world_detection",
+        "fusion_policy": "open_world_assist",
+        "openai_base_url": "https://example.invalid/v1",
+        "openai_api_mode": "chat.completions",
+        "detections": [
+          {
+            "path": "ultralytics/assets/bus.jpg",
+            "detections": [
+              {
+                "label": "bus",
+                "confidence": 0.9,
+                "xyxy": [10, 20, 100, 160]
+              }
+            ]
+          }
+        ]
+      },
+      "artifacts": {},
+      "policy": {
+        "dry_run": false
+      }
+    },
+    "probe": {
+      "kind": "multimodal_stub",
+      "skill": "yolo.multimodal.infer"
+    },
+    "expect": {
+      "status": "ok",
+      "equals": {
+        "data.call_count": 2,
+        "payload.multimodal.fusion.policy": "open_world_assist",
+        "payload.multimodal.fusion.summary.open_world_added": 1
+      },
+      "contains": {
+        "data.vlm.text": "open-world vlm answer",
+        "data.calls.0.body.messages.1.content.0.text": "open_label"
+      },
+      "paths": [
+        "payload.multimodal.fusion.open_world_predictions_preview.0.open_label",
+        "payload.multimodal.fusion.actions.0.type",
         "payload.multimodal.provider.base_url"
       ],
-      "path_exists": ["payload.manifest"]
+      "path_exists": ["payload.manifest", "payload.multimodal.image.marked.path"]
+    }
+  },
+  {
+    "name": "multimodal_open_world_taxonomy_guardrail_probe",
+    "suite": "contract",
+    "executor": "probe",
+    "request": {
+      "skill": "yolo.multimodal.infer",
+      "inputs": {
+        "model": "ultralytics/cfg/models/master/v0_1/det/yolo-master-n.yaml",
+        "source": "ultralytics/assets/bus.jpg",
+        "prompt": "Discover visible objects, including generic regions outside COCO, and preserve them conservatively for open-world reasoning."
+      },
+      "params": {
+        "skip_yolo": true,
+        "thinking_with_image": true,
+        "enable_llm_refine": true,
+        "vlm_model": "gpt-4.1-mini",
+        "llm_model": "gpt-4.1-mini",
+        "prompt_template": "vlm_open_world_detection",
+        "fusion_policy": "open_world_assist",
+        "openai_base_url": "https://example.invalid/v1",
+        "openai_api_mode": "chat.completions",
+        "open_world_taxonomy_min_score": 40,
+        "open_world_taxonomy_require_exact_for_generic": true,
+        "detections": [
+          {
+            "path": "ultralytics/assets/bus.jpg",
+            "detections": [
+              {
+                "label": "bus",
+                "confidence": 0.9,
+                "xyxy": [10, 20, 100, 160]
+              }
+            ]
+          }
+        ]
+      },
+      "artifacts": {},
+      "policy": {
+        "dry_run": false
+      }
+    },
+    "probe": {
+      "kind": "multimodal_stub",
+      "skill": "yolo.multimodal.infer"
+    },
+    "expect": {
+      "status": "ok",
+      "equals": {
+        "payload.multimodal.open_world_comparison.open_world_predictions.0.open_label": "grass",
+        "payload.multimodal.open_world_comparison.open_world_predictions.0.taxonomy.matched": true,
+        "payload.multimodal.open_world_comparison.open_world_predictions.0.taxonomy.match_status": "hypernym_fallback",
+        "payload.multimodal.open_world_comparison.open_world_predictions.0.include_in_open_world_stats": true,
+        "payload.multimodal.open_world_comparison.open_world_predictions.0.open_world_report_bucket": "enhancement_stats"
+      },
+      "paths": [
+        "payload.multimodal.open_world_comparison.open_world_predictions.0.taxonomy.raw_best.name",
+        "payload.multimodal.open_world_comparison.possible_misses.0.taxonomy.raw_best.name"
+      ],
+      "contains": {
+        "payload.multimodal.open_world_comparison.open_world_predictions.0.taxonomy.best.name": "gramineous plant"
+      }
     }
   },
   {
@@ -804,7 +1081,7 @@
       "skill": "yolo.multimodal.evaluate",
       "inputs": {
         "model": "ultralytics/cfg/models/master/v0_1/det/yolo-master-n.yaml",
-        "source": "ultralytics/assets",
+        "source": "agent/assets/mini-detect/images",
         "prompt": "Evaluate this image sample with YOLO and VLM evidence."
       },
       "params": {
@@ -833,15 +1110,24 @@
         "data.aggregate.verdict_parse_rate": 1.0,
         "data.baseline_status": "skipped",
         "payload.multimodal.dataset.sample_count": 2,
-        "payload.results.0.status": "ok"
+        "payload.results.0.status": "ok",
+        "payload.evaluation.fusion_summary.fused_boxes": 2,
+        "payload.evaluation.metric_preview.status": "ok",
+        "payload.evaluation.metric_preview.yolo.map50": 1.0,
+        "payload.evaluation.metric_preview.fused.map50_95": 1.0,
+        "payload.metric_guardrail.selected": "yolo_only"
       },
       "paths": [
         "data.first_item.multimodal.vlm.verdict.answer",
         "data.first_item.multimodal.llm_refine.verdict.yolo_cross_check.confirmed",
+        "data.first_item.multimodal.fusion.strategy",
         "payload.evaluation.cross_check_flag_counts.confirmed",
+        "payload.evaluation.metric_preview.delta.map50_95",
+        "payload.metric_guardrail.reason",
+        "payload.results.0.metric_preview.yolo.map50",
         "payload.results.0.detector.summary.detections.0.label"
       ],
-      "path_exists": ["payload.manifest", "payload.artifacts.0.path"]
+      "path_exists": ["payload.manifest", "payload.artifacts.0.path", "payload.artifacts.1.path", "payload.artifacts.2.path", "payload.artifacts.3.path"]
     }
   },
   {

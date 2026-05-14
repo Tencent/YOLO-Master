@@ -43,6 +43,23 @@
 
 ## 3. Current Technical Architecture
 
+### 3.0 Skill Runtime Layout
+
+The skill runtime is now split into two layers:
+
+- `agent/scripts/`
+  - thin executable wrappers only
+  - no business logic or reusable helper modules
+- `agent/runtime/`
+  - reusable internal library modules
+  - `cli/` dispatcher, validator, and report command implementations
+  - multimodal runtime
+  - fusion logic
+  - metric preview / guardrail logic
+  - open-world taxonomy helpers
+
+This keeps the command surface stable for agents while moving long-lived implementation into a package-shaped library.
+
 ### 3.1 Layered View
 
 ```mermaid
@@ -401,7 +418,7 @@ result = model.train(**params)
 3. 若 `runtime.prefer_mps=true` 且 `torch.backends.mps.is_available()`, 自动注入 `device=mps`
 4. 否则保持 Ultralytics 默认行为
 
-这样既能满足显式控制, 又能让 `yolo-master-agent` 在未指定设备时自然走 MPS 训练、验证与评估。
+这样既能满足显式控制, 又能让 `yolo-master-agent` 这个 skill 在未指定设备时自然走 MPS 训练、验证与评估。
 
 当设备来源是自动选择而不是用户显式指定时, 若 CLI 首次执行命中 `mps_runtime_error` 或 `cuda_runtime_error`, 代理应自动重试一次 `device=cpu`, 并返回:
 
@@ -733,6 +750,28 @@ result = model.train(**params)
 - `prompt` 或 `question`: 用户的视觉推理任务
 - `thinking_with_image`: 默认 `true`, 是否向 VLM 附带图像
 - `structured_output`: 默认 `true`, 要求模型返回可解析 JSON verdict
+- `prompt_template`: 可选模板名或路径; `vlm_coco_multitask` 会要求 VLM 输出 caption、global classification、COCO-style detections、rough segmentation proxies 与 fusion hints; `vlm_open_world_detection` 则允许保留 novel/open-world labels, 并附带可选 COCO mapping; `vlm_open_world_detection_compact` 是给易截断 provider 的精简 schema
+- `max_output_tokens`: 在 `vlm_coco_multitask` + structured output 下默认 `3500`, 防止完整 schema 被截断
+- `use_marked_image`: 默认在有 `prompt_template` 时启用, 生成带编号 YOLO 框的标注图作为 VLM 输入
+- `visual_search_mode`: 默认 `auto`, 当 VLM 返回 `visual_search.needs_zoom=true` 时执行 crop-and-zoom 二次 VLM 复核; 可设 `off`
+- `fusion_mode`: 默认 `preview`, 将 VLM/LLM 的 `fusion_hints` 转成可审计的 keep/suppress/add/relabel/adjust 候选和 COCO-style prediction preview; 可设 `off`
+- `fusion_policy`: 默认 `add_only`; 仅允许高置信 VLM add proposals 进入 preview。`balanced` 允许 suppress, `aggressive` 才允许 adjust/relabel。`open_world_assist` 是显式 opt-in 模式, 会保留未映射到 COCO 的 open-world proposals 到 `open_world_predictions_preview`, 且默认采用 add-first 行为
+- `open_world_taxonomy_min_score`: 默认 `40`; taxonomy 候选即使存在, 低于该分数也不会被视作正式命中, 只会保留在 `raw_best/candidates` 供审阅
+- `open_world_taxonomy_require_exact_for_generic`: 默认 `true`; 对 `grass`, `food`, `object` 这类泛词, 只有 taxonomy 名称与 canonical label 完全一致时才允许作为正式锚点, 避免 `grass -> bear grass` 这类牵强映射污染后续统计
+- `open_world_assist_profile`: `strict | balanced | exploratory`; 作为 open-world 运行的高层策略开关, 只负责补默认值, 不覆盖显式传入的细粒度参数
+  - `strict`: `min_score=40`, 过滤 unmatched taxonomy 与 generic labels
+  - `balanced`: `min_score=30`, 保留 unmatched taxonomy 到 enhancement stats, 仍过滤 generic labels
+  - `exploratory`: `min_score=20`, 不过滤 unmatched taxonomy / generic labels, 适合开放探索和词表采样
+- `open_world_iou_relabel_enabled`: opt-in 的 IoU 吞噬机制; 当 open-world proposal 与现有 YOLO 框高度重叠且 YOLO 置信度不过高时, 预览里会记录 `open_world_relabelled` / `relabel_open_world`
+- taxonomy 无法直接命中时, 当前 helper 可通过 WordNet hypernym fallback 生成较粗粒度锚点, 例如 `grass -> gramineous plant`
+- prompt ensemble / 仲裁层的基础合并逻辑已下沉到 `scripts/open_world_multimodal.py`, 并被 `compare_open_world_profiles.py` 用于生成 `verified_open_world_list`
+- `fusion_add_require_unlinked`: 默认 `true`, add proposal 若强关联到已有高置信 YOLO 框则拒绝, 避免把重复框当补漏
+- `fusion_add_max_linked_yolo_confidence`: 默认 `0.4`, 与 add proposal 关联的 YOLO 框高于此置信度时拒绝 add
+- `fusion_add_allowed_bbox_quality`: 默认 `exact, estimated`, `rough` geometry 不进入默认 add path
+- `fusion_add_confidence_min` / `fusion_suppress_confidence_min` / `fusion_adjust_confidence_min`: 控制 VLM 建议进入 preview 的保守阈值
+- `fusion_suppress_max_yolo_confidence`: 默认 `0.45`, 高于此 YOLO confidence 的框不会被 VLM 直接抑制
+- `fusion_relabel_max_yolo_confidence`: 默认 `0.5`, 高置信 YOLO 分类不会被 VLM 直接重标注
+- `fusion_adjust_min_iou`: 默认 `0.5`, VLM 调整框与原 YOLO 框 IoU 低于此值时拒绝调整
 - `openai_api_mode`: 默认 `auto`, 可选 `responses` 或 `chat.completions`
 - `vlm_model`: 默认 `OPENAI_VLM_MODEL` / `OPENAI_MODEL` / `gpt-4.1-mini`
 - `llm_model`: 默认 `OPENAI_LLM_MODEL` / `OPENAI_MODEL`, 用于二次精炼
@@ -755,10 +794,15 @@ result = model.train(**params)
 1. 规范化 `source`、模型路径和 YOLO 参数。
 2. 默认先执行 `YOLO(...).predict(...)`, 并把 boxes 压缩成 `label/confidence/xyxy` 推理证据。
 3. 构造 `thinking-with-image` prompt, 要求模型私下对比图像与检测摘要, 只输出答案、证据、不确定性和下一步动作, 不暴露隐藏推理链。
+   当 `prompt_template=vlm_coco_multitask` 时, prompt 会改为 COCO 多任务 schema, 额外包含 `caption`, `global_classification`, `vlm_detections`, `vlm_segmentation`, `visual_search`, `fusion_hints`。
+   当 `prompt_template=vlm_open_world_detection` 时, schema 允许 `open_label`、`coco_label`、可选 `class_id`, 以及 `add_open_world_detections` 这类 novel-object fusion hints。
+   当 `use_marked_image=true` 时, dispatcher 会先用 Pillow 生成一张带 YOLO box index 的 marked image, 让 VLM 可以稳定引用 `linked_yolo_indices`。
 4. 若 `OPENAI_API_KEY` 缺失, 返回 `blocked`, 同时保留 YOLO 检测证据。
-5. 若 VLM 成功且启用了 `llm_model` 或 `enable_llm_refine`, 再调用一次 LLM 做一致性精炼。
-6. 当 `structured_output=true` 时, 尝试解析 `answer / visual_evidence / yolo_cross_check / uncertainty / recommended_next_actions` 为 `multimodal.*.verdict`。
-7. 返回 `results`, `multimodal.vlm`, `multimodal.llm_refine`, `environment`, `artifacts`, `manifest`。
+5. 若 VLM 返回 `visual_search.needs_zoom=true`, 对 `visual_search.search_regions` 做 crop, 再对每个 crop 调用 VLM, 将结果记录到 `multimodal.visual_search.passes`。
+6. 若 VLM 成功且启用了 `llm_model` 或 `enable_llm_refine`, 再调用一次 LLM 做一致性精炼。
+7. 合并 VLM 与 LLM verdict, 生成 `multimodal.fusion` preview: 保留 YOLO 框, 对高置信 VLM 建议执行候选 suppress/add/adjust/relabel, 并输出 `coco_predictions_preview`。
+8. 当 `structured_output=true` 时, 尝试解析 `answer / visual_evidence / yolo_cross_check / uncertainty / recommended_next_actions` 为 `multimodal.*.verdict`。
+9. 返回 `results`, `multimodal.vlm`, `multimodal.visual_search`, `multimodal.llm_refine`, `multimodal.fusion`, `environment`, `artifacts`, `manifest`。
 
 DashScope 等 OpenAI-compatible chat endpoints 可设置:
 
@@ -817,6 +861,11 @@ DashScope 等 OpenAI-compatible chat endpoints 可设置:
 - `offset` / `stride` / `shuffle` / `seed`: 控制抽样
 - `run_yolo_val`: 若有 `inputs.data`, 同步跑一次 YOLO-only baseline
 - `include_ground_truth_in_prompt`: 默认 `false`; true 时才把标签摘要放进 VLM prompt
+- `prompt_template`: 推荐 `vlm_coco_multitask` 做闭集 COCO 评估; 若目标是开放世界辅助检测/分类/分割/caption, 可切换到 `vlm_open_world_detection`
+- `use_marked_image` / `visual_search_mode`: 与单图 infer 一致, 支持 marked image grounding 与 crop/zoom follow-up
+- `fusion_mode`: 默认 `preview`, 生成每张图的 `multimodal.fusion` 和批量 `fusion-preview-coco-predictions.json`
+- `evaluation.metric_preview`: 当 YOLO label 可用时生成轻量同样本指标, 比较 YOLO-only 与 fused 的 precision/recall/mAP50/mAP50-95 delta; 这是 agent guardrail, 不替代官方 `yolo val`
+- `fusion_metric_guardrail`: 默认 `true`, 若没有 material change, 或 same-sample `map50_95` 未出现正增益, 或 recall 回退, `metric_guardrail.selected` 自动回退到 `yolo_only`; 通过时才选择 `fused_preview`
 - 所有 `yolo.multimodal.infer` 的 OpenAI/VLM/LLM 参数
 - 常规 YOLO predict 参数, 如 `imgsz`, `conf`, `device`
 
@@ -825,9 +874,12 @@ DashScope 等 OpenAI-compatible chat endpoints 可设置:
 1. 解析 dataset YAML 或本地 `source`, 生成确定性图片样本列表。
 2. 对每张图片执行 `YOLO(model).predict(...)`, 默认使用自适应设备选择, Apple Silicon 优先 `mps`。
 3. 将检测框压缩为 `label/confidence/xyxy` 证据, 并读取可用 YOLO 标签作为 post-hoc report ground truth。
-4. 调用 OpenAI-compatible VLM; 当 `llm_model` 或 `enable_llm_refine=true` 时再执行二次 LLM 精炼。
-5. 解析每张图的 structured JSON verdict, 聚合 `ok/blocked/partial/failed`, parse rate, 检测框数量、标签计数和 `false_positives/possible_misses/duplicate_or_fragmented` 标记。
-6. 写入 `multimodal-evaluation.json` artifact 与 `skill_manifest.json`, 返回 `evaluation`, `results`, `multimodal.dataset`, `baseline`。
+4. 可生成 marked image, 再调用 OpenAI-compatible VLM; 当 VLM 请求 zoom 时执行 crop pass。
+5. 当 `llm_model` 或 `enable_llm_refine=true` 时再执行二次 LLM 精炼。
+6. 解析每张图的 structured JSON verdict, 生成 `multimodal.fusion` preview, 并在标签可用时生成 per-image `metric_preview`。
+7. 聚合 `ok/blocked/partial/failed`, parse rate, 检测框数量、标签计数、fusion summary、YOLO-only vs fused metric delta 和 `false_positives/possible_misses/duplicate_or_fragmented` 标记。
+8. 应用 `metric_guardrail`: 指标不回退才采纳 fused preview, 否则写出 YOLO-only guarded prediction records。
+9. 写入 `multimodal-evaluation.json`, 可选 `fusion-preview-coco-predictions.json` / `fusion-metric-preview.json` / `metric-guarded-coco-predictions.json` artifact 与 `skill_manifest.json`, 返回 `evaluation`, `metric_guardrail`, `results`, `multimodal.dataset`, `baseline`。
 
 **Example**
 
@@ -849,6 +901,10 @@ DashScope 等 OpenAI-compatible chat endpoints 可设置:
     "imgsz": 640,
     "batch": 1,
     "thinking_with_image": true,
+    "prompt_template": "vlm_coco_multitask",
+    "use_marked_image": true,
+    "visual_search_mode": "auto",
+    "fusion_mode": "preview",
     "vlm_model": "qwen-vl-plus",
     "llm_model": "qwen-plus",
     "openai_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -1299,7 +1355,7 @@ DashScope 等 OpenAI-compatible chat endpoints 可设置:
 
 这样代理在日常自检时应优先跑 `quick`, 在需要真实 CLI 冷启动或模型加载把握时再显式触发 `cli-smoke`, `deep-smoke`, `all` 或 `extended-cli`。
 
-Validator 子进程会设置 `YOLO_MASTER_AGENT_RUNTIME_CACHE=1`, 让 Torch/MPS 运行时探测在短 TTL 内复用 `yolo-master-agent/logs/runtime-cache.json`。普通 dispatcher/doctor 调用默认不启用该缓存, 以保持环境检查结果尽量实时。
+Validator 子进程会设置 `YOLO_MASTER_AGENT_RUNTIME_CACHE=1`, 让 Torch/MPS 运行时探测在短 TTL 内复用 `agent/logs/runtime-cache.json`。普通 dispatcher/doctor 调用默认不启用该缓存, 以保持环境检查结果尽量实时。
 
 ### 9.2 Job Manifest
 

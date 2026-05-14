@@ -170,7 +170,7 @@ cython_debug/
 
 # YOLO-Master agent runtime artifacts
 runs/
-yolo-master-agent/logs/
+agent/logs/
 
 # PyCharm
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can

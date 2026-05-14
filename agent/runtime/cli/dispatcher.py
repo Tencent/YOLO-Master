@@ -25,19 +25,110 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+SKILL_ROOT = Path(__file__).resolve().parents[2]
+SCRIPT_DIR = SKILL_ROOT / "scripts"
+for candidate in (SKILL_ROOT,):
+    if str(candidate) not in sys.path:
+        sys.path.insert(0, str(candidate))
 
-SKILL_ROOT = Path(__file__).resolve().parents[1]
-REPO_ROOT = Path(__file__).resolve().parents[2]
+from runtime.open_world.taxonomy import (
+    aggregate_open_world_comparison,
+    apply_open_world_assist_profile_defaults,
+    build_open_world_comparison_entry,
+    default_multimodal_max_output_tokens,
+    effective_prompt_template_name,
+    open_world_policy_enabled,
+    open_world_template_enabled,
+)
+from runtime.multimodal.fusion import build_multimodal_fusion_preview as fusion_build_multimodal_fusion_preview
+from runtime.evaluation.metrics import (
+    aggregate_metric_preview,
+    aggregate_multimodal_evaluation,
+    build_item_metric_preview,
+    build_metric_guardrail,
+    classification_metric_delta,
+    evaluate_classification_metric_preview,
+    evaluate_detection_metric_preview,
+    evaluate_segmentation_metric_preview,
+    metric_delta,
+    merge_counts,
+    overall_multimodal_evaluation_status,
+    preferred_verdict,
+    prediction_records_to_coco,
+    segmentation_metric_delta,
+    yolo_coco_records_for_items,
+)
+from runtime.multimodal.runtime import (
+    attach_multimodal_verdict,
+    build_thinking_with_image_prompt,
+    build_visual_search_crop_prompt,
+    call_openai_compatible,
+    default_llm_refine_developer_prompt,
+    default_vlm_developer_prompt,
+    extract_json_object,
+    multimodal_overall_status,
+    openai_config,
+    run_visual_search_crop_passes as runtime_run_visual_search_crop_passes,
+)
+from runtime.multimodal.visual import (
+    clamp_box_xyxy,
+    encode_image_reference_for_openai as encode_image_reference_for_openai_raw,
+    image_source_for_openai as visual_image_source_for_openai,
+    load_pillow_image,
+    normalize_detection_boxes,
+    render_marked_image as visual_render_marked_image,
+)
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
 LOG_DIR = SKILL_ROOT / "logs"
 DEFAULT_MANIFEST_DIR = REPO_ROOT / "runs" / "agent"
 MODULE_CACHE: dict[str, Any] = {}
 ULTRALYTICS_INIT = REPO_ROOT / "ultralytics" / "__init__.py"
 DEFAULT_CFG_FILE = REPO_ROOT / "ultralytics" / "cfg" / "default.yaml"
 DATASET_CFG_DIR = REPO_ROOT / "ultralytics" / "cfg" / "datasets"
+PROMPT_DIR = SKILL_ROOT / "assets" / "prompts"
 ANSI_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
 RUNTIME_CACHE_FILE = LOG_DIR / "runtime-cache.json"
 RUNTIME_CACHE_TTL_SEC = 600
 IMAGE_EXTENSIONS = {".bmp", ".dng", ".jpeg", ".jpg", ".mpo", ".png", ".tif", ".tiff", ".webp"}
+DEFAULT_OPEN_WORLD_LABEL_ALIASES = {
+    "meal box": "bento box",
+    "lunch box": "bento box",
+    "lunchbox": "bento box",
+    "bento meal": "bento box",
+    "bento box meal": "bento box",
+    "dried apricot": "dried fruit",
+    "dried mango": "dried fruit",
+    "apricot": "dried fruit",
+    "pineapple chunks": "pineapple",
+    "pineapple piece": "pineapple",
+    "meat ball": "meatball",
+    "meatball in sauce": "meatball",
+    "bouquet": "flower arrangement",
+    "flower bouquet": "flower arrangement",
+    "flowers": "flower arrangement",
+    "floral arrangement": "flower arrangement",
+    "tree trunk": "log",
+    "fallen tree": "log",
+    "grass patch": "grass",
+}
+OPEN_WORLD_GENERIC_LABELS = {
+    "food",
+    "meal",
+    "dish",
+    "object",
+    "objects",
+    "container",
+    "scene",
+    "outdoor scene",
+    "indoor scene",
+}
+DEFAULT_OPEN_WORLD_ALIASES_FILE = SKILL_ROOT / "assets" / "open_world_label_aliases.json"
+OPEN_WORLD_TAXONOMY_DIR = SKILL_ROOT / "assets" / "open-world-taxonomy"
+DEFAULT_OPEN_WORLD_TAXONOMY_FILES = {
+    "lvis": OPEN_WORLD_TAXONOMY_DIR / "lvis_1203_classes.json",
+    "v3det": OPEN_WORLD_TAXONOMY_DIR / "v3det_13204_classes.json",
+}
 MULTIMODAL_PARAM_KEYS = {
     "prompt",
     "question",
@@ -45,6 +136,23 @@ MULTIMODAL_PARAM_KEYS = {
     "developer_prompt",
     "thinking_with_image",
     "method",
+    "prompt_template",
+    "compact_open_world_profile",
+    "open_world_profile",
+    "open_world_assist_profile",
+    "open_world_label_normalizer",
+    "open_world_label_aliases",
+    "open_world_label_aliases_path",
+    "open_world_taxonomy_datasets",
+    "open_world_taxonomy_topk",
+    "open_world_taxonomy_min_score",
+    "open_world_taxonomy_require_exact_for_generic",
+    "open_world_taxonomy_hypernym_fallback",
+    "open_world_filter_unmatched_taxonomy",
+    "open_world_filter_generic_labels",
+    "open_world_iou_relabel_enabled",
+    "open_world_iou_relabel_threshold",
+    "open_world_iou_relabel_max_yolo_confidence",
     "provider",
     "vlm_provider",
     "vlm_model",
@@ -61,6 +169,27 @@ MULTIMODAL_PARAM_KEYS = {
     "enable_llm_refine",
     "skip_yolo",
     "detections",
+    "use_marked_image",
+    "visual_search_mode",
+    "visual_search_max_regions",
+    "visual_search_crop_margin",
+    "visual_search_prompt",
+    "fusion_mode",
+    "fusion_policy",
+    "fusion_enabled",
+    "fusion_open_world_confidence_min",
+    "fusion_add_confidence_min",
+    "fusion_add_require_unlinked",
+    "fusion_add_max_linked_yolo_confidence",
+    "fusion_add_allowed_bbox_quality",
+    "fusion_suppress_confidence_min",
+    "fusion_adjust_confidence_min",
+    "fusion_suppress_max_yolo_confidence",
+    "fusion_relabel_max_yolo_confidence",
+    "fusion_adjust_min_iou",
+    "fusion_metric_guardrail",
+    "fusion_guardrail_min_map50_95_delta",
+    "fusion_guardrail_require_recall_nonnegative",
 }
 MULTIMODAL_EVALUATE_PARAM_KEYS = {
     "data",
@@ -71,7 +200,6 @@ MULTIMODAL_EVALUATE_PARAM_KEYS = {
     "stride",
     "shuffle",
     "seed",
-    "prompt_template",
     "include_ground_truth",
     "include_ground_truth_in_prompt",
     "run_yolo_val",
@@ -579,6 +707,32 @@ def kv_arg(key: str, value: Any) -> str:
 def resolved_path(value: str | Path) -> Path:
     path = Path(value)
     return path if path.is_absolute() else (REPO_ROOT / path).resolve()
+
+
+def image_source_for_openai(source: Any, results_summary: list[dict[str, Any]]) -> str | None:
+    return visual_image_source_for_openai(source, results_summary, resolved_path=resolved_path)
+
+
+def encode_image_reference_for_openai(image_ref: str, max_bytes: int = 20_000_000) -> dict[str, Any]:
+    return globals()["encode_image_reference_for_openai_raw"](image_ref, resolved_path=resolved_path, max_bytes=max_bytes)
+
+
+def render_marked_image(
+    image_ref: str | Path,
+    detections: list[dict[str, Any]],
+    *,
+    output_dir: Path,
+    prefix: str,
+    max_items: int = 24,
+) -> dict[str, Any]:
+    return visual_render_marked_image(
+        image_ref,
+        detections,
+        resolved_path=resolved_path,
+        output_dir=output_dir,
+        prefix=prefix,
+        max_items=max_items,
+    )
 
 
 def repo_cli_env() -> dict[str, str]:
@@ -1138,6 +1292,7 @@ def summarize_results_for_reasoning(results: Any, max_items: int = 5, max_boxes:
                     class_id = int(cls[idx]) if idx < len(cls) else None
                     item["detections"].append(
                         {
+                            "index": idx,
                             "class_id": class_id,
                             "label": names.get(class_id, str(class_id)) if class_id is not None else None,
                             "confidence": round(float(conf[idx]), 4) if idx < len(conf) else None,
@@ -1153,425 +1308,823 @@ def summarize_results_for_reasoning(results: Any, max_items: int = 5, max_boxes:
     return summary
 
 
-def image_source_for_openai(source: Any, results_summary: list[dict[str, Any]]) -> str | None:
-    candidates: list[str] = []
-    if source is not None:
-        candidates.append(str(source))
-    if results_summary and results_summary[0].get("path"):
-        candidate = str(results_summary[0]["path"])
-        if candidate not in candidates:
-            candidates.append(candidate)
-    for candidate in candidates:
-        if candidate.startswith(("http://", "https://", "data:image/")):
-            return candidate
-        path = resolved_path(candidate)
-        if path.exists() and path.is_file():
-            return str(path)
-    return None
-
-
-def encode_image_reference_for_openai(image_ref: str, max_bytes: int = 20_000_000) -> dict[str, Any]:
-    if image_ref.startswith(("http://", "https://", "data:image/")):
-        return {"image_url": image_ref, "kind": "url" if image_ref.startswith(("http://", "https://")) else "data_url"}
-    path = resolved_path(image_ref)
-    if not path.exists() or not path.is_file():
-        raise FileNotFoundError(f"Image source for VLM is not a file or URL: {image_ref}")
-    size = path.stat().st_size
-    if size > max_bytes:
-        raise ValueError(f"Image source is too large for inline VLM upload: {path} ({size} bytes)")
-    mime_type = mimetypes.guess_type(path.name)[0] or "image/jpeg"
-    data = base64.b64encode(path.read_bytes()).decode("ascii")
-    return {"image_url": f"data:{mime_type};base64,{data}", "kind": "local_file", "path": str(path.resolve())}
-
-
-def openai_config(params: dict[str, Any]) -> dict[str, Any]:
-    provider = params.get("vlm_provider") or params.get("provider") or "openai"
-    base_url = str(params.get("openai_base_url") or os.environ.get("OPENAI_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
-    return {
-        "provider": provider,
-        "api_key_env": "OPENAI_API_KEY",
-        "api_key_present": bool(os.environ.get("OPENAI_API_KEY")),
-        "base_url": base_url,
-        "api_mode": params.get("openai_api_mode") or os.environ.get("OPENAI_API_MODE") or "auto",
-        "vlm_model": params.get("vlm_model") or os.environ.get("OPENAI_VLM_MODEL") or os.environ.get("OPENAI_MODEL") or "gpt-4.1-mini",
-        "llm_model": params.get("llm_model") or os.environ.get("OPENAI_LLM_MODEL") or os.environ.get("OPENAI_MODEL"),
-    }
-
-
-def build_thinking_with_image_prompt(
-    user_prompt: str,
+def build_visual_search_crop_prompt(
+    base_prompt: str,
+    region: dict[str, Any],
     detections: list[dict[str, Any]],
-    *,
-    method: str = "thinking-with-image",
-    thinking_with_image: bool = True,
-    structured_output: bool = True,
 ) -> str:
-    detection_text = json.dumps(json_safe(detections), ensure_ascii=False, indent=2)
-    image_instruction = (
-        "Privately inspect the image, compare it with the YOLO detection summary, and resolve disagreements."
-        if thinking_with_image
-        else "Use the user prompt and YOLO detection summary as the evidence surface, and do not assume image access."
-    )
-    output_instruction = (
-        "Return exactly one JSON object without Markdown fences. Use these keys: answer, visual_evidence, "
-        "yolo_cross_check, uncertainty, recommended_next_actions. In yolo_cross_check, include arrays named "
-        "confirmed, false_positives, possible_misses, duplicate_or_fragmented, and notes when applicable."
-        if structured_output
-        else "Return these sections: answer, visual_evidence, yolo_cross_check, uncertainty, recommended_next_actions."
-    )
     return (
-        "You are helping a YOLO-Master agent perform multimodal visual inference.\n"
-        f"Method: {method}. {image_instruction} Do not reveal hidden chain-of-thought. "
-        "Return a concise, evidence-based answer.\n\n"
-        f"User task:\n{user_prompt}\n\n"
-        f"YOLO detection summary:\n{detection_text}\n\n{output_instruction}"
+        "You are inspecting a zoomed crop extracted from the original image.\n"
+        "Focus on local object presence, object boundaries, and whether the YOLO box should be kept, adjusted, or suppressed.\n"
+        "Return exactly one JSON object without markdown fences. Preserve any useful keys from the schema, especially answer, visual_evidence, "
+        "yolo_cross_check, uncertainty, recommended_next_actions, visual_search, and fusion_hints.\n\n"
+        f"Crop region:\n{json.dumps(json_safe(region), ensure_ascii=False, indent=2)}\n\n"
+        f"Base task:\n{base_prompt}\n\n"
+        f"YOLO detection summary:\n{json.dumps(json_safe(detections), ensure_ascii=False, indent=2)}\n"
     )
 
 
-def extract_json_object(text: str) -> dict[str, Any] | None:
-    if not text:
-        return None
-    cleaned = text.strip()
-    fence_match = re.search(r"```(?:json)?\s*(.*?)\s*```", cleaned, re.DOTALL | re.IGNORECASE)
-    if fence_match:
-        cleaned = fence_match.group(1).strip()
+def default_visual_search_regions(detections: list[dict[str, Any]], max_regions: int = 2) -> list[dict[str, Any]]:
+    normalized = normalize_detection_boxes(detections)
+    ranked = sorted(
+        normalized,
+        key=lambda item: (
+            float(item.get("confidence") or 0.0),
+            (item["bbox_xyxy"][2] - item["bbox_xyxy"][0]) * (item["bbox_xyxy"][3] - item["bbox_xyxy"][1]),
+        ),
+    )
+    regions: list[dict[str, Any]] = []
+    for item in ranked[: max(0, max_regions)]:
+        regions.append(
+            {
+                "region_id": f"auto-{item['index']}",
+                "bbox_xyxy": item["bbox_xyxy"],
+                "reason": f"low_confidence_{item.get('label')}",
+                "priority": "high" if float(item.get("confidence") or 0.0) < 0.35 else "medium",
+                "linked_yolo_indices": [item["index"]],
+            }
+        )
+    return regions
 
-    def balanced_fragment(source: str) -> str | None:
-        start = None
-        depth = 0
-        in_string = False
-        escape = False
-        opener = None
-        for idx, ch in enumerate(source):
-            if in_string:
-                if escape:
-                    escape = False
-                elif ch == "\\":
-                    escape = True
-                elif ch == '"':
-                    in_string = False
-                continue
-            if ch == '"':
-                in_string = True
-            elif ch in "{[":
-                if start is None:
-                    start = idx
-                    opener = ch
-                    depth = 1
-                    continue
-                depth += 1
-            elif ch in '}]':
-                if start is None:
-                    continue
-                depth -= 1
-                if depth == 0 and opener is not None:
-                    return source[start : idx + 1]
-        return None
 
-    fragment = balanced_fragment(cleaned)
-    if fragment is not None:
-        try:
-            value = json.loads(fragment)
-            return value if isinstance(value, dict) else None
-        except Exception:
-            pass
-
-    try:
-        value = json.loads(cleaned)
-        return value if isinstance(value, dict) else None
-    except Exception:
-        pass
-    decoder = json.JSONDecoder()
-    for match in re.finditer(r"[{]", cleaned):
-        try:
-            value, _ = decoder.raw_decode(cleaned[match.start() :])
-        except Exception:
+def extract_visual_search_regions(verdict: dict[str, Any]) -> list[dict[str, Any]]:
+    if not isinstance(verdict, dict):
+        return []
+    visual_search = verdict.get("visual_search", {})
+    if not isinstance(visual_search, dict):
+        return []
+    regions = visual_search.get("search_regions", [])
+    if not isinstance(regions, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    for idx, region in enumerate(regions):
+        if not isinstance(region, dict):
             continue
-        if isinstance(value, dict):
-            return value
+        bbox = region.get("bbox_xyxy") or region.get("bbox") or region.get("xyxy")
+        if not isinstance(bbox, (list, tuple)):
+            continue
+        normalized.append(
+            {
+                "region_id": str(region.get("region_id") or f"r{idx+1}"),
+                "bbox_xyxy": [float(v) for v in bbox[:4]],
+                "purpose": str(region.get("purpose") or region.get("reason") or "inspect uncertain region"),
+                "priority": str(region.get("priority") or "medium"),
+                "linked_yolo_indices": [int(v) for v in region.get("linked_yolo_indices", []) if isinstance(v, (int, float, str)) and str(v).isdigit()],
+                "raw": region,
+            }
+        )
+    return normalized
+
+
+def run_visual_search_crop_passes(
+    *,
+    image_path: str | Path,
+    base_prompt: str,
+    detections: list[dict[str, Any]],
+    initial_verdict: dict[str, Any],
+    provider_cfg: dict[str, Any],
+    multimodal_params: dict[str, Any],
+    output_dir: Path,
+    max_output_tokens: int,
+    method: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    mode = str(multimodal_params.get("visual_search_mode") or "auto").lower()
+    if mode in {"off", "none", "false", "0"}:
+        return [], []
+    if mode in {"auto", "smart"}:
+        visual_search = initial_verdict.get("visual_search", {}) if isinstance(initial_verdict, dict) else {}
+        if not (isinstance(visual_search, dict) and parse_bool(visual_search.get("needs_zoom"), False)):
+            return [], []
+    regions = extract_visual_search_regions(initial_verdict)
+    if not regions and mode in {"always", "low-confidence", "low_confidence"}:
+        regions = default_visual_search_regions(detections, max_regions=int(multimodal_params.get("visual_search_max_regions", 2)))
+    if not regions:
+        return [], []
+    source_path = resolved_path(image_path)
+    image = load_pillow_image(source_path).convert("RGB")
+    width, height = image.size
+    crop_margin = float(multimodal_params.get("visual_search_crop_margin", 0.18))
+    max_regions = max(0, int(multimodal_params.get("visual_search_max_regions", 2)))
+    region_results: list[dict[str, Any]] = []
+    artifacts: list[dict[str, Any]] = []
+    crop_dir = output_dir / "visual-search"
+    crop_dir.mkdir(parents=True, exist_ok=True)
+
+    for idx, region in enumerate(regions[:max_regions]):
+        bbox = clamp_box_xyxy(region.get("bbox_xyxy", []), width, height, margin=crop_margin)
+        if bbox is None:
+            continue
+        crop = image.crop(tuple(bbox))
+        crop_path = crop_dir / f"{Path(source_path).stem}-region-{idx + 1}.jpg"
+        crop.save(crop_path, quality=92)
+        artifacts.append({"kind": "crop_image", "path": str(crop_path.resolve()), "region_id": region.get("region_id")})
+        crop_prompt = build_visual_search_crop_prompt(base_prompt, region, detections)
+        crop_result = call_openai_compatible(
+            model=str(provider_cfg["vlm_model"]),
+            user_text=crop_prompt,
+            developer_text=str(
+                multimodal_params.get("developer_prompt")
+                or multimodal_params.get("system_prompt")
+                or "You are a careful visual search assistant. Focus on the crop and return concise structured JSON."
+            ),
+            image_url=encode_image_reference_for_openai(str(crop_path), max_bytes=int(multimodal_params.get("max_image_bytes", 20_000_000)))["image_url"],
+            image_detail=str(multimodal_params.get("image_detail", "auto")),
+            base_url=provider_cfg["base_url"],
+            api_mode=str(provider_cfg["api_mode"]),
+            max_output_tokens=max_output_tokens,
+            temperature=float(multimodal_params["temperature"]) if "temperature" in multimodal_params else None,
+        )
+        crop_result = attach_multimodal_verdict(crop_result)
+        region_results.append(
+            {
+                "region": {**region, "bbox_xyxy": bbox},
+                "crop": {"path": str(crop_path.resolve()), "bbox_xyxy": bbox},
+                "vlm": crop_result,
+            }
+        )
+    return region_results, artifacts
+
+
+def as_list(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    return value if isinstance(value, list) else [value]
+
+
+def coerce_int(value: Any) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        if isinstance(value, str):
+            text = value.strip()
+            if not re.fullmatch(r"[-+]?\d+(?:\.0+)?", text):
+                return None
+            return int(float(text))
+        return int(value)
+    except Exception:
+        return None
+
+
+def coerce_float(value: Any) -> float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+
+def extract_yolo_indices(value: Any) -> set[int]:
+    indices: set[int] = set()
+    if isinstance(value, dict):
+        for key in ("index", "yolo_index", "yolo_idx", "yolo_box_index", "box_index"):
+            idx = coerce_int(value.get(key))
+            if idx is not None:
+                indices.add(idx)
+        for key in ("linked_yolo_indices", "indices", "yolo_indices"):
+            for item in as_list(value.get(key)):
+                idx = coerce_int(item)
+                if idx is not None:
+                    indices.add(idx)
+        return indices
+    if isinstance(value, list):
+        for item in value:
+            indices.update(extract_yolo_indices(item))
+        return indices
+    idx = coerce_int(value)
+    if idx is not None:
+        indices.add(idx)
+    return indices
+
+
+def valid_xyxy(box: Any) -> list[float] | None:
+    if not isinstance(box, (list, tuple)) or len(box) < 4:
+        return None
+    values: list[float] = []
+    for item in box[:4]:
+        value = coerce_float(item)
+        if value is None:
+            return None
+        values.append(round(value, 3))
+    if values[2] <= values[0] or values[3] <= values[1]:
+        return None
+    return values
+
+
+def xyxy_to_xywh(box: list[float]) -> list[float]:
+    return [round(box[0], 3), round(box[1], 3), round(box[2] - box[0], 3), round(box[3] - box[1], 3)]
+
+
+def merge_verdicts(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    merged = deepcopy(base) if isinstance(base, dict) else {}
+    if not isinstance(override, dict):
+        return merged
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = merge_verdicts(merged[key], value)
+        else:
+            merged[key] = deepcopy(value)
+    return merged
+
+
+def proposal_key(proposal: dict[str, Any]) -> str:
+    proposal_id = proposal.get("proposal_id")
+    if proposal_id not in (None, ""):
+        return f"id:{proposal_id}"
+    bbox = valid_xyxy(proposal.get("bbox_xyxy") or proposal.get("bbox") or proposal.get("xyxy"))
+    return f"bbox:{bbox}:{proposal.get('class_id')}:{proposal.get('label')}"
+
+
+def resolve_proposal_reference(item: Any, proposals_by_id: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
+    if isinstance(item, dict):
+        proposal_id = item.get("proposal_id")
+        if proposal_id not in (None, "") and str(proposal_id) in proposals_by_id:
+            merged = dict(proposals_by_id[str(proposal_id)])
+            merged.update({k: v for k, v in item.items() if v not in (None, "")})
+            return merged
+        return dict(item)
+    key = str(item)
+    if key in proposals_by_id:
+        return dict(proposals_by_id[key])
     return None
 
 
-def attach_multimodal_verdict(result: dict[str, Any]) -> dict[str, Any]:
-    result = dict(result)
-    if result.get("status") == "ok" and "verdict" not in result:
-        verdict = extract_json_object(str(result.get("text") or ""))
-        expected_keys = {"answer", "visual_evidence", "yolo_cross_check", "uncertainty", "recommended_next_actions"}
-        if verdict is not None and expected_keys.intersection(verdict):
-            result["verdict"] = json_safe(verdict)
-            result["verdict_parse_status"] = "parsed"
+def prompt_template_name(prompt_template: Any) -> str:
+    if prompt_template in (None, ""):
+        return ""
+    value = str(prompt_template)
+    return Path(value).stem if value.endswith(".md") else Path(value).name
+
+
+def proposal_open_label(proposal: dict[str, Any]) -> str | None:
+    for key in ("open_label", "object_label", "category_name", "label", "name"):
+        value = proposal.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def proposal_coco_class_id(proposal: dict[str, Any]) -> int | None:
+    for key in ("class_id", "category_id", "coco_class_id", "mapped_class_id", "canonical_class_id"):
+        value = coerce_int(proposal.get(key))
+        if value is not None:
+            return value
+    coco_candidate = proposal.get("coco_candidate")
+    if isinstance(coco_candidate, dict):
+        for key in ("class_id", "category_id"):
+            value = coerce_int(coco_candidate.get(key))
+            if value is not None:
+                return value
+    return None
+
+
+def proposal_coco_label(proposal: dict[str, Any]) -> str | None:
+    for key in ("coco_label", "canonical_label", "mapped_label", "label"):
+        value = proposal.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    coco_candidate = proposal.get("coco_candidate")
+    if isinstance(coco_candidate, dict):
+        for key in ("label", "name"):
+            value = coco_candidate.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return None
+
+
+def build_multimodal_fusion_preview(
+    *,
+    detections: list[dict[str, Any]],
+    verdict: dict[str, Any],
+    multimodal_params: dict[str, Any],
+    image_path: str | Path | None = None,
+) -> dict[str, Any]:
+    mode = str(multimodal_params.get("fusion_mode") or "preview").lower()
+    policy = str(multimodal_params.get("fusion_policy") or "add_only").lower()
+    enabled = parse_bool(multimodal_params.get("fusion_enabled"), mode not in {"off", "none", "false", "0"})
+    if not enabled:
+        return {"mode": "off", "strategy": "metric_safe_v1", "enabled": False}
+
+    open_world_enabled = open_world_policy_enabled(multimodal_params) or open_world_template_enabled(multimodal_params)
+    open_world_assist = policy in {"open_world_assist", "open-world-assist"}
+    allow_add = policy in {"add_only", "balanced", "aggressive", "all"} or open_world_enabled
+    allow_suppress = policy in {"balanced", "aggressive", "all"} or (open_world_enabled and not open_world_assist and policy in {"open_world", "open-world"})
+    allow_adjust = policy in {"aggressive", "all"}
+    allow_relabel = policy in {"aggressive", "all"}
+
+    add_min = float(multimodal_params.get("fusion_add_confidence_min", 0.65))
+    open_world_add_min = float(multimodal_params.get("fusion_open_world_confidence_min", 0.55 if open_world_enabled else add_min))
+    add_require_unlinked = parse_bool(multimodal_params.get("fusion_add_require_unlinked"), True)
+    add_max_linked_yolo_conf = float(multimodal_params.get("fusion_add_max_linked_yolo_confidence", 0.4))
+    add_allowed_bbox_quality = {
+        str(value).lower()
+        for value in as_list(multimodal_params.get("fusion_add_allowed_bbox_quality") or ["exact", "estimated"])
+        if value not in (None, "")
+    }
+    suppress_min = float(multimodal_params.get("fusion_suppress_confidence_min", 0.75))
+    adjust_min = float(multimodal_params.get("fusion_adjust_confidence_min", 0.7))
+    suppress_max_yolo_conf = float(multimodal_params.get("fusion_suppress_max_yolo_confidence", 0.45))
+    relabel_max_yolo_conf = float(multimodal_params.get("fusion_relabel_max_yolo_confidence", 0.5))
+    adjust_min_iou = float(multimodal_params.get("fusion_adjust_min_iou", 0.5))
+    open_world_iou_relabel_enabled = parse_bool(multimodal_params.get("open_world_iou_relabel_enabled"), False)
+    open_world_iou_relabel_threshold = float(multimodal_params.get("open_world_iou_relabel_threshold", 0.7) or 0.7)
+    open_world_iou_relabel_max_yolo_conf = float(multimodal_params.get("open_world_iou_relabel_max_yolo_confidence", 0.8) or 0.8)
+    yolo_boxes = normalize_detection_boxes(detections)
+    yolo_by_index = {int(item["index"]): item for item in yolo_boxes}
+    fusion_hints = verdict.get("fusion_hints", {}) if isinstance(verdict, dict) else {}
+    if not isinstance(fusion_hints, dict):
+        fusion_hints = {}
+    cross_check = verdict.get("yolo_cross_check", {}) if isinstance(verdict, dict) else {}
+    if not isinstance(cross_check, dict):
+        cross_check = {}
+
+    vlm_proposals = [item for item in as_list(verdict.get("vlm_detections")) if isinstance(item, dict)] if isinstance(verdict, dict) else []
+    proposals_by_id = {
+        str(item.get("proposal_id")): item
+        for item in vlm_proposals
+        if item.get("proposal_id") not in (None, "")
+    }
+
+    actions: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    suppress_indices = set()
+    open_world_predictions: list[dict[str, Any]] = []
+
+    def yolo_confidence(idx: int) -> float | None:
+        return coerce_float((yolo_by_index.get(idx) or {}).get("confidence"))
+
+    def yolo_box(idx: int) -> list[float] | None:
+        return valid_xyxy((yolo_by_index.get(idx) or {}).get("bbox_xyxy"))
+
+    def can_suppress(idx: int, score: float | None) -> tuple[bool, str]:
+        yolo_conf = yolo_confidence(idx)
+        if score is not None and score < suppress_min:
+            return False, "vlm_confidence_below_threshold"
+        if yolo_conf is not None and yolo_conf > suppress_max_yolo_conf:
+            return False, "yolo_confidence_too_high"
+        return True, "vlm_false_positive_low_yolo_confidence"
+
+    def can_add(proposal: dict[str, Any]) -> tuple[bool, str]:
+        bbox_quality = str(proposal.get("bbox_quality") or "estimated").lower()
+        if bbox_quality not in add_allowed_bbox_quality:
+            return False, "bbox_quality_not_allowed"
+        linked_indices = sorted(extract_yolo_indices(proposal))
+        if add_require_unlinked and linked_indices:
+            linked_confidences = [yolo_confidence(idx) for idx in linked_indices]
+            if any(conf is not None and conf > add_max_linked_yolo_conf for conf in linked_confidences):
+                return False, "linked_yolo_confidence_too_high"
+        return True, "vlm_add_candidate"
+
+    for item in as_list(fusion_hints.get("suppress_yolo_indices")) + as_list(cross_check.get("false_positives")):
+        score = coerce_float(item.get("confidence")) if isinstance(item, dict) else None
+        for idx in extract_yolo_indices(item):
+            if not allow_suppress:
+                actions.append(
+                    {
+                        "type": "reject_suppress",
+                        "yolo_index": idx,
+                        "confidence": score,
+                        "yolo_confidence": yolo_confidence(idx),
+                        "reason": "fusion_policy_disallows_suppress",
+                        "policy": policy,
+                    }
+                )
+                continue
+            allowed, reason = can_suppress(idx, score)
+            if allowed:
+                suppress_indices.add(idx)
+                actions.append(
+                    {
+                        "type": "suppress",
+                        "yolo_index": idx,
+                        "confidence": score,
+                        "yolo_confidence": yolo_confidence(idx),
+                        "reason": reason,
+                    }
+                )
+            else:
+                actions.append(
+                    {
+                        "type": "reject_suppress",
+                        "yolo_index": idx,
+                        "confidence": score,
+                        "yolo_confidence": yolo_confidence(idx),
+                        "reason": reason,
+                        "threshold": suppress_min,
+                        "max_yolo_confidence": suppress_max_yolo_conf,
+                    }
+                )
+
+    adjustments: dict[int, dict[str, Any]] = {}
+    for item in as_list(fusion_hints.get("adjust_boxes")):
+        if not isinstance(item, dict):
+            continue
+        if not allow_adjust:
+            idx_set = extract_yolo_indices(item)
+            score = coerce_float(item.get("confidence"))
+            for idx in idx_set:
+                actions.append(
+                    {
+                        "type": "reject_adjust_box",
+                        "yolo_index": idx,
+                        "confidence": score,
+                        "reason": "fusion_policy_disallows_adjust",
+                        "policy": policy,
+                    }
+                )
+            continue
+        idx_set = extract_yolo_indices(item)
+        bbox = valid_xyxy(item.get("bbox_xyxy") or item.get("bbox") or item.get("xyxy"))
+        score = coerce_float(item.get("confidence"))
+        if bbox is None:
+            continue
+        for idx in idx_set:
+            original_box = yolo_box(idx)
+            overlap = box_iou_xyxy(original_box, bbox) if original_box is not None else None
+            if score is not None and score < adjust_min:
+                actions.append({"type": "reject_adjust_box", "yolo_index": idx, "confidence": score, "threshold": adjust_min})
+            elif original_box is None:
+                actions.append({"type": "reject_adjust_box", "yolo_index": idx, "confidence": score, "reason": "missing_original_yolo_box"})
+            elif overlap is None or overlap < adjust_min_iou:
+                actions.append(
+                    {
+                        "type": "reject_adjust_box",
+                        "yolo_index": idx,
+                        "confidence": score,
+                        "iou_with_original": overlap,
+                        "min_iou": adjust_min_iou,
+                        "reason": "adjustment_too_far_from_original",
+                    }
+                )
+            else:
+                adjustments[idx] = {"bbox_xyxy": bbox, "confidence": score, "raw": item}
+                actions.append({"type": "adjust_box", "yolo_index": idx, "bbox_xyxy": bbox, "confidence": score, "iou_with_original": overlap})
+
+    relabels: dict[int, dict[str, Any]] = {}
+    for item in as_list(fusion_hints.get("relabel_yolo")):
+        if not isinstance(item, dict):
+            continue
+        if not allow_relabel:
+            idx_set = extract_yolo_indices(item)
+            class_value = item.get("class_id") if item.get("class_id") is not None else item.get("to_class_id")
+            class_value = class_value if class_value is not None else item.get("new_class_id")
+            class_id = coerce_int(class_value)
+            label = item.get("label") or item.get("to_label") or item.get("new_label")
+            for idx in idx_set:
+                actions.append(
+                    {
+                        "type": "reject_relabel",
+                        "yolo_index": idx,
+                        "class_id": class_id,
+                        "label": label,
+                        "reason": "fusion_policy_disallows_relabel",
+                        "policy": policy,
+                    }
+                )
+            continue
+        idx_set = extract_yolo_indices(item)
+        class_value = item.get("class_id") if item.get("class_id") is not None else item.get("to_class_id")
+        class_value = class_value if class_value is not None else item.get("new_class_id")
+        class_id = coerce_int(class_value)
+        label = item.get("label") or item.get("to_label") or item.get("new_label")
+        if class_id is None and label in (None, ""):
+            continue
+        for idx in idx_set:
+            yolo_conf = yolo_confidence(idx)
+            if yolo_conf is not None and yolo_conf > relabel_max_yolo_conf:
+                actions.append(
+                    {
+                        "type": "reject_relabel",
+                        "yolo_index": idx,
+                        "class_id": class_id,
+                        "label": label,
+                        "yolo_confidence": yolo_conf,
+                        "max_yolo_confidence": relabel_max_yolo_conf,
+                        "reason": "yolo_confidence_too_high",
+                    }
+                )
+                continue
+            relabels[idx] = {"class_id": class_id, "label": label, "raw": item}
+            actions.append({"type": "relabel", "yolo_index": idx, "class_id": class_id, "label": label, "yolo_confidence": yolo_conf})
+
+    explicit_adds: list[dict[str, Any]] = []
+    explicit_open_world_adds: list[dict[str, Any]] = []
+    if allow_add:
+        for item in as_list(fusion_hints.get("add_vlm_detections")):
+            resolved = resolve_proposal_reference(item, proposals_by_id)
+            if resolved is not None:
+                explicit_adds.append(resolved)
+        for item in as_list(fusion_hints.get("add_open_world_detections")):
+            resolved = resolve_proposal_reference(item, proposals_by_id)
+            if resolved is not None:
+                explicit_open_world_adds.append(resolved)
+    else:
+        for item in as_list(fusion_hints.get("add_vlm_detections")):
+            actions.append({"type": "reject_add", "proposal_id": item.get("proposal_id") if isinstance(item, dict) else str(item), "reason": "fusion_policy_disallows_add", "policy": policy})
+    for proposal in vlm_proposals:
+        action = str(proposal.get("coco_eval_action") or proposal.get("open_world_action") or "").lower()
+        if action in {"add", "add_vlm", "add_vlm_detection", "new", "insert"}:
+            if allow_add and (proposal_coco_class_id(proposal) is not None or not open_world_enabled):
+                explicit_adds.append(proposal)
+            elif allow_add and open_world_enabled:
+                explicit_open_world_adds.append(proposal)
+            else:
+                actions.append({"type": "reject_add", "proposal_id": proposal.get("proposal_id"), "reason": "fusion_policy_disallows_add", "policy": policy})
+        elif action in {"open_world_add", "open-world-add", "open_world", "discover", "novel"}:
+            if allow_add and open_world_enabled:
+                explicit_open_world_adds.append(proposal)
+            else:
+                actions.append({"type": "reject_open_world_add", "proposal_id": proposal.get("proposal_id"), "reason": "fusion_policy_disallows_open_world_add", "policy": policy})
+        elif action in {"suppress", "drop", "remove"}:
+            for idx in extract_yolo_indices(proposal):
+                if not allow_suppress:
+                    actions.append({"type": "reject_suppress", "yolo_index": idx, "proposal_id": proposal.get("proposal_id"), "reason": "fusion_policy_disallows_suppress", "policy": policy})
+                    continue
+                score = coerce_float(proposal.get("confidence"))
+                allowed, reason = can_suppress(idx, score)
+                if allowed:
+                    suppress_indices.add(idx)
+                    actions.append(
+                        {
+                            "type": "suppress",
+                            "yolo_index": idx,
+                            "proposal_id": proposal.get("proposal_id"),
+                            "confidence": score,
+                            "yolo_confidence": yolo_confidence(idx),
+                            "reason": "vlm_proposal_action",
+                        }
+                    )
+                else:
+                    actions.append(
+                        {
+                            "type": "reject_suppress",
+                            "yolo_index": idx,
+                            "proposal_id": proposal.get("proposal_id"),
+                            "confidence": score,
+                            "yolo_confidence": yolo_confidence(idx),
+                            "reason": reason,
+                            "threshold": suppress_min,
+                            "max_yolo_confidence": suppress_max_yolo_conf,
+                        }
+                    )
+
+    fused_predictions: list[dict[str, Any]] = []
+    for item in yolo_boxes:
+        idx = int(item["index"])
+        if idx in suppress_indices:
+            continue
+        prediction = {
+            "source": "yolo",
+            "index": idx,
+            "class_id": item.get("class_id"),
+            "label": item.get("label"),
+            "confidence": item.get("confidence"),
+            "bbox_xyxy": item.get("bbox_xyxy"),
+            "coco_bbox_xywh": xyxy_to_xywh(item["bbox_xyxy"]),
+            "action": "keep",
+        }
+        if idx in adjustments:
+            prediction["bbox_xyxy"] = adjustments[idx]["bbox_xyxy"]
+            prediction["coco_bbox_xywh"] = xyxy_to_xywh(adjustments[idx]["bbox_xyxy"])
+            prediction["action"] = "adjusted"
+        if idx in relabels:
+            if relabels[idx].get("class_id") is not None:
+                prediction["class_id"] = relabels[idx]["class_id"]
+            if relabels[idx].get("label") not in (None, ""):
+                prediction["label"] = relabels[idx]["label"]
+            prediction["action"] = "relabelled" if prediction["action"] == "keep" else f"{prediction['action']}+relabelled"
+        fused_predictions.append(prediction)
+
+    seen_adds: set[str] = set()
+    for proposal in explicit_adds:
+        key = proposal_key(proposal)
+        if key in seen_adds:
+            continue
+        seen_adds.add(key)
+        bbox = valid_xyxy(proposal.get("bbox_xyxy") or proposal.get("bbox") or proposal.get("xyxy"))
+        confidence = coerce_float(proposal.get("confidence"))
+        class_value = proposal.get("class_id") if proposal.get("class_id") is not None else proposal.get("category_id")
+        class_id = coerce_int(class_value)
+        if bbox is None or class_id is None:
+            warnings.append(f"Skipped VLM proposal without usable bbox/class_id: {proposal.get('proposal_id', key)}")
+            continue
+        allowed, reason = can_add(proposal)
+        if not allowed:
+            actions.append(
+                {
+                    "type": "reject_add",
+                    "proposal_id": proposal.get("proposal_id"),
+                    "confidence": confidence,
+                    "bbox_quality": proposal.get("bbox_quality"),
+                    "linked_yolo_indices": sorted(extract_yolo_indices(proposal)),
+                    "reason": reason,
+                    "policy": policy,
+                }
+            )
+            continue
+        if confidence is None or confidence < add_min:
+            actions.append(
+                {
+                    "type": "reject_add",
+                    "proposal_id": proposal.get("proposal_id"),
+                    "confidence": confidence,
+                    "threshold": add_min,
+                }
+            )
+            continue
+        fused_predictions.append(
+            {
+                "source": "vlm",
+                "proposal_id": proposal.get("proposal_id"),
+                "class_id": class_id,
+                "label": proposal.get("label"),
+                "confidence": round(confidence, 4),
+                "bbox_xyxy": bbox,
+                "coco_bbox_xywh": xyxy_to_xywh(bbox),
+                "bbox_quality": proposal.get("bbox_quality", "estimated"),
+                "action": "added",
+                "linked_yolo_indices": sorted(extract_yolo_indices(proposal)),
+            }
+        )
+        actions.append({"type": "add", "proposal_id": proposal.get("proposal_id"), "confidence": confidence})
+
+    seen_open_world_adds: set[str] = set()
+    for proposal in explicit_open_world_adds:
+        key = proposal_key(proposal)
+        if key in seen_open_world_adds:
+            continue
+        seen_open_world_adds.add(key)
+        bbox = valid_xyxy(proposal.get("bbox_xyxy") or proposal.get("bbox") or proposal.get("xyxy"))
+        confidence = coerce_float(proposal.get("confidence"))
+        open_label = proposal_open_label(proposal)
+        class_id = proposal_coco_class_id(proposal)
+        coco_label = proposal_coco_label(proposal)
+        if bbox is None or open_label in (None, ""):
+            warnings.append(f"Skipped open-world VLM proposal without usable bbox/label: {proposal.get('proposal_id', key)}")
+            continue
+        relabel_hit = None
+        if open_world_iou_relabel_enabled:
+            for yolo_item in yolo_boxes:
+                yolo_bbox = yolo_item.get("bbox_xyxy")
+                iou = box_iou_xyxy(yolo_bbox, bbox) if isinstance(yolo_bbox, list) else 0.0
+                if iou >= open_world_iou_relabel_threshold:
+                    yolo_conf = coerce_float(yolo_item.get("confidence"))
+                    if yolo_conf is not None and yolo_conf <= open_world_iou_relabel_max_yolo_conf:
+                        relabel_hit = {
+                            "yolo_index": yolo_item.get("index"),
+                            "yolo_label": yolo_item.get("label"),
+                            "yolo_confidence": yolo_conf,
+                            "iou": iou,
+                        }
+                        break
+        if relabel_hit is not None:
+            record = {
+                "source": "vlm_open_world",
+                "proposal_id": proposal.get("proposal_id"),
+                "open_label": open_label,
+                "label": coco_label or open_label,
+                "class_id": class_id,
+                "confidence": round(confidence or 0.0, 4),
+                "bbox_xyxy": bbox,
+                "bbox_quality": proposal.get("bbox_quality", "estimated"),
+                "action": "open_world_relabelled",
+                "linked_yolo_indices": sorted(extract_yolo_indices(proposal)),
+                "ontology_aliases": as_list(proposal.get("ontology_aliases")),
+                "relabelled_from": relabel_hit,
+            }
+            open_world_predictions.append(record)
+            actions.append(
+                {
+                    "type": "relabel_open_world",
+                    "proposal_id": proposal.get("proposal_id"),
+                    "open_label": open_label,
+                    "yolo_index": relabel_hit["yolo_index"],
+                    "yolo_label": relabel_hit["yolo_label"],
+                    "iou": relabel_hit["iou"],
+                    "confidence": confidence,
+                }
+            )
+            continue
+        allowed, reason = can_add(proposal)
+        if not allowed:
+            actions.append(
+                {
+                    "type": "reject_open_world_add",
+                    "proposal_id": proposal.get("proposal_id"),
+                    "confidence": confidence,
+                    "bbox_quality": proposal.get("bbox_quality"),
+                    "linked_yolo_indices": sorted(extract_yolo_indices(proposal)),
+                    "reason": reason,
+                    "policy": policy,
+                }
+            )
+            continue
+        if confidence is None or confidence < open_world_add_min:
+            actions.append(
+                {
+                    "type": "reject_open_world_add",
+                    "proposal_id": proposal.get("proposal_id"),
+                    "confidence": confidence,
+                    "threshold": open_world_add_min,
+                    "reason": "open_world_confidence_below_threshold",
+                }
+            )
+            continue
+        record = {
+            "source": "vlm_open_world",
+            "proposal_id": proposal.get("proposal_id"),
+            "open_label": open_label,
+            "label": coco_label or open_label,
+            "class_id": class_id,
+            "confidence": round(confidence, 4),
+            "bbox_xyxy": bbox,
+            "bbox_quality": proposal.get("bbox_quality", "estimated"),
+            "action": "open_world_added",
+            "linked_yolo_indices": sorted(extract_yolo_indices(proposal)),
+            "ontology_aliases": as_list(proposal.get("ontology_aliases")),
+        }
+        if class_id is not None:
+            record["coco_bbox_xywh"] = xyxy_to_xywh(bbox)
+            fused_predictions.append(record)
+            actions.append(
+                {
+                    "type": "add_open_world_mapped",
+                    "proposal_id": proposal.get("proposal_id"),
+                    "confidence": confidence,
+                    "class_id": class_id,
+                    "open_label": open_label,
+                }
+            )
         else:
-            result["verdict_parse_status"] = "unparsed"
-    return result
+            open_world_predictions.append(record)
+            actions.append(
+                {
+                    "type": "add_open_world",
+                    "proposal_id": proposal.get("proposal_id"),
+                    "confidence": confidence,
+                    "open_label": open_label,
+                }
+            )
 
-
-def extract_openai_text(payload: dict[str, Any]) -> str:
-    if isinstance(payload.get("output_text"), str):
-        return payload["output_text"]
-    chunks: list[str] = []
-    for output in payload.get("output", []) or []:
-        for content in output.get("content", []) or []:
-            text = content.get("text")
-            if isinstance(text, str):
-                chunks.append(text)
-    return "\n".join(chunks).strip()
-
-
-def extract_openai_chat_text(payload: dict[str, Any]) -> str:
-    chunks: list[str] = []
-    for choice in payload.get("choices", []) or []:
-        message = choice.get("message") or {}
-        content = message.get("content")
-        if isinstance(content, str):
-            chunks.append(content)
-        elif isinstance(content, list):
-            for item in content:
-                if isinstance(item, dict) and isinstance(item.get("text"), str):
-                    chunks.append(item["text"])
-    return "\n".join(chunks).strip()
-
-
-def classify_openai_http_status(detail: str) -> str:
-    text = detail.lower()
-    blocked_markers = (
-        "access denied",
-        "arrearage",
-        "insufficient_quota",
-        "quota",
-        "billing",
-        "permission",
-        "unauthorized",
-        "forbidden",
-    )
-    return "blocked" if any(marker in text for marker in blocked_markers) else "failed"
-
-
-def call_openai_responses(
-    *,
-    model: str,
-    user_text: str,
-    developer_text: str | None = None,
-    image_url: str | None = None,
-    image_detail: str = "auto",
-    base_url: str | None = None,
-    max_output_tokens: int = 800,
-    temperature: float | None = None,
-) -> dict[str, Any]:
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        return {
-            "status": "blocked",
-            "provider": "openai",
-            "summary": "OPENAI_API_KEY is not set; multimodal reasoning was skipped.",
-            "api_key_env": "OPENAI_API_KEY",
-        }
-
-    base_url = (base_url or os.environ.get("OPENAI_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
-    content: list[dict[str, Any]] = [{"type": "input_text", "text": user_text}]
-    if image_url:
-        content.append({"type": "input_image", "image_url": image_url, "detail": image_detail})
-    input_items = []
-    if developer_text:
-        input_items.append({"role": "developer", "content": [{"type": "input_text", "text": developer_text}]})
-    input_items.append({"role": "user", "content": content})
-
-    body: dict[str, Any] = {
-        "model": model,
-        "input": input_items,
-        "max_output_tokens": max_output_tokens,
-    }
-    if temperature is not None:
-        body["temperature"] = temperature
-
-    request = urllib.request.Request(
-        f"{base_url}/responses",
-        data=json.dumps(body).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=120) as response_handle:
-            payload = json.loads(response_handle.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        status = classify_openai_http_status(detail)
-        return {
-            "status": status,
-            "provider": "openai",
-            "summary": f"OpenAI Responses API returned HTTP {exc.code}",
-            "error": {"type": "HTTPError", "code": exc.code, "body": detail},
-        }
-    except Exception as exc:
-        return {
-            "status": "failed",
-            "provider": "openai",
-            "summary": "OpenAI Responses API request failed",
-            "error": {"type": type(exc).__name__, "message": str(exc)},
-        }
-
-    return {
-        "status": "ok",
-        "provider": "openai",
-        "api_mode": "responses",
-        "model": model,
-        "text": extract_openai_text(payload),
-        "response_id": payload.get("id"),
-        "usage": json_safe(payload.get("usage", {})),
-    }
-
-
-def call_openai_chat_completions(
-    *,
-    model: str,
-    user_text: str,
-    developer_text: str | None = None,
-    image_url: str | None = None,
-    base_url: str | None = None,
-    max_output_tokens: int = 800,
-    temperature: float | None = None,
-) -> dict[str, Any]:
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        return {
-            "status": "blocked",
-            "provider": "openai",
-            "api_mode": "chat.completions",
-            "summary": "OPENAI_API_KEY is not set; multimodal reasoning was skipped.",
-            "api_key_env": "OPENAI_API_KEY",
-        }
-
-    base_url = (base_url or os.environ.get("OPENAI_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
-    content: list[dict[str, Any]] = [{"type": "text", "text": user_text}]
-    if image_url:
-        content.append({"type": "image_url", "image_url": {"url": image_url}})
-    messages = []
-    if developer_text:
-        messages.append({"role": "system", "content": developer_text})
-    messages.append({"role": "user", "content": content})
-
-    body: dict[str, Any] = {
-        "model": model,
-        "messages": messages,
-        "max_tokens": max_output_tokens,
-    }
-    if temperature is not None:
-        body["temperature"] = temperature
-
-    request = urllib.request.Request(
-        f"{base_url}/chat/completions",
-        data=json.dumps(body).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=120) as response_handle:
-            payload = json.loads(response_handle.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        status = classify_openai_http_status(detail)
-        return {
-            "status": status,
-            "provider": "openai",
-            "api_mode": "chat.completions",
-            "summary": f"OpenAI-compatible Chat Completions API returned HTTP {exc.code}",
-            "error": {"type": "HTTPError", "code": exc.code, "body": detail},
-        }
-    except Exception as exc:
-        return {
-            "status": "failed",
-            "provider": "openai",
-            "api_mode": "chat.completions",
-            "summary": "OpenAI-compatible Chat Completions API request failed",
-            "error": {"type": type(exc).__name__, "message": str(exc)},
-        }
-
-    return {
-        "status": "ok",
-        "provider": "openai",
-        "api_mode": "chat.completions",
-        "model": model,
-        "text": extract_openai_chat_text(payload),
-        "response_id": payload.get("id"),
-        "usage": json_safe(payload.get("usage", {})),
-    }
-
-
-def call_openai_compatible(
-    *,
-    model: str,
-    user_text: str,
-    developer_text: str | None = None,
-    image_url: str | None = None,
-    image_detail: str = "auto",
-    base_url: str | None = None,
-    api_mode: str = "auto",
-    max_output_tokens: int = 800,
-    temperature: float | None = None,
-) -> dict[str, Any]:
-    normalized_mode = api_mode.replace("_", ".").lower()
-    if normalized_mode in {"chat", "chat.completion", "chat.completions"}:
-        return call_openai_chat_completions(
-            model=model,
-            user_text=user_text,
-            developer_text=developer_text,
-            image_url=image_url,
-            base_url=base_url,
-            max_output_tokens=max_output_tokens,
-            temperature=temperature,
-        )
-    if normalized_mode == "responses":
-        return call_openai_responses(
-            model=model,
-            user_text=user_text,
-            developer_text=developer_text,
-            image_url=image_url,
-            image_detail=image_detail,
-            base_url=base_url,
-            max_output_tokens=max_output_tokens,
-            temperature=temperature,
+    image_id: int | str | None = None
+    if image_path not in (None, ""):
+        stem = Path(str(image_path)).stem
+        image_id = int(stem) if stem.isdigit() else stem
+    coco_records = []
+    for prediction in fused_predictions:
+        class_id = coerce_int(prediction.get("class_id"))
+        score = coerce_float(prediction.get("confidence"))
+        bbox = prediction.get("coco_bbox_xywh")
+        if image_id is None or class_id is None or score is None or not isinstance(bbox, list):
+            continue
+        coco_records.append(
+            {
+                "image_id": image_id,
+                "category_id": class_id,
+                "bbox": bbox,
+                "score": round(score, 6),
+                "source": prediction.get("source"),
+                "action": prediction.get("action"),
+            }
         )
 
-    responses_result = call_openai_responses(
-        model=model,
-        user_text=user_text,
-        developer_text=developer_text,
-        image_url=image_url,
-        image_detail=image_detail,
-        base_url=base_url,
-        max_output_tokens=max_output_tokens,
-        temperature=temperature,
-    )
-    if responses_result.get("status") in {"ok", "blocked"}:
-        return responses_result
-    chat_result = call_openai_chat_completions(
-        model=model,
-        user_text=user_text,
-        developer_text=developer_text,
-        image_url=image_url,
-        base_url=base_url,
-        max_output_tokens=max_output_tokens,
-        temperature=temperature,
-    )
-    if chat_result.get("status") == "ok":
-        chat_result["fallback_from"] = responses_result
-    return chat_result
-
-
-def multimodal_overall_status(vlm_result: dict[str, Any], llm_result: dict[str, Any] | None) -> str:
-    vlm_status = vlm_result.get("status")
-    if vlm_status == "blocked" or (llm_result and llm_result.get("status") == "blocked"):
-        return "blocked"
-    if vlm_status != "ok":
-        return "partial"
-    if llm_result and llm_result.get("status") == "failed":
-        return "partial"
-    return "ok"
+    summary = {
+        "yolo_boxes": len(yolo_boxes),
+        "vlm_proposals": len(vlm_proposals),
+        "kept": sum(1 for item in fused_predictions if item.get("source") == "yolo"),
+        "suppressed": len(suppress_indices),
+        "added": sum(1 for item in fused_predictions if item.get("source") == "vlm"),
+        "open_world_added": len(open_world_predictions),
+        "open_world_mapped_to_coco": sum(1 for item in fused_predictions if item.get("source") == "vlm_open_world"),
+        "adjusted": len(adjustments),
+        "relabelled": len(relabels),
+        "fused_boxes": len(fused_predictions),
+        "coco_records": len(coco_records),
+    }
+    return {
+        "mode": mode,
+        "policy": policy,
+        "enabled": True,
+        "strategy": "metric_safe_v1",
+        "thresholds": {
+            "add_confidence_min": add_min,
+            "open_world_confidence_min": open_world_add_min,
+            "add_require_unlinked": add_require_unlinked,
+            "add_max_linked_yolo_confidence": add_max_linked_yolo_conf,
+            "add_allowed_bbox_quality": sorted(add_allowed_bbox_quality),
+            "suppress_confidence_min": suppress_min,
+            "adjust_confidence_min": adjust_min,
+            "suppress_max_yolo_confidence": suppress_max_yolo_conf,
+            "relabel_max_yolo_confidence": relabel_max_yolo_conf,
+            "adjust_min_iou": adjust_min_iou,
+        },
+        "summary": summary,
+        "actions": actions,
+        "predictions": fused_predictions,
+        "coco_predictions_preview": coco_records,
+        "open_world_predictions_preview": open_world_predictions,
+        "warnings": warnings,
+    }
 
 
 def response(skill: str, status: str, summary: str, **kwargs: Any) -> dict[str, Any]:
@@ -2360,17 +2913,18 @@ def read_ground_truth_summary(image_path: Path, names: dict[int, str], max_objec
     labels: list[dict[str, Any]] = []
     counts: dict[str, int] = {}
     for raw_line in label_path.read_text(encoding="utf-8").splitlines():
-        parts = raw_line.strip().split()
-        if len(parts) < 5:
+        parsed = parse_label_line(raw_line)
+        if parsed is None:
             continue
-        try:
-            class_id = int(float(parts[0]))
-            xywhn = [round(float(value), 6) for value in parts[1:5]]
-        except Exception:
-            continue
+        class_id, xywhn, segment = parsed
         label = names.get(class_id, str(class_id))
         counts[label] = counts.get(label, 0) + 1
-        labels.append({"class_id": class_id, "label": label, "xywhn": xywhn})
+        item = {"class_id": class_id, "label": label}
+        if len(segment) >= 6:
+            item["segment_points"] = len(segment) // 2
+        else:
+            item["xywhn"] = [round(float(value), 6) for value in xywhn[:4]]
+        labels.append(item)
     summary["objects"] = len(labels)
     summary["labels"] = labels[:max_objects]
     summary["label_counts"] = counts
@@ -2379,12 +2933,689 @@ def read_ground_truth_summary(image_path: Path, names: dict[int, str], max_objec
     return summary
 
 
-def merge_counts(target: dict[str, int], source: dict[str, Any]) -> None:
-    for key, value in source.items():
-        try:
-            target[str(key)] = target.get(str(key), 0) + int(value)
-        except Exception:
+def image_size_for_metric(image_path: Path) -> tuple[int, int] | None:
+    try:
+        with load_pillow_image(image_path) as image:
+            return image.size
+    except Exception:
+        return None
+
+
+def xywhn_to_xyxy(xywhn: list[float], width: int, height: int) -> list[float] | None:
+    if len(xywhn) < 4:
+        return None
+    x_center, y_center, box_w, box_h = [float(value) for value in xywhn[:4]]
+    x1 = (x_center - box_w / 2.0) * width
+    y1 = (y_center - box_h / 2.0) * height
+    x2 = (x_center + box_w / 2.0) * width
+    y2 = (y_center + box_h / 2.0) * height
+    return valid_xyxy([x1, y1, x2, y2])
+
+
+def ground_truth_records_for_metric(image_path: Path, names: dict[int, str]) -> list[dict[str, Any]]:
+    label_path = label_path_for_image(image_path)
+    image_size = image_size_for_metric(image_path)
+    if not label_path.exists() or image_size is None:
+        return []
+    width, height = image_size
+    records: list[dict[str, Any]] = []
+    for index, raw_line in enumerate(label_path.read_text(encoding="utf-8").splitlines()):
+        parsed = parse_label_line(raw_line)
+        if parsed is None:
             continue
+        class_id, xywhn, segment = parsed
+        bbox = None
+        if len(segment) >= 6:
+            polygon = polygon_points_from_segment(segment, width, height)
+            bbox = polygon_bbox_xyxy(polygon)
+        if bbox is None:
+            bbox = xywhn_to_xyxy([float(value) for value in xywhn[:4]], width, height)
+        if bbox is None:
+            continue
+        records.append(
+            {
+                "image_id": str(image_path.resolve()),
+                "target_index": index,
+                "class_id": class_id,
+                "label": names.get(class_id, str(class_id)),
+                "bbox_xyxy": bbox,
+            }
+        )
+    return records
+
+
+def parse_label_line(raw_line: str) -> tuple[int, list[float], list[float]] | None:
+    parts = raw_line.strip().split()
+    if len(parts) < 5:
+        return None
+    try:
+        class_id = int(float(parts[0]))
+        coords = [float(value) for value in parts[1:]]
+    except Exception:
+        return None
+    return class_id, coords[:4], coords[4:]
+
+
+def ground_truth_classification_records_for_metric(image_path: Path, names: dict[int, str]) -> list[dict[str, Any]]:
+    label_path = label_path_for_image(image_path)
+    if not label_path.exists():
+        return []
+    records: list[dict[str, Any]] = []
+    seen: set[tuple[int, str]] = set()
+    for raw_line in label_path.read_text(encoding="utf-8").splitlines():
+        parsed = parse_label_line(raw_line)
+        if parsed is None:
+            continue
+        class_id, _, _ = parsed
+        key = (class_id, str(image_path.resolve()))
+        if key in seen:
+            continue
+        seen.add(key)
+        records.append(
+            {
+                "image_id": str(image_path.resolve()),
+                "class_id": class_id,
+                "label": names.get(class_id, str(class_id)),
+            }
+        )
+    return records
+
+
+def polygon_points_from_segment(segment: list[float], width: int, height: int) -> list[list[float]]:
+    points: list[list[float]] = []
+    usable = len(segment) - (len(segment) % 2)
+    for idx in range(0, usable, 2):
+        x = max(0.0, min(float(segment[idx]) * width, float(width)))
+        y = max(0.0, min(float(segment[idx + 1]) * height, float(height)))
+        points.append([round(x, 6), round(y, 6)])
+    return points
+
+
+def polygon_bbox_xyxy(points: list[list[float]]) -> list[float] | None:
+    if len(points) < 3:
+        return None
+    xs = [point[0] for point in points]
+    ys = [point[1] for point in points]
+    return valid_xyxy([min(xs), min(ys), max(xs), max(ys)])
+
+
+def polygon_area(points: list[list[float]]) -> float:
+    if len(points) < 3:
+        return 0.0
+    area = 0.0
+    for idx, point in enumerate(points):
+        nxt = points[(idx + 1) % len(points)]
+        area += point[0] * nxt[1] - nxt[0] * point[1]
+    return abs(area) * 0.5
+
+
+def point_in_polygon(point: tuple[float, float], polygon: list[list[float]]) -> bool:
+    if len(polygon) < 3:
+        return False
+    x, y = point
+    inside = False
+    j = len(polygon) - 1
+    for i, current in enumerate(polygon):
+        xi, yi = current
+        xj, yj = polygon[j]
+        intersects = ((yi > y) != (yj > y)) and (
+            x < (xj - xi) * (y - yi) / ((yj - yi) or 1e-9) + xi
+        )
+        if intersects:
+            inside = not inside
+        j = i
+    return inside
+
+
+def polygon_iou_approx(a: list[list[float]], b: list[list[float]], samples: int = 24) -> float:
+    bbox_a = polygon_bbox_xyxy(a)
+    bbox_b = polygon_bbox_xyxy(b)
+    if bbox_a is None or bbox_b is None:
+        return 0.0
+    inter_x1 = max(bbox_a[0], bbox_b[0])
+    inter_y1 = max(bbox_a[1], bbox_b[1])
+    inter_x2 = min(bbox_a[2], bbox_b[2])
+    inter_y2 = min(bbox_a[3], bbox_b[3])
+    if inter_x2 <= inter_x1 or inter_y2 <= inter_y1:
+        return 0.0
+    inter_box_area = (inter_x2 - inter_x1) * (inter_y2 - inter_y1)
+    if inter_box_area <= 0:
+        return 0.0
+    inside_both = 0
+    total = 0
+    for xi in range(samples):
+        for yi in range(samples):
+            px = inter_x1 + (xi + 0.5) * (inter_x2 - inter_x1) / samples
+            py = inter_y1 + (yi + 0.5) * (inter_y2 - inter_y1) / samples
+            total += 1
+            if point_in_polygon((px, py), a) and point_in_polygon((px, py), b):
+                inside_both += 1
+    intersection = inter_box_area * inside_both / total if total else 0.0
+    area_a = polygon_area(a)
+    area_b = polygon_area(b)
+    union = area_a + area_b - intersection
+    return round(intersection / union, 6) if union > 0 else 0.0
+
+
+def ground_truth_segmentation_records_for_metric(image_path: Path, names: dict[int, str]) -> list[dict[str, Any]]:
+    label_path = label_path_for_image(image_path)
+    image_size = image_size_for_metric(image_path)
+    if not label_path.exists() or image_size is None:
+        return []
+    width, height = image_size
+    records: list[dict[str, Any]] = []
+    for index, raw_line in enumerate(label_path.read_text(encoding="utf-8").splitlines()):
+        parsed = parse_label_line(raw_line)
+        if parsed is None:
+            continue
+        class_id, _, segment = parsed
+        if len(segment) < 6:
+            continue
+        polygon = polygon_points_from_segment(segment, width, height)
+        bbox = polygon_bbox_xyxy(polygon)
+        if bbox is None:
+            continue
+        records.append(
+            {
+                "image_id": str(image_path.resolve()),
+                "target_index": index,
+                "class_id": class_id,
+                "label": names.get(class_id, str(class_id)),
+                "polygon_xy": polygon,
+                "bbox_xyxy": bbox,
+            }
+        )
+    return records
+
+
+def normalize_global_classification_items(verdict: dict[str, Any]) -> list[dict[str, Any]]:
+    items = verdict.get("global_classification", []) if isinstance(verdict, dict) else []
+    normalized: list[dict[str, Any]] = []
+    for item in as_list(items):
+        if not isinstance(item, dict):
+            continue
+        class_id = coerce_int(item.get("class_id"))
+        label = item.get("label")
+        confidence = coerce_float(item.get("confidence"))
+        if class_id is None and not label:
+            continue
+        normalized.append(
+            {
+                "class_id": class_id,
+                "label": str(label) if label is not None else str(class_id),
+                "confidence": round(confidence, 6) if confidence is not None else None,
+            }
+        )
+    normalized.sort(key=lambda entry: float(entry.get("confidence") or 0.0), reverse=True)
+    return normalized
+
+
+def normalize_segmentation_proposals(verdict: dict[str, Any]) -> list[dict[str, Any]]:
+    items = verdict.get("vlm_segmentation", []) if isinstance(verdict, dict) else []
+    normalized: list[dict[str, Any]] = []
+    for item in as_list(items):
+        if not isinstance(item, dict):
+            continue
+        class_id = coerce_int(item.get("class_id"))
+        label = item.get("label")
+        bbox = valid_xyxy(item.get("bbox_xyxy"))
+        polygon_raw = item.get("polygon_xy")
+        polygon: list[list[float]] = []
+        if isinstance(polygon_raw, list):
+            for point in polygon_raw:
+                if (
+                    isinstance(point, (list, tuple))
+                    and len(point) >= 2
+                    and isinstance(point[0], (int, float))
+                    and isinstance(point[1], (int, float))
+                ):
+                    polygon.append([round(float(point[0]), 6), round(float(point[1]), 6)])
+        if bbox is None and polygon:
+            bbox = polygon_bbox_xyxy(polygon)
+        if class_id is None or bbox is None:
+            continue
+        normalized.append(
+            {
+                "proposal_id": item.get("proposal_id"),
+                "class_id": class_id,
+                "label": str(label) if label is not None else str(class_id),
+                "bbox_xyxy": bbox,
+                "polygon_xy": polygon,
+                "mask_quality": item.get("mask_quality"),
+            }
+        )
+    return normalized
+
+
+def yolo_prediction_records_for_metric(image_path: Path, detections: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for item in normalize_detection_boxes(detections):
+        class_id = coerce_int(item.get("class_id"))
+        confidence = coerce_float(item.get("confidence"))
+        bbox = valid_xyxy(item.get("bbox_xyxy"))
+        if class_id is None or confidence is None or bbox is None:
+            continue
+        records.append(
+            {
+                "image_id": str(image_path.resolve()),
+                "source": "yolo",
+                "index": item.get("index"),
+                "class_id": class_id,
+                "label": item.get("label"),
+                "confidence": round(confidence, 6),
+                "bbox_xyxy": bbox,
+            }
+        )
+    return records
+
+
+def fused_prediction_records_for_metric(image_path: Path, fusion_preview: dict[str, Any]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    if not isinstance(fusion_preview, dict):
+        return records
+    for item in fusion_preview.get("predictions", []) or []:
+        if not isinstance(item, dict):
+            continue
+        class_id = coerce_int(item.get("class_id"))
+        confidence = coerce_float(item.get("confidence"))
+        bbox = valid_xyxy(item.get("bbox_xyxy"))
+        if class_id is None or confidence is None or bbox is None:
+            continue
+        records.append(
+            {
+                "image_id": str(image_path.resolve()),
+                "source": item.get("source", "fused"),
+                "action": item.get("action"),
+                "index": item.get("index"),
+                "proposal_id": item.get("proposal_id"),
+                "class_id": class_id,
+                "label": item.get("label"),
+                "confidence": round(confidence, 6),
+                "bbox_xyxy": bbox,
+            }
+        )
+    return records
+
+
+def box_iou_xyxy(a: list[float], b: list[float]) -> float:
+    inter_x1 = max(a[0], b[0])
+    inter_y1 = max(a[1], b[1])
+    inter_x2 = min(a[2], b[2])
+    inter_y2 = min(a[3], b[3])
+    inter_w = max(0.0, inter_x2 - inter_x1)
+    inter_h = max(0.0, inter_y2 - inter_y1)
+    inter_area = inter_w * inter_h
+    if inter_area <= 0:
+        return 0.0
+    area_a = max(0.0, a[2] - a[0]) * max(0.0, a[3] - a[1])
+    area_b = max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
+    union = area_a + area_b - inter_area
+    return float(inter_area / union) if union > 0 else 0.0
+
+
+def average_precision(recalls: list[float], precisions: list[float]) -> float:
+    if not recalls or not precisions:
+        return 0.0
+    mrec = [0.0, *recalls, 1.0]
+    mpre = [0.0, *precisions, 0.0]
+    for idx in range(len(mpre) - 2, -1, -1):
+        mpre[idx] = max(mpre[idx], mpre[idx + 1])
+    ap = 0.0
+    for idx in range(len(mrec) - 1):
+        if mrec[idx + 1] != mrec[idx]:
+            ap += (mrec[idx + 1] - mrec[idx]) * mpre[idx + 1]
+    return round(ap, 6)
+
+
+def match_class_predictions(
+    predictions: list[dict[str, Any]],
+    ground_truth: list[dict[str, Any]],
+    *,
+    class_id: int,
+    iou_threshold: float,
+) -> dict[str, Any]:
+    class_predictions = sorted(
+        [item for item in predictions if coerce_int(item.get("class_id")) == class_id],
+        key=lambda item: float(item.get("confidence") or 0.0),
+        reverse=True,
+    )
+    class_ground_truth = [item for item in ground_truth if coerce_int(item.get("class_id")) == class_id]
+    gt_by_image: dict[str, list[dict[str, Any]]] = {}
+    for item in class_ground_truth:
+        gt_by_image.setdefault(str(item.get("image_id")), []).append(item)
+    matched: dict[str, set[int]] = {image_id: set() for image_id in gt_by_image}
+    tp_flags: list[int] = []
+    fp_flags: list[int] = []
+    for prediction in class_predictions:
+        image_id = str(prediction.get("image_id"))
+        best_iou = 0.0
+        best_gt_index: int | None = None
+        for gt_index, target in enumerate(gt_by_image.get(image_id, [])):
+            if gt_index in matched.setdefault(image_id, set()):
+                continue
+            iou = box_iou_xyxy(prediction["bbox_xyxy"], target["bbox_xyxy"])
+            if iou > best_iou:
+                best_iou = iou
+                best_gt_index = gt_index
+        if best_gt_index is not None and best_iou >= iou_threshold:
+            matched[image_id].add(best_gt_index)
+            tp_flags.append(1)
+            fp_flags.append(0)
+        else:
+            tp_flags.append(0)
+            fp_flags.append(1)
+    tp_total = sum(tp_flags)
+    fp_total = sum(fp_flags)
+    fn_total = max(0, len(class_ground_truth) - tp_total)
+    recalls: list[float] = []
+    precisions: list[float] = []
+    tp_cum = 0
+    fp_cum = 0
+    for tp, fp in zip(tp_flags, fp_flags):
+        tp_cum += tp
+        fp_cum += fp
+        recalls.append(tp_cum / len(class_ground_truth) if class_ground_truth else 0.0)
+        precisions.append(tp_cum / (tp_cum + fp_cum) if tp_cum + fp_cum else 0.0)
+    return {
+        "tp": tp_total,
+        "fp": fp_total,
+        "fn": fn_total,
+        "ap": average_precision(recalls, precisions) if class_ground_truth else None,
+    }
+
+
+def evaluate_detection_metric_preview(
+    predictions: list[dict[str, Any]],
+    ground_truth: list[dict[str, Any]],
+    *,
+    iou_thresholds: list[float] | None = None,
+) -> dict[str, Any]:
+    thresholds = iou_thresholds or [round(0.5 + 0.05 * idx, 2) for idx in range(10)]
+    if not ground_truth:
+        return {
+            "status": "skipped",
+            "reason": "ground_truth_unavailable",
+            "predictions": len(predictions),
+            "ground_truth": 0,
+        }
+    gt_classes = sorted({int(item["class_id"]) for item in ground_truth if coerce_int(item.get("class_id")) is not None})
+    pred_classes = sorted({int(item["class_id"]) for item in predictions if coerce_int(item.get("class_id")) is not None})
+    all_classes = sorted(set(gt_classes) | set(pred_classes))
+    per_threshold: dict[str, dict[str, Any]] = {}
+    ap_by_threshold: dict[float, list[float]] = {threshold: [] for threshold in thresholds}
+    counts_at_50 = {"tp": 0, "fp": 0, "fn": 0}
+    per_class_50: dict[str, dict[str, Any]] = {}
+    for threshold in thresholds:
+        threshold_counts = {"tp": 0, "fp": 0, "fn": 0}
+        for class_id in all_classes:
+            result = match_class_predictions(predictions, ground_truth, class_id=class_id, iou_threshold=threshold)
+            threshold_counts["tp"] += int(result["tp"])
+            threshold_counts["fp"] += int(result["fp"])
+            threshold_counts["fn"] += int(result["fn"])
+            if class_id in gt_classes:
+                ap_by_threshold[threshold].append(float(result["ap"] or 0.0))
+            if abs(threshold - 0.5) < 1e-9:
+                per_class_50[str(class_id)] = {
+                    "tp": int(result["tp"]),
+                    "fp": int(result["fp"]),
+                    "fn": int(result["fn"]),
+                    "ap": result["ap"],
+                }
+        precision = threshold_counts["tp"] / (threshold_counts["tp"] + threshold_counts["fp"]) if threshold_counts["tp"] + threshold_counts["fp"] else 0.0
+        recall = threshold_counts["tp"] / (threshold_counts["tp"] + threshold_counts["fn"]) if threshold_counts["tp"] + threshold_counts["fn"] else 0.0
+        per_threshold[f"{threshold:.2f}"] = {
+            **threshold_counts,
+            "precision": round(precision, 6),
+            "recall": round(recall, 6),
+            "map": round(sum(ap_by_threshold[threshold]) / len(ap_by_threshold[threshold]), 6) if ap_by_threshold[threshold] else 0.0,
+        }
+        if abs(threshold - 0.5) < 1e-9:
+            counts_at_50 = threshold_counts
+    precision_50 = counts_at_50["tp"] / (counts_at_50["tp"] + counts_at_50["fp"]) if counts_at_50["tp"] + counts_at_50["fp"] else 0.0
+    recall_50 = counts_at_50["tp"] / (counts_at_50["tp"] + counts_at_50["fn"]) if counts_at_50["tp"] + counts_at_50["fn"] else 0.0
+    map50 = per_threshold.get("0.50", {}).get("map", 0.0)
+    maps = [value["map"] for value in per_threshold.values()]
+    map50_95 = round(sum(maps) / len(maps), 6) if maps else 0.0
+    f1 = (2 * precision_50 * recall_50 / (precision_50 + recall_50)) if precision_50 + recall_50 else 0.0
+    return {
+        "status": "ok",
+        "basis": "yolo_label_metric_preview",
+        "predictions": len(predictions),
+        "ground_truth": len(ground_truth),
+        "classes_with_ground_truth": len(gt_classes),
+        "precision": round(precision_50, 6),
+        "recall": round(recall_50, 6),
+        "f1": round(f1, 6),
+        "map50": round(float(map50), 6),
+        "map50_95": map50_95,
+        "counts_at_iou50": counts_at_50,
+        "per_threshold": per_threshold,
+        "per_class_iou50": per_class_50,
+    }
+
+
+def metric_delta(fused: dict[str, Any], yolo: dict[str, Any]) -> dict[str, Any]:
+    delta: dict[str, Any] = {}
+    for key in ("precision", "recall", "f1", "map50", "map50_95"):
+        if isinstance(fused.get(key), (int, float)) and isinstance(yolo.get(key), (int, float)):
+            delta[key] = round(float(fused[key]) - float(yolo[key]), 6)
+    if "map50_95" in delta:
+        delta["direction"] = "improved" if delta["map50_95"] > 0 else ("regressed" if delta["map50_95"] < 0 else "unchanged")
+    return delta
+
+
+def evaluate_classification_metric_preview(
+    predictions: list[dict[str, Any]],
+    ground_truth: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not ground_truth:
+        return {"status": "skipped", "reason": "ground_truth_unavailable", "ground_truth": 0, "predictions": len(predictions)}
+    gt_labels: dict[str, set[int]] = {}
+    for item in ground_truth:
+        class_id = coerce_int(item.get("class_id"))
+        if class_id is None:
+            continue
+        gt_labels.setdefault(str(item.get("image_id")), set()).add(int(class_id))
+    pred_by_image: dict[str, list[dict[str, Any]]] = {}
+    for item in predictions:
+        image_id = str(item.get("image_id"))
+        pred_by_image.setdefault(image_id, []).append(item)
+    total_images = len(gt_labels)
+    exact_match = 0
+    top1_correct = 0
+    tp = 0
+    fp = 0
+    fn = 0
+    for image_id, gt_classes in gt_labels.items():
+        preds = sorted(pred_by_image.get(image_id, []), key=lambda entry: float(entry.get("confidence") or 0.0), reverse=True)
+        pred_classes = {int(item["class_id"]) for item in preds if coerce_int(item.get("class_id")) is not None}
+        if pred_classes == gt_classes:
+            exact_match += 1
+        if preds:
+            top1 = coerce_int(preds[0].get("class_id"))
+            if top1 is not None and top1 in gt_classes:
+                top1_correct += 1
+        tp += len(pred_classes & gt_classes)
+        fp += len(pred_classes - gt_classes)
+        fn += len(gt_classes - pred_classes)
+    precision = tp / (tp + fp) if tp + fp else 0.0
+    recall = tp / (tp + fn) if tp + fn else 0.0
+    f1 = (2 * precision * recall / (precision + recall)) if precision + recall else 0.0
+    return {
+        "status": "ok",
+        "basis": "label_presence_preview",
+        "ground_truth": len(ground_truth),
+        "predictions": len(predictions),
+        "images_with_ground_truth": total_images,
+        "top1_accuracy": round(top1_correct / total_images if total_images else 0.0, 6),
+        "exact_set_accuracy": round(exact_match / total_images if total_images else 0.0, 6),
+        "precision": round(precision, 6),
+        "recall": round(recall, 6),
+        "f1": round(f1, 6),
+        "counts": {"tp": tp, "fp": fp, "fn": fn},
+    }
+
+
+def classification_metric_delta(fused: dict[str, Any], yolo: dict[str, Any]) -> dict[str, Any]:
+    delta: dict[str, Any] = {}
+    for key in ("top1_accuracy", "exact_set_accuracy", "precision", "recall", "f1"):
+        if isinstance(fused.get(key), (int, float)) and isinstance(yolo.get(key), (int, float)):
+            delta[key] = round(float(fused[key]) - float(yolo[key]), 6)
+    if "top1_accuracy" in delta:
+        delta["direction"] = "improved" if delta["top1_accuracy"] > 0 else ("regressed" if delta["top1_accuracy"] < 0 else "unchanged")
+    return delta
+
+
+def evaluate_segmentation_metric_preview(
+    predictions: list[dict[str, Any]],
+    ground_truth: list[dict[str, Any]],
+    *,
+    iou_threshold: float = 0.5,
+) -> dict[str, Any]:
+    if not ground_truth:
+        return {"status": "skipped", "reason": "ground_truth_unavailable", "ground_truth": 0, "predictions": len(predictions)}
+    predictions_sorted = sorted(
+        predictions,
+        key=lambda entry: float(entry.get("confidence") or 0.0),
+        reverse=True,
+    )
+    gt_by_image: dict[str, list[dict[str, Any]]] = {}
+    for item in ground_truth:
+        gt_by_image.setdefault(str(item.get("image_id")), []).append(item)
+    matched: dict[str, set[int]] = {image_id: set() for image_id in gt_by_image}
+    tp = 0
+    fp = 0
+    iou_sum = 0.0
+    for prediction in predictions_sorted:
+        class_id = coerce_int(prediction.get("class_id"))
+        polygon = prediction.get("polygon_xy")
+        image_id = str(prediction.get("image_id"))
+        if class_id is None or not isinstance(polygon, list) or len(polygon) < 3:
+            fp += 1
+            continue
+        best_iou = 0.0
+        best_index: int | None = None
+        for gt_index, target in enumerate(gt_by_image.get(image_id, [])):
+            if gt_index in matched.setdefault(image_id, set()):
+                continue
+            if coerce_int(target.get("class_id")) != class_id:
+                continue
+            iou = polygon_iou_approx(polygon, target.get("polygon_xy", []))
+            if iou > best_iou:
+                best_iou = iou
+                best_index = gt_index
+        if best_index is not None and best_iou >= iou_threshold:
+            matched[image_id].add(best_index)
+            tp += 1
+            iou_sum += best_iou
+        else:
+            fp += 1
+    fn = 0
+    for image_id, targets in gt_by_image.items():
+        fn += max(0, len(targets) - len(matched.get(image_id, set())))
+    precision = tp / (tp + fp) if tp + fp else 0.0
+    recall = tp / (tp + fn) if tp + fn else 0.0
+    f1 = (2 * precision * recall / (precision + recall)) if precision + recall else 0.0
+    mean_iou = iou_sum / tp if tp else 0.0
+    return {
+        "status": "ok",
+        "basis": "polygon_iou_preview",
+        "ground_truth": len(ground_truth),
+        "predictions": len(predictions),
+        "precision": round(precision, 6),
+        "recall": round(recall, 6),
+        "f1": round(f1, 6),
+        "mean_iou": round(mean_iou, 6),
+        "mask_ap50_proxy": round(precision, 6),
+        "counts": {"tp": tp, "fp": fp, "fn": fn},
+    }
+
+
+def segmentation_metric_delta(fused: dict[str, Any], yolo: dict[str, Any]) -> dict[str, Any]:
+    delta: dict[str, Any] = {}
+    for key in ("precision", "recall", "f1", "mean_iou", "mask_ap50_proxy"):
+        if isinstance(fused.get(key), (int, float)) and isinstance(yolo.get(key), (int, float)):
+            delta[key] = round(float(fused[key]) - float(yolo[key]), 6)
+    if "mask_ap50_proxy" in delta:
+        delta["direction"] = "improved" if delta["mask_ap50_proxy"] > 0 else ("regressed" if delta["mask_ap50_proxy"] < 0 else "unchanged")
+    return delta
+
+
+def yolo_classification_predictions_for_metric(image_path: Path, detections: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    records: dict[int, dict[str, Any]] = {}
+    for item in normalize_detection_boxes(detections):
+        class_id = coerce_int(item.get("class_id"))
+        confidence = coerce_float(item.get("confidence"))
+        if class_id is None:
+            continue
+        current = records.get(class_id)
+        if current is None or float(confidence or 0.0) > float(current.get("confidence") or 0.0):
+            records[class_id] = {
+                "image_id": str(image_path.resolve()),
+                "class_id": class_id,
+                "label": item.get("label"),
+                "confidence": round(confidence, 6) if confidence is not None else 0.0,
+                "source": "yolo",
+            }
+    return list(records.values())
+
+
+def fused_classification_predictions_for_metric(image_path: Path, verdict: dict[str, Any], detections: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    records = normalize_global_classification_items(verdict)
+    if records:
+        return [
+            {
+                "image_id": str(image_path.resolve()),
+                "class_id": item.get("class_id"),
+                "label": item.get("label"),
+                "confidence": item.get("confidence") if item.get("confidence") is not None else 0.0,
+                "source": "vlm",
+            }
+            for item in records
+        ]
+    return yolo_classification_predictions_for_metric(image_path, detections)
+
+
+def yolo_segmentation_predictions_for_metric(image_path: Path, detections: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for item in normalize_detection_boxes(detections):
+        class_id = coerce_int(item.get("class_id"))
+        confidence = coerce_float(item.get("confidence"))
+        bbox = valid_xyxy(item.get("bbox_xyxy"))
+        if class_id is None or bbox is None:
+            continue
+        x1, y1, x2, y2 = bbox
+        polygon = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
+        records.append(
+            {
+                "image_id": str(image_path.resolve()),
+                "class_id": class_id,
+                "label": item.get("label"),
+                "confidence": round(confidence, 6) if confidence is not None else 0.0,
+                "polygon_xy": polygon,
+                "bbox_xyxy": bbox,
+                "source": "yolo_box_proxy",
+            }
+        )
+    return records
+
+
+def fused_segmentation_predictions_for_metric(image_path: Path, verdict: dict[str, Any], detections: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    records = normalize_segmentation_proposals(verdict)
+    if records:
+        return [
+            {
+                "image_id": str(image_path.resolve()),
+                "class_id": item.get("class_id"),
+                "label": item.get("label"),
+                "confidence": 1.0,
+                "polygon_xy": item.get("polygon_xy"),
+                "bbox_xyxy": item.get("bbox_xyxy"),
+                "source": "vlm_segmentation",
+            }
+            for item in records
+        ]
+    return yolo_segmentation_predictions_for_metric(image_path, detections)
 
 
 def detection_label_counts(detections: list[dict[str, Any]]) -> dict[str, int]:
@@ -2396,84 +3627,6 @@ def detection_label_counts(detections: list[dict[str, Any]]) -> dict[str, int]:
                 continue
             counts[str(label)] = counts.get(str(label), 0) + 1
     return counts
-
-
-def preferred_verdict(item: dict[str, Any]) -> dict[str, Any]:
-    multimodal = item.get("multimodal", {}) or {}
-    llm = multimodal.get("llm_refine", {}) or {}
-    if isinstance(llm, dict) and isinstance(llm.get("verdict"), dict):
-        return llm["verdict"]
-    vlm = multimodal.get("vlm", {}) or {}
-    return vlm.get("verdict", {}) if isinstance(vlm, dict) and isinstance(vlm.get("verdict"), dict) else {}
-
-
-def verdict_field_count(verdict: dict[str, Any], field: str) -> int:
-    cross_check = verdict.get("yolo_cross_check", {}) if isinstance(verdict, dict) else {}
-    if not isinstance(cross_check, dict):
-        return 0
-    value = cross_check.get(field)
-    if isinstance(value, list):
-        return len(value)
-    return 1 if value else 0
-
-
-def aggregate_multimodal_evaluation(items: list[dict[str, Any]]) -> dict[str, Any]:
-    status_counts: dict[str, int] = {}
-    gt_counts: dict[str, int] = {}
-    detection_counts: dict[str, int] = {}
-    flag_counts = {"confirmed": 0, "false_positives": 0, "possible_misses": 0, "duplicate_or_fragmented": 0}
-    parsed = 0
-    total_boxes = 0
-    total_gt_objects = 0
-    gt_available = 0
-    for item in items:
-        status = str(item.get("status", "unknown"))
-        status_counts[status] = status_counts.get(status, 0) + 1
-        detector = item.get("detector", {}) or {}
-        total_boxes += int(detector.get("boxes", 0) or 0)
-        merge_counts(detection_counts, detector.get("label_counts", {}) or {})
-        ground_truth = item.get("ground_truth", {}) or {}
-        if ground_truth.get("exists"):
-            gt_available += 1
-            total_gt_objects += int(ground_truth.get("objects", 0) or 0)
-            merge_counts(gt_counts, ground_truth.get("label_counts", {}) or {})
-        multimodal = item.get("multimodal", {}) or {}
-        vlm = multimodal.get("vlm", {}) or {}
-        llm = multimodal.get("llm_refine", {}) or {}
-        if vlm.get("verdict_parse_status") == "parsed" or llm.get("verdict_parse_status") == "parsed":
-            parsed += 1
-        verdict = preferred_verdict(item)
-        for field in flag_counts:
-            flag_counts[field] += verdict_field_count(verdict, field)
-    total = len(items)
-    return {
-        "images_processed": total,
-        "status_counts": status_counts,
-        "verdicts_parsed": parsed,
-        "verdict_parse_rate": round(parsed / total, 4) if total else 0.0,
-        "detections_total": total_boxes,
-        "ground_truth_total": total_gt_objects,
-        "ground_truth_images": gt_available,
-        "avg_detected_boxes": round(total_boxes / total, 4) if total else 0.0,
-        "avg_ground_truth_objects": round(total_gt_objects / gt_available, 4) if gt_available else None,
-        "detection_label_counts": detection_counts,
-        "ground_truth_label_counts": gt_counts,
-        "cross_check_flag_counts": flag_counts,
-    }
-
-
-def overall_multimodal_evaluation_status(aggregate: dict[str, Any]) -> str:
-    counts = aggregate.get("status_counts", {}) or {}
-    total = int(aggregate.get("images_processed", 0) or 0)
-    if total == 0:
-        return "failed"
-    if counts.get("ok") == total:
-        return "ok"
-    if counts.get("blocked") == total:
-        return "blocked"
-    if counts.get("failed") == total:
-        return "failed"
-    return "partial"
 
 
 def build_multimodal_evaluation_prompt(
@@ -2507,6 +3660,7 @@ def multimodal_prompt_from_request(request: dict[str, Any], params: dict[str, An
 def run_multimodal_infer(request: dict[str, Any]) -> dict[str, Any]:
     params = dict(request["params"])
     yolo_params, multimodal_params = split_yolo_and_multimodal_params(params)
+    multimodal_params = apply_open_world_assist_profile_defaults(multimodal_params)
     source = request["inputs"].get("source") or yolo_params.pop("source", None) or multimodal_params.get("source")
     if source is None:
         raise ValueError("`inputs.source` is required for yolo.multimodal.infer.")
@@ -2519,7 +3673,19 @@ def run_multimodal_infer(request: dict[str, Any]) -> dict[str, Any]:
     max_boxes = int(multimodal_params.get("max_reasoning_boxes", 20))
     thinking_with_image = parse_bool(multimodal_params.get("thinking_with_image"), True)
     structured_output = parse_bool(multimodal_params.get("structured_output"), True)
-    max_output_tokens = int(multimodal_params.get("max_output_tokens", 1000 if structured_output else 800))
+    prompt_template = multimodal_params.get("prompt_template")
+    resolved_prompt_template = effective_prompt_template_name(provider_cfg, prompt_template, multimodal_params, prompt)
+    default_max_output_tokens = default_multimodal_max_output_tokens(
+        provider_cfg,
+        prompt_template,
+        multimodal_params,
+        structured_output=structured_output,
+        user_prompt=prompt,
+    )
+    max_output_tokens = int(multimodal_params.get("max_output_tokens", default_max_output_tokens))
+    use_marked_image = parse_bool(multimodal_params.get("use_marked_image"), bool(resolved_prompt_template))
+    visual_search_mode = str(multimodal_params.get("visual_search_mode") or "auto")
+    fusion_mode = str(multimodal_params.get("fusion_mode") or "preview")
     device_selection = resolve_device_selection(request, yolo_params)
     yolo_params, chosen_device, auto_completed = apply_runtime_defaults(request, yolo_params, purpose="predict")
     effective_request = deepcopy(request)
@@ -2545,6 +3711,20 @@ def run_multimodal_infer(request: dict[str, Any]) -> dict[str, Any]:
                         "image": "input_image" if thinking_with_image else "text_only",
                         "method": method,
                         "structured_output": structured_output,
+                        "prompt_template": resolved_prompt_template,
+                        "marked_image": use_marked_image,
+                    },
+                    {
+                        "name": "visual_search_crop_pass",
+                        "executor": "openai.compatible",
+                        "mode": visual_search_mode,
+                        "enabled": visual_search_mode.lower() not in {"off", "none", "false", "0"},
+                    },
+                    {
+                        "name": "fusion_preview",
+                        "executor": "python",
+                        "strategy": "metric_safe_v1",
+                        "mode": fusion_mode,
                     },
                     {
                         "name": "llm_refine",
@@ -2570,6 +3750,17 @@ def run_multimodal_infer(request: dict[str, Any]) -> dict[str, Any]:
                     "method": method,
                     "thinking_with_image": thinking_with_image,
                     "structured_output": structured_output,
+                    "prompt_template": resolved_prompt_template,
+                    "open_world_assist_profile": multimodal_params.get("open_world_assist_profile"),
+                    "open_world_filters": {
+                        "taxonomy_min_score": multimodal_params.get("open_world_taxonomy_min_score"),
+                        "taxonomy_require_exact_for_generic": multimodal_params.get("open_world_taxonomy_require_exact_for_generic"),
+                        "filter_unmatched_taxonomy": multimodal_params.get("open_world_filter_unmatched_taxonomy"),
+                        "filter_generic_labels": multimodal_params.get("open_world_filter_generic_labels"),
+                    },
+                    "use_marked_image": use_marked_image,
+                    "visual_search_mode": visual_search_mode,
+                    "fusion_mode": fusion_mode,
                 },
             },
         )
@@ -2609,6 +3800,11 @@ def run_multimodal_infer(request: dict[str, Any]) -> dict[str, Any]:
         "thinking_with_image": thinking_with_image,
         "attached": False,
     }
+    visual_artifacts: list[dict[str, Any]] = []
+    fusion_artifacts: list[dict[str, Any]] = []
+    visual_search_passes: list[dict[str, Any]] = []
+    marked_meta: dict[str, Any] | None = None
+    marked_error: dict[str, Any] | None = None
     if thinking_with_image and image_ref is None:
         vlm_result = {
             "status": "blocked",
@@ -2626,11 +3822,31 @@ def run_multimodal_infer(request: dict[str, Any]) -> dict[str, Any]:
         try:
             encoded_image = None
             if thinking_with_image and image_ref is not None:
+                reasoning_image_ref = image_ref
+                if use_marked_image and not str(image_ref).startswith(("http://", "https://", "data:image/")):
+                    try:
+                        marked = render_marked_image(
+                            image_ref,
+                            detections,
+                            output_dir=ensure_manifest_dir(request) / "visual-search",
+                            prefix=slugify(Path(str(image_ref)).stem),
+                        )
+                        reasoning_image_ref = marked["path"]
+                        marked_meta = marked
+                        visual_artifacts.append({"kind": "marked_image", "path": marked["path"]})
+                    except Exception as mark_exc:
+                        marked_error = {"type": type(mark_exc).__name__, "message": str(mark_exc)}
                 encoded_image = encode_image_reference_for_openai(
-                    image_ref,
+                    reasoning_image_ref,
                     max_bytes=int(multimodal_params.get("max_image_bytes", 20_000_000)),
                 )
                 image_meta = {k: v for k, v in encoded_image.items() if k != "image_url"}
+                image_meta["requested"] = image_ref
+                image_meta["reasoning_input"] = reasoning_image_ref
+                if marked_meta:
+                    image_meta["marked"] = marked_meta
+                if marked_error:
+                    image_meta["marked_error"] = marked_error
                 image_meta["thinking_with_image"] = True
                 image_meta["attached"] = True
             user_text = build_thinking_with_image_prompt(
@@ -2639,6 +3855,8 @@ def run_multimodal_infer(request: dict[str, Any]) -> dict[str, Any]:
                 method=method,
                 thinking_with_image=thinking_with_image,
                 structured_output=structured_output,
+                prompt_template=str(resolved_prompt_template) if resolved_prompt_template is not None else None,
+                prompt_dir=PROMPT_DIR,
             )
             vlm_result = call_openai_compatible(
                 model=str(provider_cfg["vlm_model"]),
@@ -2646,7 +3864,7 @@ def run_multimodal_infer(request: dict[str, Any]) -> dict[str, Any]:
                 developer_text=str(
                     multimodal_params.get("developer_prompt")
                     or multimodal_params.get("system_prompt")
-                    or "You are a careful visual reasoning assistant for YOLO-Master. Use the image and detector evidence, but only return concise evidence and uncertainty, not hidden chain-of-thought."
+                    or default_vlm_developer_prompt(resolved_prompt_template)
                 ),
                 image_url=encoded_image["image_url"] if encoded_image else None,
                 image_detail=str(multimodal_params.get("image_detail", "auto")),
@@ -2656,6 +3874,23 @@ def run_multimodal_infer(request: dict[str, Any]) -> dict[str, Any]:
                 temperature=float(multimodal_params["temperature"]) if "temperature" in multimodal_params else None,
             )
             vlm_result = attach_multimodal_verdict(vlm_result)
+            if vlm_result.get("status") == "ok" and image_ref is not None:
+                visual_search_passes, search_artifacts = runtime_run_visual_search_crop_passes(
+                    image_path=image_ref,
+                    base_prompt=prompt,
+                    detections=detections,
+                    initial_verdict=vlm_result.get("verdict", {}),
+                    provider_cfg=provider_cfg,
+                    multimodal_params=multimodal_params,
+                    output_dir=ensure_manifest_dir(request),
+                    max_output_tokens=max_output_tokens,
+                    method=method,
+                    resolved_path_fn=resolved_path,
+                    normalize_detection_boxes_fn=normalize_detection_boxes,
+                    call_openai_compatible_fn=call_openai_compatible,
+                    attach_multimodal_verdict_fn=attach_multimodal_verdict,
+                )
+                visual_artifacts.extend(search_artifacts)
         except Exception as exc:
             vlm_result = {
                 "status": "failed",
@@ -2671,22 +3906,49 @@ def run_multimodal_infer(request: dict[str, Any]) -> dict[str, Any]:
             "Refine this YOLO + VLM inference into a compact final answer. Do not add unsupported visual claims. "
             "Return exactly one JSON object without Markdown fences. Use these keys: answer, visual_evidence, "
             "yolo_cross_check, uncertainty, recommended_next_actions. In yolo_cross_check, include arrays named "
-            "confirmed, false_positives, possible_misses, duplicate_or_fragmented, and notes when applicable.\n\n"
+            "confirmed, false_positives, possible_misses, duplicate_or_fragmented, and notes when applicable. "
+            "If the VLM answer includes caption, global_classification, vlm_detections, vlm_segmentation, "
+            "visual_search, or fusion_hints, preserve those keys and refine them conservatively.\n\n"
             f"User task:\n{prompt}\n\n"
             f"YOLO detection summary:\n{json.dumps(json_safe(detections), ensure_ascii=False, indent=2)}\n\n"
             f"VLM answer:\n{vlm_result.get('text', '')}\n\n"
             f"Parsed VLM verdict:\n{json.dumps(json_safe(vlm_result.get('verdict', {})), ensure_ascii=False, indent=2)}"
+            f"\n\nVisual search crop passes:\n{json.dumps(json_safe(visual_search_passes), ensure_ascii=False, indent=2)}"
         )
         llm_result = call_openai_compatible(
             model=llm_model,
             user_text=refine_prompt,
-            developer_text="You are a concise verifier. Return answer, evidence, uncertainty, and next actions.",
+            developer_text=default_llm_refine_developer_prompt(resolved_prompt_template),
             base_url=provider_cfg["base_url"],
             api_mode=str(provider_cfg["api_mode"]),
             max_output_tokens=max_output_tokens,
             temperature=float(multimodal_params["temperature"]) if "temperature" in multimodal_params else None,
         )
         llm_result = attach_multimodal_verdict(llm_result)
+
+    vlm_verdict = vlm_result.get("verdict", {}) if isinstance(vlm_result.get("verdict"), dict) else {}
+    llm_verdict = llm_result.get("verdict", {}) if isinstance(llm_result, dict) and isinstance(llm_result.get("verdict"), dict) else {}
+    fusion_verdict = merge_verdicts(vlm_verdict, llm_verdict)
+    fusion_preview = fusion_build_multimodal_fusion_preview(
+        detections=detections,
+        verdict=fusion_verdict,
+        multimodal_params=multimodal_params,
+        image_path=image_ref,
+        normalize_detection_boxes_fn=normalize_detection_boxes,
+    )
+    open_world_comparison = build_open_world_comparison_entry(
+        image_path=image_ref,
+        detections=detections,
+        fusion_preview=fusion_preview,
+        verdict=fusion_verdict,
+        multimodal_params=multimodal_params,
+        effective_prompt_template=str(resolved_prompt_template) if resolved_prompt_template is not None else None,
+    )
+    if fusion_preview.get("enabled"):
+        fusion_path = ensure_manifest_dir(request) / "fusion-preview.json"
+        fusion_path.write_text(json.dumps(json_safe({"image": image_ref, "fusion": fusion_preview}), ensure_ascii=False, indent=2), encoding="utf-8")
+        fusion_preview["artifact"] = str(fusion_path.resolve())
+        fusion_artifacts.append({"kind": "fusion_preview", "path": str(fusion_path.resolve())})
 
     overall_status = multimodal_overall_status(vlm_result, llm_result)
     summary_map = {
@@ -2708,6 +3970,17 @@ def run_multimodal_infer(request: dict[str, Any]) -> dict[str, Any]:
             "method": method,
             "thinking_with_image": thinking_with_image,
             "structured_output": structured_output,
+            "prompt_template": prompt_template,
+            "effective_prompt_template": resolved_prompt_template,
+            "open_world_assist_profile": multimodal_params.get("open_world_assist_profile"),
+            "open_world_filters": {
+                "taxonomy_min_score": multimodal_params.get("open_world_taxonomy_min_score"),
+                "taxonomy_require_exact_for_generic": multimodal_params.get("open_world_taxonomy_require_exact_for_generic"),
+                "filter_unmatched_taxonomy": multimodal_params.get("open_world_filter_unmatched_taxonomy"),
+                "filter_generic_labels": multimodal_params.get("open_world_filter_generic_labels"),
+            },
+            "use_marked_image": use_marked_image,
+            "visual_search": {"mode": visual_search_mode, "passes": visual_search_passes, "artifacts": visual_artifacts},
             "provider": {
                 "name": provider_cfg["provider"],
                 "base_url": provider_cfg["base_url"],
@@ -2719,6 +3992,8 @@ def run_multimodal_infer(request: dict[str, Any]) -> dict[str, Any]:
             "prompt": prompt,
             "vlm": vlm_result,
             "llm_refine": llm_result or {"status": "skipped"},
+            "fusion": fusion_preview,
+            "open_world_comparison": open_world_comparison,
         },
         next_actions=["yolo.predict", "yolo.val"],
     )
@@ -2726,6 +4001,9 @@ def run_multimodal_infer(request: dict[str, Any]) -> dict[str, Any]:
         payload["yolo_error"] = yolo_error
     if save_dir:
         payload["artifacts"] = [{"kind": "directory", "path": str(Path(save_dir).resolve())}]
+    if visual_artifacts or fusion_artifacts:
+        payload.setdefault("artifacts", [])
+        payload["artifacts"].extend(visual_artifacts + fusion_artifacts)
     payload["manifest"] = str(write_manifest(request, payload))
     return payload
 
@@ -2733,6 +4011,7 @@ def run_multimodal_infer(request: dict[str, Any]) -> dict[str, Any]:
 def run_multimodal_evaluate(request: dict[str, Any]) -> dict[str, Any]:
     params = dict(request["params"])
     yolo_params, multimodal_params, evaluate_params = split_yolo_multimodal_evaluate_params(params)
+    multimodal_params = apply_open_world_assist_profile_defaults(multimodal_params)
     prompt = multimodal_prompt_from_request(request, multimodal_params)
     provider_cfg = openai_config(multimodal_params)
     if provider_cfg["provider"] != "openai":
@@ -2740,7 +4019,19 @@ def run_multimodal_evaluate(request: dict[str, Any]) -> dict[str, Any]:
 
     thinking_with_image = parse_bool(multimodal_params.get("thinking_with_image"), True)
     structured_output = parse_bool(multimodal_params.get("structured_output"), True)
-    max_output_tokens = int(multimodal_params.get("max_output_tokens", 1000 if structured_output else 800))
+    prompt_template = multimodal_params.get("prompt_template")
+    resolved_prompt_template = effective_prompt_template_name(provider_cfg, prompt_template, multimodal_params, prompt)
+    default_max_output_tokens = default_multimodal_max_output_tokens(
+        provider_cfg,
+        prompt_template,
+        multimodal_params,
+        structured_output=structured_output,
+        user_prompt=prompt,
+    )
+    max_output_tokens = int(multimodal_params.get("max_output_tokens", default_max_output_tokens))
+    use_marked_image = parse_bool(multimodal_params.get("use_marked_image"), bool(resolved_prompt_template))
+    visual_search_mode = str(multimodal_params.get("visual_search_mode") or "auto")
+    fusion_mode = str(multimodal_params.get("fusion_mode") or "preview")
     include_ground_truth = parse_bool(
         evaluate_params.get("include_ground_truth_in_prompt", evaluate_params.get("include_ground_truth")),
         False,
@@ -2776,7 +4067,10 @@ def run_multimodal_evaluate(request: dict[str, Any]) -> dict[str, Any]:
                 "stages": [
                     {"name": "collect_images", "executor": "dataset_or_source_resolver"},
                     {"name": "yolo_predict_batch", "executor": "python_api", "target": "YOLO(...).predict"},
+                    {"name": "marked_image_batch", "executor": "pillow", "enabled": use_marked_image},
                     {"name": "vlm_reasoning_batch", "executor": "openai.compatible"},
+                    {"name": "visual_search_crop_pass", "executor": "openai.compatible", "mode": visual_search_mode},
+                    {"name": "fusion_preview", "executor": "python", "strategy": "metric_safe_v1", "mode": fusion_mode},
                     {"name": "aggregate_report", "executor": "python"},
                 ],
                 "sample_count": len(images),
@@ -2799,6 +4093,18 @@ def run_multimodal_evaluate(request: dict[str, Any]) -> dict[str, Any]:
                     "method": str(multimodal_params.get("method") or ("thinking-with-image" if thinking_with_image else "detector-text-reflection")),
                     "thinking_with_image": thinking_with_image,
                     "structured_output": structured_output,
+                    "prompt_template": prompt_template,
+                    "effective_prompt_template": resolved_prompt_template,
+                    "open_world_assist_profile": multimodal_params.get("open_world_assist_profile"),
+                    "use_marked_image": use_marked_image,
+                    "visual_search_mode": visual_search_mode,
+                    "fusion_mode": fusion_mode,
+                    "open_world_filters": {
+                        "taxonomy_min_score": multimodal_params.get("open_world_taxonomy_min_score"),
+                        "taxonomy_require_exact_for_generic": multimodal_params.get("open_world_taxonomy_require_exact_for_generic"),
+                        "filter_unmatched_taxonomy": multimodal_params.get("open_world_filter_unmatched_taxonomy"),
+                        "filter_generic_labels": multimodal_params.get("open_world_filter_generic_labels"),
+                    },
                     "dataset": dataset_info,
                 },
             },
@@ -2862,6 +4168,10 @@ def run_multimodal_evaluate(request: dict[str, Any]) -> dict[str, Any]:
             "thinking_with_image": thinking_with_image,
             "attached": False,
         }
+        item_visual_artifacts: list[dict[str, Any]] = []
+        visual_search_passes: list[dict[str, Any]] = []
+        marked_meta: dict[str, Any] | None = None
+        marked_error: dict[str, Any] | None = None
         vlm_result: dict[str, Any]
         llm_result: dict[str, Any] | None = None
         if thinking_with_image and image_ref is None:
@@ -2881,11 +4191,31 @@ def run_multimodal_evaluate(request: dict[str, Any]) -> dict[str, Any]:
             try:
                 encoded_image = None
                 if thinking_with_image and image_ref is not None:
+                    reasoning_image_ref = image_ref
+                    if use_marked_image and not str(image_ref).startswith(("http://", "https://", "data:image/")):
+                        try:
+                            marked = render_marked_image(
+                                image_ref,
+                                detections,
+                                output_dir=ensure_manifest_dir(request) / "visual-search",
+                                prefix=f"{index:04d}-{slugify(Path(str(image_ref)).stem)}",
+                            )
+                            reasoning_image_ref = marked["path"]
+                            marked_meta = marked
+                            item_visual_artifacts.append({"kind": "marked_image", "path": marked["path"]})
+                        except Exception as mark_exc:
+                            marked_error = {"type": type(mark_exc).__name__, "message": str(mark_exc)}
                     encoded_image = encode_image_reference_for_openai(
-                        image_ref,
+                        reasoning_image_ref,
                         max_bytes=int(multimodal_params.get("max_image_bytes", 20_000_000)),
                     )
                     image_meta = {k: v for k, v in encoded_image.items() if k != "image_url"}
+                    image_meta["requested"] = image_ref
+                    image_meta["reasoning_input"] = reasoning_image_ref
+                    if marked_meta:
+                        image_meta["marked"] = marked_meta
+                    if marked_error:
+                        image_meta["marked_error"] = marked_error
                     image_meta["thinking_with_image"] = True
                     image_meta["attached"] = True
                 user_text = build_thinking_with_image_prompt(
@@ -2894,6 +4224,8 @@ def run_multimodal_evaluate(request: dict[str, Any]) -> dict[str, Any]:
                     method=method,
                     thinking_with_image=thinking_with_image,
                     structured_output=structured_output,
+                    prompt_template=str(resolved_prompt_template) if resolved_prompt_template is not None else None,
+                    prompt_dir=PROMPT_DIR,
                 )
                 vlm_result = call_openai_compatible(
                     model=str(provider_cfg["vlm_model"]),
@@ -2901,7 +4233,7 @@ def run_multimodal_evaluate(request: dict[str, Any]) -> dict[str, Any]:
                     developer_text=str(
                         multimodal_params.get("developer_prompt")
                         or multimodal_params.get("system_prompt")
-                        or "You are a careful visual reasoning assistant for YOLO-Master. Use the image and detector evidence, but only return concise evidence and uncertainty, not hidden chain-of-thought."
+                        or default_vlm_developer_prompt(resolved_prompt_template)
                     ),
                     image_url=encoded_image["image_url"] if encoded_image else None,
                     image_detail=str(multimodal_params.get("image_detail", "auto")),
@@ -2911,6 +4243,23 @@ def run_multimodal_evaluate(request: dict[str, Any]) -> dict[str, Any]:
                     temperature=float(multimodal_params["temperature"]) if "temperature" in multimodal_params else None,
                 )
                 vlm_result = attach_multimodal_verdict(vlm_result)
+                if vlm_result.get("status") == "ok" and image_ref is not None:
+                    visual_search_passes, search_artifacts = runtime_run_visual_search_crop_passes(
+                        image_path=image_ref,
+                        base_prompt=image_prompt,
+                        detections=detections,
+                        initial_verdict=vlm_result.get("verdict", {}),
+                        provider_cfg=provider_cfg,
+                        multimodal_params=multimodal_params,
+                        output_dir=ensure_manifest_dir(request),
+                        max_output_tokens=max_output_tokens,
+                        method=method,
+                        resolved_path_fn=resolved_path,
+                        normalize_detection_boxes_fn=normalize_detection_boxes,
+                        call_openai_compatible_fn=call_openai_compatible,
+                        attach_multimodal_verdict_fn=attach_multimodal_verdict,
+                    )
+                    item_visual_artifacts.extend(search_artifacts)
             except Exception as exc:
                 vlm_result = {
                     "status": "failed",
@@ -2925,22 +4274,61 @@ def run_multimodal_evaluate(request: dict[str, Any]) -> dict[str, Any]:
                 "Refine this YOLO + VLM evaluation into a compact final answer. Do not add unsupported visual claims. "
                 "Return exactly one JSON object without Markdown fences. Use these keys: answer, visual_evidence, "
                 "yolo_cross_check, uncertainty, recommended_next_actions. In yolo_cross_check, include arrays named "
-                "confirmed, false_positives, possible_misses, duplicate_or_fragmented, and notes when applicable.\n\n"
+                "confirmed, false_positives, possible_misses, duplicate_or_fragmented, and notes when applicable. "
+                "If the VLM answer includes caption, global_classification, vlm_detections, vlm_segmentation, "
+                "visual_search, or fusion_hints, preserve those keys and refine them conservatively.\n\n"
                 f"User task:\n{image_prompt}\n\n"
                 f"YOLO detection summary:\n{json.dumps(json_safe(detections), ensure_ascii=False, indent=2)}\n\n"
                 f"VLM answer:\n{vlm_result.get('text', '')}\n\n"
                 f"Parsed VLM verdict:\n{json.dumps(json_safe(vlm_result.get('verdict', {})), ensure_ascii=False, indent=2)}"
+                f"\n\nVisual search crop passes:\n{json.dumps(json_safe(visual_search_passes), ensure_ascii=False, indent=2)}"
             )
             llm_result = call_openai_compatible(
                 model=llm_model,
                 user_text=refine_prompt,
-                developer_text="You are a concise verifier. Return answer, evidence, uncertainty, and next actions.",
+                developer_text=default_llm_refine_developer_prompt(resolved_prompt_template),
                 base_url=provider_cfg["base_url"],
                 api_mode=str(provider_cfg["api_mode"]),
                 max_output_tokens=max_output_tokens,
                 temperature=float(multimodal_params["temperature"]) if "temperature" in multimodal_params else None,
             )
             llm_result = attach_multimodal_verdict(llm_result)
+
+        vlm_verdict = vlm_result.get("verdict", {}) if isinstance(vlm_result.get("verdict"), dict) else {}
+        llm_verdict = llm_result.get("verdict", {}) if isinstance(llm_result, dict) and isinstance(llm_result.get("verdict"), dict) else {}
+        merged_verdict = merge_verdicts(vlm_verdict, llm_verdict)
+        fusion_preview = fusion_build_multimodal_fusion_preview(
+            detections=detections,
+            verdict=merged_verdict,
+            multimodal_params=multimodal_params,
+            image_path=image_ref,
+            normalize_detection_boxes_fn=normalize_detection_boxes,
+        )
+        metric_preview = build_item_metric_preview(
+            image_path=image_path,
+            names=names,
+            detections=detections,
+            fusion_preview=fusion_preview,
+            verdict=merged_verdict,
+            ground_truth_records_for_metric_fn=ground_truth_records_for_metric,
+            ground_truth_classification_records_for_metric_fn=ground_truth_classification_records_for_metric,
+            ground_truth_segmentation_records_for_metric_fn=ground_truth_segmentation_records_for_metric,
+            yolo_prediction_records_for_metric_fn=yolo_prediction_records_for_metric,
+            fused_prediction_records_for_metric_fn=fused_prediction_records_for_metric,
+            yolo_classification_predictions_for_metric_fn=yolo_classification_predictions_for_metric,
+            fused_classification_predictions_for_metric_fn=fused_classification_predictions_for_metric,
+            yolo_segmentation_predictions_for_metric_fn=yolo_segmentation_predictions_for_metric,
+            fused_segmentation_predictions_for_metric_fn=fused_segmentation_predictions_for_metric,
+            polygon_iou_approx_fn=polygon_iou_approx,
+        )
+        open_world_comparison = build_open_world_comparison_entry(
+            image_path=image_path,
+            detections=detections,
+            fusion_preview=fusion_preview,
+            verdict=merged_verdict,
+            multimodal_params=multimodal_params,
+            effective_prompt_template=str(resolved_prompt_template) if resolved_prompt_template is not None else None,
+        )
 
         status = multimodal_overall_status(vlm_result, llm_result)
         image_item.update(
@@ -2956,6 +4344,18 @@ def run_multimodal_evaluate(request: dict[str, Any]) -> dict[str, Any]:
                     "method": method,
                     "thinking_with_image": thinking_with_image,
                     "structured_output": structured_output,
+                    "prompt_template": prompt_template,
+                    "effective_prompt_template": resolved_prompt_template,
+                    "open_world_assist_profile": multimodal_params.get("open_world_assist_profile"),
+                    "open_world_filters": {
+                        "taxonomy_min_score": multimodal_params.get("open_world_taxonomy_min_score"),
+                        "taxonomy_require_exact_for_generic": multimodal_params.get("open_world_taxonomy_require_exact_for_generic"),
+                        "filter_unmatched_taxonomy": multimodal_params.get("open_world_filter_unmatched_taxonomy"),
+                        "filter_generic_labels": multimodal_params.get("open_world_filter_generic_labels"),
+                    },
+                    "use_marked_image": use_marked_image,
+                    "visual_search_mode": visual_search_mode,
+                    "fusion_mode": fusion_mode,
                     "provider": {
                         "name": provider_cfg["provider"],
                         "base_url": provider_cfg["base_url"],
@@ -2964,18 +4364,40 @@ def run_multimodal_evaluate(request: dict[str, Any]) -> dict[str, Any]:
                         "api_key_present": provider_cfg["api_key_present"],
                     },
                     "image": image_meta,
+                    "visual_search": {"mode": visual_search_mode, "passes": visual_search_passes, "artifacts": item_visual_artifacts},
                     "prompt": image_prompt,
                     "vlm": vlm_result,
                     "llm_refine": llm_result or {"status": "skipped"},
+                    "fusion": fusion_preview,
+                    "open_world_comparison": open_world_comparison,
                 },
+                "metric_preview": metric_preview,
             }
         )
+        if item_visual_artifacts:
+            image_item["artifacts"] = item_visual_artifacts
         if status in {"blocked", "partial", "failed"}:
             image_item["notes"] = ["See multimodal cross-check and detection summary for details."]
         items.append(image_item)
         save_dir = getattr(getattr(model, "predictor", None), "save_dir", save_dir)
 
     aggregate = aggregate_multimodal_evaluation(items)
+    metric_preview = aggregate_metric_preview(
+        items,
+        names,
+        ground_truth_records_for_metric_fn=ground_truth_records_for_metric,
+        ground_truth_classification_records_for_metric_fn=ground_truth_classification_records_for_metric,
+        ground_truth_segmentation_records_for_metric_fn=ground_truth_segmentation_records_for_metric,
+        yolo_prediction_records_for_metric_fn=yolo_prediction_records_for_metric,
+        fused_prediction_records_for_metric_fn=fused_prediction_records_for_metric,
+        yolo_classification_predictions_for_metric_fn=yolo_classification_predictions_for_metric,
+        fused_classification_predictions_for_metric_fn=fused_classification_predictions_for_metric,
+        yolo_segmentation_predictions_for_metric_fn=yolo_segmentation_predictions_for_metric,
+        fused_segmentation_predictions_for_metric_fn=fused_segmentation_predictions_for_metric,
+        merge_verdicts_fn=merge_verdicts,
+        polygon_iou_approx_fn=polygon_iou_approx,
+    )
+    aggregate["metric_preview"] = metric_preview
     overall_status = overall_multimodal_evaluation_status(aggregate)
     if run_yolo_val and data_ref_for_baseline not in (None, ""):
         baseline_request = normalize_request(
@@ -3009,6 +4431,7 @@ def run_multimodal_evaluate(request: dict[str, Any]) -> dict[str, Any]:
         "request_id": request.get("request_id"),
         "dataset": dataset_info,
         "aggregate": aggregate,
+        "metric_preview": metric_preview,
         "baseline": baseline,
         "items": items,
         "environment": environment,
@@ -3017,6 +4440,18 @@ def run_multimodal_evaluate(request: dict[str, Any]) -> dict[str, Any]:
             "method": method,
             "thinking_with_image": thinking_with_image,
             "structured_output": structured_output,
+            "prompt_template": prompt_template,
+            "effective_prompt_template": resolved_prompt_template,
+            "open_world_assist_profile": multimodal_params.get("open_world_assist_profile"),
+            "open_world_filters": {
+                "taxonomy_min_score": multimodal_params.get("open_world_taxonomy_min_score"),
+                "taxonomy_require_exact_for_generic": multimodal_params.get("open_world_taxonomy_require_exact_for_generic"),
+                "filter_unmatched_taxonomy": multimodal_params.get("open_world_filter_unmatched_taxonomy"),
+                "filter_generic_labels": multimodal_params.get("open_world_filter_generic_labels"),
+            },
+            "use_marked_image": use_marked_image,
+            "visual_search_mode": visual_search_mode,
+            "fusion_mode": fusion_mode,
             "provider": {
                 "name": provider_cfg["provider"],
                 "base_url": provider_cfg["base_url"],
@@ -3028,8 +4463,57 @@ def run_multimodal_evaluate(request: dict[str, Any]) -> dict[str, Any]:
             "prompt": prompt,
         },
     }
+    open_world_report = {
+        "items": [
+            item.get("multimodal", {}).get("open_world_comparison", {})
+            for item in items
+            if isinstance(item.get("multimodal", {}).get("open_world_comparison", {}), dict)
+        ]
+    }
+    open_world_report["aggregate"] = aggregate_open_world_comparison(open_world_report["items"])
+    report["open_world_comparison_report"] = open_world_report
+    fusion_coco_records = [
+        record
+        for item in items
+        for record in (
+            item.get("multimodal", {})
+            .get("fusion", {})
+            .get("coco_predictions_preview", [])
+            if isinstance(item.get("multimodal", {}).get("fusion", {}), dict)
+            else []
+        )
+    ]
+    metric_guardrail = build_metric_guardrail(
+        items=items,
+        metric_preview=metric_preview,
+        fused_coco_records=fusion_coco_records,
+        multimodal_params=multimodal_params,
+        yolo_prediction_records_for_metric_fn=yolo_prediction_records_for_metric,
+    )
+    if fusion_coco_records:
+        report["fusion_preview"] = {
+            "strategy": "metric_safe_v1",
+            "coco_prediction_records": len(fusion_coco_records),
+            "note": "Preview records are VLM-assisted candidates; run COCO evaluation before treating them as metric gains.",
+        }
+    report["metric_guardrail"] = {k: v for k, v in metric_guardrail.items() if k != "records"}
     report_path.write_text(json.dumps(json_safe(report), ensure_ascii=False, indent=2), encoding="utf-8")
     artifacts = [{"kind": "json", "path": str(report_path.resolve())}]
+    open_world_report_path = report_dir / "open-world-comparison-report.json"
+    open_world_report_path.write_text(json.dumps(json_safe(open_world_report), ensure_ascii=False, indent=2), encoding="utf-8")
+    artifacts.append({"kind": "open_world_comparison_report", "path": str(open_world_report_path.resolve())})
+    if fusion_coco_records:
+        fusion_path = report_dir / "fusion-preview-coco-predictions.json"
+        fusion_path.write_text(json.dumps(json_safe(fusion_coco_records), ensure_ascii=False, indent=2), encoding="utf-8")
+        artifacts.append({"kind": "fusion_coco_predictions_preview", "path": str(fusion_path.resolve())})
+    if metric_preview.get("status") == "ok":
+        metric_path = report_dir / "fusion-metric-preview.json"
+        metric_path.write_text(json.dumps(json_safe(metric_preview), ensure_ascii=False, indent=2), encoding="utf-8")
+        artifacts.append({"kind": "fusion_metric_preview", "path": str(metric_path.resolve())})
+    if metric_guardrail.get("records"):
+        guarded_path = report_dir / "metric-guarded-coco-predictions.json"
+        guarded_path.write_text(json.dumps(json_safe(metric_guardrail["records"]), ensure_ascii=False, indent=2), encoding="utf-8")
+        artifacts.append({"kind": "metric_guarded_coco_predictions", "path": str(guarded_path.resolve())})
     if save_dir:
         artifacts.append({"kind": "directory", "path": str(Path(save_dir).resolve())})
 
@@ -3044,6 +4528,7 @@ def run_multimodal_evaluate(request: dict[str, Any]) -> dict[str, Any]:
         auto_completed=auto_completed,
         artifacts=artifacts,
         multimodal=report["multimodal"],
+        metric_guardrail={k: v for k, v in metric_guardrail.items() if k != "records"},
         baseline=baseline,
         next_actions=["yolo.val", "yolo.multimodal.infer", "yolo.predict"],
     )

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import importlib.util
+import importlib
 import json
 import os
 import subprocess
@@ -13,8 +13,11 @@ from pathlib import Path
 from typing import Any
 
 
-SKILL_ROOT = Path(__file__).resolve().parents[1]
-REPO_ROOT = Path(__file__).resolve().parents[2]
+SKILL_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(SKILL_ROOT) not in sys.path:
+    sys.path.insert(0, str(SKILL_ROOT))
+
 DISPATCHER = SKILL_ROOT / "scripts" / "run_yolo_master_skill.py"
 DEFAULT_CASES = SKILL_ROOT / "assets" / "autotrain_cases.json"
 REPORT_DIR = SKILL_ROOT / "logs"
@@ -44,12 +47,7 @@ def dotted_get(value: Any, path: str) -> Any:
 
 
 def load_dispatcher_module() -> Any:
-    spec = importlib.util.spec_from_file_location("yolo_master_skill_dispatcher", DISPATCHER)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"Unable to load dispatcher module from {DISPATCHER}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return importlib.import_module("runtime.cli.dispatcher")
 
 
 def apply_env_overrides(env: dict[str, str], overrides: dict[str, Any] | None) -> dict[str, str]:
@@ -284,40 +282,202 @@ def run_probe_case(case: dict[str, Any]) -> dict[str, Any]:
     if kind == "multimodal_stub":
         module = load_dispatcher_module()
         calls: list[dict[str, Any]] = []
-        fake_outputs = iter(
-            [
-                json.dumps(
-                    {
-                        "answer": "vlm answer",
-                        "visual_evidence": ["image supports the bus detection"],
-                        "yolo_cross_check": {
-                            "confirmed": ["bus"],
-                            "false_positives": [],
-                            "possible_misses": [],
-                            "duplicate_or_fragmented": [],
-                            "notes": [],
-                        },
-                        "uncertainty": "low",
-                        "recommended_next_actions": ["continue validation"],
-                    }
-                ),
-                json.dumps(
-                    {
-                        "answer": "refined answer",
-                        "visual_evidence": ["detector and VLM agree"],
-                        "yolo_cross_check": {
-                            "confirmed": ["bus"],
-                            "false_positives": [],
-                            "possible_misses": [],
-                            "duplicate_or_fragmented": [],
-                            "notes": [],
-                        },
-                        "uncertainty": "low",
-                        "recommended_next_actions": ["continue validation"],
-                    }
-                ),
-            ]
-        )
+        open_world_mode = str(request.get("params", {}).get("prompt_template") or "") == "vlm_open_world_detection"
+        generic_taxonomy_probe = bool(request.get("params", {}).get("open_world_taxonomy_require_exact_for_generic"))
+        if open_world_mode:
+            if generic_taxonomy_probe:
+                fake_outputs = iter(
+                    [
+                        json.dumps(
+                            {
+                                "answer": "open-world vlm answer",
+                                "visual_evidence": ["a bus and visible grass are both present"],
+                                "caption": {"short": "A bus near grass", "dense": "A bus occupies the main view while a grassy area appears nearby.", "tags": ["bus", "grass"]},
+                                "global_classification": [{"open_label": "bus", "class_id": 5, "coco_label": "bus", "confidence": 0.96}],
+                                "vlm_detections": [
+                                    {
+                                        "proposal_id": "ow1",
+                                        "open_label": "grass",
+                                        "confidence": 0.88,
+                                        "bbox_xyxy": [702, 742, 760, 875],
+                                        "bbox_quality": "estimated",
+                                        "linked_yolo_indices": [],
+                                        "open_world_action": "open_world_add",
+                                        "visual_evidence": "green grassy patch near the scene edge",
+                                        "rationale": "generic vegetation region visible in image",
+                                    }
+                                ],
+                                "yolo_cross_check": {
+                                    "confirmed": ["bus"],
+                                    "false_positives": [],
+                                    "possible_misses": ["grass"],
+                                    "duplicate_or_fragmented": [],
+                                    "notes": [],
+                                },
+                                "fusion_hints": {
+                                    "add_open_world_detections": [{"proposal_id": "ow1", "confidence": 0.88, "evidence": "visible grassy patch"}],
+                                    "add_vlm_detections": [],
+                                    "suppress_yolo_indices": [],
+                                    "relabel_yolo": [],
+                                    "adjust_boxes": [],
+                                },
+                                "uncertainty": "low",
+                                "recommended_next_actions": ["preserve the open-world region but keep taxonomy matching conservative"],
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "answer": "open-world refined answer",
+                                "visual_evidence": ["bus remains correct and the grass region is still visible"],
+                                "caption": {"short": "Bus with grass", "dense": "The verification pass agrees that the bus is correct and a grassy area is visible.", "tags": ["bus", "grass"]},
+                                "global_classification": [{"open_label": "bus", "class_id": 5, "coco_label": "bus", "confidence": 0.95}],
+                                "vlm_detections": [
+                                    {
+                                        "proposal_id": "ow1",
+                                        "open_label": "grass",
+                                        "confidence": 0.9,
+                                        "bbox_xyxy": [702, 742, 760, 875],
+                                        "bbox_quality": "estimated",
+                                        "linked_yolo_indices": [],
+                                        "open_world_action": "open_world_add",
+                                        "visual_evidence": "green patch near the lower side",
+                                        "rationale": "still visible after verification",
+                                    }
+                                ],
+                                "yolo_cross_check": {
+                                    "confirmed": ["bus"],
+                                    "false_positives": [],
+                                    "possible_misses": ["grass"],
+                                    "duplicate_or_fragmented": [],
+                                    "notes": [],
+                                },
+                                "fusion_hints": {
+                                    "add_open_world_detections": [{"proposal_id": "ow1", "confidence": 0.9, "evidence": "verified grassy patch"}],
+                                    "add_vlm_detections": [],
+                                    "suppress_yolo_indices": [],
+                                    "relabel_yolo": [],
+                                    "adjust_boxes": [],
+                                },
+                                "uncertainty": "low",
+                                "recommended_next_actions": ["keep the generic label, but do not force a taxonomy anchor"],
+                            }
+                        ),
+                    ]
+                )
+            else:
+                fake_outputs = iter(
+                    [
+                        json.dumps(
+                            {
+                                "answer": "open-world vlm answer",
+                                "visual_evidence": ["a bus and a traffic cone are both visible"],
+                                "caption": {"short": "A bus on the road near a traffic cone", "dense": "A parked bus occupies most of the frame and a small traffic cone sits nearby.", "tags": ["bus", "traffic cone", "road"]},
+                                "global_classification": [{"open_label": "bus", "class_id": 5, "coco_label": "bus", "confidence": 0.96}],
+                                "vlm_detections": [
+                                    {
+                                        "proposal_id": "ow1",
+                                        "open_label": "traffic cone",
+                                        "confidence": 0.88,
+                                        "bbox_xyxy": [702, 742, 760, 875],
+                                        "bbox_quality": "estimated",
+                                        "linked_yolo_indices": [],
+                                        "open_world_action": "open_world_add",
+                                        "visual_evidence": "orange cone on the right side of the bus",
+                                        "rationale": "clearly visible novel roadside object",
+                                    }
+                                ],
+                                "yolo_cross_check": {
+                                    "confirmed": ["bus"],
+                                    "false_positives": [],
+                                    "possible_misses": ["traffic cone"],
+                                    "duplicate_or_fragmented": [],
+                                    "notes": [],
+                                },
+                                "fusion_hints": {
+                                    "add_open_world_detections": [{"proposal_id": "ow1", "confidence": 0.88, "evidence": "visible roadside cone"}],
+                                    "add_vlm_detections": [],
+                                    "suppress_yolo_indices": [],
+                                    "relabel_yolo": [],
+                                    "adjust_boxes": [],
+                                },
+                                "uncertainty": "low",
+                                "recommended_next_actions": ["preserve open-world object for downstream reasoning"],
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "answer": "open-world refined answer",
+                                "visual_evidence": ["bus remains correct and the cone is still visible"],
+                                "caption": {"short": "Bus with roadside cone", "dense": "The verification pass agrees that the bus is correct and a cone-like object is visible.", "tags": ["bus", "cone"]},
+                                "global_classification": [{"open_label": "bus", "class_id": 5, "coco_label": "bus", "confidence": 0.95}],
+                                "vlm_detections": [
+                                    {
+                                        "proposal_id": "ow1",
+                                        "open_label": "traffic cone",
+                                        "confidence": 0.9,
+                                        "bbox_xyxy": [702, 742, 760, 875],
+                                        "bbox_quality": "estimated",
+                                        "linked_yolo_indices": [],
+                                        "open_world_action": "open_world_add",
+                                        "visual_evidence": "small cone near the curb",
+                                        "rationale": "still visible after verification",
+                                    }
+                                ],
+                                "yolo_cross_check": {
+                                    "confirmed": ["bus"],
+                                    "false_positives": [],
+                                    "possible_misses": ["traffic cone"],
+                                    "duplicate_or_fragmented": [],
+                                    "notes": [],
+                                },
+                                "fusion_hints": {
+                                    "add_open_world_detections": [{"proposal_id": "ow1", "confidence": 0.9, "evidence": "verified roadside cone"}],
+                                    "add_vlm_detections": [],
+                                    "suppress_yolo_indices": [],
+                                    "relabel_yolo": [],
+                                    "adjust_boxes": [],
+                                },
+                                "uncertainty": "low",
+                                "recommended_next_actions": ["keep the novel object in open-world preview"],
+                            }
+                        ),
+                    ]
+                )
+        else:
+            fake_outputs = iter(
+                [
+                    json.dumps(
+                        {
+                            "answer": "vlm answer",
+                            "visual_evidence": ["image supports the bus detection"],
+                            "yolo_cross_check": {
+                                "confirmed": ["bus"],
+                                "false_positives": [],
+                                "possible_misses": [],
+                                "duplicate_or_fragmented": [],
+                                "notes": [],
+                            },
+                            "uncertainty": "low",
+                            "recommended_next_actions": ["continue validation"],
+                        }
+                    ),
+                    json.dumps(
+                        {
+                            "answer": "refined answer",
+                            "visual_evidence": ["detector and VLM agree"],
+                            "yolo_cross_check": {
+                                "confirmed": ["bus"],
+                                "false_positives": [],
+                                "possible_misses": [],
+                                "duplicate_or_fragmented": [],
+                                "notes": [],
+                            },
+                            "uncertainty": "low",
+                            "recommended_next_actions": ["continue validation"],
+                        }
+                    ),
+                ]
+            )
         original_urlopen = module.urllib.request.urlopen
 
         class FakeResponse:
@@ -397,8 +557,8 @@ def run_probe_case(case: dict[str, Any]) -> dict[str, Any]:
 
         class FakeBoxes:
             def __init__(self):
-                self.xyxy = FakeArray([[0.0, 0.0, 12.0, 12.0]])
-                self.cls = FakeArray([5])
+                self.xyxy = FakeArray([[121.5, 459.0, 688.5, 945.0]])
+                self.cls = FakeArray([0])
                 self.conf = FakeArray([0.91])
 
             def __len__(self):
@@ -409,7 +569,7 @@ def run_probe_case(case: dict[str, Any]) -> dict[str, Any]:
                 self.path = path
                 self.speed = {"preprocess": 1.0, "inference": 2.0, "postprocess": 3.0}
                 self.boxes = FakeBoxes()
-                self.names = {5: "bus"}
+                self.names = {0: "bus"}
 
         class FakeModel:
             def __init__(self):
