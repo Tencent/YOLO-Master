@@ -16,7 +16,7 @@ agent/
 ├── references/              # 架构、接口、thinking-with-image 等长文档
 ├── scripts/                 # 仅保留可执行薄封装
 └── runtime/                 # 可复用实现库
-    ├── cli/                 # dispatcher、validator、报告命令
+    ├── cli/                 # dispatcher、contract、pipeline、LoRA/PEFT 工具、validator
     ├── evaluation/          # 指标预览、guardrail、融合评估
     ├── multimodal/          # VLM/LLM 调用、视觉标注与融合逻辑
     └── open_world/          # LVIS/V3Det 分类学与开放世界归一化
@@ -47,9 +47,13 @@ yolo version
 
 ## Runtime Responsibilities
 
-- `runtime/cli/dispatcher.py`: 统一解析 skill request, 选择 CLI/Python 执行路径, 注入设备与 macOS/MPS 默认值, 写出 manifest。
+- `runtime/cli/dispatcher.py`: 统一解析 skill request 并路由到具体 runtime 模块; 新逻辑优先放入同级模块, 避免继续膨胀入口文件。
+- `runtime/cli/contract.py`: 统一响应 envelope、manifest、`usage.tokens` 与 `cost_estimate`。
+- `runtime/cli/pipeline.py`: `yolo.pipeline.experiment` 的端到端阶段编排, 支持 train/val/export/benchmark 以及 LoRA/MoE/PEFT 诊断阶段, 并为长流程写出可 tail 的 `progress.jsonl`。
+- `runtime/cli/lora_tools.py`: `yolo.lora.diagnose`, 包含 effective rank、LoRA A/B 范数与 delta-W 谱预览。
+- `runtime/cli/peft_compare.py`: `yolo.eval.peft_compare`, 用统一请求结构编排多个 LoRA/DoRA/LoHA/Full-SFT 变体。
 - `runtime/cli/validate.py`: AutoTrain 风格用例执行器, 支持 `quick`, `contract`, `cli-smoke`, `deep-smoke`, `extended` 等验证套件。
-- `runtime/multimodal/`: 负责 OpenAI-compatible VLM/LLM 请求、thinking-with-image prompt、marked image、crop/zoom 视觉搜索与结构化结果解析。
+- `runtime/multimodal/`: 负责 OpenAI-compatible VLM/LLM 请求、thinking-with-image prompt、marked image、crop/zoom 视觉搜索与结构化结果解析; provider 配置位于 `runtime/multimodal/providers/*.yaml`。
 - `runtime/evaluation/`: 负责 YOLO-only 与融合结果的指标预览、分类/检测/分割 delta、metric guardrail。
 - `runtime/open_world/`: 负责 LVIS/V3Det taxonomy 匹配、open-world profile、IoU relabel、未匹配标签兜底与 verified list 合并。
 
@@ -70,3 +74,5 @@ yolo version
 ```
 
 新增能力时优先补 `runtime/` 模块和验证用例, 再让 `scripts/` 暴露薄入口。不要把长逻辑重新写回 `scripts/`。
+
+AutoTrain case 默认从 `assets/autotrain_cases/` 目录读取, 按 skill 分组维护; 旧的 `assets/autotrain_cases.json` 仍保留为兼容入口。

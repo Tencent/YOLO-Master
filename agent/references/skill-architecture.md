@@ -478,13 +478,14 @@ result = model.train(**params)
 |---|---|---|---|
 | `yolo.lora.train` | 带 LoRA 训练 | `Model.train(lora_*=...)` | Ready |
 | `yolo.lora.adapters` | 保存/加载/合并 LoRA 适配器 | `save_lora_only/load_lora/merge_lora` | Ready |
+| `yolo.lora.diagnose` | LoRA effective rank、A/B 范数、delta-W 谱诊断 | `runtime/cli/lora_tools.py` | Ready |
 | `yolo.moe.diagnose` | 专家使用率诊断 | `diagnose_model()` | Mostly Ready |
 | `yolo.moe.prune` | 专家裁剪 | `prune_moe_model()` | Mostly Ready |
 | `yolo.solutions.run` | 视觉方案运行 | `solutions.*` | Mostly Ready |
 | `yolo.ui.launch` | Gradio / Streamlit 启动 | `app.py` / `streamlit_inference.py` | Partially Ready |
-| `yolo.eval.peft_compare` | PEFT 方案对比实验 | `scripts/peft_validation/*` | Needs Refactor |
+| `yolo.eval.peft_compare` | PEFT 方案对比实验 | `runtime/cli/peft_compare.py` | Ready |
 | `yolo.eval.sparse_sahi_compare` | Sparse SAHI 对比 | `scripts/test_sahi_compare.py` | Needs Refactor |
-| `yolo.pipeline.experiment` | 训练-验证-导出-评估全流程编排 | Orchestrator skill | Recommended |
+| `yolo.pipeline.experiment` | 训练-验证-导出-评估全流程编排 | `runtime/cli/pipeline.py` | Ready |
 
 ---
 
@@ -1267,21 +1268,15 @@ DashScope 等 OpenAI-compatible chat endpoints 可设置:
 
 对不同 PEFT 变体做对比实验。
 
-**Current Reality**
+**Current Implementation**
 
-现有脚本具备研究价值, 但不适合作为通用 Skill 直接调用, 因为它硬编码了:
+`runtime/cli/peft_compare.py` 已经把 PEFT 对比从脚本式入口迁移为 agent skill。请求通过 `params.train`, `params.val`, `params.variants` 描述公共训练配置、验证配置与各变体覆盖项; 每个变体会被编排成 `yolo.train` 或 `yolo.lora.train`, 可选接 `yolo.val`, 最终返回结构化 `results` 与按 `rank_metric` 排序的 `peft_compare.ranking`。
 
-- `MODEL_PATH`
-- `DATA_YAML`
-- `DEVICE`
-- `EPOCHS`
-- `PROJECT_DIR`
+**Notes**
 
-**Required Refactor Before Production**
-
-1. 提取为 `run_peft_compare(config: dict) -> dict`
-2. 把模型、数据、设备、epoch、变体列表全部外置
-3. 返回结构化结果而不是依赖 stdout
+- `policy.dry_run=true` 只生成变体计划, 适合 AutoTrain contract。
+- 真跑时应先控制 `epochs`, `batch`, `device`, `project/name`, 避免多个变体输出目录冲突。
+- 推荐在对比后接 `yolo.lora.diagnose`, 查看 effective rank 与 delta-W 谱是否出现退化。
 
 ### 8.17 `yolo.eval.sparse_sahi_compare`
 
@@ -1386,7 +1381,7 @@ Validator 子进程会设置 `YOLO_MASTER_AGENT_RUNTIME_CACHE=1`, 让 Torch/MPS 
 
 ### 10.1 Recommended Orchestrator Skill
 
-建议增加一个高层编排 Skill:
+已落地一个高层编排 Skill:
 
 `yolo.pipeline.experiment`
 
@@ -1398,8 +1393,8 @@ Validator 子进程会设置 `YOLO_MASTER_AGENT_RUNTIME_CACHE=1`, 让 Torch/MPS 
 4. 验证
 5. 导出
 6. 基准测试
-7. 可选 LoRA/MoE 诊断
-8. 汇总报告
+7. 可选 LoRA/MoE/PEFT 诊断
+8. 汇总报告与 `progress.jsonl` 文件流
 
 ### 10.2 Example Workflow
 

@@ -11,12 +11,14 @@ Use this skill for any repository task that should drive the YOLO-Master stack e
 
 - `train`, `val`, `predict`, `track`, `export`, `benchmark`, `tune`
 - model inspection and task detection
-- LoRA save/load/merge
+- LoRA save/load/merge and `yolo.lora.diagnose`
+- PEFT comparison via `yolo.eval.peft_compare`
 - MoE diagnose/prune
 - multimodal visual inference with OpenAI VLM/LLM cooperation
 - multimodal batch evaluation over a dataset or image folder
 - `solutions` workflows
 - launchers for Gradio / Streamlit
+- end-to-end orchestration via `yolo.pipeline.experiment`
 
 ## Execution Rule
 
@@ -39,7 +41,7 @@ python agent/scripts/validate_yolo_master_skill.py --suite quick --pretty --summ
 ```
 
 `quick` is the default agent loop. It combines `fast-smoke`, `dry-run`, and `contract` so agents can iterate without waiting on real model inspection or CLI cold-start probes. Use `all` only when you explicitly want the slower full non-manual regression pass.
-The case pack now includes multimodal dry-run and contract probes for `yolo.multimodal.infer` and `yolo.multimodal.evaluate`.
+The case pack now lives in `assets/autotrain_cases/` as skill-grouped JSON files. It includes multimodal dry-run/contract probes plus dry-run coverage for `yolo.pipeline.experiment`, `yolo.lora.diagnose`, and `yolo.eval.peft_compare`.
 
 For quick regression checks, prefer the tiered suites:
 
@@ -121,8 +123,10 @@ Behavior:
 - `thinking_with_image=true` attaches the image to the VLM request
 - `enable_llm_refine=true` or `OPENAI_LLM_MODEL` enables the refinement pass
 - missing `OPENAI_API_KEY` returns a structured `blocked` result
-- DashScope/OpenAI-compatible chat endpoints can use `params.openai_api_mode="chat.completions"` with `OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1`
+- Provider-aware defaults can be externalized under `runtime/multimodal/providers/*.yaml`; built-in configs currently include `openai` and `dashscope`.
+- DashScope/OpenAI-compatible chat endpoints can use `params.provider="dashscope"` plus `DASHSCOPE_API_KEY`, or set `OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1` with `params.openai_api_mode="chat.completions"`.
 - the manifest now preserves the `multimodal` block, including parsed verdicts, visual-search crop passes, fusion preview, and artifact paths when available
+- every response envelope includes `usage.tokens` and `cost_estimate`; cost is `null` when provider pricing is not configured.
 
 Example:
 
@@ -171,7 +175,7 @@ python agent/scripts/run_yolo_master_skill.py --json '{"skill":"yolo.multimodal.
 
 Use the bundled validator and case pack to keep this skill honest:
 
-- case pack: `assets/autotrain_cases.json`
+- case pack: `assets/autotrain_cases/` grouped by skill, with `assets/autotrain_cases.json` retained for compatibility
 - report: `logs/autotrain-report.json`
 - bootstrap: `python -m pip install -e .`
 - dispatcher supports `policy.dry_run=true` for cheap coverage before real runs
@@ -190,6 +194,22 @@ Use the bundled validator and case pack to keep this skill honest:
 - Built-in dataset YAML names such as `coco128.yaml` are auto-resolved against the local repository before execution.
 - `doctor` returns environment, device selection source, and agent-facing recommendations.
 - CLI train/val/predict/benchmark/export responses now carry environment metadata, and auto-selected runs can include a recovery trail when a device fallback occurs.
+
+## Pipeline And PEFT Tools
+
+Use `yolo.pipeline.experiment` for end-to-end train/val/export/benchmark flows. It accepts either stage keys such as `train`, `val`, `export`, `benchmark`, or an explicit `params.stages` list, and can include `inspect`, `lora_diagnose`, `moe_diagnose`, and `peft_compare`. Real runs write `progress.jsonl` next to the manifest for file-tail progress monitoring.
+
+Use `yolo.lora.diagnose` to inspect active or loaded adapters:
+
+```bash
+python agent/scripts/run_yolo_master_skill.py --json '{"skill":"yolo.lora.diagnose","inputs":{"model":"yolo11n.pt"},"params":{"path":"runs/train/exp/weights/lora_adapter_best","svd_max_layers":20,"spectrum_max_layers":12},"policy":{"dry_run":true}}' --pretty
+```
+
+Use `yolo.eval.peft_compare` to compare Full-SFT and PEFT variants with the same base train/val settings:
+
+```bash
+python agent/scripts/run_yolo_master_skill.py --json '{"skill":"yolo.eval.peft_compare","inputs":{"model":"yolo11n.pt","data":"coco8.yaml"},"params":{"train":{"epochs":1,"imgsz":32,"batch":1},"variants":[{"name":"full_sft","train":{"lora_r":0}},{"name":"lora_r8","train":{"lora_type":"lora","lora_r":8,"lora_alpha":16}}]},"policy":{"dry_run":true}}' --pretty
+```
 
 ## Manual Probes
 
