@@ -1,0 +1,12 @@
+provider: dashscope
+api_family: openai-compatible
+api_key_env: DASHSCOPE_API_KEY
+base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+defaults:
+  api_mode: chat.completions
+  vlm_model: qwen-vl-max
+  llm_model:
+pricing:
+  default:
+    input_per_1k_usd:
+    output_per_1k_usd:
