@@ -1,0 +1,17 @@
+{
+  "lvis": {
+    "dataset": "LVIS v1.0",
+    "class_count": 1203,
+    "source": "/Users/gatilin/PycharmProjects/YOLO-Master-v260510-paper/ultralytics/cfg/datasets/lvis.yaml",
+    "upstream_reference": "https://opendatalab.com/OpenDataLab/LVIS_v1_dot_0",
+    "notes": "Class list extracted from local ultralytics lvis.yaml reference."
+  },
+  "v3det": {
+    "dataset": "V3Det",
+    "class_count": 13204,
+    "official_filename": "category_name_13204_v3det_2023_v1.txt",
+    "upstream_reference": "https://opendatalab.com/V3Det/V3Det",
+    "mirror_source": "https://huggingface.co/datasets/myownskyW7/V3Det/resolve/main/category_name_13204_v3det_2023_v1.txt",
+    "notes": "Class list fetched from a public mirror because GitHub API lookups were rate-limited during this run."
+  }
+}
