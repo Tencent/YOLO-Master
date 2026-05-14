@@ -31,6 +31,17 @@ for candidate in (SKILL_ROOT,):
     if str(candidate) not in sys.path:
         sys.path.insert(0, str(candidate))
 
+from runtime.cli.contract import (
+    ensure_manifest_dir,
+    finalize_payload,
+    json_safe,
+    plan_response,
+    response,
+    write_manifest,
+)
+from runtime.cli.lora_tools import LoraDiagnoseDeps, run_lora_diagnose as run_lora_diagnose_impl
+from runtime.cli.peft_compare import PeftCompareDeps, run_peft_compare as run_peft_compare_impl
+from runtime.cli.pipeline import PipelineDeps, run_experiment_pipeline
 from runtime.open_world.taxonomy import (
     aggregate_open_world_comparison,
     apply_open_world_assist_profile_defaults,
@@ -358,30 +369,6 @@ def get_torch_runtime() -> dict[str, Any]:
         return info
 
     return cached("torch_runtime", _loader)
-
-
-def json_safe(value: Any) -> Any:
-    if isinstance(value, Path):
-        return str(value)
-    if isinstance(value, dict):
-        return {str(k): json_safe(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple, set)):
-        return [json_safe(v) for v in value]
-    if hasattr(value, "results_dict"):
-        return json_safe(value.results_dict)
-    if hasattr(value, "tolist"):
-        try:
-            return value.tolist()
-        except Exception:
-            pass
-    if hasattr(value, "item"):
-        try:
-            return value.item()
-        except Exception:
-            pass
-    if isinstance(value, (str, int, float, bool)) or value is None:
-        return value
-    return str(value)
 
 
 def parse_bool(value: Any, default: bool = False) -> bool:
@@ -1175,47 +1162,6 @@ def pushd(path: Path):
         os.chdir(old)
 
 
-def ensure_manifest_dir(request: dict[str, Any]) -> Path:
-    project = request.get("artifacts", {}).get("project")
-    name = request.get("artifacts", {}).get("name")
-    base = (REPO_ROOT / project).resolve() if project else DEFAULT_MANIFEST_DIR / request["request_id"]
-    target = base / name if name else base
-    target.mkdir(parents=True, exist_ok=True)
-    return target
-
-
-def write_manifest(request: dict[str, Any], payload: dict[str, Any]) -> Path:
-    manifest_dir = ensure_manifest_dir(request)
-    manifest_path = manifest_dir / "skill_manifest.json"
-    manifest = {
-        "skill": request.get("skill"),
-        "request_id": request.get("request_id"),
-        "status": payload.get("status"),
-        "summary": payload.get("summary"),
-        "artifacts": payload.get("artifacts", []),
-        "metrics": payload.get("metrics", {}),
-        "evaluation": payload.get("evaluation", {}),
-        "environment": payload.get("environment", {}),
-        "auto_completed": payload.get("auto_completed", {}),
-        "attempts": payload.get("attempts", []),
-        "recovery": payload.get("recovery", {}),
-        "multimodal": payload.get("multimodal", {}),
-        "recommendations": payload.get("recommendations", []),
-        "job": payload.get("job", {}),
-        "dry_run": payload.get("dry_run", False),
-    }
-    manifest_path.write_text(json.dumps(json_safe(manifest), ensure_ascii=False, indent=2), encoding="utf-8")
-    return manifest_path
-
-
-def finalize_payload(request: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
-    payload = dict(payload)
-    payload.setdefault("request_id", request.get("request_id"))
-    if "manifest" not in payload:
-        payload["manifest"] = str(write_manifest(request, payload))
-    return json_safe(payload)
-
-
 def best_checkpoint(payload: dict[str, Any]) -> str | None:
     for artifact in payload.get("artifacts", []):
         if artifact.get("kind") == "checkpoint" and artifact.get("label") == "best":
@@ -1430,6 +1376,8 @@ def run_visual_search_crop_passes(
             image_url=encode_image_reference_for_openai(str(crop_path), max_bytes=int(multimodal_params.get("max_image_bytes", 20_000_000)))["image_url"],
             image_detail=str(multimodal_params.get("image_detail", "auto")),
             base_url=provider_cfg["base_url"],
+            provider=str(provider_cfg.get("provider", "openai")),
+            api_key_env=str(provider_cfg.get("api_key_env", "OPENAI_API_KEY")),
             api_mode=str(provider_cfg["api_mode"]),
             max_output_tokens=max_output_tokens,
             temperature=float(multimodal_params["temperature"]) if "temperature" in multimodal_params else None,
@@ -2125,40 +2073,6 @@ def build_multimodal_fusion_preview(
         "open_world_predictions_preview": open_world_predictions,
         "warnings": warnings,
     }
-
-
-def response(skill: str, status: str, summary: str, **kwargs: Any) -> dict[str, Any]:
-    payload = {"skill": skill, "status": status, "summary": summary}
-    payload.update(kwargs)
-    return json_safe(payload)
-
-
-def plan_response(
-    request: dict[str, Any],
-    summary: str,
-    executor: str,
-    target: str,
-    params: dict[str, Any] | None = None,
-    next_actions: list[str] | None = None,
-    extra: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    payload = response(
-        request["skill"],
-        "ok",
-        summary,
-        dry_run=True,
-        plan={
-            "executor": executor,
-            "target": target,
-            "inputs": json_safe(request.get("inputs", {})),
-            "params": json_safe(params if params is not None else request.get("params", {})),
-        },
-        next_actions=next_actions or [],
-    )
-    if extra:
-        payload.update(json_safe(extra))
-    payload["manifest"] = str(write_manifest(request, payload))
-    return payload
 
 
 def build_model(request: dict[str, Any]) -> Any:
@@ -3666,7 +3580,7 @@ def run_multimodal_infer(request: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("`inputs.source` is required for yolo.multimodal.infer.")
     prompt = multimodal_prompt_from_request(request, multimodal_params)
     provider_cfg = openai_config(multimodal_params)
-    if provider_cfg["provider"] != "openai":
+    if provider_cfg.get("api_family") != "openai-compatible":
         raise ValueError(f"Unsupported multimodal provider: {provider_cfg['provider']}")
 
     max_items = int(yolo_params.pop("max_items", multimodal_params.get("max_reasoning_items", 3)))
@@ -3869,6 +3783,8 @@ def run_multimodal_infer(request: dict[str, Any]) -> dict[str, Any]:
                 image_url=encoded_image["image_url"] if encoded_image else None,
                 image_detail=str(multimodal_params.get("image_detail", "auto")),
                 base_url=provider_cfg["base_url"],
+                provider=str(provider_cfg.get("provider", "openai")),
+                api_key_env=str(provider_cfg.get("api_key_env", "OPENAI_API_KEY")),
                 api_mode=str(provider_cfg["api_mode"]),
                 max_output_tokens=max_output_tokens,
                 temperature=float(multimodal_params["temperature"]) if "temperature" in multimodal_params else None,
@@ -3894,7 +3810,7 @@ def run_multimodal_infer(request: dict[str, Any]) -> dict[str, Any]:
         except Exception as exc:
             vlm_result = {
                 "status": "failed",
-                "provider": "openai",
+                "provider": provider_cfg.get("provider", "openai"),
                 "summary": "Failed to prepare or call VLM reasoning.",
                 "error": {"type": type(exc).__name__, "message": str(exc)},
             }
@@ -3920,6 +3836,8 @@ def run_multimodal_infer(request: dict[str, Any]) -> dict[str, Any]:
             user_text=refine_prompt,
             developer_text=default_llm_refine_developer_prompt(resolved_prompt_template),
             base_url=provider_cfg["base_url"],
+            provider=str(provider_cfg.get("provider", "openai")),
+            api_key_env=str(provider_cfg.get("api_key_env", "OPENAI_API_KEY")),
             api_mode=str(provider_cfg["api_mode"]),
             max_output_tokens=max_output_tokens,
             temperature=float(multimodal_params["temperature"]) if "temperature" in multimodal_params else None,
@@ -4014,7 +3932,7 @@ def run_multimodal_evaluate(request: dict[str, Any]) -> dict[str, Any]:
     multimodal_params = apply_open_world_assist_profile_defaults(multimodal_params)
     prompt = multimodal_prompt_from_request(request, multimodal_params)
     provider_cfg = openai_config(multimodal_params)
-    if provider_cfg["provider"] != "openai":
+    if provider_cfg.get("api_family") != "openai-compatible":
         raise ValueError(f"Unsupported multimodal provider: {provider_cfg['provider']}")
 
     thinking_with_image = parse_bool(multimodal_params.get("thinking_with_image"), True)
@@ -4177,14 +4095,14 @@ def run_multimodal_evaluate(request: dict[str, Any]) -> dict[str, Any]:
         if thinking_with_image and image_ref is None:
             vlm_result = {
                 "status": "blocked",
-                "provider": "openai",
+                "provider": provider_cfg.get("provider", "openai"),
                 "summary": "No image source was available for multimodal reasoning.",
             }
         elif not provider_cfg["api_key_present"]:
             vlm_result = {
                 "status": "blocked",
-                "provider": "openai",
-                "summary": "OPENAI_API_KEY is not set; multimodal reasoning was skipped.",
+                "provider": provider_cfg.get("provider", "openai"),
+                "summary": f"{provider_cfg['api_key_env']} is not set; multimodal reasoning was skipped.",
                 "api_key_env": provider_cfg["api_key_env"],
             }
         else:
@@ -4238,6 +4156,8 @@ def run_multimodal_evaluate(request: dict[str, Any]) -> dict[str, Any]:
                     image_url=encoded_image["image_url"] if encoded_image else None,
                     image_detail=str(multimodal_params.get("image_detail", "auto")),
                     base_url=provider_cfg["base_url"],
+                    provider=str(provider_cfg.get("provider", "openai")),
+                    api_key_env=str(provider_cfg.get("api_key_env", "OPENAI_API_KEY")),
                     api_mode=str(provider_cfg["api_mode"]),
                     max_output_tokens=max_output_tokens,
                     temperature=float(multimodal_params["temperature"]) if "temperature" in multimodal_params else None,
@@ -4263,7 +4183,7 @@ def run_multimodal_evaluate(request: dict[str, Any]) -> dict[str, Any]:
             except Exception as exc:
                 vlm_result = {
                     "status": "failed",
-                    "provider": "openai",
+                    "provider": provider_cfg.get("provider", "openai"),
                     "summary": "Failed to prepare or call VLM reasoning.",
                     "error": {"type": type(exc).__name__, "message": str(exc)},
                 }
@@ -4288,6 +4208,8 @@ def run_multimodal_evaluate(request: dict[str, Any]) -> dict[str, Any]:
                 user_text=refine_prompt,
                 developer_text=default_llm_refine_developer_prompt(resolved_prompt_template),
                 base_url=provider_cfg["base_url"],
+                provider=str(provider_cfg.get("provider", "openai")),
+                api_key_env=str(provider_cfg.get("api_key_env", "OPENAI_API_KEY")),
                 api_mode=str(provider_cfg["api_mode"]),
                 max_output_tokens=max_output_tokens,
                 temperature=float(multimodal_params["temperature"]) if "temperature" in multimodal_params else None,
@@ -4749,6 +4671,19 @@ def run_lora_adapters(request: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def run_lora_diagnose(request: dict[str, Any]) -> dict[str, Any]:
+    return run_lora_diagnose_impl(
+        request,
+        LoraDiagnoseDeps(
+            build_model=build_model,
+            is_dry_run=is_dry_run,
+            response=response,
+            plan_response=plan_response,
+            write_manifest=write_manifest,
+        ),
+    )
+
+
 def run_moe_diagnose(request: dict[str, Any]) -> dict[str, Any]:
     inputs = request["inputs"]
     params = request["params"]
@@ -4813,6 +4748,22 @@ def run_moe_prune(request: dict[str, Any]) -> dict[str, Any]:
     )
     payload["manifest"] = str(write_manifest(request, payload))
     return payload
+
+
+def run_peft_compare(request: dict[str, Any]) -> dict[str, Any]:
+    return run_peft_compare_impl(
+        request,
+        PeftCompareDeps(
+            normalize_request=normalize_request,
+            is_dry_run=is_dry_run,
+            response=response,
+            plan_response=plan_response,
+            write_manifest=write_manifest,
+            best_checkpoint=best_checkpoint,
+            run_train_like=run_train_like,
+            run_val=run_val,
+        ),
+    )
 
 
 def format_solution_arg(key: str, value: Any) -> str:
@@ -4916,87 +4867,26 @@ def run_ui_launch(request: dict[str, Any]) -> dict[str, Any]:
 
 
 def run_pipeline(request: dict[str, Any]) -> dict[str, Any]:
-    params = request["params"]
-    common_inputs = deepcopy(request["inputs"])
-    current_model = common_inputs.get("model")
-
-    if is_dry_run(request):
-        return plan_response(
-            request,
-            "pipeline dry run prepared",
-            "orchestrator",
-            "yolo.pipeline.experiment",
-            params=params,
-            next_actions=["yolo.train", "yolo.val", "yolo.export", "yolo.benchmark"],
-        )
-
-    stages = {}
-    if "train" in params:
-        train_request = normalize_request(
-            {
-                "skill": "yolo.train",
-                "runtime": request.get("runtime", {}),
-                "inputs": {**common_inputs, "model": current_model},
-                "params": params["train"],
-                "artifacts": request.get("artifacts", {}),
-                "policy": request.get("policy", {}),
-                "request_id": request.get("request_id"),
-            }
-        )
-        stages["train"] = run_train_like(train_request, "yolo.train")
-        current_model = best_checkpoint(stages["train"]) or current_model
-
-    if "val" in params:
-        val_request = normalize_request(
-            {
-                "skill": "yolo.val",
-                "runtime": request.get("runtime", {}),
-                "inputs": {**common_inputs, "model": current_model},
-                "params": params["val"],
-                "artifacts": request.get("artifacts", {}),
-                "policy": request.get("policy", {}),
-                "request_id": request.get("request_id"),
-            }
-        )
-        stages["val"] = run_val(val_request)
-
-    if "export" in params:
-        export_request = normalize_request(
-            {
-                "skill": "yolo.export",
-                "runtime": request.get("runtime", {}),
-                "inputs": {**common_inputs, "model": current_model},
-                "params": params["export"],
-                "artifacts": request.get("artifacts", {}),
-                "policy": request.get("policy", {}),
-                "request_id": request.get("request_id"),
-            }
-        )
-        stages["export"] = run_export(export_request)
-
-    if "benchmark" in params:
-        benchmark_request = normalize_request(
-            {
-                "skill": "yolo.benchmark",
-                "runtime": request.get("runtime", {}),
-                "inputs": {**common_inputs, "model": current_model},
-                "params": params["benchmark"],
-                "artifacts": request.get("artifacts", {}),
-                "policy": request.get("policy", {}),
-                "request_id": request.get("request_id"),
-            }
-        )
-        stages["benchmark"] = run_benchmark(benchmark_request)
-
-    payload = response(
-        request["skill"],
-        "ok",
-        "pipeline finished",
-        stages=stages,
-        best_checkpoint=current_model,
+    return run_experiment_pipeline(
+        request,
+        PipelineDeps(
+            normalize_request=normalize_request,
+            is_dry_run=is_dry_run,
+            response=response,
+            plan_response=plan_response,
+            write_manifest=write_manifest,
+            best_checkpoint=best_checkpoint,
+            run_system=run_system,
+            run_model_inspect=run_model_inspect,
+            run_train_like=run_train_like,
+            run_val=run_val,
+            run_export=run_export,
+            run_benchmark=run_benchmark,
+            run_lora_diagnose=run_lora_diagnose,
+            run_moe_diagnose=run_moe_diagnose,
+            run_peft_compare=run_peft_compare,
+        ),
     )
-    payload["manifest"] = str(write_manifest(request, payload))
-    return payload
 
 
 HANDLERS = {
@@ -5013,6 +4903,8 @@ HANDLERS = {
     "yolo.benchmark": run_benchmark,
     "yolo.tune": run_tune,
     "yolo.lora.adapters": run_lora_adapters,
+    "yolo.lora.diagnose": run_lora_diagnose,
+    "yolo.eval.peft_compare": run_peft_compare,
     "yolo.moe.diagnose": run_moe_diagnose,
     "yolo.moe.prune": run_moe_prune,
     "yolo.solutions.run": run_solutions,

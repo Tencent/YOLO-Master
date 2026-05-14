@@ -1,0 +1,12 @@
+provider: openai
+api_family: openai-compatible
+api_key_env: OPENAI_API_KEY
+base_url: https://api.openai.com/v1
+defaults:
+  api_mode: auto
+  vlm_model: gpt-4.1-mini
+  llm_model:
+pricing:
+  default:
+    input_per_1k_usd:
+    output_per_1k_usd:

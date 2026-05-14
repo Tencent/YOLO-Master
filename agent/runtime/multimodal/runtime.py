@@ -10,6 +10,8 @@ from typing import Any, Callable
 
 from .visual import clamp_box_xyxy, encode_image_reference_for_openai, load_pillow_image
 
+PROVIDER_CONFIG_DIR = Path(__file__).resolve().parent / "providers"
+
 
 def parse_bool(value: Any, default: bool = False) -> bool:
     if value is None:
@@ -64,17 +66,42 @@ def prompt_template_name(prompt_template: Any) -> str:
     return Path(value).stem if value.endswith(".md") else Path(value).name
 
 
+def load_provider_config(provider: str) -> dict[str, Any]:
+    path = PROVIDER_CONFIG_DIR / f"{provider.lower()}.yaml"
+    if not path.exists():
+        return {}
+    try:
+        import yaml
+    except Exception:
+        return {}
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return data if isinstance(data, dict) else {}
+
+
+def _env_present(primary: str) -> bool:
+    return bool(os.environ.get(primary) or (primary != "OPENAI_API_KEY" and os.environ.get("OPENAI_API_KEY")))
+
+
 def openai_config(params: dict[str, Any]) -> dict[str, Any]:
     provider = params.get("vlm_provider") or params.get("provider") or "openai"
-    base_url = str(params.get("openai_base_url") or os.environ.get("OPENAI_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
+    provider_cfg = load_provider_config(str(provider))
+    defaults = provider_cfg.get("defaults") if isinstance(provider_cfg.get("defaults"), dict) else {}
+    api_key_env = str(params.get("openai_api_key_env") or provider_cfg.get("api_key_env") or "OPENAI_API_KEY")
+    base_url = str(
+        params.get("openai_base_url")
+        or os.environ.get("OPENAI_BASE_URL")
+        or provider_cfg.get("base_url")
+        or "https://api.openai.com/v1"
+    ).rstrip("/")
     return {
         "provider": provider,
-        "api_key_env": "OPENAI_API_KEY",
-        "api_key_present": bool(os.environ.get("OPENAI_API_KEY")),
+        "api_family": provider_cfg.get("api_family", "openai-compatible"),
+        "api_key_env": api_key_env,
+        "api_key_present": _env_present(api_key_env),
         "base_url": base_url,
-        "api_mode": params.get("openai_api_mode") or os.environ.get("OPENAI_API_MODE") or "auto",
-        "vlm_model": params.get("vlm_model") or os.environ.get("OPENAI_VLM_MODEL") or os.environ.get("OPENAI_MODEL") or "gpt-4.1-mini",
-        "llm_model": params.get("llm_model") or os.environ.get("OPENAI_LLM_MODEL") or os.environ.get("OPENAI_MODEL"),
+        "api_mode": params.get("openai_api_mode") or os.environ.get("OPENAI_API_MODE") or defaults.get("api_mode") or "auto",
+        "vlm_model": params.get("vlm_model") or os.environ.get("OPENAI_VLM_MODEL") or os.environ.get("OPENAI_MODEL") or defaults.get("vlm_model") or "gpt-4.1-mini",
+        "llm_model": params.get("llm_model") or os.environ.get("OPENAI_LLM_MODEL") or os.environ.get("OPENAI_MODEL") or defaults.get("llm_model"),
     }
 
 
@@ -296,12 +323,14 @@ def call_openai_responses(
     image_url: str | None = None,
     image_detail: str = "auto",
     base_url: str | None = None,
+    provider: str = "openai",
+    api_key_env: str = "OPENAI_API_KEY",
     max_output_tokens: int = 800,
     temperature: float | None = None,
 ) -> dict[str, Any]:
-    api_key = os.environ.get("OPENAI_API_KEY")
+    api_key = os.environ.get(api_key_env) or (os.environ.get("OPENAI_API_KEY") if api_key_env != "OPENAI_API_KEY" else None)
     if not api_key:
-        return {"status": "blocked", "provider": "openai", "summary": "OPENAI_API_KEY is not set; multimodal reasoning was skipped.", "api_key_env": "OPENAI_API_KEY"}
+        return {"status": "blocked", "provider": provider, "summary": f"{api_key_env} is not set; multimodal reasoning was skipped.", "api_key_env": api_key_env}
     base_url = (base_url or os.environ.get("OPENAI_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
     content: list[dict[str, Any]] = [{"type": "input_text", "text": user_text}]
     if image_url:
@@ -326,15 +355,15 @@ def call_openai_responses(
         detail = exc.read().decode("utf-8", errors="replace")
         return {
             "status": classify_openai_http_status(detail),
-            "provider": "openai",
+            "provider": provider,
             "summary": f"OpenAI Responses API returned HTTP {exc.code}",
             "error": {"type": "HTTPError", "code": exc.code, "body": detail},
         }
     except Exception as exc:
-        return {"status": "failed", "provider": "openai", "summary": "OpenAI Responses API request failed", "error": {"type": type(exc).__name__, "message": str(exc)}}
+        return {"status": "failed", "provider": provider, "summary": "OpenAI Responses API request failed", "error": {"type": type(exc).__name__, "message": str(exc)}}
     return {
         "status": "ok",
-        "provider": "openai",
+        "provider": provider,
         "api_mode": "responses",
         "model": model,
         "text": extract_openai_text(payload),
@@ -350,17 +379,19 @@ def call_openai_chat_completions(
     developer_text: str | None = None,
     image_url: str | None = None,
     base_url: str | None = None,
+    provider: str = "openai",
+    api_key_env: str = "OPENAI_API_KEY",
     max_output_tokens: int = 800,
     temperature: float | None = None,
 ) -> dict[str, Any]:
-    api_key = os.environ.get("OPENAI_API_KEY")
+    api_key = os.environ.get(api_key_env) or (os.environ.get("OPENAI_API_KEY") if api_key_env != "OPENAI_API_KEY" else None)
     if not api_key:
         return {
             "status": "blocked",
-            "provider": "openai",
+            "provider": provider,
             "api_mode": "chat.completions",
-            "summary": "OPENAI_API_KEY is not set; multimodal reasoning was skipped.",
-            "api_key_env": "OPENAI_API_KEY",
+            "summary": f"{api_key_env} is not set; multimodal reasoning was skipped.",
+            "api_key_env": api_key_env,
         }
     base_url = (base_url or os.environ.get("OPENAI_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
     content: list[dict[str, Any]] = [{"type": "text", "text": user_text}]
@@ -386,16 +417,16 @@ def call_openai_chat_completions(
         detail = exc.read().decode("utf-8", errors="replace")
         return {
             "status": classify_openai_http_status(detail),
-            "provider": "openai",
+            "provider": provider,
             "api_mode": "chat.completions",
             "summary": f"OpenAI-compatible Chat Completions API returned HTTP {exc.code}",
             "error": {"type": "HTTPError", "code": exc.code, "body": detail},
         }
     except Exception as exc:
-        return {"status": "failed", "provider": "openai", "api_mode": "chat.completions", "summary": "OpenAI-compatible Chat Completions API request failed", "error": {"type": type(exc).__name__, "message": str(exc)}}
+        return {"status": "failed", "provider": provider, "api_mode": "chat.completions", "summary": "OpenAI-compatible Chat Completions API request failed", "error": {"type": type(exc).__name__, "message": str(exc)}}
     return {
         "status": "ok",
-        "provider": "openai",
+        "provider": provider,
         "api_mode": "chat.completions",
         "model": model,
         "text": extract_openai_chat_text(payload),
@@ -412,6 +443,8 @@ def call_openai_compatible(
     image_url: str | None = None,
     image_detail: str = "auto",
     base_url: str | None = None,
+    provider: str = "openai",
+    api_key_env: str = "OPENAI_API_KEY",
     api_mode: str = "auto",
     max_output_tokens: int = 800,
     temperature: float | None = None,
@@ -424,6 +457,8 @@ def call_openai_compatible(
             developer_text=developer_text,
             image_url=image_url,
             base_url=base_url,
+            provider=provider,
+            api_key_env=api_key_env,
             max_output_tokens=max_output_tokens,
             temperature=temperature,
         )
@@ -435,6 +470,8 @@ def call_openai_compatible(
             image_url=image_url,
             image_detail=image_detail,
             base_url=base_url,
+            provider=provider,
+            api_key_env=api_key_env,
             max_output_tokens=max_output_tokens,
             temperature=temperature,
         )
@@ -445,6 +482,8 @@ def call_openai_compatible(
         image_url=image_url,
         image_detail=image_detail,
         base_url=base_url,
+        provider=provider,
+        api_key_env=api_key_env,
         max_output_tokens=max_output_tokens,
         temperature=temperature,
     )
@@ -456,6 +495,8 @@ def call_openai_compatible(
         developer_text=developer_text,
         image_url=image_url,
         base_url=base_url,
+        provider=provider,
+        api_key_env=api_key_env,
         max_output_tokens=max_output_tokens,
         temperature=temperature,
     )
@@ -605,6 +646,8 @@ def run_visual_search_crop_passes(
             image_url=encode_image_reference_for_openai(str(crop_path), resolved_path=resolved_path_fn, max_bytes=int(multimodal_params.get("max_image_bytes", 20_000_000)))["image_url"],
             image_detail=str(multimodal_params.get("image_detail", "auto")),
             base_url=provider_cfg["base_url"],
+            provider=str(provider_cfg.get("provider", "openai")),
+            api_key_env=str(provider_cfg.get("api_key_env", "OPENAI_API_KEY")),
             api_mode=str(provider_cfg["api_mode"]),
             max_output_tokens=max_output_tokens,
             temperature=float(multimodal_params["temperature"]) if "temperature" in multimodal_params else None,
