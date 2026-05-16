@@ -49,35 +49,35 @@ LoRA 训练并不是孤立的工具函数调用，而是已经接入标准训练
 ```mermaid
 flowchart TD
     A["用户入口<br/>CLI / Python / Agent"] --> B["Ultralytics 参数<br/>lora_r / lora_type / lora_backend / lora_lr_mult"]
-    B --> C["LoRAConfig.from_args()"]
-    C --> D["Trainer._setup_train()"]
+    B --> D["Trainer._setup_train()"]
 
     D --> E["resolve_adalora_total_step()"]
     E --> F["apply_lora(model, args)"]
+    F --> F1["LoRAConfig.from_args()<br/>在 apply_lora() 内部完成"]
 
-    F --> G{"后端决策"}
-    G -->|PEFT| H["使用 PEFT adapter 包装模型"]
-    G -->|Fallback| I["应用手写 LoRA wrapper"]
+    F1 --> G{"后端决策<br/>auto 优先选择 PEFT"}
+    G -->|PEFT| H["使用 PEFT adapter 包装 base model"]
+    G -->|Fallback| I["应用手写 LoRA wrapper<br/>fallback 支持面更窄"]
 
-    H --> J["挂载运行时元数据<br/>backend / variant / targets"]
+    H --> J["将运行时状态挂到适配后的模型上<br/>backend / variant / targets / safety overrides"]
     I --> J
 
     J --> K["update_args_with_lora_runtime_metadata()"]
     K --> L["Trainer.build_optimizer()"]
 
-    L --> M["拆分参数组"]
-    M --> M1["Base 权重"]
+    L --> M["通过 _is_adapter_param()<br/>拆分 optimizer 参数组"]
+    M --> M1["Base 参数<br/>大多冻结"]
     M --> M2["BN / bias / router"]
-    M --> M3["LoRA adapter 参数<br/>通过 lora_lr_mult 使用独立学习率"]
+    M --> M3["Adapter 参数<br/>通过 lora_lr_mult 使用独立学习率"]
 
     M3 --> N["训练循环"]
-    N --> O["save_lora_adapters()"]
+    N --> O["save_lora_adapters()<br/>PEFT: save_pretrained + runtime_metadata.json<br/>fallback: fallback_adapter.pt + fallback_meta.json"]
 
     O --> P{"后续使用"}
     P -->|推理| Q["load_lora(..., merge=False)"]
     P -->|导出| R["merge_lora_weights()"]
-    P -->|继续训练| S["load_lora(..., trainable=True)"]
-    S --> T["再次执行 model.train(...)"]
+    P -->|继续微调| S["load_lora(..., trainable=True)"]
+    S --> T["Model.train()<br/>若已加载活动 LoRA，则直接复用"]
 ```
 
 ### 1. PEFT 配置先走 Ultralytics 标准参数通道

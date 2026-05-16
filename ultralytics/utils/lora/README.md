@@ -49,35 +49,35 @@ The important part is not only that this repository supports PEFT, but how PEFT 
 ```mermaid
 flowchart TD
     A["User Entry<br/>CLI / Python / Agent"] --> B["Ultralytics Args<br/>lora_r / lora_type / lora_backend / lora_lr_mult"]
-    B --> C["LoRAConfig.from_args()"]
-    C --> D["Trainer._setup_train()"]
+    B --> D["Trainer._setup_train()"]
 
     D --> E["resolve_adalora_total_step()"]
     E --> F["apply_lora(model, args)"]
+    F --> F1["LoRAConfig.from_args()<br/>inside apply_lora()"]
 
-    F --> G{"Backend Decision"}
-    G -->|PEFT| H["Wrap model with PEFT adapter"]
-    G -->|Fallback| I["Apply manual LoRA wrapper"]
+    F1 --> G{"Backend Decision<br/>auto prefers PEFT"}
+    G -->|PEFT| H["Wrap base model with PEFT adapter"]
+    G -->|Fallback| I["Apply manual LoRA wrapper<br/>fallback support is narrower"]
 
-    H --> J["Attach runtime metadata<br/>backend / variant / targets"]
+    H --> J["Attach runtime state to adapted model<br/>backend / variant / targets / safety overrides"]
     I --> J
 
     J --> K["update_args_with_lora_runtime_metadata()"]
     K --> L["Trainer.build_optimizer()"]
 
-    L --> M["Split param groups"]
-    M --> M1["Base weights"]
+    L --> M["Split optimizer param groups<br/>via _is_adapter_param()"]
+    M --> M1["Base params<br/>mostly frozen"]
     M --> M2["BN / bias / router"]
-    M --> M3["LoRA adapter params<br/>separate LR via lora_lr_mult"]
+    M --> M3["Adapter params<br/>separate LR via lora_lr_mult"]
 
-    M3 --> N["Train Loop"]
-    N --> O["save_lora_adapters()"]
+    M3 --> N["Training loop"]
+    N --> O["save_lora_adapters()<br/>PEFT: save_pretrained + runtime_metadata.json<br/>fallback: fallback_adapter.pt + fallback_meta.json"]
 
-    O --> P{"Later Usage"}
+    O --> P{"Later usage"}
     P -->|Inference| Q["load_lora(..., merge=False)"]
     P -->|Export| R["merge_lora_weights()"]
-    P -->|Continue Training| S["load_lora(..., trainable=True)"]
-    S --> T["model.train(...) again"]
+    P -->|Continue tuning| S["load_lora(..., trainable=True)"]
+    S --> T["Model.train()<br/>reuses active LoRA model if already loaded"]
 ```
 
 ### 1. Config values are read from normal Ultralytics args
