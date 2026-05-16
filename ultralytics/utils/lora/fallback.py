@@ -1,6 +1,8 @@
 # 🐧Please note that this file has been modified by Tencent on 2026/02/13. All Tencent Modifications are Copyright (C) 2026 Tencent.
 import math
-from typing import Any, Dict, List, Optional
+import re
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Union
 
 import torch
 import torch.nn as nn
@@ -15,7 +17,15 @@ from ultralytics.nn.tasks import (
     WorldModel,
 )
 from ultralytics.utils import LOGGER
-from .api import PEFT_AVAILABLE, PeftModel, _fast_parse_int_list, _fast_parse_str_list, _normalize_lora_init
+from .api import (
+    PEFT_AVAILABLE,
+    PeftModel,
+    _effective_peft_variant,
+    _fast_parse_int_list,
+    _fast_parse_str_list,
+    _normalize_lora_init,
+    resolve_effective_lora_request,
+)
 
 class FewShotLoRAConv(nn.Module):
     """LoRA wrapper optimized for few-shot learning.
@@ -954,6 +964,10 @@ __all__ = [
     "_merge_manual_lora_conv",
     "_merge_fallback_modules",
     "_clear_lora_runtime_state",
+    "_filter_target_modules",
+    "_freeze_batchnorm_layers",
+    "_build_peft_exact_target_regex",
+    "_validate_peft_init_compatibility",
     "PeftProxy",
     "LoRADetectionModel",
     "LoRADetectionModelWrapper",

@@ -25,6 +25,11 @@ from .api import (
     _supports_peft_kwarg,
     resolve_adalora_total_step,
 )
+from .fallback import (
+    _build_peft_exact_target_regex,
+    _filter_target_modules,
+    _validate_peft_init_compatibility,
+)
 
 @dataclass
 class LoRAConfig:
@@ -903,12 +908,12 @@ class LoRAConfigBuilder:
                 "use_dora": kwargs.get('use_dora', False),
                 **common_kwargs,
             }
-            if _supports_peft_kwarg(LoraConfig, "use_rslora"):
+            if _supports_peft_kwarg(PeftLoraConfig, "use_rslora"):
                 lora_kwargs["use_rslora"] = kwargs.get('use_rslora', True)
             elif kwargs.get('use_rslora', True):
                 LOGGER.warning("[LoRA] Installed PEFT does not support use_rslora; falling back to standard scaling.")
 
-            if _supports_peft_kwarg(LoraConfig, "init_lora_weights"):
+            if _supports_peft_kwarg(PeftLoraConfig, "init_lora_weights"):
                 # FIX: Final guard against non-bool/non-str values that PEFT rejects
                 if not isinstance(normalized_init, (bool, str)):
                     LOGGER.warning(f"[LoRA] init_lora_weights normalized to unexpected type {type(normalized_init).__name__}; falling back to True.")
@@ -920,7 +925,7 @@ class LoRAConfigBuilder:
                 if isinstance(requested_init, str) and requested_init not in {"default", "true", "false", "gaussian", "pissa", "olora"}:
                     LOGGER.warning(f"[LoRA] Installed PEFT does not support init_lora_weights='{requested_init}'; using PEFT defaults.")
 
-            return LoraConfig(**lora_kwargs)
+            return PeftLoraConfig(**lora_kwargs)
 
 
 # ============================================================================
