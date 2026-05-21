@@ -3,6 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from runtime.cli.dataset import label_path_for_image, parse_label_line
+from runtime.multimodal.visual import normalize_detection_boxes
+
 
 def parse_bool(value: Any, default: bool = False) -> bool:
     if value is None:
@@ -15,6 +18,12 @@ def parse_bool(value: Any, default: bool = False) -> bool:
     if text in {"0", "false", "no", "n", "off"}:
         return False
     return default
+
+
+def as_list(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    return value if isinstance(value, list) else [value]
 
 
 def coerce_int(value: Any) -> int | None:
@@ -54,8 +63,390 @@ def valid_xyxy(box: Any) -> list[float] | None:
     return values
 
 
+def image_size_for_metric(image_path: Path) -> tuple[int, int] | None:
+    try:
+        from PIL import Image
+
+        with Image.open(image_path) as image:
+            return image.size
+    except Exception:
+        return None
+
+
+def xywhn_to_xyxy(xywhn: list[float], width: int, height: int) -> list[float] | None:
+    if len(xywhn) < 4:
+        return None
+    x_center, y_center, box_w, box_h = [float(value) for value in xywhn[:4]]
+    x1 = (x_center - box_w / 2.0) * width
+    y1 = (y_center - box_h / 2.0) * height
+    x2 = (x_center + box_w / 2.0) * width
+    y2 = (y_center + box_h / 2.0) * height
+    return valid_xyxy([x1, y1, x2, y2])
+
+
 def xyxy_to_xywh(box: list[float]) -> list[float]:
     return [round(box[0], 3), round(box[1], 3), round(box[2] - box[0], 3), round(box[3] - box[1], 3)]
+
+
+def polygon_points_from_segment(segment: list[float], width: int, height: int) -> list[list[float]]:
+    points: list[list[float]] = []
+    usable = len(segment) - (len(segment) % 2)
+    for idx in range(0, usable, 2):
+        x = max(0.0, min(float(segment[idx]) * width, float(width)))
+        y = max(0.0, min(float(segment[idx + 1]) * height, float(height)))
+        points.append([round(x, 6), round(y, 6)])
+    return points
+
+
+def polygon_bbox_xyxy(points: list[list[float]]) -> list[float] | None:
+    if len(points) < 3:
+        return None
+    xs = [point[0] for point in points]
+    ys = [point[1] for point in points]
+    return valid_xyxy([min(xs), min(ys), max(xs), max(ys)])
+
+
+def polygon_area(points: list[list[float]]) -> float:
+    if len(points) < 3:
+        return 0.0
+    area = 0.0
+    for idx, point in enumerate(points):
+        nxt = points[(idx + 1) % len(points)]
+        area += point[0] * nxt[1] - nxt[0] * point[1]
+    return abs(area) * 0.5
+
+
+def point_in_polygon(point: tuple[float, float], polygon: list[list[float]]) -> bool:
+    if len(polygon) < 3:
+        return False
+    x, y = point
+    inside = False
+    j = len(polygon) - 1
+    for i, current in enumerate(polygon):
+        xi, yi = current
+        xj, yj = polygon[j]
+        intersects = ((yi > y) != (yj > y)) and (
+            x < (xj - xi) * (y - yi) / ((yj - yi) or 1e-9) + xi
+        )
+        if intersects:
+            inside = not inside
+        j = i
+    return inside
+
+
+def polygon_iou_approx(a: list[list[float]], b: list[list[float]], samples: int = 24) -> float:
+    bbox_a = polygon_bbox_xyxy(a)
+    bbox_b = polygon_bbox_xyxy(b)
+    if bbox_a is None or bbox_b is None:
+        return 0.0
+    inter_x1 = max(bbox_a[0], bbox_b[0])
+    inter_y1 = max(bbox_a[1], bbox_b[1])
+    inter_x2 = min(bbox_a[2], bbox_b[2])
+    inter_y2 = min(bbox_a[3], bbox_b[3])
+    if inter_x2 <= inter_x1 or inter_y2 <= inter_y1:
+        return 0.0
+    inter_box_area = (inter_x2 - inter_x1) * (inter_y2 - inter_y1)
+    if inter_box_area <= 0:
+        return 0.0
+    inside_both = 0
+    total = 0
+    for xi in range(samples):
+        for yi in range(samples):
+            px = inter_x1 + (xi + 0.5) * (inter_x2 - inter_x1) / samples
+            py = inter_y1 + (yi + 0.5) * (inter_y2 - inter_y1) / samples
+            total += 1
+            if point_in_polygon((px, py), a) and point_in_polygon((px, py), b):
+                inside_both += 1
+    intersection = inter_box_area * inside_both / total if total else 0.0
+    area_a = polygon_area(a)
+    area_b = polygon_area(b)
+    union = area_a + area_b - intersection
+    return round(intersection / union, 6) if union > 0 else 0.0
+
+
+def ground_truth_records_for_metric(image_path: Path, names: dict[int, str]) -> list[dict[str, Any]]:
+    label_path = label_path_for_image(image_path)
+    image_size = image_size_for_metric(image_path)
+    if not label_path.exists() or image_size is None:
+        return []
+    width, height = image_size
+    records: list[dict[str, Any]] = []
+    for index, raw_line in enumerate(label_path.read_text(encoding="utf-8").splitlines()):
+        parsed = parse_label_line(raw_line)
+        if parsed is None:
+            continue
+        class_id, xywhn, segment = parsed
+        bbox = None
+        if len(segment) >= 6:
+            polygon = polygon_points_from_segment(segment, width, height)
+            bbox = polygon_bbox_xyxy(polygon)
+        if bbox is None:
+            bbox = xywhn_to_xyxy([float(value) for value in xywhn[:4]], width, height)
+        if bbox is None:
+            continue
+        records.append(
+            {
+                "image_id": str(image_path.resolve()),
+                "target_index": index,
+                "class_id": class_id,
+                "label": names.get(class_id, str(class_id)),
+                "bbox_xyxy": bbox,
+            }
+        )
+    return records
+
+
+def ground_truth_classification_records_for_metric(image_path: Path, names: dict[int, str]) -> list[dict[str, Any]]:
+    label_path = label_path_for_image(image_path)
+    if not label_path.exists():
+        return []
+    records: list[dict[str, Any]] = []
+    seen: set[tuple[int, str]] = set()
+    for raw_line in label_path.read_text(encoding="utf-8").splitlines():
+        parsed = parse_label_line(raw_line)
+        if parsed is None:
+            continue
+        class_id, _, _ = parsed
+        key = (class_id, str(image_path.resolve()))
+        if key in seen:
+            continue
+        seen.add(key)
+        records.append(
+            {
+                "image_id": str(image_path.resolve()),
+                "class_id": class_id,
+                "label": names.get(class_id, str(class_id)),
+            }
+        )
+    return records
+
+
+def ground_truth_segmentation_records_for_metric(image_path: Path, names: dict[int, str]) -> list[dict[str, Any]]:
+    label_path = label_path_for_image(image_path)
+    image_size = image_size_for_metric(image_path)
+    if not label_path.exists() or image_size is None:
+        return []
+    width, height = image_size
+    records: list[dict[str, Any]] = []
+    for index, raw_line in enumerate(label_path.read_text(encoding="utf-8").splitlines()):
+        parsed = parse_label_line(raw_line)
+        if parsed is None:
+            continue
+        class_id, _, segment = parsed
+        if len(segment) < 6:
+            continue
+        polygon = polygon_points_from_segment(segment, width, height)
+        bbox = polygon_bbox_xyxy(polygon)
+        if bbox is None:
+            continue
+        records.append(
+            {
+                "image_id": str(image_path.resolve()),
+                "target_index": index,
+                "class_id": class_id,
+                "label": names.get(class_id, str(class_id)),
+                "polygon_xy": polygon,
+                "bbox_xyxy": bbox,
+            }
+        )
+    return records
+
+
+def normalize_global_classification_items(verdict: dict[str, Any]) -> list[dict[str, Any]]:
+    items = verdict.get("global_classification", []) if isinstance(verdict, dict) else []
+    normalized: list[dict[str, Any]] = []
+    for item in as_list(items):
+        if not isinstance(item, dict):
+            continue
+        class_id = coerce_int(item.get("class_id"))
+        label = item.get("label")
+        confidence = coerce_float(item.get("confidence"))
+        if class_id is None and not label:
+            continue
+        normalized.append(
+            {
+                "class_id": class_id,
+                "label": str(label) if label is not None else str(class_id),
+                "confidence": round(confidence, 6) if confidence is not None else None,
+            }
+        )
+    normalized.sort(key=lambda entry: float(entry.get("confidence") or 0.0), reverse=True)
+    return normalized
+
+
+def normalize_segmentation_proposals(verdict: dict[str, Any]) -> list[dict[str, Any]]:
+    items = verdict.get("vlm_segmentation", []) if isinstance(verdict, dict) else []
+    normalized: list[dict[str, Any]] = []
+    for item in as_list(items):
+        if not isinstance(item, dict):
+            continue
+        class_id = coerce_int(item.get("class_id"))
+        label = item.get("label")
+        bbox = valid_xyxy(item.get("bbox_xyxy"))
+        polygon_raw = item.get("polygon_xy")
+        polygon: list[list[float]] = []
+        if isinstance(polygon_raw, list):
+            for point in polygon_raw:
+                if (
+                    isinstance(point, (list, tuple))
+                    and len(point) >= 2
+                    and isinstance(point[0], (int, float))
+                    and isinstance(point[1], (int, float))
+                ):
+                    polygon.append([round(float(point[0]), 6), round(float(point[1]), 6)])
+        if bbox is None and polygon:
+            bbox = polygon_bbox_xyxy(polygon)
+        if class_id is None or bbox is None:
+            continue
+        normalized.append(
+            {
+                "proposal_id": item.get("proposal_id"),
+                "class_id": class_id,
+                "label": str(label) if label is not None else str(class_id),
+                "bbox_xyxy": bbox,
+                "polygon_xy": polygon,
+                "mask_quality": item.get("mask_quality"),
+            }
+        )
+    return normalized
+
+
+def yolo_prediction_records_for_metric(image_path: Path, detections: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for item in normalize_detection_boxes(detections):
+        class_id = coerce_int(item.get("class_id"))
+        confidence = coerce_float(item.get("confidence"))
+        bbox = valid_xyxy(item.get("bbox_xyxy"))
+        if class_id is None or confidence is None or bbox is None:
+            continue
+        records.append(
+            {
+                "image_id": str(image_path.resolve()),
+                "source": "yolo",
+                "index": item.get("index"),
+                "class_id": class_id,
+                "label": item.get("label"),
+                "confidence": round(confidence, 6),
+                "bbox_xyxy": bbox,
+            }
+        )
+    return records
+
+
+def fused_prediction_records_for_metric(image_path: Path, fusion_preview: dict[str, Any]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    if not isinstance(fusion_preview, dict):
+        return records
+    for item in fusion_preview.get("predictions", []) or []:
+        if not isinstance(item, dict):
+            continue
+        class_id = coerce_int(item.get("class_id"))
+        confidence = coerce_float(item.get("confidence"))
+        bbox = valid_xyxy(item.get("bbox_xyxy"))
+        if class_id is None or confidence is None or bbox is None:
+            continue
+        records.append(
+            {
+                "image_id": str(image_path.resolve()),
+                "source": item.get("source", "fused"),
+                "action": item.get("action"),
+                "index": item.get("index"),
+                "proposal_id": item.get("proposal_id"),
+                "class_id": class_id,
+                "label": item.get("label"),
+                "confidence": round(confidence, 6),
+                "bbox_xyxy": bbox,
+            }
+        )
+    return records
+
+
+def yolo_classification_predictions_for_metric(image_path: Path, detections: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    records: dict[int, dict[str, Any]] = {}
+    for item in normalize_detection_boxes(detections):
+        class_id = coerce_int(item.get("class_id"))
+        confidence = coerce_float(item.get("confidence"))
+        if class_id is None:
+            continue
+        current = records.get(class_id)
+        if current is None or float(confidence or 0.0) > float(current.get("confidence") or 0.0):
+            records[class_id] = {
+                "image_id": str(image_path.resolve()),
+                "class_id": class_id,
+                "label": item.get("label"),
+                "confidence": round(confidence, 6) if confidence is not None else 0.0,
+                "source": "yolo",
+            }
+    return list(records.values())
+
+
+def fused_classification_predictions_for_metric(image_path: Path, verdict: dict[str, Any], detections: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    records = normalize_global_classification_items(verdict)
+    if records:
+        return [
+            {
+                "image_id": str(image_path.resolve()),
+                "class_id": item.get("class_id"),
+                "label": item.get("label"),
+                "confidence": item.get("confidence") if item.get("confidence") is not None else 0.0,
+                "source": "vlm",
+            }
+            for item in records
+        ]
+    return yolo_classification_predictions_for_metric(image_path, detections)
+
+
+def yolo_segmentation_predictions_for_metric(image_path: Path, detections: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for item in normalize_detection_boxes(detections):
+        class_id = coerce_int(item.get("class_id"))
+        confidence = coerce_float(item.get("confidence"))
+        bbox = valid_xyxy(item.get("bbox_xyxy"))
+        if class_id is None or bbox is None:
+            continue
+        x1, y1, x2, y2 = bbox
+        polygon = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
+        records.append(
+            {
+                "image_id": str(image_path.resolve()),
+                "class_id": class_id,
+                "label": item.get("label"),
+                "confidence": round(confidence, 6) if confidence is not None else 0.0,
+                "polygon_xy": polygon,
+                "bbox_xyxy": bbox,
+                "source": "yolo_box_proxy",
+            }
+        )
+    return records
+
+
+def fused_segmentation_predictions_for_metric(image_path: Path, verdict: dict[str, Any], detections: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    records = normalize_segmentation_proposals(verdict)
+    if records:
+        return [
+            {
+                "image_id": str(image_path.resolve()),
+                "class_id": item.get("class_id"),
+                "label": item.get("label"),
+                "confidence": 1.0,
+                "polygon_xy": item.get("polygon_xy"),
+                "bbox_xyxy": item.get("bbox_xyxy"),
+                "source": "vlm_segmentation",
+            }
+            for item in records
+        ]
+    return yolo_segmentation_predictions_for_metric(image_path, detections)
+
+
+def detection_label_counts(detections: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in detections:
+        for detection in item.get("detections", []) or []:
+            label = detection.get("label")
+            if label is None:
+                continue
+            counts[str(label)] = counts.get(str(label), 0) + 1
+    return counts
 
 
 def box_iou_xyxy(a: list[float], b: list[float]) -> float:
@@ -335,17 +726,27 @@ def build_item_metric_preview(
     detections: list[dict[str, Any]],
     fusion_preview: dict[str, Any],
     verdict: dict[str, Any] | None = None,
-    ground_truth_records_for_metric_fn,
-    ground_truth_classification_records_for_metric_fn,
-    ground_truth_segmentation_records_for_metric_fn,
-    yolo_prediction_records_for_metric_fn,
-    fused_prediction_records_for_metric_fn,
-    yolo_classification_predictions_for_metric_fn,
-    fused_classification_predictions_for_metric_fn,
-    yolo_segmentation_predictions_for_metric_fn,
-    fused_segmentation_predictions_for_metric_fn,
-    polygon_iou_approx_fn,
+    ground_truth_records_for_metric_fn=None,
+    ground_truth_classification_records_for_metric_fn=None,
+    ground_truth_segmentation_records_for_metric_fn=None,
+    yolo_prediction_records_for_metric_fn=None,
+    fused_prediction_records_for_metric_fn=None,
+    yolo_classification_predictions_for_metric_fn=None,
+    fused_classification_predictions_for_metric_fn=None,
+    yolo_segmentation_predictions_for_metric_fn=None,
+    fused_segmentation_predictions_for_metric_fn=None,
+    polygon_iou_approx_fn=None,
 ) -> dict[str, Any]:
+    ground_truth_records_for_metric_fn = ground_truth_records_for_metric_fn or ground_truth_records_for_metric
+    ground_truth_classification_records_for_metric_fn = ground_truth_classification_records_for_metric_fn or ground_truth_classification_records_for_metric
+    ground_truth_segmentation_records_for_metric_fn = ground_truth_segmentation_records_for_metric_fn or ground_truth_segmentation_records_for_metric
+    yolo_prediction_records_for_metric_fn = yolo_prediction_records_for_metric_fn or yolo_prediction_records_for_metric
+    fused_prediction_records_for_metric_fn = fused_prediction_records_for_metric_fn or fused_prediction_records_for_metric
+    yolo_classification_predictions_for_metric_fn = yolo_classification_predictions_for_metric_fn or yolo_classification_predictions_for_metric
+    fused_classification_predictions_for_metric_fn = fused_classification_predictions_for_metric_fn or fused_classification_predictions_for_metric
+    yolo_segmentation_predictions_for_metric_fn = yolo_segmentation_predictions_for_metric_fn or yolo_segmentation_predictions_for_metric
+    fused_segmentation_predictions_for_metric_fn = fused_segmentation_predictions_for_metric_fn or fused_segmentation_predictions_for_metric
+    polygon_iou_approx_fn = polygon_iou_approx_fn or polygon_iou_approx
     ground_truth = ground_truth_records_for_metric_fn(image_path, names)
     ground_truth_classes = ground_truth_classification_records_for_metric_fn(image_path, names)
     ground_truth_segments = ground_truth_segmentation_records_for_metric_fn(image_path, names)
@@ -382,18 +783,31 @@ def aggregate_metric_preview(
     items: list[dict[str, Any]],
     names: dict[int, str],
     *,
-    ground_truth_records_for_metric_fn,
-    ground_truth_classification_records_for_metric_fn,
-    ground_truth_segmentation_records_for_metric_fn,
-    yolo_prediction_records_for_metric_fn,
-    fused_prediction_records_for_metric_fn,
-    yolo_classification_predictions_for_metric_fn,
-    fused_classification_predictions_for_metric_fn,
-    yolo_segmentation_predictions_for_metric_fn,
-    fused_segmentation_predictions_for_metric_fn,
-    merge_verdicts_fn,
-    polygon_iou_approx_fn,
+    ground_truth_records_for_metric_fn=None,
+    ground_truth_classification_records_for_metric_fn=None,
+    ground_truth_segmentation_records_for_metric_fn=None,
+    yolo_prediction_records_for_metric_fn=None,
+    fused_prediction_records_for_metric_fn=None,
+    yolo_classification_predictions_for_metric_fn=None,
+    fused_classification_predictions_for_metric_fn=None,
+    yolo_segmentation_predictions_for_metric_fn=None,
+    fused_segmentation_predictions_for_metric_fn=None,
+    merge_verdicts_fn=None,
+    polygon_iou_approx_fn=None,
 ) -> dict[str, Any]:
+    from runtime.multimodal.fusion import merge_verdicts
+
+    ground_truth_records_for_metric_fn = ground_truth_records_for_metric_fn or ground_truth_records_for_metric
+    ground_truth_classification_records_for_metric_fn = ground_truth_classification_records_for_metric_fn or ground_truth_classification_records_for_metric
+    ground_truth_segmentation_records_for_metric_fn = ground_truth_segmentation_records_for_metric_fn or ground_truth_segmentation_records_for_metric
+    yolo_prediction_records_for_metric_fn = yolo_prediction_records_for_metric_fn or yolo_prediction_records_for_metric
+    fused_prediction_records_for_metric_fn = fused_prediction_records_for_metric_fn or fused_prediction_records_for_metric
+    yolo_classification_predictions_for_metric_fn = yolo_classification_predictions_for_metric_fn or yolo_classification_predictions_for_metric
+    fused_classification_predictions_for_metric_fn = fused_classification_predictions_for_metric_fn or fused_classification_predictions_for_metric
+    yolo_segmentation_predictions_for_metric_fn = yolo_segmentation_predictions_for_metric_fn or yolo_segmentation_predictions_for_metric
+    fused_segmentation_predictions_for_metric_fn = fused_segmentation_predictions_for_metric_fn or fused_segmentation_predictions_for_metric
+    merge_verdicts_fn = merge_verdicts_fn or merge_verdicts
+    polygon_iou_approx_fn = polygon_iou_approx_fn or polygon_iou_approx
     ground_truth: list[dict[str, Any]] = []
     ground_truth_classes: list[dict[str, Any]] = []
     ground_truth_segments: list[dict[str, Any]] = []
@@ -478,7 +892,8 @@ def prediction_records_to_coco(records: list[dict[str, Any]], image_path: Path |
     return coco_records
 
 
-def yolo_coco_records_for_items(items: list[dict[str, Any]], *, yolo_prediction_records_for_metric_fn) -> list[dict[str, Any]]:
+def yolo_coco_records_for_items(items: list[dict[str, Any]], *, yolo_prediction_records_for_metric_fn=None) -> list[dict[str, Any]]:
+    yolo_prediction_records_for_metric_fn = yolo_prediction_records_for_metric_fn or yolo_prediction_records_for_metric
     records: list[dict[str, Any]] = []
     for item in items:
         image_path_value = item.get("path")
@@ -491,7 +906,15 @@ def yolo_coco_records_for_items(items: list[dict[str, Any]], *, yolo_prediction_
     return records
 
 
-def build_metric_guardrail(*, items: list[dict[str, Any]], metric_preview: dict[str, Any], fused_coco_records: list[dict[str, Any]], multimodal_params: dict[str, Any], yolo_prediction_records_for_metric_fn) -> dict[str, Any]:
+def build_metric_guardrail(
+    *,
+    items: list[dict[str, Any]],
+    metric_preview: dict[str, Any],
+    fused_coco_records: list[dict[str, Any]],
+    multimodal_params: dict[str, Any],
+    yolo_prediction_records_for_metric_fn=None,
+) -> dict[str, Any]:
+    yolo_prediction_records_for_metric_fn = yolo_prediction_records_for_metric_fn or yolo_prediction_records_for_metric
     enabled = parse_bool(multimodal_params.get("fusion_metric_guardrail"), True)
     if not enabled:
         return {"enabled": False, "selected": "fused_preview", "reason": "guardrail_disabled", "records": fused_coco_records}

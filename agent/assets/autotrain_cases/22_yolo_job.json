@@ -1,0 +1,55 @@
+{
+  "cases": [
+    {
+      "name": "job_status_missing_contract",
+      "suite": "contract",
+      "request": {
+        "skill": "yolo.job.status",
+        "inputs": {
+          "job_id": "missing-job-contract"
+        },
+        "params": {},
+        "policy": {
+          "dry_run": false
+        }
+      },
+      "expect": {
+        "status": "failed",
+        "paths": [
+          "job.job_id",
+          "job.status",
+          "manifest"
+        ],
+        "equals": {
+          "job.status": "missing"
+        }
+      }
+    },
+    {
+      "name": "job_cancel_missing_contract",
+      "suite": "contract",
+      "request": {
+        "skill": "yolo.job.cancel",
+        "inputs": {
+          "job_id": "missing-job-contract"
+        },
+        "params": {},
+        "policy": {
+          "dry_run": false
+        }
+      },
+      "expect": {
+        "status": "partial",
+        "paths": [
+          "job.job_id",
+          "job.status",
+          "manifest"
+        ],
+        "equals": {
+          "job.status": "missing",
+          "job.cancelled": false
+        }
+      }
+    }
+  ]
+}

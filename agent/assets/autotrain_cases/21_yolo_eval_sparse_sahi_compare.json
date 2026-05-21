@@ -1,16 +1,18 @@
 {
   "cases": [
     {
-      "name": "moe_prune_dry_run",
+      "name": "sparse_sahi_compare_dry_run",
       "suite": "dry-run",
       "request": {
-        "skill": "yolo.moe.prune",
+        "skill": "yolo.eval.sparse_sahi_compare",
         "inputs": {
           "model": "ultralytics/cfg/models/master/v0_1/det/yolo-master-n.yaml",
-          "data": "coco8.yaml"
+          "source": "ultralytics/assets/bus.jpg"
         },
         "params": {
-          "threshold": 0.15
+          "imgsz": 224,
+          "conf": 0.25,
+          "limit": 1
         },
         "artifacts": {},
         "policy": {
@@ -22,9 +24,7 @@
         "paths": [
           "dry_run",
           "plan.target",
-          "moe_prune.layer_details",
-          "moe_prune.validation_before",
-          "moe_prune.validation_after"
+          "plan.params.stages"
         ],
         "path_exists": [
           "manifest"
