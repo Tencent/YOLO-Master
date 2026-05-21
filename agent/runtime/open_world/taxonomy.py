@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import re
-from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +43,9 @@ OPEN_WORLD_GENERIC_LABELS = {
 DEFAULT_OPEN_WORLD_TAXONOMY_FILES = {
     "lvis": OPEN_WORLD_TAXONOMY_DIR / "lvis_1203_classes.json",
     "v3det": OPEN_WORLD_TAXONOMY_DIR / "v3det_13204_classes.json",
+}
+STATIC_HYPERNYM_FALLBACKS = {
+    "grass": ["gramineous plant"],
 }
 _CACHE: dict[str, Any] = {}
 
@@ -293,13 +295,32 @@ def taxonomy_match_score(label_info: dict[str, Any], candidate: dict[str, Any]) 
 
 
 def _wordnet_hypernym_candidates(label: str) -> list[dict[str, Any]]:
+    def static_candidates() -> list[dict[str, Any]]:
+        candidates: list[dict[str, Any]] = []
+        for name in STATIC_HYPERNYM_FALLBACKS.get(normalize_open_world_label_text(label), []):
+            normalized = normalize_open_world_label_text(name)
+            candidates.append(
+                {
+                    "dataset": "wordnet",
+                    "id": None,
+                    "name": normalized,
+                    "normalized_name": normalized,
+                    "tokens": taxonomy_token_set(normalized),
+                    "source": "static_hypernym_fallback",
+                }
+            )
+        return candidates
+
     try:
         from nltk.corpus import wordnet as wn  # type: ignore
     except Exception:
-        return []
+        return static_candidates()
     text = normalize_open_world_label_text(label).replace("-", " ")
     tokens = [token for token in re.split(r"[^a-z0-9]+", text) if token]
-    synsets = wn.synsets(text) or (wn.synsets(tokens[0]) if tokens else [])
+    try:
+        synsets = wn.synsets(text) or (wn.synsets(tokens[0]) if tokens else [])
+    except Exception:
+        return static_candidates()
     candidates: list[dict[str, Any]] = []
     seen: set[str] = set()
     for syn in synsets[:3]:
@@ -319,7 +340,7 @@ def _wordnet_hypernym_candidates(label: str) -> list[dict[str, Any]]:
                         "source": "wordnet_hypernym",
                     }
                 )
-    return candidates
+    return candidates or static_candidates()
 
 
 def resolve_open_world_taxonomy_candidates(label_info: dict[str, Any], multimodal_params: dict[str, Any]) -> dict[str, Any]:
