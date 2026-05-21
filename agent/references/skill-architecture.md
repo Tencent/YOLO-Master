@@ -139,10 +139,10 @@ flowchart TD
 | 任务模型分发 | `YOLO.task_map` | Ready | 已具备稳定任务抽象 |
 | Solutions | `yolo solutions ...` | Mostly Ready | 视频流与 UI 场景需要长任务封装 |
 | LoRA 训练与适配器保存/加载/合并 | `train + save_lora_only/load_lora/merge_lora` | Ready | 建议独立 Skill 族 |
-| MoE 诊断与裁剪 | `diagnose_model/prune_moe_model` | Mostly Ready | 现有脚本化接口可直接包, 但建议补结构化返回 |
+| MoE 诊断与裁剪 | `runtime/cli/moe_tools.py` | Ready | 已补 `moe_diagnose` / `moe_prune` 结构化返回 |
 | Gradio / Streamlit | `app.py`, `solutions/streamlit_inference.py` | Partially Ready | 更像 launcher skill, 不是纯函数 skill |
 | PEFT 对比脚本 | `scripts/peft_validation/...` | Needs Refactor | 参数大量硬编码, 需先抽成函数化接口 |
-| Sparse SAHI 对比脚本 | `scripts/test_sahi_compare.py` | Needs Refactor | 依赖可选模块与硬编码数据路径 |
+| Sparse SAHI 对比脚本 | `runtime/cli/sahi_compare.py` | Ready | 已去硬编码路径并注册为 `yolo.eval.sparse_sahi_compare` |
 
 ### 4.3 Key Constraints
 
@@ -460,32 +460,34 @@ result = model.train(**params)
 
 | Skill ID | Scope | Underlying API | Async | CLI Coverage |
 |---|---|---|---:|---|
-| `yolo.system` | 系统检查、环境 doctor、版本、settings、cfg、copy-cfg | `cfg` 模块函数 | No | `doctor/help/checks/version/settings/cfg/copy-cfg` |
-| `yolo.model.inspect` | 模型加载、info、names、fuse、reset、task 推断 | `YOLO` / `Model` | No | Python API fallback |
-| `yolo.train` | 训练与恢复训练 | `Model.train()` | Yes | `yolo train ...` |
-| `yolo.val` | 验证与 COCO JSON 评估 | `Model.val()` / validator | No | `yolo val ...` |
-| `yolo.predict` | 单图/批量/目录/URL/流推理 | `Model.predict()` | Optional | `yolo predict ...` |
-| `yolo.multimodal.infer` | YOLO 检测证据 + OpenAI VLM/LLM 协同推理 | `Model.predict()` + Responses API | No | Python orchestrator |
-| `yolo.multimodal.evaluate` | 数据集/图片目录抽样的 YOLO + VLM/LLM 批量复核与报告 | `Model.predict()` + OpenAI-compatible API | No | Python orchestrator |
-| `yolo.track` | 视频/流追踪 | `Model.track()` | Optional | `yolo track ...` |
-| `yolo.export` | 导出各格式模型 | `Model.export()` | No | `yolo export ...` |
-| `yolo.benchmark` | 导出格式对比与性能基准 | `Model.benchmark()` | Optional | `yolo benchmark ...` |
-| `yolo.tune` | 超参搜索 | `Model.tune()` | Yes | Python API fallback |
+| `yolo.system` | 系统检查、环境 doctor、版本、settings、cfg、copy-cfg | `runtime/cli/system_handlers.py` | No | `doctor/help/checks/version/settings/cfg/copy-cfg` |
+| `yolo.model.inspect` | 模型加载、info、names、fuse、reset、task 推断 | `runtime/cli/model_handlers.py` | No | Python API fallback |
+| `yolo.train` | 训练与恢复训练 | `runtime/cli/core_handlers.py` | Yes | `yolo train ...` |
+| `yolo.val` | 验证与 COCO JSON 评估 | `runtime/cli/core_handlers.py` | No | `yolo val ...` |
+| `yolo.predict` | 单图/批量/目录/URL/流推理 | `runtime/cli/core_handlers.py` | Optional | `yolo predict ...` |
+| `yolo.multimodal.infer` | YOLO 检测证据 + OpenAI VLM/LLM 协同推理 | `runtime/cli/multimodal_handlers.py` | No | Python orchestrator |
+| `yolo.multimodal.evaluate` | 数据集/图片目录抽样的 YOLO + VLM/LLM 批量复核与报告 | `runtime/cli/multimodal_handlers.py` | No | Python orchestrator |
+| `yolo.track` | 视频/流追踪 | `runtime/cli/core_handlers.py` | Optional | `yolo track ...` |
+| `yolo.export` | 导出各格式模型 | `runtime/cli/core_handlers.py` | No | `yolo export ...` |
+| `yolo.benchmark` | 导出格式对比与性能基准 | `runtime/cli/core_handlers.py` | Optional | `yolo benchmark ...` |
+| `yolo.tune` | 超参搜索 | `runtime/cli/core_handlers.py` | Yes | Python API fallback |
 
 ### 7.2 Extension Skills
 
 | Skill ID | Scope | Underlying API | Status |
 |---|---|---|---|
-| `yolo.lora.train` | 带 LoRA 训练 | `Model.train(lora_*=...)` | Ready |
-| `yolo.lora.adapters` | 保存/加载/合并 LoRA 适配器 | `save_lora_only/load_lora/merge_lora` | Ready |
+| `yolo.lora.train` | 带 LoRA 训练 | `runtime/cli/core_handlers.py` | Ready |
+| `yolo.lora.adapters` | 保存/加载/合并 LoRA 适配器 | `runtime/cli/core_handlers.py` | Ready |
 | `yolo.lora.diagnose` | LoRA effective rank、A/B 范数、delta-W 谱诊断 | `runtime/cli/lora_tools.py` | Ready |
-| `yolo.moe.diagnose` | 专家使用率诊断 | `diagnose_model()` | Mostly Ready |
-| `yolo.moe.prune` | 专家裁剪 | `prune_moe_model()` | Mostly Ready |
-| `yolo.solutions.run` | 视觉方案运行 | `solutions.*` | Mostly Ready |
-| `yolo.ui.launch` | Gradio / Streamlit 启动 | `app.py` / `streamlit_inference.py` | Partially Ready |
+| `yolo.moe.diagnose` | 专家使用率诊断 | `runtime/cli/moe_tools.py` | Ready |
+| `yolo.moe.prune` | 专家裁剪 | `runtime/cli/moe_tools.py` | Ready |
+| `yolo.solutions.run` | 视觉方案运行 | `runtime/cli/launcher_handlers.py` | Mostly Ready |
+| `yolo.ui.launch` | Gradio / Streamlit 启动 | `runtime/cli/launcher_handlers.py` | Partially Ready |
 | `yolo.eval.peft_compare` | PEFT 方案对比实验 | `runtime/cli/peft_compare.py` | Ready |
-| `yolo.eval.sparse_sahi_compare` | Sparse SAHI 对比 | `scripts/test_sahi_compare.py` | Needs Refactor |
+| `yolo.eval.sparse_sahi_compare` | Sparse SAHI 对比 | `runtime/cli/sahi_compare.py` | Ready |
 | `yolo.pipeline.experiment` | 训练-验证-导出-评估全流程编排 | `runtime/cli/pipeline.py` | Ready |
+| `yolo.job.status` | 异步任务状态查询 | `runtime/cli/job_handlers.py` | Ready |
+| `yolo.job.cancel` | 异步任务取消 | `runtime/cli/job_handlers.py` | Ready |
 
 ---
 
@@ -1135,9 +1137,9 @@ DashScope 等 OpenAI-compatible chat endpoints 可设置:
 
 `diagnose_model(model_path, dataset, batch_size, verbose)`
 
-**Current Limitation**
+**Implementation Note**
 
-`diagnose_model()` 这条模块级路径本身仍偏脚本风格。当前限制只影响 MoE diagnose 封装, 不影响主 dispatcher 的 `train / val / predict / benchmark`, 后者在 Apple Silicon 上已经可默认解析到 `mps`。
+`runtime/cli/moe_tools.py` 负责封装脚本式 `diagnose_model()` / `prune_moe_model()` 输出, 并转换为 Agent 统一响应中的 `moe_diagnose` / `moe_prune` 结构。
 
 **Outputs**
 

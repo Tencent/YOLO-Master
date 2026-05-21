@@ -13,6 +13,7 @@ Use this skill for any repository task that should drive the YOLO-Master stack e
 - model inspection and task detection
 - LoRA save/load/merge and `yolo.lora.diagnose`
 - PEFT comparison via `yolo.eval.peft_compare`
+- Sparse SAHI comparison via `yolo.eval.sparse_sahi_compare`
 - MoE diagnose/prune
 - multimodal visual inference with OpenAI VLM/LLM cooperation
 - multimodal batch evaluation over a dataset or image folder
@@ -67,7 +68,7 @@ python agent/scripts/validate_yolo_master_skill.py --suite all --pretty --summar
 7. For `predict` and `track`, accept `source` in either `inputs.source` or `params.source`; the dispatcher will normalize it before CLI emission.
 8. Pass all task-specific options through `params` unchanged.
 9. Return structured artifacts, metrics, evaluation summaries, environment reports, and next actions.
-10. For long jobs, use `async`/launcher behavior and write a manifest.
+10. For long jobs, set `policy.async=true` on train/tune/pipeline requests to submit a subprocess job and return `job_id`, status, stdout/stderr, manifest, and progress paths.
 
 ## Multimodal Inference
 
