@@ -22,12 +22,33 @@ DISPATCHER = SKILL_ROOT / "scripts" / "run_yolo_master_skill.py"
 DEFAULT_CASES = SKILL_ROOT / "assets" / "autotrain_cases"
 LEGACY_CASES = SKILL_ROOT / "assets" / "autotrain_cases.json"
 REPORT_DIR = SKILL_ROOT / "logs"
+SNAPSHOT_DIR = SKILL_ROOT / "logs" / "snapshots"
 SUITE_ALIASES = {
     "quick": {"fast-smoke", "dry-run", "contract"},
     "smoke": {"fast-smoke", "cli-smoke", "deep-smoke"},
     "extended": {"extended-cli"},
+    # Model/query-independent stability suites.
+    "stability": {"stability-check"},
+    "stability-quick": {"fast-smoke", "dry-run", "contract", "stability-check"},
 }
 ENV_UNSET = object()
+
+
+def _load_stability_checker():
+    """Load stability checks only when a suite requests them."""
+    try:
+        from runtime.cli.stability import StabilityChecker
+        return StabilityChecker
+    except Exception:
+        return None
+
+
+def _load_snapshot_tools():
+    try:
+        from runtime.cli.snapshot import PayloadSnapshot, SnapshotDiff, EnvironmentSnapshot
+        return PayloadSnapshot, SnapshotDiff, EnvironmentSnapshot
+    except Exception:
+        return None, None, None
 
 
 def dotted_get(value: Any, path: str) -> Any:
@@ -126,7 +147,91 @@ def build_result(
         "payload": payload,
         "passed": True,
         "checks": [],
+        "stability_checks": [],
     }
+
+    # -----------------------------------------------------------------------
+    # Stability checks cover model/query-independent schema, behavior, and ranges.
+    # Run them when a case opts in or when a suite includes stability-check.
+    # -----------------------------------------------------------------------
+    run_stability = (
+        case.get("executor") != "probe"
+        and (
+            case.get("stability", False)
+            or case.get("suite") == "stability-check"
+            or case.get("suite") in {"quick", "contract", "fast-smoke"}
+        )
+    )
+    if run_stability and returncode == 0:
+        StabilityChecker = _load_stability_checker()
+        if StabilityChecker is not None:
+            skill = str(payload.get("skill", request.get("skill", "")))
+            stab_result = StabilityChecker.run_all(payload, skill=skill)
+            result["stability_checks"] = stab_result["checks"]
+            # Only stability regressions fail the validation result.
+            has_regression = any(
+                not c["ok"] for c in stab_result["checks"]
+                if c.get("rule", "").startswith(("schema.", "behavior.", "monotonic."))
+            )
+            if has_regression:
+                result["passed"] = False
+
+    # -----------------------------------------------------------------------
+    # Snapshot recording for cases with snapshot: {record: true}.
+    # -----------------------------------------------------------------------
+    snap_cfg = case.get("snapshot", {})
+    if isinstance(snap_cfg, dict) and snap_cfg.get("record") and returncode == 0:
+        PayloadSnapshot, _, EnvironmentSnapshot = _load_snapshot_tools()
+        if PayloadSnapshot is not None:
+            skill = str(payload.get("skill", request.get("skill", "")))
+            snap = PayloadSnapshot.capture(payload, skill=skill,
+                                           env=EnvironmentSnapshot.capture())
+            snap_name = snap_cfg.get("name", case["name"])
+            snap_path = SNAPSHOT_DIR / f"{snap_name}.json"
+            snap.save(snap_path)
+            result["snapshot_path"] = str(snap_path)
+
+    # -----------------------------------------------------------------------
+    # Snapshot replay for cases with snapshot: {replay: "baseline_name"}.
+    # -----------------------------------------------------------------------
+    if isinstance(snap_cfg, dict) and snap_cfg.get("replay") and returncode == 0:
+        PayloadSnapshot, SnapshotDiff, EnvironmentSnapshot = _load_snapshot_tools()
+        if PayloadSnapshot is not None and SnapshotDiff is not None:
+            baseline_name = snap_cfg["replay"]
+            baseline_path = SNAPSHOT_DIR / f"{baseline_name}.json"
+            if baseline_path.exists():
+                try:
+                    baseline = PayloadSnapshot.load(baseline_path)
+                    skill = str(payload.get("skill", request.get("skill", "")))
+                    current = PayloadSnapshot.capture(payload, skill=skill,
+                                                     env=EnvironmentSnapshot.capture())
+                    diff = SnapshotDiff.compare(baseline, current)
+                    result["snapshot_diff"] = diff.to_dict()
+                    if diff.regression_count > 0:
+                        result["passed"] = False
+                        result["checks"].append({
+                            "kind": "snapshot_regression",
+                            "ok": False,
+                            "detail": diff.summary(),
+                        })
+                    else:
+                        result["checks"].append({
+                            "kind": "snapshot_regression",
+                            "ok": True,
+                            "detail": f"no regressions, {diff.drift_count} acceptable drifts",
+                        })
+                except Exception as exc:
+                    result["checks"].append({
+                        "kind": "snapshot_regression",
+                        "ok": False,
+                        "detail": f"snapshot compare error: {exc}",
+                    })
+            else:
+                result["checks"].append({
+                    "kind": "snapshot_regression",
+                    "ok": True,
+                    "detail": f"baseline {baseline_path} not found, skipping replay",
+                })
 
     expect = case.get("expect", {})
     if "status" in expect:
@@ -180,7 +285,11 @@ def build_result(
             {"kind": "returncode", "ok": ok, "expected": int(expected_returncode), "actual": returncode}
         )
         result["passed"] &= ok
-    elif returncode != 0:
+    elif returncode != 0 and not (
+        "status" in expect
+        and payload.get("status") == expect["status"]
+        and expect["status"] in {"blocked", "failed"}
+    ):
         result["passed"] = False
     return result
 

@@ -1,0 +1,224 @@
+{
+  "cases": [
+    {
+      "name": "stability_train_dry_run",
+      "suite": "stability-check",
+      "stability": true,
+      "comment": "模型无关稳定性校验：train dry_run 响应结构必须满足 schema+behavior 规则，与使用哪个模型无关",
+      "request": {
+        "skill": "yolo.train",
+        "inputs": {
+          "model": "ultralytics/cfg/models/master/v0_1/det/yolo-master-n.yaml",
+          "data": "coco8.yaml"
+        },
+        "params": { "epochs": 1, "imgsz": 32, "batch": 1 },
+        "policy": { "dry_run": true }
+      },
+      "expect": {
+        "status": "ok",
+        "paths": ["dry_run", "plan.target", "manifest"]
+      }
+    },
+    {
+      "name": "stability_val_dry_run",
+      "suite": "stability-check",
+      "stability": true,
+      "comment": "val dry_run：切换到不同验证数据集后响应结构不变",
+      "request": {
+        "skill": "yolo.val",
+        "inputs": {
+          "model": "ultralytics/cfg/models/master/v0_1/det/yolo-master-n.yaml",
+          "data": "coco8.yaml"
+        },
+        "params": { "imgsz": 32 },
+        "policy": { "dry_run": true }
+      },
+      "expect": {
+        "status": "ok",
+        "paths": ["dry_run", "plan.target", "manifest"]
+      }
+    },
+    {
+      "name": "stability_predict_dry_run",
+      "suite": "stability-check",
+      "stability": true,
+      "comment": "predict dry_run：source 路径变化不影响响应结构",
+      "request": {
+        "skill": "yolo.predict",
+        "inputs": {
+          "model": "ultralytics/cfg/models/master/v0_1/det/yolo-master-n.yaml",
+          "source": "ultralytics/assets/bus.jpg"
+        },
+        "params": { "conf": 0.25, "imgsz": 32 },
+        "policy": { "dry_run": true }
+      },
+      "expect": {
+        "status": "ok",
+        "paths": ["dry_run", "plan.target", "manifest"]
+      }
+    },
+    {
+      "name": "stability_multimodal_blocked_schema",
+      "suite": "stability-check",
+      "stability": true,
+      "comment": "无 API Key 时 multimodal.infer 必须返回 blocked，结构字段不随 query/model 变化",
+      "env": {
+        "OPENAI_API_KEY": null
+      },
+      "request": {
+        "skill": "yolo.multimodal.infer",
+        "inputs": {
+          "model": "ultralytics/cfg/models/master/v0_1/det/yolo-master-n.yaml",
+          "source": "ultralytics/assets/bus.jpg",
+          "prompt": "Describe the scene."
+        },
+        "params": {
+          "thinking_with_image": true,
+          "vlm_model": "gpt-4.1-mini"
+        },
+        "policy": { "dry_run": false }
+      },
+      "expect": {
+        "status": "blocked",
+        "paths": ["multimodal", "manifest"]
+      }
+    },
+    {
+      "name": "stability_multimodal_blocked_schema_qwen",
+      "suite": "stability-check",
+      "stability": true,
+      "comment": "换成 qwen provider 且无 key，blocked 行为必须一致（provider 无关）",
+      "env": {
+        "OPENAI_API_KEY": null,
+        "DASHSCOPE_API_KEY": null
+      },
+      "request": {
+        "skill": "yolo.multimodal.infer",
+        "inputs": {
+          "model": "ultralytics/cfg/models/master/v0_1/det/yolo-master-n.yaml",
+          "source": "ultralytics/assets/bus.jpg",
+          "prompt": "列出图片中的物体。"
+        },
+        "params": {
+          "thinking_with_image": true,
+          "vlm_model": "qwen-vl-plus",
+          "llm_model": "qwen-plus",
+          "openai_api_mode": "chat.completions"
+        },
+        "policy": { "dry_run": false }
+      },
+      "expect": {
+        "status": "blocked",
+        "paths": ["multimodal", "manifest"]
+      }
+    },
+    {
+      "name": "stability_lora_diagnose_dry_run",
+      "suite": "stability-check",
+      "stability": true,
+      "comment": "lora.diagnose dry_run：不同适配器路径不影响计划结构",
+      "request": {
+        "skill": "yolo.lora.diagnose",
+        "inputs": { "model": "yolo11n.pt" },
+        "params": {
+          "path": "runs/train/exp/weights/lora_adapter_best",
+          "svd_max_layers": 20
+        },
+        "policy": { "dry_run": true }
+      },
+      "expect": {
+        "status": "ok",
+        "paths": ["dry_run", "plan.target", "manifest"]
+      }
+    },
+    {
+      "name": "stability_peft_compare_dry_run",
+      "suite": "stability-check",
+      "stability": true,
+      "comment": "peft_compare dry_run：variants 列表变化不影响响应 envelope 结构",
+      "request": {
+        "skill": "yolo.eval.peft_compare",
+        "inputs": { "model": "yolo11n.pt", "data": "coco8.yaml" },
+        "params": {
+          "train": { "epochs": 1, "imgsz": 32, "batch": 1 },
+          "variants": [
+            { "name": "full_sft",  "train": { "lora_r": 0 } },
+            { "name": "lora_r16", "train": { "lora_type": "lora", "lora_r": 16, "lora_alpha": 32 } }
+          ]
+        },
+        "policy": { "dry_run": true }
+      },
+      "expect": {
+        "status": "ok",
+        "paths": ["dry_run", "plan.target", "manifest"]
+      }
+    },
+    {
+      "name": "stability_pipeline_dry_run",
+      "suite": "stability-check",
+      "stability": true,
+      "comment": "pipeline.experiment dry_run：不同阶段组合不影响顶层 envelope 结构",
+      "request": {
+        "skill": "yolo.pipeline.experiment",
+        "inputs": {
+          "model": "ultralytics/cfg/models/master/v0_1/det/yolo-master-n.yaml",
+          "data": "coco8.yaml"
+        },
+        "params": {
+          "stages": ["train", "val", "export"],
+          "train": { "epochs": 1, "imgsz": 32, "batch": 1 },
+          "val": {},
+          "export": { "format": "onnx" }
+        },
+        "policy": { "dry_run": true }
+      },
+      "expect": {
+        "status": "ok",
+        "paths": ["dry_run", "plan.target", "manifest"]
+      }
+    },
+    {
+      "name": "stability_system_doctor_schema",
+      "suite": "stability-check",
+      "stability": true,
+      "comment": "system.doctor：不同机器/设备配置下结构必须一致",
+      "request": {
+        "skill": "yolo.system",
+        "action": "doctor",
+        "params": { "ensure_cli": false }
+      },
+      "expect": {
+        "status": "ok",
+        "paths": ["manifest"]
+      }
+    },
+    {
+      "name": "stability_multimodal_evaluate_dry_run_schema",
+      "suite": "stability-check",
+      "stability": true,
+      "comment": "multimodal.evaluate dry_run：换 limit/split/provider 后计划结构不变",
+      "request": {
+        "skill": "yolo.multimodal.evaluate",
+        "inputs": {
+          "model": "ultralytics/cfg/models/master/v0_1/det/yolo-master-n.yaml",
+          "source": "ultralytics/assets",
+          "prompt": "Cross-check detections."
+        },
+        "params": {
+          "limit": 3,
+          "split": "val",
+          "thinking_with_image": true,
+          "vlm_model": "gpt-4.1-mini",
+          "openai_api_mode": "chat.completions",
+          "fusion_mode": "preview",
+          "fusion_policy": "add_only"
+        },
+        "policy": { "dry_run": true }
+      },
+      "expect": {
+        "status": "ok",
+        "paths": ["dry_run", "plan.target", "multimodal.dataset.source", "manifest"]
+      }
+    }
+  ]
+}

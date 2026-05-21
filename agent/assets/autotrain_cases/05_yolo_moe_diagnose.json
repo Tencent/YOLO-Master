@@ -22,7 +22,9 @@
         "status": "ok",
         "paths": [
           "dry_run",
-          "plan.target"
+          "plan.target",
+          "moe_diagnose.layer_summary",
+          "moe_diagnose.artifacts"
         ],
         "path_exists": [
           "manifest"
