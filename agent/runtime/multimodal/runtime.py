@@ -207,6 +207,70 @@ def build_thinking_with_image_prompt(
     )
 
 
+def summarize_results_for_reasoning(results: Any, max_items: int = 5, max_boxes: int = 20) -> list[dict[str, Any]]:
+    """Return compact, structured prediction evidence for multimodal reasoning."""
+    summary = []
+    for result in list(results)[:max_items]:
+        item: dict[str, Any] = {
+            "path": str(getattr(result, "path", "")),
+            "speed": json_safe(getattr(result, "speed", {})),
+            "detections": [],
+        }
+        names = getattr(result, "names", {}) or {}
+        boxes = getattr(result, "boxes", None)
+        if boxes is not None:
+            try:
+                xyxy = boxes.xyxy.detach().cpu().tolist()
+                cls = boxes.cls.detach().cpu().tolist()
+                conf = boxes.conf.detach().cpu().tolist()
+                for idx, coords in enumerate(xyxy[:max_boxes]):
+                    class_id = int(cls[idx]) if idx < len(cls) else None
+                    item["detections"].append(
+                        {
+                            "index": idx,
+                            "class_id": class_id,
+                            "label": names.get(class_id, str(class_id)) if class_id is not None else None,
+                            "confidence": round(float(conf[idx]), 4) if idx < len(conf) else None,
+                            "xyxy": [round(float(v), 2) for v in coords],
+                        }
+                    )
+            except Exception:
+                try:
+                    item["boxes"] = len(boxes)
+                except Exception:
+                    item["boxes"] = 0
+        summary.append(item)
+    return summary
+
+
+def build_multimodal_evaluation_prompt(
+    base_prompt: str,
+    image_path: Path,
+    index: int,
+    total: int,
+    ground_truth: dict[str, Any],
+    *,
+    include_ground_truth: bool,
+) -> str:
+    prompt = (
+        f"{base_prompt}\n\n"
+        f"Evaluation image {index + 1}/{total}: {image_path.name}. "
+        "Focus on detector agreement, obvious false positives, likely missed objects, duplicates, and uncertainty."
+    )
+    if include_ground_truth:
+        prompt += "\n\nGround-truth labels for post-hoc comparison:\n" + json.dumps(ground_truth, ensure_ascii=False, indent=2)
+    return prompt
+
+
+def multimodal_prompt_from_request(request: dict[str, Any], params: dict[str, Any]) -> str:
+    return str(
+        request.get("inputs", {}).get("prompt")
+        or params.get("prompt")
+        or params.get("question")
+        or "Explain the scene, verify the YOLO detections, and identify important missed or uncertain visual evidence."
+    )
+
+
 def extract_json_object(text: str) -> dict[str, Any] | None:
     if not text:
         return None
