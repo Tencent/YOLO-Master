@@ -48,13 +48,23 @@ yolo version
 ## Runtime Responsibilities
 
 - `runtime/cli/dispatcher.py`: 统一解析 skill request 并路由到具体 runtime 模块; 新逻辑优先放入同级模块, 避免继续膨胀入口文件。
+- `runtime/cli/executor.py`, `device.py`, `normalize.py`, `dataset.py`: CLI 执行/恢复、设备环境、请求规范化、数据集与图像解析的共享实现, 保持 dispatcher 只负责路由和 handler 编排。
+- `runtime/cli/system_handlers.py`: `yolo.system` 的 doctor、install、settings、cfg 等系统管理动作。
+- `runtime/cli/model_handlers.py`: `yolo.model.inspect` 的模型元信息、names、device、task map 与轻量模型操作。
+- `runtime/cli/core_handlers.py`: `train/val/predict/track/export/benchmark/tune` 与 LoRA adapter 的主干 handler, 通过依赖注入复用 dispatcher 的模型与 CLI 兼容入口。
+- `runtime/cli/launcher_handlers.py`: `yolo.solutions.run` 与 `yolo.ui.launch` 的 launcher-style handler, 包含 Solutions 参数组装和 Gradio/Streamlit 启动。
 - `runtime/cli/contract.py`: 统一响应 envelope、manifest、`usage.tokens` 与 `cost_estimate`。
+- `runtime/cli/async_jobs.py`: 为 `policy.async=true` 的长任务提交子进程 job, 返回 `job_id`, status 文件、stdout/stderr 和可 tail 的 progress 路径。
+- `runtime/cli/job_handlers.py`: `yolo.job.status` / `yolo.job.cancel` 的异步任务查询与取消入口。
+- `runtime/cli/multimodal_handlers.py`: `yolo.multimodal.infer` / `yolo.multimodal.evaluate` 的 handler 编排, 通过依赖注入保留 dispatcher 兼容 monkeypatch 入口。
 - `runtime/cli/pipeline.py`: `yolo.pipeline.experiment` 的端到端阶段编排, 支持 train/val/export/benchmark 以及 LoRA/MoE/PEFT 诊断阶段, 并为长流程写出可 tail 的 `progress.jsonl`。
 - `runtime/cli/lora_tools.py`: `yolo.lora.diagnose`, 包含 effective rank、LoRA A/B 范数与 delta-W 谱预览。
+- `runtime/cli/moe_tools.py`: `yolo.moe.diagnose` / `yolo.moe.prune`, 包含专家使用率、保留/裁剪专家列表、裁剪比例与验证状态预览。
 - `runtime/cli/peft_compare.py`: `yolo.eval.peft_compare`, 用统一请求结构编排多个 LoRA/DoRA/LoHA/Full-SFT 变体。
+- `runtime/cli/sahi_compare.py`: `yolo.eval.sparse_sahi_compare`, 将标准推理、完整 SAHI 和集成 Sparse SAHI 对比纳入统一 skill 契约。
 - `runtime/cli/validate.py`: AutoTrain 风格用例执行器, 支持 `quick`, `contract`, `cli-smoke`, `deep-smoke`, `extended` 等验证套件。
-- `runtime/multimodal/`: 负责 OpenAI-compatible VLM/LLM 请求、thinking-with-image prompt、marked image、crop/zoom 视觉搜索与结构化结果解析; provider 配置位于 `runtime/multimodal/providers/*.yaml`。
-- `runtime/evaluation/`: 负责 YOLO-only 与融合结果的指标预览、分类/检测/分割 delta、metric guardrail。
+- `runtime/multimodal/`: 负责 OpenAI-compatible VLM/LLM 请求、thinking-with-image prompt、reasoning 摘要、marked image、crop/zoom 视觉搜索与结构化结果解析; provider 配置位于 `runtime/multimodal/providers/*.yaml`。
+- `runtime/evaluation/`: 负责 YOLO-only 与融合结果的指标预览、分类/检测/分割 delta、COCO/label record 构建和 metric guardrail。
 - `runtime/open_world/`: 负责 LVIS/V3Det taxonomy 匹配、open-world profile、IoU relabel、未匹配标签兜底与 verified list 合并。
 
 ## Skill Contract
