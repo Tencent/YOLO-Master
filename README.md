@@ -443,25 +443,35 @@ results = model.predict(
   <img width="45%" alt="Model Performance 4" src="https://github.com/user-attachments/assets/9f17ac3e-f839-4950-8661-76a5d4714443" />
 </div>
 
+> Pretrained `.pt` weights are synced from the [YOLO-Master-v26.02 release](https://github.com/Tencent/YOLO-Master/releases/tag/YOLO-Master-v26.02).
+
+[esomoe-n-weights]: https://github.com/Tencent/YOLO-Master/releases/download/YOLO-Master-v26.02/YOLO-Master-EsMoE-N.pt
+[esomoe-s-weights]: https://github.com/Tencent/YOLO-Master/releases/download/YOLO-Master-v26.02/YOLO-Master-EsMoE-S.pt
+[esomoe-m-weights]: https://github.com/Tencent/YOLO-Master/releases/download/YOLO-Master-v26.02/YOLO-Master-EsMoE-M.pt
+[v01-n-weights]: https://github.com/Tencent/YOLO-Master/releases/download/YOLO-Master-v26.02/YOLO-Master-v0.1-N.pt
+[v01-s-weights]: https://github.com/Tencent/YOLO-Master/releases/download/YOLO-Master-v26.02/YOLO-Master-v0.1-S.pt
+[v01-m-weights]: https://github.com/Tencent/YOLO-Master/releases/download/YOLO-Master-v26.02/YOLO-Master-v0.1-M.pt
+[v01-l-weights]: https://github.com/Tencent/YOLO-Master/releases/download/YOLO-Master-v26.02/YOLO-Master-v0.1-L.pt
+
 ### YOLO-Master-EsMoE Series
 
-| Model | Params(M) | GFLOPs(G) | Box(P) | R | mAP50 | mAP50-95 | Speed (4090 TRT) FPS |
-|:------|:---------|:---------|:------|:--|:------|:---------|:--------------------|
-| YOLO-Master-EsMoE-N | 2.68 | 8.7 | 0.684 | 0.536 | 0.587 | 0.427 | 640.18 |
-| YOLO-Master-EsMoE-S | 9.69 | 29.1 | 0.699 | 0.603 | 0.603 | 0.489 | 423.87 |
-| YOLO-Master-EsMoE-M | 34.88 | 97.4 | 0.737 | 0.640 | 0.697 | 0.530 | 243.79 |
-| YOLO-Master-EsMoE-L | 🔥training | TBD | TBD | TBD | TBD | TBD | TBD |
-| YOLO-Master-EsMoE-X | 🔥training | TBD | TBD | TBD | TBD | TBD | TBD |
+| Model | Weights | Params(M) | GFLOPs(G) | Box(P) | R | mAP50 | mAP50-95 | Speed (4090 TRT) FPS |
+|:------|:--------|:---------|:---------|:------|:--|:------|:---------|:--------------------|
+| YOLO-Master-EsMoE-N | [Weights][esomoe-n-weights] | 2.68 | 8.7 | 0.684 | 0.536 | 0.587 | 0.427 | 640.18 |
+| YOLO-Master-EsMoE-S | [Weights][esomoe-s-weights] | 9.69 | 29.1 | 0.699 | 0.603 | 0.603 | 0.489 | 423.87 |
+| YOLO-Master-EsMoE-M | [Weights][esomoe-m-weights] | 34.88 | 97.4 | 0.737 | 0.640 | 0.697 | 0.530 | 243.79 |
+| YOLO-Master-EsMoE-L | - | 🔥training | TBD | TBD | TBD | TBD | TBD | TBD |
+| YOLO-Master-EsMoE-X | - | 🔥training | TBD | TBD | TBD | TBD | TBD | TBD |
 
 ### YOLO-Master-v0.1 Series
 
-| Model | Params(M) | GFLOPs(G) | Box(P) | R | mAP50 | mAP50-95 | Speed (4090 TRT) FPS |
-|:------|:---------|:---------|:------|:--|:------|:---------|:--------------------|
-| YOLO-Master-v0.1-N | 7.54 | 10.1 | 0.684 | 0.542 | 0.592 | 0.429 | 528.84 |
-| YOLO-Master-v0.1-S | 29.15 | 36.0 | 0.724 | 0.607 | 0.662 | 0.489 | 345.24 |
-| YOLO-Master-v0.1-M | 52.17 | 116.7 | 0.729 | 0.641 | 0.696 | 0.528 | 170.72 |
-| YOLO-Master-v0.1-L | 58.41 | 138.1 | 0.739 | 0.646 | 0.705 | 0.539 | 149.86 |
-| YOLO-Master-v0.1-X | 🔥training | TBD | TBD | TBD | TBD | TBD | TBD |
+| Model | Weights | Params(M) | GFLOPs(G) | Box(P) | R | mAP50 | mAP50-95 | Speed (4090 TRT) FPS |
+|:------|:--------|:---------|:---------|:------|:--|:------|:---------|:--------------------|
+| YOLO-Master-v0.1-N | [Weights][v01-n-weights] | 7.54 | 10.1 | 0.684 | 0.542 | 0.592 | 0.429 | 528.84 |
+| YOLO-Master-v0.1-S | [Weights][v01-s-weights] | 29.15 | 36.0 | 0.724 | 0.607 | 0.662 | 0.489 | 345.24 |
+| YOLO-Master-v0.1-M | [Weights][v01-m-weights] | 52.17 | 116.7 | 0.729 | 0.641 | 0.696 | 0.528 | 170.72 |
+| YOLO-Master-v0.1-L | [Weights][v01-l-weights] | 58.41 | 138.1 | 0.739 | 0.646 | 0.705 | 0.539 | 149.86 |
+| YOLO-Master-v0.1-X | - | 🔥training | TBD | TBD | TBD | TBD | TBD | TBD |
 
 ## 🖼️ Detection Examples
 
