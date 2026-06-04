@@ -74,6 +74,8 @@ embed: # (list[int], optional) return feature embeddings from given layer indice
 sparse_sahi: False # (bool) use Sparse SAHI inference
 slice_size: 640 # (int) slice size for SAHI
 overlap_ratio: 0.2 # (float) overlap ratio for SAHI slices
+objectness_threshold: 0.15 # (float) threshold for objectness mask activation in Sparse SAHI (0.0-1.0)
+sparse_sahi_fallback: True # (bool) fallback to full SAHI when global detection finds no objects
 
 # Visualize settings ---------------------------------------------------------------------------------------------------
 show: False # (bool) show images/videos in a window if supported

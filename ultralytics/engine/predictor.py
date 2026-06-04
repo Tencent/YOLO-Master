@@ -540,6 +540,8 @@ class BasePredictor:
 
         slice_size = getattr(self.args, 'slice_size', 640)
         overlap_ratio = getattr(self.args, 'overlap_ratio', 0.2)
+        objectness_threshold = getattr(self.args, 'objectness_threshold', 0.15)
+        sparse_sahi_fallback = getattr(self.args, 'sparse_sahi_fallback', True)
         slice_h = slice_w = slice_size
         overlap = int(min(slice_h, slice_w) * overlap_ratio)
         
@@ -562,6 +564,7 @@ class BasePredictor:
         
         # --- Step 2: Adaptive Sparse Slicing ---
         active_slice_coords = []
+        fallback_coords = []  # Track all slice coords for fallback mode
         step_y, step_x = slice_h - overlap, slice_w - overlap
         
         for y_min in range(0, img_h, step_y):
@@ -571,10 +574,15 @@ class BasePredictor:
                 m_y1, m_x1 = y_min // mask_scale, x_min // mask_scale
                 m_y2, m_x2 = y_max // mask_scale, x_max // mask_scale
                 
-                # Activation threshold 0.15
+                coord = (x_min, y_min, x_max, y_max)
+                
                 if m_y2 > m_y1 and m_x2 > m_x1:
-                    if objectness_mask[m_y1:m_y2, m_x1:m_x2].max() > 0.15:
-                        active_slice_coords.append((x_min, y_min, x_max, y_max))
+                    if objectness_mask[m_y1:m_y2, m_x1:m_x2].max() > objectness_threshold:
+                        active_slice_coords.append(coord)
+                    elif sparse_sahi_fallback:
+                        # Fallback: include slices in low-objectness regions with reduced priority
+                        # This prevents missing objects that the global model failed to detect
+                        fallback_coords.append(coord)
 
         # Collect all boxes (Global + Slices)
         all_boxes = []
@@ -590,6 +598,7 @@ class BasePredictor:
             all_sources.extend([0] * len(global_result.boxes))
             
         # --- Step 3: Batch Inference on Slices ---
+        # Primary slices (high objectness regions)
         if active_slice_coords:
             batch_imgs = []
             for (x1, y1, x2, y2) in active_slice_coords:
@@ -597,16 +606,12 @@ class BasePredictor:
                 batch_imgs.append(self._pad_slice(crop, slice_h, slice_w))
             
             # Preprocess batch
-            # Note: preprocess handles tensor conversion, normalization, etc.
             slice_tensor = self.preprocess(batch_imgs)
             
             # Inference
-            # We must use self.inference
             slice_preds = self.inference(slice_tensor, *args, **kwargs)
             
             # Postprocess slices
-            # We pass batch_imgs as 'im0s' so postprocess scales boxes back to slice size (slice_size)
-            # This is crucial.
             slice_results = self.postprocess(slice_preds, slice_tensor, batch_imgs)
             
             for res, (off_x, off_y, _, _) in zip(slice_results, active_slice_coords):
@@ -619,12 +624,37 @@ class BasePredictor:
                     all_cls.append(res.boxes.cls)
                     all_sources.extend([1] * len(boxes))
 
+        # Fallback slices (low objectness regions) — only if enabled and no active slices found
+        # This prevents missing objects that the global model completely failed to detect
+        if sparse_sahi_fallback and not active_slice_coords and fallback_coords:
+            LOGGER.info(f"Sparse SAHI fallback: running full SAHI on all {len(fallback_coords)} slices "
+                        f"(global detection found no objects above threshold)")
+            batch_imgs = []
+            for (x1, y1, x2, y2) in fallback_coords:
+                crop = img[y1:y2, x1:x2]
+                batch_imgs.append(self._pad_slice(crop, slice_h, slice_w))
+            
+            slice_tensor = self.preprocess(batch_imgs)
+            slice_preds = self.inference(slice_tensor, *args, **kwargs)
+            slice_results = self.postprocess(slice_preds, slice_tensor, batch_imgs)
+            
+            for res, (off_x, off_y, _, _) in zip(slice_results, fallback_coords):
+                if len(res.boxes) > 0:
+                    boxes = res.boxes.xyxy.clone()
+                    boxes[:, [0, 2]] += off_x
+                    boxes[:, [1, 3]] += off_y
+                    all_boxes.append(boxes)
+                    all_scores.append(res.boxes.conf)
+                    all_cls.append(res.boxes.cls)
+                    all_sources.extend([2] * len(boxes))  # source=2 for fallback slices
+
         # --- Step 4: Merge & NMS ---
         if not all_boxes:
              # No detections
              global_result.sparse_sahi_metadata = {
                  'objectness_map': objectness_mask,
                  'slices': active_slice_coords,
+                 'fallback_slices': fallback_coords if sparse_sahi_fallback else [],
                  'final_sources': []
              }
              return global_result
@@ -657,6 +687,7 @@ class BasePredictor:
         global_result.sparse_sahi_metadata = {
             'objectness_map': objectness_mask,
             'slices': active_slice_coords,
+            'fallback_slices': fallback_coords if sparse_sahi_fallback else [],
             'final_sources': final_sources
         }
         
