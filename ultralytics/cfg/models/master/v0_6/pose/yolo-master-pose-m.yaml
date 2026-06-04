@@ -1,0 +1,51 @@
+# YOLO-Master v0.6 🚀 AGPL-3.0 License - https://ultralytics.com/license
+# Based on HybridAdaptiveGateMoE: hybrid fused-sparse experts + channel mixing
+
+# Parameters
+nc: 1 # number of classes
+kpt_shape: [17, 3] # number of keypoints, number of dims (2 for x,y or 3 for x,y,visible)
+scales: # model compound scaling constants
+  # [depth, width, max_channels]
+  m: [0.50, 1.00, 512]
+
+# YOLO-Master-v0.6 backbone with HybridAdaptiveGateMoE
+backbone:
+  # [from, repeats, module, args]
+  - [-1, 1, Conv, [64, 3, 2]]         # 0-P1/2
+  - [-1, 1, Conv, [128, 3, 2]]        # 1-P2/4
+  - [-1, 2, C3k2, [256, False, 0.25]] # 2
+
+  - [-1, 1, Conv, [256, 3, 2]]        # 3-P3/8
+  - [-1, 2, C3k2, [512, False, 0.25]] # 4
+
+  - [-1, 1, HybridAdaptiveGateMoE, [512, 4, 2, 0.5]]  # 5 - MoE at P3/P4 junction
+
+  - [-1, 1, Conv, [512, 3, 2]]        # 6-P4/16
+  - [-1, 4, A2C2f, [512, True, 4]]   # 7
+
+  - [-1, 1, HybridAdaptiveGateMoE, [512, 8, 2, 0.5]]  # 8 - MoE at P4/P5 junction
+
+  - [-1, 1, Conv, [1024, 3, 2]]       # 9-P5/32
+  - [-1, 4, A2C2f, [1024, True, 1]]   # 10
+
+  - [-1, 1, HybridAdaptiveGateMoE, [1024, 16, 2, 0.5]] # 11 - MoE at P5
+
+# YOLO-Master-v0.6 pose head
+head:
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
+  - [[-1, 8], 1, Concat, [1]]
+  - [-1, 2, C3k2, [512, True]]
+
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
+  - [[-1, 5], 1, Concat, [1]]
+  - [-1, 2, C3k2, [256, True]]
+
+  - [-1, 1, Conv, [256, 3, 2]]
+  - [[-1, 14], 1, Concat, [1]]
+  - [-1, 2, C3k2, [512, True]]
+
+  - [-1, 1, Conv, [512, 3, 2]]
+  - [[-1, 11], 1, Concat, [1]]
+  - [-1, 2, C3k2, [512, True]]
+
+  - [[17, 20, 23], 1, Pose, [nc, kpt_shape]]
