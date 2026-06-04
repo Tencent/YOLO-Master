@@ -171,6 +171,84 @@ class InvertedResidualExpert(nn.Module):
         return FlopsUtils.count_conv2d(self.conv, input_shape)
 
 
+class SharedInvertedExpertGroup(nn.Module):
+    """
+    Efficient expert group with shared inverted-residual feature extraction.
+
+    The expensive expand + depthwise spatial processing is computed once for the
+    dynamic branch. Experts specialize through lightweight pointwise projection
+    heads, which are dispatched sparsely according to Top-K routing.
+    """
+
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        num_experts: int,
+        expand_ratio: float = 2.0,
+        kernel_size: int = 3,
+        top_k: int = 2,
+        weight_threshold: float = 0.0,
+    ):
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.num_experts = num_experts
+        self.top_k = top_k
+        self.weight_threshold = weight_threshold
+        hidden_dim = max(1, int(in_channels * expand_ratio))
+        padding = kernel_size // 2
+
+        self.shared_feature = nn.Sequential(
+            nn.Conv2d(in_channels, hidden_dim, 1, bias=False),
+            nn.BatchNorm2d(hidden_dim),
+            nn.SiLU(inplace=True),
+            nn.Conv2d(hidden_dim, hidden_dim, kernel_size, padding=padding, groups=hidden_dim, bias=False),
+            nn.BatchNorm2d(hidden_dim),
+            nn.SiLU(inplace=True),
+        )
+        self.expert_projections = nn.ModuleList(
+            nn.Sequential(
+                nn.Conv2d(hidden_dim, out_channels, 1, bias=False),
+                nn.BatchNorm2d(out_channels),
+            )
+            for _ in range(num_experts)
+        )
+
+    @staticmethod
+    def _flatten_topk(tensor: torch.Tensor, batch: int, top_k: int) -> torch.Tensor:
+        return tensor.reshape(batch, -1)[:, :top_k]
+
+    def forward(self, x, routing_weights, routing_indices, top_k: int):
+        B, _, H, W = x.shape
+        top_k = min(int(top_k), routing_indices.numel() // max(B, 1))
+        features = self.shared_feature(x)
+        indices = self._flatten_topk(routing_indices, B, top_k).to(torch.long)
+        weights = self._flatten_topk(routing_weights, B, top_k)
+        valid_mask = weights > self.weight_threshold
+
+        output = x.new_zeros(B, self.out_channels, H, W)
+        active_experts = torch.unique(indices[valid_mask]).to(torch.long).tolist()
+        for expert_idx in active_experts:
+            projection = self.expert_projections[expert_idx]
+            expert_mask = (indices == expert_idx) & valid_mask
+
+            batch_indices, k_indices = torch.where(expert_mask)
+            expert_out = projection(features[batch_indices])
+            expert_weight = weights[batch_indices, k_indices].view(-1, 1, 1, 1).to(expert_out.dtype)
+            output.index_add_(0, batch_indices, expert_out * expert_weight)
+
+        return output
+
+    def compute_flops(self, input_shape):
+        B, _, H, W = input_shape
+        flops = FlopsUtils.count_conv2d(self.shared_feature, input_shape)
+        hidden_dim = self.shared_feature[0].out_channels
+        single_projection = FlopsUtils.count_conv2d(self.expert_projections[0][0], (1, hidden_dim, H, W))
+        flops += single_projection * B * min(self.num_experts, self.top_k)
+        return flops
+
+
 class DepthwiseSeparableConv(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, stride=1):
         super(DepthwiseSeparableConv, self).__init__()
@@ -199,5 +277,3 @@ class EfficientExpertGroup(nn.Module):
             out_c = x.shape[1]
             self.conv = DepthwiseSeparableConv(x.shape[1], out_c, 3, 1)
         return self.conv(x)
-
-
