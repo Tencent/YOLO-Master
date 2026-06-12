@@ -1,0 +1,67 @@
+# YOLO-Master v0.11 🚀 AGPL-3.0 License
+# ──────────────────────────────────────────────────────────────────────────────
+# Experiment v0_11-B1: Increased Expert Count (num_experts 4→8)
+#
+# Architecture: v0_5 FusedAdaptiveGateMoE with 8 experts (top_k=2 unchanged)
+#
+# Hypothesis (B1): VOC (~16K imgs) may still support 8 experts per MoE block
+# when MoE loss is properly activated (P0 fix). With balanced routing enforced
+# by variance_loss, 8 experts can specialize into 4×2 functional groups.
+# Risk: approaching the complexity ceiling — monitor convergence std closely.
+#
+# Key diffs vs v0_5 (yolo-master-n.yaml):
+#   - All FusedAdaptiveGateMoE args: num_experts 4/8/16 → 8 (P3,P4,P5 unified)
+#   - top_k remains 2 (sparsity ratio improves from 2/4=50% to 2/8=25%)
+#
+# Training command (50-epoch verification):
+#   yolo detect train \
+#     model=ultralytics/cfg/models/master/v0_11/det/yolo-master-n-b1-experts8.yaml \
+#     data=VOC.yaml epochs=50 imgsz=640 batch=16 \
+#     moe_balance_loss=0.1 moe_variance_loss=0.01
+# ──────────────────────────────────────────────────────────────────────────────
+
+nc: 80
+scales:
+  n: [0.50, 0.25, 1024]
+
+backbone:
+  - [-1, 1, Conv, [64, 3, 2]]
+  - [-1, 1, Conv, [128, 3, 2]]
+  - [-1, 2, C3k2, [256, False, 0.25]]
+
+  - [-1, 1, Conv, [256, 3, 2]]
+  - [-1, 2, C3k2, [512, False, 0.25]]
+
+  # B1: num_experts=8 (was 4) at P3/P4 junction
+  - [-1, 1, FusedAdaptiveGateMoE, [512, 8, 2, 0.5]]   # 5 - 8 experts, top_k=2
+
+  - [-1, 1, Conv, [512, 3, 2]]
+  - [-1, 4, A2C2f, [512, True, 4]]
+
+  # B1: num_experts=8 (was 8, unchanged) at P4/P5 junction
+  - [-1, 1, FusedAdaptiveGateMoE, [512, 8, 2, 0.5]]   # 8 - 8 experts, top_k=2
+
+  - [-1, 1, Conv, [1024, 3, 2]]
+  - [-1, 4, A2C2f, [1024, True, 1]]
+
+  # B1: num_experts=8 (was 16) at P5 — reduced to unified 8 to test scaling law
+  - [-1, 1, FusedAdaptiveGateMoE, [1024, 8, 2, 0.5]]  # 11 - 8 experts, top_k=2
+
+head:
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
+  - [[-1, 8], 1, Concat, [1]]
+  - [-1, 2, C3k2, [512, True]]
+
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
+  - [[-1, 5], 1, Concat, [1]]
+  - [-1, 2, C3k2, [256, True]]
+
+  - [-1, 1, Conv, [256, 3, 2]]
+  - [[-1, 14], 1, Concat, [1]]
+  - [-1, 2, C3k2, [512, True]]
+
+  - [-1, 1, Conv, [512, 3, 2]]
+  - [[-1, 11], 1, Concat, [1]]
+  - [-1, 2, C3k2, [512, True]]
+
+  - [[17, 20, 23], 1, Detect, [nc]]

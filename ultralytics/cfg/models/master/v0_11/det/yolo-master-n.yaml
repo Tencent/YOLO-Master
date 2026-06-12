@@ -1,0 +1,73 @@
+# YOLO-Master v0.11 🚀 AGPL-3.0 License
+# ──────────────────────────────────────────────────────────────────────────────
+# Experiment v0_11-B4: Gated Dynamic Fusion (FusedAdaptiveGateMoEv2)
+#
+# Architecture: identical to v0_5 except MoE module is replaced by
+# FusedAdaptiveGateMoEv2 which uses a learned per-channel gate to blend
+# the static and dynamic branches instead of a fixed concatenation.
+#
+# Hypothesis (B4): replacing fixed split fusion with a dynamic gate allows
+# the model to learn region-adaptive weighting between local and global
+# expert features, targeting the ~0.5-1.0% mAP improvement identified in
+# post-experiment analysis.
+#
+# Key changes vs v0_5:
+#   - MoE module: FusedAdaptiveGateMoE → FusedAdaptiveGateMoEv2
+#   - fusion_gate: adaptive per-channel softmax blend (static vs dynamic)
+#   - proj input dim: out_channels (not 2× out_channels) → fewer params
+#   - MoE loss: variance_loss_coeff = 0.01 now injected by trainer
+#
+# Training command (50-epoch verification run):
+#   yolo detect train \
+#     model=ultralytics/cfg/models/master/v0_11/det/yolo-master-n.yaml \
+#     data=VOC.yaml epochs=50 imgsz=640 batch=16 \
+#     moe_balance_loss=0.1 moe_variance_loss=0.01 moe_router_z_loss=0.01
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Parameters
+nc: 80 # number of classes
+scales: # model compound scaling constants
+  # [depth, width, max_channels]
+  n: [0.50, 0.25, 1024]
+
+# YOLO-Master-v0.11 backbone with FusedAdaptiveGateMoEv2 (B4: Gated Dynamic Fusion)
+backbone:
+  # [from, repeats, module, args]
+  - [-1, 1, Conv, [64, 3, 2]]         # 0-P1/2
+  - [-1, 1, Conv, [128, 3, 2]]        # 1-P2/4
+  - [-1, 2, C3k2, [256, False, 0.25]] # 2
+
+  - [-1, 1, Conv, [256, 3, 2]]        # 3-P3/8
+  - [-1, 2, C3k2, [512, False, 0.25]] # 4
+
+  - [-1, 1, FusedAdaptiveGateMoEv2, [512, 4, 2, 0.5]]  # 5 - MoE@P3/P4 (gated fusion)
+
+  - [-1, 1, Conv, [512, 3, 2]]        # 6-P4/16
+  - [-1, 4, A2C2f, [512, True, 4]]   # 7
+
+  - [-1, 1, FusedAdaptiveGateMoEv2, [512, 8, 2, 0.5]]  # 8 - MoE@P4/P5 (gated fusion)
+
+  - [-1, 1, Conv, [1024, 3, 2]]       # 9-P5/32
+  - [-1, 4, A2C2f, [1024, True, 1]]   # 10
+
+  - [-1, 1, FusedAdaptiveGateMoEv2, [1024, 16, 2, 0.5]] # 11 - MoE@P5 (gated fusion)
+
+# YOLO-Master-v0.11 detection head (identical to v0_5)
+head:
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
+  - [[-1, 8], 1, Concat, [1]]         # cat backbone P4
+  - [-1, 2, C3k2, [512, True]]         # 14
+
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
+  - [[-1, 5], 1, Concat, [1]]          # cat backbone P3
+  - [-1, 2, C3k2, [256, True]]         # 17
+
+  - [-1, 1, Conv, [256, 3, 2]]
+  - [[-1, 14], 1, Concat, [1]]         # cat head P4
+  - [-1, 2, C3k2, [512, True]]         # 20
+
+  - [-1, 1, Conv, [512, 3, 2]]
+  - [[-1, 11], 1, Concat, [1]]         # cat head P5
+  - [-1, 2, C3k2, [512, True]]         # 23 (P5/32-large)
+
+  - [[17, 20, 23], 1, Detect, [nc]]     # Detect(P3, P4, P5)
