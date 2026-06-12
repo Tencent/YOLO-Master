@@ -13,7 +13,12 @@ class MoELoss(nn.Module):
     - Distributed-aware calculation
     - Support for both Hard (GShard-style) and Soft (Differentiable) load balancing
     - Entropy regularization to prevent router indecisiveness
+    - Variance penalty for direct uniform-distribution enforcement
     - Detailed diagnostic outputs
+
+    Notes on balance_loss_coeff tuning:
+      VOC-scale (~16K imgs): 0.1 is a good starting point.
+      If moe_loss stays near 0 check that forward() is called with training=True.
     """
 
     def __init__(
@@ -22,7 +27,7 @@ class MoELoss(nn.Module):
         z_loss_coeff: float = 1e-3,
         entropy_loss_coeff: float = 0.0,
         diversity_loss_coeff: float = 0.0,  # New: penalize similar expert outputs
-        variance_loss_coeff: float = 0.0,   # New: direct variance penalty on usage
+        variance_loss_coeff: float = 0.01,  # Default ON: direct variance penalty on usage
         num_experts: int = 8,
         top_k: int = 2,
         use_soft_balancing: bool = True

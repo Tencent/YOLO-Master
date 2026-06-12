@@ -17,6 +17,61 @@ from .metrics import bbox_iou, probiou
 from .tal import bbox2dist
 
 
+def _collect_moe_loss(model: nn.Module, device: torch.device) -> torch.Tensor:
+    """Collect MoE auxiliary loss from all MoE modules in the model.
+
+    Reads live tensors directly from MOE_LOSS_REGISTRY (a WeakKeyDictionary
+    keyed by module instance) to get the gradients-attached loss computed in
+    the most recent forward pass.  Falls back to the ``aux_loss`` property
+    (which also reads from the registry) and then to ``last_aux_loss`` float
+    attribute as a last resort.
+
+    This replaces the old loop that called ``m.aux_loss`` unconditionally: the
+    old approach accumulated loss from *every* module that happened to have the
+    attribute, including parent wrappers that merely delegate to their child,
+    causing double-counting and masking zero-loss bugs.
+    """
+    try:
+        from ultralytics.nn.modules.moe.modules import MOE_LOSS_REGISTRY  # lazy import to avoid circular deps
+    except ImportError:
+        MOE_LOSS_REGISTRY = None
+
+    total = torch.zeros((), device=device)
+    seen_ids: set = set()  # deduplicate by object identity
+
+    if model is None:
+        return total
+
+    for m in model.modules():
+        mid = id(m)
+        if mid in seen_ids:
+            continue
+
+        # Primary path: live tensor from registry (carries grad_fn)
+        if MOE_LOSS_REGISTRY is not None:
+            reg_loss = MOE_LOSS_REGISTRY.get(m)
+            if isinstance(reg_loss, torch.Tensor) and reg_loss.numel() == 1:
+                seen_ids.add(mid)
+                total = total + reg_loss.to(device)
+                continue
+
+        # Secondary path: aux_loss property (also reads registry, but safe)
+        if hasattr(m, 'aux_loss'):
+            aux = m.aux_loss
+            if isinstance(aux, torch.Tensor) and aux.numel() == 1 and aux.item() != 0.0:
+                seen_ids.add(mid)
+                total = total + aux.to(device)
+                continue
+
+        # Tertiary path: detached float scalar (no gradient contribution, but
+        # ensures the loss is at least logged non-zero for monitoring)
+        if hasattr(m, 'last_aux_loss') and m.last_aux_loss != 0.0:
+            seen_ids.add(mid)
+            total = total + torch.tensor(m.last_aux_loss, device=device, dtype=torch.float32)
+
+    return total
+
+
 class VarifocalLoss(nn.Module):
     """Varifocal loss by Zhang et al.
 
@@ -300,13 +355,8 @@ class v8DetectionLoss:
         loss[1] *= self.hyp.cls  # cls gain
         loss[2] *= self.hyp.dfl  # dfl gain
 
-        # MoE auxiliary loss
-        moe_loss = torch.tensor(0.0, device=self.device)
-        if hasattr(self, 'model'):
-             for m in self.model.modules():
-                 if hasattr(m, 'aux_loss'):
-                     moe_loss += m.aux_loss
-        loss[3] = moe_loss * self.hyp.moe
+        # MoE auxiliary loss — collected from MOE_LOSS_REGISTRY via helper
+        loss[3] = _collect_moe_loss(self.model, self.device) * self.hyp.moe
 
         return loss * batch_size, loss.detach()  # loss(box, cls, dfl, moe)
 
@@ -400,13 +450,8 @@ class v8SegmentationLoss(v8DetectionLoss):
         loss[2] *= self.hyp.cls  # cls gain
         loss[3] *= self.hyp.dfl  # dfl gain
 
-        # MoE auxiliary loss
-        moe_loss = torch.tensor(0.0, device=self.device)
-        if hasattr(self, 'model'):
-             for m in self.model.modules():
-                 if hasattr(m, 'aux_loss'):
-                     moe_loss += m.aux_loss
-        loss[4] = moe_loss * self.hyp.moe
+        # MoE auxiliary loss — collected from MOE_LOSS_REGISTRY via helper
+        loss[4] = _collect_moe_loss(self.model, self.device) * self.hyp.moe
 
         return loss * batch_size, loss.detach()  # loss(box, seg, cls, dfl, moe)
 
@@ -577,13 +622,8 @@ class v8PoseLoss(v8DetectionLoss):
         loss[3] *= self.hyp.cls  # cls gain
         loss[4] *= self.hyp.dfl  # dfl gain
 
-        # MoE auxiliary loss
-        moe_loss = torch.tensor(0.0, device=self.device)
-        if hasattr(self, 'model'):
-             for m in self.model.modules():
-                 if hasattr(m, 'aux_loss'):
-                     moe_loss += m.aux_loss
-        loss[5] = moe_loss * self.hyp.moe
+        # MoE auxiliary loss — collected from MOE_LOSS_REGISTRY via helper
+        loss[5] = _collect_moe_loss(self.model, self.device) * self.hyp.moe
 
         return loss * batch_size, loss.detach()  # loss(box, cls, dfl)
 
@@ -775,13 +815,8 @@ class v8OBBLoss(v8DetectionLoss):
         loss[1] *= self.hyp.cls  # cls gain
         loss[2] *= self.hyp.dfl  # dfl gain
 
-        # MoE auxiliary loss
-        moe_loss = torch.tensor(0.0, device=self.device)
-        if hasattr(self, 'model'):
-             for m in self.model.modules():
-                 if hasattr(m, 'aux_loss'):
-                     moe_loss += m.aux_loss
-        loss[3] = moe_loss * self.hyp.moe
+        # MoE auxiliary loss — collected from MOE_LOSS_REGISTRY via helper
+        loss[3] = _collect_moe_loss(self.model, self.device) * self.hyp.moe
 
         return loss * batch_size, loss.detach()  # loss(box, cls, dfl, moe)
 

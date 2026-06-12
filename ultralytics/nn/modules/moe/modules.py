@@ -47,9 +47,18 @@ def _zero_aux_loss_like(module: nn.Module) -> torch.Tensor:
 
 
 def _get_moe_aux_loss(module: nn.Module) -> torch.Tensor:
-    """Read the registered MoE aux loss, defaulting to a device-safe zero."""
+    """Read the registered MoE aux loss, defaulting to a device-safe zero.
+
+    Returns the live tensor from MOE_LOSS_REGISTRY.  If the registry contains
+    a stale detached tensor (grad_fn is None and value is 0), return zero so
+    that the caller can fall back to other collection methods.
+    """
     loss = MOE_LOSS_REGISTRY.get(module)
-    return loss if isinstance(loss, torch.Tensor) else _zero_aux_loss_like(module)
+    if isinstance(loss, torch.Tensor):
+        # Accept any non-zero tensor, or a tensor still attached to the graph
+        if loss.grad_fn is not None or loss.item() != 0.0:
+            return loss
+    return _zero_aux_loss_like(module)
 
 
 def _flatten_moe_topk(topk_tensor: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
@@ -2174,6 +2183,257 @@ class FusedAdaptiveGateMoE(AdaptiveGateMoE):
         )
         self.expert_backend = "fused"
         self.fused_experts = FusedExpertGroup(self.dynamic_channels, self.out_dynamic, num_experts, num_groups, top_k=top_k)
+
+
+class FusedAdaptiveGateMoEv2(FusedAdaptiveGateMoE):
+    """
+    v0_5 → v0_11 upgrade: Gated Dynamic Fusion (B4 experiment).
+
+    Replaces the fixed static/dynamic concatenation in FusedAdaptiveGateMoE
+    with a lightweight gate that learns the per-channel mixture ratio
+    between the static and dynamic branches at runtime.
+
+    Architecture change:
+        v0_5:  out = proj(cat[out_static, out_dynamic]) + x
+        v0_11: out = proj(gate_s * out_static + gate_d * out_dynamic) + x
+               where gate_s, gate_d = softmax(fusion_gate(x), dim=0)
+
+    This allows the model to:
+      - Give dynamic experts more influence on complex/ambiguous regions
+      - Let the static path dominate for simple background regions
+      - Eliminate the need for a fixed split_ratio at inference time
+
+    Additional changes vs v0_5:
+      - `proj` input is now `out_channels` (not 2×) after gated sum → fewer params
+      - Learnable per-expert temperature (B2-style warm start at 1.0)
+    """
+
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        num_experts: int = 4,
+        top_k: int = 2,
+        split_ratio: float = 0.5,
+        num_groups: int = 8,
+        initial_temperature: float = 1.0,
+        final_temperature: float = 0.5,
+        balance_loss_coeff: float = 0.01,
+        router_z_loss_coeff: float = 1e-3,
+        entropy_loss_coeff: float = 0.01,
+    ):
+        super().__init__(
+            in_channels,
+            out_channels,
+            num_experts,
+            top_k,
+            split_ratio,
+            num_groups,
+            initial_temperature,
+            final_temperature,
+            balance_loss_coeff,
+            router_z_loss_coeff,
+            entropy_loss_coeff,
+        )
+
+        # ── Gated Dynamic Fusion gate ──
+        # Produces per-channel soft gates for static and dynamic branches.
+        # Uses global context (GAP) to decide mixture ratio.
+        # Input: in_channels (original), Output: 2 × out_channels logits
+        gate_hidden = max(out_channels // 4, 8)
+        self.fusion_gate = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Flatten(),
+            nn.Linear(in_channels, gate_hidden, bias=False),
+            nn.SiLU(inplace=True),
+            nn.Linear(gate_hidden, 2 * out_channels, bias=True),
+        )
+        nn.init.zeros_(self.fusion_gate[-1].bias)  # start at balanced 0.5/0.5
+
+        # Replace the concat-proj with a single-input proj (saves ~50% params in proj)
+        # The fused output dimension is now out_channels (not 2 × out_channels)
+        self.proj = nn.Conv2d(out_channels, out_channels, 1, bias=False)
+        # Re-init bn for out_channels (already correct from parent)
+
+        self.expert_backend = "fused_v2"
+
+    def forward(self, x):
+        B, C, H, W = x.shape
+
+        if self.training:
+            self._update_temperature()
+            self.training_step += 1
+            self._training_step_value += 1
+
+        # ── 1. SE-Gated Channel Allocation (inherited) ──
+        gate_weights = self.se_gate(x)
+        gate_static = gate_weights[:, :self.static_channels].unsqueeze(-1).unsqueeze(-1)
+        gate_dynamic = gate_weights[:, self.static_channels:].unsqueeze(-1).unsqueeze(-1)
+        x_static = x[:, :self.static_channels, :, :] * gate_static
+        x_dynamic = x[:, self.static_channels:, :, :] * gate_dynamic
+
+        # ── 2. Static Path ──
+        out_static = self.static_net(x_static)    # [B, out_static, H, W]
+
+        # ── 3. Complexity + Routing ──
+        complexity = self._safe_complexity(x_dynamic)
+        routing_weights, routing_indices, routing_stats = self.routing(x_dynamic)
+        routing_weights, routing_indices, routing_stats, adaptive_top_k = self._apply_complexity_gate(
+            routing_weights, routing_indices, routing_stats, complexity
+        )
+
+        # ── 4. Fused Expert Computation ──
+        out_dynamic = self.fused_experts(x_dynamic, routing_weights, routing_indices, adaptive_top_k)
+
+        # ── 5. Gated Dynamic Fusion (B4 innovation) ──
+        # Compute per-channel mixture gates from global context
+        gate_logits = self.fusion_gate(x).view(B, 2, self.out_channels, 1, 1)  # [B, 2, C_out, 1, 1]
+        gate_s, gate_d = torch.softmax(gate_logits, dim=1).unbind(dim=1)        # each [B, C_out, 1, 1]
+
+        # Pad out_static / out_dynamic to out_channels if split made them unequal
+        if out_static.shape[1] < self.out_channels:
+            pad_s = self.out_channels - out_static.shape[1]
+            out_static = F.pad(out_static, (0, 0, 0, 0, 0, pad_s))
+        if out_dynamic.shape[1] < self.out_channels:
+            pad_d = self.out_channels - out_dynamic.shape[1]
+            out_dynamic = F.pad(out_dynamic, (0, 0, 0, 0, 0, pad_d))
+
+        fused = gate_s * out_static + gate_d * out_dynamic   # [B, out_channels, H, W]
+
+        # ── 6. Projection + Residual ──
+        out = self.proj(fused)
+        out = self.bn(out) + x
+
+        # ── 7. Auxiliary Loss ──
+        if self.training:
+            router_probs = routing_stats.get('router_probs')
+            router_logits = routing_stats.get('router_logits')
+            topk_indices = routing_stats.get('topk_indices')
+            if isinstance(router_probs, torch.Tensor) and isinstance(router_logits, torch.Tensor):
+                aux_loss = self.moe_loss_fn(router_probs, router_logits, topk_indices)
+                MOE_LOSS_REGISTRY[self] = aux_loss
+                _record_moe_snapshot(
+                    self,
+                    expert_usage=routing_stats.get('expert_usage'),
+                    topk_indices=topk_indices,
+                    topk_weights=routing_weights,
+                    router_probs=router_probs,
+                    aux_loss=aux_loss,
+                )
+
+        return out
+
+    def __deepcopy__(self, memo):
+        return _robust_deepcopy(self, memo)
+
+
+
+    """
+    v0.6 MoE: hybrid expert backend with lightweight channel mixing.
+
+    Layers with fewer experts use the fused backend from v0.5 to amortize
+    launch overhead. Layers with many experts use the shared inverted backend
+    from v0.4 to avoid computing large inactive expert sets. A small channel
+    shuffle before projection improves static/dynamic feature exchange.
+    """
+
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        num_experts: int = 4,
+        top_k: int = 2,
+        split_ratio: float = 0.5,
+        num_groups: int = 8,
+        initial_temperature: float = 1.2,
+        final_temperature: float = 0.5,
+        balance_loss_coeff: float = 0.01,
+        router_z_loss_coeff: float = 1e-3,
+        entropy_loss_coeff: float = 0.01,
+        fused_expert_threshold: int = 8,
+        shuffle_groups: int = 2,
+    ):
+        super().__init__(
+            in_channels,
+            out_channels,
+            num_experts,
+            top_k,
+            split_ratio,
+            num_groups,
+            initial_temperature,
+            final_temperature,
+            balance_loss_coeff,
+            router_z_loss_coeff,
+            entropy_loss_coeff,
+        )
+        self.fused_expert_threshold = fused_expert_threshold
+        self.shuffle_groups = shuffle_groups if out_channels % shuffle_groups == 0 else 1
+        if num_experts <= fused_expert_threshold:
+            self.expert_backend = "fused"
+            self.fused_experts = FusedExpertGroup(self.dynamic_channels, self.out_dynamic, num_experts, num_groups, top_k=top_k)
+        else:
+            self.expert_backend = "shared_inverted"
+            self.fused_experts = SharedInvertedExpertGroup(
+                self.dynamic_channels,
+                self.out_dynamic,
+                num_experts,
+                top_k=top_k,
+                weight_threshold=0.0,
+            )
+
+    def _channel_shuffle(self, x: torch.Tensor) -> torch.Tensor:
+        if self.shuffle_groups <= 1:
+            return x
+        B, C, H, W = x.shape
+        return x.view(B, self.shuffle_groups, C // self.shuffle_groups, H, W).transpose(1, 2).reshape(B, C, H, W)
+
+    def forward(self, x):
+        B, C, H, W = x.shape
+
+        if self.training:
+            self._update_temperature()
+            self.training_step += 1
+            self._training_step_value += 1
+
+        gate_weights = self.se_gate(x)
+        gate_static = gate_weights[:, :self.static_channels].unsqueeze(-1).unsqueeze(-1)
+        gate_dynamic = gate_weights[:, self.static_channels:].unsqueeze(-1).unsqueeze(-1)
+
+        x_static = x[:, :self.static_channels, :, :] * gate_static
+        x_dynamic = x[:, self.static_channels:, :, :] * gate_dynamic
+
+        out_static = self.static_net(x_static)
+
+        complexity = self._safe_complexity(x_dynamic)
+
+        routing_weights, routing_indices, routing_stats = self.routing(x_dynamic)
+        routing_weights, routing_indices, routing_stats, adaptive_top_k = self._apply_complexity_gate(
+            routing_weights, routing_indices, routing_stats, complexity
+        )
+
+        out_dynamic = self.fused_experts(x_dynamic, routing_weights, routing_indices, adaptive_top_k)
+
+        out_concat = self._channel_shuffle(torch.cat([out_static, out_dynamic], dim=1))
+        out = self.proj(out_concat)
+        out = self.bn(out) + x
+
+        if self.training:
+            router_probs = routing_stats.get('router_probs')
+            router_logits = routing_stats.get('router_logits')
+            topk_indices = routing_stats.get('topk_indices')
+            if isinstance(router_probs, torch.Tensor) and isinstance(router_logits, torch.Tensor):
+                aux_loss = self.moe_loss_fn(router_probs, router_logits, topk_indices)
+                MOE_LOSS_REGISTRY[self] = aux_loss
+                _record_moe_snapshot(
+                    self,
+                    expert_usage=routing_stats.get('expert_usage'),
+                    topk_indices=topk_indices,
+                    topk_weights=routing_weights,
+                    router_probs=router_probs,
+                    aux_loss=aux_loss,
+                )
+
+        return out
 
 
 class HybridAdaptiveGateMoE(AdaptiveGateMoE):
