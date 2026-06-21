@@ -18,8 +18,8 @@ class MoELoss(nn.Module):
 
     def __init__(
         self,
-        balance_loss_coeff: float = 0.01,
-        z_loss_coeff: float = 1e-3,
+        balance_loss_coeff: float = 1.0,
+        z_loss_coeff: float = 1.0,
         entropy_loss_coeff: float = 0.0,
         diversity_loss_coeff: float = 0.0,  # New: penalize similar expert outputs
         variance_loss_coeff: float = 0.0,   # New: direct variance penalty on usage

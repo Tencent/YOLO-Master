@@ -194,8 +194,8 @@ class UltraOptimizedMoE(nn.Module):
             router_pool_scale: int = 8,
             noise_std: float = 1.0,
             router_temperature: float = 1.0,
-            balance_loss_coeff: float = 0.01,
-            router_z_loss_coeff: float = 1e-3,
+            balance_loss_coeff: float = 1.0,
+            router_z_loss_coeff: float = 1.0,
             num_groups: int = 8,
             weight_threshold: float = 0.01  # conditional compute threshold
     ):
@@ -628,8 +628,8 @@ class OptimizedMOE(nn.Module):
             num_experts: int = 4,
             top_k: int = 2,
             expert_expand_ratio: int = 2,
-            balance_loss_coeff: float = 0.01,
-            z_loss_coeff: float = 1e-3,
+            balance_loss_coeff: float = 1.0,
+            z_loss_coeff: float = 1.0,
     ):
         super().__init__()
         self.num_experts = num_experts
@@ -790,8 +790,8 @@ class OptimizedMOEImproved(nn.Module):
             expert_type: str = 'simple',  # ['simple', 'ghost', 'inverted', 'spatial']
             router_type: str = 'efficient',  # ['efficient', 'local', 'adaptive']
             noise_std: float = 1.0,
-            balance_loss_coeff: float = 0.01,
-            router_z_loss_coeff: float = 1e-3,
+            balance_loss_coeff: float = 1.0,
+            router_z_loss_coeff: float = 1.0,
             expert_expand_ratio: float = 2.0,
             progressive_sparsity: bool = True
     ):
@@ -1179,8 +1179,8 @@ class AdaptiveGateMoE(nn.Module):
         num_groups: int = 8,
         initial_temperature: float = 1.0,
         final_temperature: float = 0.5,
-        balance_loss_coeff: float = 0.01,
-        router_z_loss_coeff: float = 1e-3,
+        balance_loss_coeff: float = 1.0,
+        router_z_loss_coeff: float = 1.0,
         entropy_loss_coeff: float = 0.01,
     ):
         super().__init__()
@@ -1455,8 +1455,8 @@ class HyperSplitMoE(nn.Module):
         top_k: int = 2,
         split_ratio: float = 0.5,  # 动态路径占比
         router_reduction: int = 8,
-        balance_loss_coeff: float = 0.01,
-        router_z_loss_coeff: float = 1e-3,
+        balance_loss_coeff: float = 1.0,
+        router_z_loss_coeff: float = 1.0,
     ):
         super().__init__()
         self.in_channels = in_channels
@@ -2155,8 +2155,8 @@ class FusedAdaptiveGateMoE(AdaptiveGateMoE):
         num_groups: int = 8,
         initial_temperature: float = 1.0,
         final_temperature: float = 0.5,
-        balance_loss_coeff: float = 0.01,
-        router_z_loss_coeff: float = 1e-3,
+        balance_loss_coeff: float = 1.0,
+        router_z_loss_coeff: float = 1.0,
         entropy_loss_coeff: float = 0.01,
     ):
         super().__init__(
@@ -2196,8 +2196,8 @@ class HybridAdaptiveGateMoE(AdaptiveGateMoE):
         num_groups: int = 8,
         initial_temperature: float = 1.2,
         final_temperature: float = 0.5,
-        balance_loss_coeff: float = 0.01,
-        router_z_loss_coeff: float = 1e-3,
+        balance_loss_coeff: float = 1.0,
+        router_z_loss_coeff: float = 1.0,
         entropy_loss_coeff: float = 0.01,
         fused_expert_threshold: int = 8,
         shuffle_groups: int = 2,
@@ -2305,8 +2305,8 @@ class LowRankHybridAdaptiveGateMoE(HybridAdaptiveGateMoE):
         num_groups: int = 8,
         initial_temperature: float = 1.2,
         final_temperature: float = 0.5,
-        balance_loss_coeff: float = 0.01,
-        router_z_loss_coeff: float = 1e-3,
+        balance_loss_coeff: float = 1.0,
+        router_z_loss_coeff: float = 1.0,
         entropy_loss_coeff: float = 0.01,
         fused_expert_threshold: int = 8,
         shuffle_groups: int = 2,
@@ -2360,8 +2360,8 @@ class RefinedLowRankHybridAdaptiveGateMoE(LowRankHybridAdaptiveGateMoE):
         num_groups: int = 8,
         initial_temperature: float = 1.2,
         final_temperature: float = 0.5,
-        balance_loss_coeff: float = 0.01,
-        router_z_loss_coeff: float = 1e-3,
+        balance_loss_coeff: float = 1.0,
+        router_z_loss_coeff: float = 1.0,
         entropy_loss_coeff: float = 0.01,
         fused_expert_threshold: int = 8,
         shuffle_groups: int = 2,
@@ -2479,8 +2479,8 @@ class DetailAwareLowRankHybridAdaptiveGateMoE(LowRankHybridAdaptiveGateMoE):
         num_groups: int = 8,
         initial_temperature: float = 1.2,
         final_temperature: float = 0.5,
-        balance_loss_coeff: float = 0.01,
-        router_z_loss_coeff: float = 1e-3,
+        balance_loss_coeff: float = 1.0,
+        router_z_loss_coeff: float = 1.0,
         entropy_loss_coeff: float = 0.01,
         fused_expert_threshold: int = 8,
         shuffle_groups: int = 2,
@@ -2535,8 +2535,8 @@ class ContextRefinedLowRankHybridAdaptiveGateMoE(RefinedLowRankHybridAdaptiveGat
         num_groups: int = 8,
         initial_temperature: float = 1.2,
         final_temperature: float = 0.5,
-        balance_loss_coeff: float = 0.01,
-        router_z_loss_coeff: float = 1e-3,
+        balance_loss_coeff: float = 1.0,
+        router_z_loss_coeff: float = 1.0,
         entropy_loss_coeff: float = 0.01,
         fused_expert_threshold: int = 8,
         shuffle_groups: int = 2,
@@ -2597,8 +2597,8 @@ class VisualEnhancedAdaptiveGateMoE(ContextRefinedLowRankHybridAdaptiveGateMoE):
         num_groups: int = 8,
         initial_temperature: float = 1.2,
         final_temperature: float = 0.5,
-        balance_loss_coeff: float = 0.01,
-        router_z_loss_coeff: float = 1e-3,
+        balance_loss_coeff: float = 1.0,
+        router_z_loss_coeff: float = 1.0,
         entropy_loss_coeff: float = 0.01,
         fused_expert_threshold: int = 8,
         shuffle_groups: int = 2,

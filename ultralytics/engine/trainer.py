@@ -446,6 +446,13 @@ class BaseTrainer:
             if getattr(self.args, 'lora_few_shot_hierarchical_distill', False):
                 self._init_hierarchical_distill_cache()
 
+        # Apply LoRA/PEFT if configured (must happen before compile and freeze)
+        if hasattr(self.args, "lora_r") and self.args.lora_r > 0:
+            from ultralytics.utils.lora import apply_lora
+
+            self.model = apply_lora(self.model, self.args)
+            LOGGER.info(f"[LoRA] Applied. lora_r={self.args.lora_r}, lora_alpha={self.args.lora_alpha}")
+
         # Compile model
         self.model = attempt_compile(self.model, device=self.device, mode=self.args.compile)
         lora_model = unwrap_model(self.model)
