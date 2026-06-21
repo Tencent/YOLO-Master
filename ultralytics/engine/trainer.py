@@ -380,8 +380,8 @@ class BaseTrainer:
 
             # Inject MoE hyperparameters from training config into model modules
             # This bridges the gap: YAML config (moe_balance_loss) → module defaults (balance_loss_coeff)
-            balance_loss_coeff = getattr(self.args, 'moe_balance_loss', 0.1)
-            router_z_loss_coeff = getattr(self.args, 'moe_router_z_loss', 0.01)
+            balance_loss_coeff = getattr(self.args, 'moe_balance_loss', 1.0)
+            router_z_loss_coeff = getattr(self.args, 'moe_router_z_loss', 1.0)
             noise_std = getattr(self.args, 'moe_noise_std', 0.5)
             temperature = getattr(self.args, 'moe_temperature', 1.0)
             weight_threshold = getattr(self.args, 'moe_weight_threshold', 0.01)
@@ -655,7 +655,7 @@ class BaseTrainer:
                         # Also boost balance_loss if not already high
                         if hasattr(self.args, 'moe_balance_loss'):
                             old_bl = self.args.moe_balance_loss
-                            self.args.moe_balance_loss = min(old_bl * 2.0, 0.5)
+                            self.args.moe_balance_loss = min(old_bl * 2.0, 2.0)
                         LOGGER.info(f"[MoE] balance_loss boosted: {old_bl:.4f} → {self.args.moe_balance_loss:.4f}")
 
             # ── LoRA Training Strategies (per-epoch) ──
