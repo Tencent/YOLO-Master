@@ -172,9 +172,14 @@ class MoELoss(nn.Module):
             variance = torch.mean((usage - target_usage) ** 2)
             variance_loss = variance
 
+        # Guard: prevent silent moe-loss collapse due to stale configs
+        # injecting tiny coefficients (e.g., 0.01, 1e-3, 1e-7).
+        bl_coeff = max(self.balance_loss_coeff, 0.1)
+        zl_coeff = max(self.z_loss_coeff, 0.1)
+
         # 6. Total Loss
-        total_loss = (self.balance_loss_coeff * balance_loss) + \
-                     (self.z_loss_coeff * z_loss) + \
+        total_loss = (bl_coeff * balance_loss) + \
+                     (zl_coeff * z_loss) + \
                      (self.entropy_loss_coeff * entropy_loss) + \
                      (self.diversity_loss_coeff * diversity_loss) + \
                      (self.variance_loss_coeff * variance_loss)
