@@ -382,6 +382,26 @@ class BaseTrainer:
             # This bridges the gap: YAML config (moe_balance_loss) → module defaults (balance_loss_coeff)
             balance_loss_coeff = getattr(self.args, 'moe_balance_loss', 1.0)
             router_z_loss_coeff = getattr(self.args, 'moe_router_z_loss', 1.0)
+
+            # Guard: prevent moe_balance_loss from being too small
+            # (legacy configs or stale caches may inject 0.01/0.001 values)
+            if balance_loss_coeff < 0.1:
+                LOGGER.warning(
+                    f"[MoE] moe_balance_loss={balance_loss_coeff} is too small (<0.1), "
+                    f"forcing to 1.0. Please check your config/hyperparameters."
+                )
+                balance_loss_coeff = 1.0
+            if router_z_loss_coeff < 0.1:
+                LOGGER.warning(
+                    f"[MoE] moe_router_z_loss={router_z_loss_coeff} is too small (<0.1), "
+                    f"forcing to 1.0."
+                )
+                router_z_loss_coeff = 1.0
+
+            LOGGER.info(
+                f"[MoE] Config injection: balance_loss_coeff={balance_loss_coeff}, "
+                f"z_loss_coeff={router_z_loss_coeff}"
+            )
             noise_std = getattr(self.args, 'moe_noise_std', 0.5)
             temperature = getattr(self.args, 'moe_temperature', 1.0)
             weight_threshold = getattr(self.args, 'moe_weight_threshold', 0.01)
