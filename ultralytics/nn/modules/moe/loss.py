@@ -25,7 +25,7 @@ class MoELoss(nn.Module):
         variance_loss_coeff: float = 0.0,   # New: direct variance penalty on usage
         num_experts: int = 8,
         top_k: int = 2,
-        use_soft_balancing: bool = True
+        use_soft_balancing: bool = False
     ):
         super().__init__()
         self.balance_loss_coeff = balance_loss_coeff

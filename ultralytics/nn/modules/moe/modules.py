@@ -851,6 +851,10 @@ class OptimizedMOEImproved(nn.Module):
             top_k=top_k
         )
         self.last_routing_snapshot = {}
+        
+        # Expert dropout: periodically disable experts to prevent uniform routing
+        self.expert_dropout_rate = 0.15  # 15% dropout during training
+        self.dropout_interval = 100  # Apply every 100 steps
 
     def _init_weights(self):
         for m in self.modules():
@@ -904,14 +908,21 @@ class OptimizedMOEImproved(nn.Module):
         # 2) Shared expert compute
         shared_out = self.shared_expert(x)
 
-        # 3) Sparse expert compute
+        # 3) Sparse expert compute with optional dropout
         # Initialize outputs with zeros
         expert_output = torch.zeros(B, self.out_channels, H, W, device=x.device, dtype=x.dtype)
+
+        # Expert dropout: randomly disable experts to prevent collapse
+        active_experts = list(range(self.num_experts))
+        if self.training and self.training_step.item() > 0 and self.training_step.item() % self.dropout_interval == 0:
+            num_drop = max(1, int(self.num_experts * self.expert_dropout_rate))
+            drop_indices = torch.randperm(self.num_experts)[:num_drop].tolist()
+            active_experts = [i for i in active_experts if i not in drop_indices]
 
         indices_flat = routing_indices.view(B, adaptive_top_k)
         weights_flat = routing_weights.view(B, adaptive_top_k)
 
-        for i in range(self.num_experts):
+        for i in active_experts:
             # Find all samples assigned to expert i
             mask = (indices_flat == i)
             if mask.any():

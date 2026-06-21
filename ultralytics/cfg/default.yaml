@@ -238,7 +238,7 @@ moe_top_k: 2 # (int) Number of experts to activate per token
 moe_balance_loss: 1.0 # (float) Load balancing loss coefficient for MoE (1.0 = direct control via moe param)
 moe_noise_std: 0.5 # (float) Noise std for MoE routing (1.0 too noisy after warmup)
 moe_temperature: 1.0 # (float) Temperature for MoE routing logits
-moe_router_z_loss: 1.0 # (float) Router z-loss coefficient (1.0 = direct control via moe param)
+moe_router_z_loss: 0.1 # (float) Router z-loss coefficient (0.1 = prevent uniform collapse while maintaining stability)
 moe_weight_threshold: 0.01 # (float) Weight threshold for conditional computation in MoE
 moe_expert_warmup_epochs: 3 # (int) Epochs to freeze experts while router learns (was 5, too long)
 moe_router_lr_scale: 0.5 # (float) Router LR as fraction of base LR (was 0.1, too small to correct collapse)
