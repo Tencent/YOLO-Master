@@ -905,11 +905,12 @@ class OptimizedMOEImproved(nn.Module):
         # Restore routing.top_k
         self.routing.top_k = original_top_k
 
-        # 2) Shared expert compute
+        # 2) Shared expert compute (always active)
         shared_out = self.shared_expert(x)
 
-        # 3) Sparse expert compute with optional dropout
-        # Initialize outputs with zeros
+        # 3) Sparse expert compute with STOP GRADIENT on routing weights
+        # This prevents main task loss from dominating router learning direction.
+        # Router should only learn from MoE auxiliary loss (balance + z-loss).
         expert_output = torch.zeros(B, self.out_channels, H, W, device=x.device, dtype=x.dtype)
 
         # Expert dropout: randomly disable experts to prevent collapse
@@ -920,7 +921,8 @@ class OptimizedMOEImproved(nn.Module):
             active_experts = [i for i in active_experts if i not in drop_indices]
 
         indices_flat = routing_indices.view(B, adaptive_top_k)
-        weights_flat = routing_weights.view(B, adaptive_top_k)
+        # STOP GRADIENT: routing weights should not receive main task gradients
+        weights_flat = routing_weights.view(B, adaptive_top_k).detach()
 
         for i in active_experts:
             # Find all samples assigned to expert i
@@ -932,7 +934,7 @@ class OptimizedMOEImproved(nn.Module):
                 inp = x[batch_idx]
                 out = self.experts[i](inp)
 
-                # Select weights and broadcast
+                # Select weights and broadcast (no gradient to router)
                 w = weights_flat[batch_idx, k_idx].view(-1, 1, 1, 1)
 
                 # Accumulate results
