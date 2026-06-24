@@ -516,6 +516,39 @@ def test_e02_index_add_clamp_prevents_overflow():
     assert torch.isfinite(out).all()
 
 
+# C-soft: soft balancing must back-prop a real (non-zero) gradient to the router.
+# Regression for the rev8 column-normalized usage bug: usage collapsed to a
+# constant 1/N, so balance_loss == 1.0 with zero gradient (silent failure).
+def test_soft_balance_loss_grad_reaches_router():
+    """soft balancing: balance_loss must produce a non-zero grad on logits."""
+    N, E, K = 16, 4, 2
+    loss_fn = MoELoss(num_experts=E, top_k=K, use_soft_balancing=True,
+                      balance_loss_coeff=1.0, z_loss_coeff=0.0)
+    logits = torch.randn(N, E, requires_grad=True)
+    probs = torch.softmax(logits, dim=1)
+    loss_fn(probs, logits, return_dict=True)["loss"].backward()
+    assert logits.grad is not None
+    assert logits.grad.abs().sum() > 1e-4, "soft balance gradient vanished (constant-usage bug)"
+
+
+def test_soft_balance_loss_responds_to_imbalance():
+    """soft balancing: a collapsed router must yield a larger balance_loss."""
+    N, E, K = 16, 4, 2
+    loss_fn = MoELoss(num_experts=E, top_k=K, use_soft_balancing=True,
+                      balance_loss_coeff=1.0, z_loss_coeff=0.0)
+    uniform_logits = torch.zeros(N, E)
+    collapsed_logits = torch.full((N, E), -10.0)
+    collapsed_logits[:, 0] = 10.0
+    bl_uniform = loss_fn(torch.softmax(uniform_logits, 1), uniform_logits,
+                         return_dict=True)["balance_loss"]
+    bl_collapsed = loss_fn(torch.softmax(collapsed_logits, 1), collapsed_logits,
+                           return_dict=True)["balance_loss"]
+    # GShard soft: uniform -> ~1.0, full collapse -> ~E. Must be distinguishable.
+    assert bl_collapsed > bl_uniform + 0.5, (
+        f"balance_loss insensitive to imbalance: uniform={bl_uniform:.3f}, "
+        f"collapsed={bl_collapsed:.3f}")
+
+
 if __name__ == "__main__":
     import sys
     sys.exit(pytest.main([__file__, "-v"]))
