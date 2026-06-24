@@ -17,6 +17,24 @@ from .metrics import bbox_iou, probiou
 from .tal import bbox2dist
 
 
+def _collect_moe_aux_loss(model: nn.Module | None, device: torch.device) -> torch.Tensor:
+    """Sum MoE aux losses from the registry only (avoids wrapper double-counting)."""
+    moe_loss = torch.tensor(0.0, device=device)
+    if model is None or not getattr(model, "training", True):
+        return moe_loss
+    try:
+        from ultralytics.nn.modules.moe.modules import MOE_LOSS_REGISTRY
+    except Exception:
+        return moe_loss
+    seen: set[int] = set()
+    for m in model.modules():
+        loss_t = MOE_LOSS_REGISTRY.get(m)
+        if isinstance(loss_t, torch.Tensor) and id(m) not in seen:
+            moe_loss = moe_loss + loss_t.to(device)
+            seen.add(id(m))
+    return moe_loss
+
+
 class VarifocalLoss(nn.Module):
     """Varifocal loss by Zhang et al.
 
@@ -301,12 +319,7 @@ class v8DetectionLoss:
         loss[2] *= self.hyp.dfl  # dfl gain
 
         # MoE auxiliary loss
-        moe_loss = torch.tensor(0.0, device=self.device)
-        if hasattr(self, 'model'):
-             for m in self.model.modules():
-                 if hasattr(m, 'aux_loss'):
-                     moe_loss += m.aux_loss
-        loss[3] = moe_loss * self.hyp.moe
+        loss[3] = _collect_moe_aux_loss(getattr(self, "model", None), self.device) * self.hyp.moe
 
         return loss * batch_size, loss.detach()  # loss(box, cls, dfl, moe)
 
@@ -401,12 +414,7 @@ class v8SegmentationLoss(v8DetectionLoss):
         loss[3] *= self.hyp.dfl  # dfl gain
 
         # MoE auxiliary loss
-        moe_loss = torch.tensor(0.0, device=self.device)
-        if hasattr(self, 'model'):
-             for m in self.model.modules():
-                 if hasattr(m, 'aux_loss'):
-                     moe_loss += m.aux_loss
-        loss[4] = moe_loss * self.hyp.moe
+        loss[4] = _collect_moe_aux_loss(getattr(self, "model", None), self.device) * self.hyp.moe
 
         return loss * batch_size, loss.detach()  # loss(box, seg, cls, dfl, moe)
 
@@ -578,12 +586,7 @@ class v8PoseLoss(v8DetectionLoss):
         loss[4] *= self.hyp.dfl  # dfl gain
 
         # MoE auxiliary loss
-        moe_loss = torch.tensor(0.0, device=self.device)
-        if hasattr(self, 'model'):
-             for m in self.model.modules():
-                 if hasattr(m, 'aux_loss'):
-                     moe_loss += m.aux_loss
-        loss[5] = moe_loss * self.hyp.moe
+        loss[5] = _collect_moe_aux_loss(getattr(self, "model", None), self.device) * self.hyp.moe
 
         return loss * batch_size, loss.detach()  # loss(box, cls, dfl)
 
@@ -776,12 +779,7 @@ class v8OBBLoss(v8DetectionLoss):
         loss[2] *= self.hyp.dfl  # dfl gain
 
         # MoE auxiliary loss
-        moe_loss = torch.tensor(0.0, device=self.device)
-        if hasattr(self, 'model'):
-             for m in self.model.modules():
-                 if hasattr(m, 'aux_loss'):
-                     moe_loss += m.aux_loss
-        loss[3] = moe_loss * self.hyp.moe
+        loss[3] = _collect_moe_aux_loss(getattr(self, "model", None), self.device) * self.hyp.moe
 
         return loss * batch_size, loss.detach()  # loss(box, cls, dfl, moe)
 
