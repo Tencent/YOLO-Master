@@ -13,6 +13,14 @@ def get_safe_groups(channels: int, desired_groups: int = 8) -> int:
     return max(1, groups)
 
 
+def last_conv_out_channels(module: nn.Module) -> int:
+    """Return out_channels of the last nn.Conv2d in `module` (layout-agnostic)."""
+    for layer in reversed(list(module.modules())):
+        if isinstance(layer, nn.Conv2d):
+            return layer.out_channels
+    raise ValueError(f"No nn.Conv2d found in expert module {type(module).__name__}")
+
+
 # ==========================================
 # Utility: FLOPs calculator (optimized)
 # ==========================================
@@ -65,8 +73,7 @@ class BatchedExpertComputation:
         3) Aggregate using efficient scatter/index_add
         """
         B, C, H, W = x.shape
-        out_channels = experts[0].conv[-2].out_channels if hasattr(experts[0], 'conv') else experts[0].primary_conv[
-            0].out_channels
+        out_channels = last_conv_out_channels(experts[0])
 
         # Flatten indices and weights
         # Handle cases where top_k might have changed dynamically

@@ -76,7 +76,7 @@ class ExpertUsageTracker:
         self.total_tokens += num_tokens
 
         # Vectorized computation of expert statistics
-        weights_np = flat_weights.numpy()
+        weights_np = flat_weights.detach().cpu().numpy()
         hits_mask = weights_np > 1e-6
 
         hits_per_expert = hits_mask.sum(axis=0)
@@ -115,8 +115,8 @@ class ExpertUsageTracker:
         self.total_tokens += num_tokens
 
         # Efficient statistics using numpy's bincount
-        idx_flat = flat_indices.numpy().flatten().astype(np.int32)
-        val_flat = flat_vals.numpy().flatten().astype(np.float32)
+        idx_flat = flat_indices.detach().cpu().numpy().flatten().astype(np.int32)
+        val_flat = flat_vals.detach().cpu().numpy().flatten().astype(np.float32)
 
         if idx_flat.size == 0:
             return
