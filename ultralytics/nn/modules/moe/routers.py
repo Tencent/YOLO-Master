@@ -61,20 +61,21 @@ class UltraEfficientRouter(nn.Module):
         # 2) Lightweight convolutional routing
         logits = self.router(x_down)
 
-        # 3) Z-loss computation (numerical stability)
-        z_loss_metric = None
-        if self.training:
-            # Use clamp instead of tanh for better performance
-            logits_safe = logits.clamp(-10.0, 10.0)
-            z_loss_metric = torch.logsumexp(logits_safe, dim=1).pow(2).mean()
-
-        # 4) Noise injection
+        # 3) Noise injection (training only)
         if self.training and self.noise_std > 0:
             logits = logits + torch.randn_like(logits).mul_(self.noise_std)
 
-        # 5) Softmax + TopK (fused operation)
-        # Clamp logits again before division to be safe
+        # 4) Clamp the final logits that actually feed softmax
         logits_clamped = logits.clamp(-30.0, 30.0)
+
+        # 5) Z-loss on the SAME logits that drive routing (post-noise, post-clamp),
+        # so the regularizer constrains the real routing decision (was computed
+        # on the pre-noise logits before, weakening its effect).
+        z_loss_metric = None
+        if self.training:
+            z_loss_metric = torch.logsumexp(logits_clamped, dim=1).pow(2).mean()
+
+        # 6) Softmax + TopK (fused operation)
         weights = F.softmax((logits_clamped / self.temperature).float(), dim=1).type_as(x)
         pooled_weights = weights.mean(dim=[2, 3], keepdim=True)
         
@@ -277,9 +278,12 @@ class AdvancedRoutingLayer(nn.Module):
                 self.router[0], nn.Conv2d):
             expected_in = self.router[0].in_channels
             if expected_in != C:
-                if not hasattr(self, "_proj") or not isinstance(self._proj,
-                                                                nn.Conv2d) or self._proj.in_channels != C or self._proj.out_channels != expected_in:
-                    self._proj = nn.Conv2d(C, expected_in, 1, bias=False)
+                existing = getattr(self, "_proj", None)
+                if not isinstance(existing, nn.Conv2d) or existing.in_channels != C or existing.out_channels != expected_in:
+                    # Register via add_module so the projection's params join the
+                    # module tree (optimizer-visible, DDP/ONNX-safe).
+                    proj = nn.Conv2d(C, expected_in, 1, bias=False).to(pooled.device, pooled.dtype)
+                    self.add_module("_proj", proj)
                 pooled = self._proj(pooled)
         logits = self.router(pooled)
         probs = F.softmax(logits.float(), dim=1).type_as(logits)
