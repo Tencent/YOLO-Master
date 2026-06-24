@@ -6,6 +6,14 @@ import torch.nn.functional as F
 import torch.distributed as dist
 from typing import Optional, Dict, Union, Tuple
 
+
+def gshard_balance_loss(expert_usage: torch.Tensor, num_experts: int) -> torch.Tensor:
+    """GShard-style balance loss: N * sum(usage^2). Equals 1.0 at uniform usage."""
+    usage = expert_usage.reshape(-1).float()
+    usage = usage / usage.sum().clamp_min(1e-6)
+    return num_experts * torch.sum(usage * usage)
+
+
 class MoELoss(nn.Module):
     """
     Advanced Auxiliary losses for MoE models.
@@ -25,7 +33,8 @@ class MoELoss(nn.Module):
         variance_loss_coeff: float = 0.0,   # New: direct variance penalty on usage
         num_experts: int = 8,
         top_k: int = 2,
-        use_soft_balancing: bool = False
+        use_soft_balancing: bool = False,
+        coeff_floor: float = 0.0,
     ):
         super().__init__()
         self.balance_loss_coeff = balance_loss_coeff
@@ -36,6 +45,7 @@ class MoELoss(nn.Module):
         self.num_experts = num_experts
         self.top_k = top_k
         self.use_soft_balancing = use_soft_balancing
+        self.coeff_floor = coeff_floor  # 0 = no floor (trainer already guards stale configs)
 
     @staticmethod
     def _flatten_router_tensor(tensor: torch.Tensor) -> torch.Tensor:
@@ -148,7 +158,8 @@ class MoELoss(nn.Module):
         # 4. Diversity Loss (Penalize similar expert outputs) - Optional
         # Targets orthogonal experts: cosine similarity -> 0, not -1
         diversity_loss = torch.tensor(0.0, device=router_probs.device)
-        if self.diversity_loss_coeff > 0 and expert_outputs is not None:
+        # Require E >= 2 (E == 1 makes num_pairs == 0 and blows up the divisor).
+        if self.diversity_loss_coeff > 0 and expert_outputs is not None and expert_outputs.shape[1] >= 2:
             # expert_outputs: [B, num_experts, D]
             B, E, D = expert_outputs.shape
             # Normalize each expert output
@@ -172,10 +183,9 @@ class MoELoss(nn.Module):
             variance = torch.mean((usage - target_usage) ** 2)
             variance_loss = variance
 
-        # Guard: prevent silent moe-loss collapse due to stale configs
-        # injecting tiny coefficients (e.g., 0.01, 1e-3, 1e-7).
-        bl_coeff = max(self.balance_loss_coeff, 0.1)
-        zl_coeff = max(self.z_loss_coeff, 0.1)
+        floor = float(getattr(self, "coeff_floor", 0.0))
+        bl_coeff = max(self.balance_loss_coeff, floor)
+        zl_coeff = max(self.z_loss_coeff, floor)
 
         # 6. Total Loss
         total_loss = (bl_coeff * balance_loss) + \
