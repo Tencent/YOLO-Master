@@ -30,7 +30,7 @@ def autocast(enabled=True, **kwargs):
     # On MPS/CPU, autocast is not fully supported; disable to avoid warnings/errors
     from contextlib import nullcontext
     return nullcontext() if not enabled else nullcontext()
-from .loss import MoELoss
+from .loss import MoELoss, gshard_balance_loss
 
 # Global registry to store auxiliary losses for MoE modules
 # This prevents storing non-leaf tensors in the module instance, avoiding deepcopy errors
@@ -556,11 +556,10 @@ class ES_MOE(nn.Module):
         return final_output
 
     def _compute_load_balancing_loss(self, routing_weights, eps=1e-6):
-        """Compute load-balancing loss (original logic)."""
+        """Compute load-balancing loss (GShard scale, ~1.0 at balance)."""
         expert_usage = routing_weights.mean(dim=(0, 2, 3))
-        ideal_usage = 1.0 / self.num_experts
-        load_balance_loss = F.mse_loss(expert_usage, torch.full_like(expert_usage, ideal_usage))
-        
+        load_balance_loss = gshard_balance_loss(expert_usage, self.num_experts)
+
         # Guard against NaN loss
         if torch.isnan(load_balance_loss):
             load_balance_loss = torch.tensor(0.0, device=load_balance_loss.device, requires_grad=True)
@@ -793,7 +792,8 @@ class OptimizedMOEImproved(nn.Module):
             balance_loss_coeff: float = 1.0,
             router_z_loss_coeff: float = 1.0,
             expert_expand_ratio: float = 2.0,
-            progressive_sparsity: bool = True
+            progressive_sparsity: bool = True,
+            detach_routing: bool = False,
     ):
         super().__init__()
         self.in_channels = in_channels
@@ -803,6 +803,8 @@ class OptimizedMOEImproved(nn.Module):
         self.balance_loss_coeff = balance_loss_coeff
         self.router_z_loss_coeff = router_z_loss_coeff
         self.progressive_sparsity = progressive_sparsity
+        # True: isolate router from main-task grads (legacy); False (default): let them flow.
+        self.detach_routing = detach_routing
 
         # Progressive Sparsity
         self.register_buffer('training_step', torch.tensor(0))
@@ -921,8 +923,9 @@ class OptimizedMOEImproved(nn.Module):
             active_experts = [i for i in active_experts if i not in drop_indices]
 
         indices_flat = routing_indices.view(B, adaptive_top_k)
-        # STOP GRADIENT: routing weights should not receive main task gradients
-        weights_flat = routing_weights.view(B, adaptive_top_k).detach()
+        weights_flat = routing_weights.view(B, adaptive_top_k)
+        if getattr(self, "detach_routing", False):
+            weights_flat = weights_flat.detach()
 
         for i in active_experts:
             # Find all samples assigned to expert i
@@ -1748,10 +1751,8 @@ class HyperFusedMoE(nn.Module):
             self.current_top_k.fill_(self.top_k)
     
     def _compute_static_balance_loss(self, routing_stats):
-        """Static load balancing loss."""
-        expert_usage = routing_stats['expert_usage']  # [num_experts]
-        target = 1.0 / self.num_experts
-        return F.mse_loss(expert_usage, torch.full_like(expert_usage, target))
+        """Static load balancing loss (GShard scale)."""
+        return gshard_balance_loss(routing_stats['expert_usage'], self.num_experts)
     
     @property
     def aux_loss(self):
@@ -2187,6 +2188,7 @@ class FusedAdaptiveGateMoE(AdaptiveGateMoE):
         )
         self.expert_backend = "fused"
         self.fused_experts = FusedExpertGroup(self.dynamic_channels, self.out_dynamic, num_experts, num_groups, top_k=top_k)
+        self._init_weights()  # re-init swapped-in experts
 
 
 class HybridAdaptiveGateMoE(AdaptiveGateMoE):
@@ -2242,6 +2244,7 @@ class HybridAdaptiveGateMoE(AdaptiveGateMoE):
                 top_k=top_k,
                 weight_threshold=0.0,
             )
+        self._init_weights()  # re-init swapped-in experts
 
     def _channel_shuffle(self, x: torch.Tensor) -> torch.Tensor:
         if self.shuffle_groups <= 1:
@@ -2351,6 +2354,7 @@ class LowRankHybridAdaptiveGateMoE(HybridAdaptiveGateMoE):
                 top_k=top_k,
                 bottleneck_ratio=bottleneck_ratio,
             )
+            self._init_weights()  # re-init swapped-in experts
 
 
 class RefinedLowRankHybridAdaptiveGateMoE(LowRankHybridAdaptiveGateMoE):
