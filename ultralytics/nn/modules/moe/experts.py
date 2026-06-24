@@ -70,15 +70,17 @@ class FusedGhostExpert(nn.Module):
 
 
 class SimpleExpert(nn.Module):
-    def __init__(self, in_channels, out_channels, expand_ratio=2):
+    def __init__(self, in_channels, out_channels, expand_ratio=2, num_groups=8):
         super().__init__()
         hidden_dim = int(in_channels * expand_ratio)
+        # GroupNorm (not BatchNorm): experts often see only 1 sample after Top-K
+        # routing, where BN's running stats / n=1 variance are ill-defined.
         self.conv = nn.Sequential(
             nn.Conv2d(in_channels, hidden_dim, 1, bias=False),
-            nn.BatchNorm2d(hidden_dim),
+            nn.GroupNorm(get_safe_groups(hidden_dim, num_groups), hidden_dim),
             nn.SiLU(inplace=True),
             nn.Conv2d(hidden_dim, out_channels, 1, bias=False),
-            nn.BatchNorm2d(out_channels)
+            nn.GroupNorm(get_safe_groups(out_channels, num_groups), out_channels)
         )
 
     def forward(self, x): return self.conv(x)
@@ -88,18 +90,19 @@ class SimpleExpert(nn.Module):
 
 class SpatialExpert(nn.Module):
     """Expert network with 3x3 spatial convolution, enabling experts to learn spatial patterns."""
-    def __init__(self, in_ch, out_ch, expand_ratio=2):
+    def __init__(self, in_ch, out_ch, expand_ratio=2, num_groups=8):
         super().__init__()
         hid = int(in_ch * expand_ratio)
+        # GroupNorm for small-batch / single-sample stability after Top-K routing.
         self.conv = nn.Sequential(
             nn.Conv2d(in_ch, hid, 1, bias=False),
-            nn.BatchNorm2d(hid),
+            nn.GroupNorm(get_safe_groups(hid, num_groups), hid),
             nn.SiLU(inplace=True),
             nn.Conv2d(hid, hid, 3, padding=1, groups=hid, bias=False),  # DW spatial conv
-            nn.BatchNorm2d(hid),
+            nn.GroupNorm(get_safe_groups(hid, num_groups), hid),
             nn.SiLU(inplace=True),
             nn.Conv2d(hid, out_ch, 1, bias=False),
-            nn.BatchNorm2d(out_ch),
+            nn.GroupNorm(get_safe_groups(out_ch, num_groups), out_ch),
         )
 
     def forward(self, x):
@@ -110,20 +113,21 @@ class SpatialExpert(nn.Module):
 
 
 class GhostExpert(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3, ratio=2):
+    def __init__(self, in_channels, out_channels, kernel_size=3, ratio=2, num_groups=8):
         super().__init__()
         self.out_channels = out_channels
         init_channels = math.ceil(out_channels / ratio)
         new_channels = init_channels * (ratio - 1)
 
+        # GroupNorm for small-batch / single-sample stability after Top-K routing.
         self.primary_conv = nn.Sequential(
             nn.Conv2d(in_channels, init_channels, kernel_size, padding=kernel_size // 2, bias=False),
-            nn.BatchNorm2d(init_channels),
+            nn.GroupNorm(get_safe_groups(init_channels, num_groups), init_channels),
             nn.SiLU(inplace=True)
         )
         self.cheap_operation = nn.Sequential(
             nn.Conv2d(init_channels, new_channels, 3, padding=1, groups=init_channels, bias=False),
-            nn.BatchNorm2d(new_channels),
+            nn.GroupNorm(get_safe_groups(new_channels, num_groups), new_channels),
             nn.SiLU(inplace=True)
         )
 
@@ -146,22 +150,23 @@ class InvertedResidualExpert(nn.Module):
     Highly efficient expert module: Uses Inverted Residual structure (MobileNetV2 style).
     2-3x faster than standard convolution experts, fewer parameters, stronger non-linearity.
     """
-    def __init__(self, in_channels, out_channels, expand_ratio=2, kernel_size=3):
+    def __init__(self, in_channels, out_channels, expand_ratio=2, kernel_size=3, num_groups=8):
         super().__init__()
         hidden_dim = int(in_channels * expand_ratio)
+        # GroupNorm for small-batch / single-sample stability after Top-K routing.
         self.conv = nn.Sequential(
             # 1. Pointwise Expand
             nn.Conv2d(in_channels, hidden_dim, 1, bias=False),
-            nn.BatchNorm2d(hidden_dim),
+            nn.GroupNorm(get_safe_groups(hidden_dim, num_groups), hidden_dim),
             nn.SiLU(inplace=True),
             # 2. Depthwise Spatial
             nn.Conv2d(hidden_dim, hidden_dim, kernel_size, padding=kernel_size//2, 
                       groups=hidden_dim, bias=False),
-            nn.BatchNorm2d(hidden_dim),
+            nn.GroupNorm(get_safe_groups(hidden_dim, num_groups), hidden_dim),
             nn.SiLU(inplace=True),
             # 3. Pointwise Project
             nn.Conv2d(hidden_dim, out_channels, 1, bias=False),
-            nn.BatchNorm2d(out_channels)
+            nn.GroupNorm(get_safe_groups(out_channels, num_groups), out_channels)
         )
 
     def forward(self, x):

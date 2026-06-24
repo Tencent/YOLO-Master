@@ -75,18 +75,12 @@ class BatchedExpertComputation:
         B, C, H, W = x.shape
         out_channels = last_conv_out_channels(experts[0])
 
-        # Flatten indices and weights
-        # Handle cases where top_k might have changed dynamically
+        # Flatten indices/weights to [B, top_k]. Use reshape (handles
+        # non-contiguous tensors from gather/permute) and slice the leading
+        # top_k cols — robust to [B, k] and [B, k, 1, 1] alike, no squeeze juggling.
         current_top_k = routing_indices.shape[1]
-        indices_flat = routing_indices.view(B, current_top_k)  # [B, top_k]
-        weights_flat = routing_weights.view(B, current_top_k)  # [B, top_k]
-        
-        # Squeeze logic handled by view if shapes align, otherwise explicit squeeze if needed
-        # But indices from router are usually [B, k], sometimes [B, k, 1, 1] if spatial
-        if routing_indices.dim() > 2:
-             indices_flat = indices_flat.squeeze(-1).squeeze(-1)
-        if routing_weights.dim() > 2:
-             weights_flat = weights_flat.squeeze(-1).squeeze(-1)
+        indices_flat = routing_indices.reshape(B, -1)[:, :current_top_k]  # [B, top_k]
+        weights_flat = routing_weights.reshape(B, -1)[:, :current_top_k]  # [B, top_k]
 
         # Plan A: conditional computation (skip low-weight experts)
         # Threshold is tunable (accuracy vs speed)
@@ -117,21 +111,15 @@ class BatchedExpertComputation:
             expert_input = x[batch_indices]
             expert_out = experts[expert_idx](expert_input)
 
-            # Apply weights
-            if weights_flat.dim() == 1:
-                 # Flattened weights [B*top_k] or just [B] if k=1
-                 # If batch_indices is used to index, we assume weights_flat aligns with flattened indices
-                 # But wait, weights_flat is [B, top_k] flattened.
-                 # If expert_mask is 1D [B], then weights_flat should be 1D [B] too.
-                 weights = weights_flat[batch_indices].view(-1, 1, 1, 1)
-            elif weights_flat.dim() == 0:
-                 # Scalar tensor, maybe from some reduction? Should not happen in normal flow.
-                 weights = weights_flat.view(-1, 1, 1, 1)
-            else:
-                 weights = weights_flat[batch_indices, k_indices].view(-1, 1, 1, 1)
+            # weights_flat is always [B, top_k] now; index by (batch, k).
+            weights = weights_flat[batch_indices, k_indices].view(-1, 1, 1, 1)
             weighted_out = expert_out * weights
 
             # Accumulate outputs (efficient index_add_)
             expert_output.index_add_(0, batch_indices, weighted_out.to(expert_output.dtype))
+
+        # Guard against activation explosion if routing collapses (all tokens to
+        # one expert) so downstream norm layers don't produce NaN.
+        expert_output = expert_output.clamp_(-1e4, 1e4)
 
         return expert_output

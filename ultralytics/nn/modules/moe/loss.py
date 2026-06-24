@@ -167,10 +167,12 @@ class MoELoss(nn.Module):
         importance = self._get_global_mean(router_probs)
 
         if self.use_soft_balancing:
-            # === Soft Balancing (Fully Differentiable) ===
-            # Usage is defined by the sum of probabilities allocated to each expert.
-            # This allows gradients to flow through the "usage" term back to the router.
-            usage = importance # In soft mode, usage approximates importance
+            # === Soft Balancing (Differentiable, ST-MoE / Mixtral style) ===
+            # importance = mean(router_probs) keeps the gradient to the router.
+            # usage = per-expert soft token-assignment share (detached), so the
+            # balance term penalizes UNEVEN distribution rather than degenerating
+            # to an L2 norm on importance (which would push importance -> 0).
+            usage = (router_probs / router_probs.sum(dim=0, keepdim=True).clamp_min(1e-6)).mean(dim=0).detach()
         else:
             # === Hard Balancing (GShard / Switch Style) ===
             # Usage is defined by the discrete selection count.
