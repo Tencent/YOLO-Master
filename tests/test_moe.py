@@ -18,16 +18,18 @@ import torch.nn as nn
 
 from ultralytics.nn.modules.moe.modules import (
     A2C2fMoE,
+    AdaptiveBalanceController,
     AdaptiveGateMoE,
     ES_MOE,
     HybridAdaptiveGateMoE,
+    HyperFusedMoE,
     MOE_LOSS_REGISTRY,
     OptimizedMOE,
     OptimizedMOEImproved,
     UltraOptimizedMoE,
 )
 from ultralytics.nn.modules.moe.experts import OptimizedSimpleExpert, GhostExpert
-from ultralytics.nn.modules.moe.loss import MoELoss, gshard_balance_loss
+from ultralytics.nn.modules.moe.loss import MoELoss, gshard_balance_loss, weighted_gshard_balance_loss
 from ultralytics.nn.modules.moe.utils import last_conv_out_channels
 from ultralytics.utils.loss import _collect_moe_aux_loss
 
@@ -268,6 +270,124 @@ def test_subclass_reinit_no_default_kaiming_leftover():
     assert convs, "fused_experts should contain conv layers"
     for c in convs:
         assert torch.isfinite(c.weight).all()
+
+
+# ---------------------------------------------------------------------------
+# §9 (rev5): cross-scale aux must not be silently dominated
+# ---------------------------------------------------------------------------
+def test_weighted_gshard_balance_scale():
+    """weighted_gshard: uniform target == plain gshard; usage==target -> 1.0; collapse -> N."""
+    E = 8
+    uni = torch.full((E,), 1.0 / E)
+    assert abs(float(weighted_gshard_balance_loss(uni, uni, E)) - 1.0) < 1e-4
+    assert abs(float(weighted_gshard_balance_loss(uni, uni, E)) - float(gshard_balance_loss(uni, E))) < 1e-4
+    tgt = torch.softmax(torch.randn(E), dim=0)
+    assert abs(float(weighted_gshard_balance_loss(tgt, tgt, E)) - 1.0) < 1e-4  # min at usage==target
+    col = torch.zeros(E); col[0] = 1.0
+    assert abs(float(weighted_gshard_balance_loss(col, uni, E)) - E) < 1e-3
+
+
+def test_adaptive_balance_controller_gshard_scale_and_nonneg():
+    """Controller aux must be O(0.1..1) (not O(1e-3)) and never negative."""
+    E = 8
+    ctrl = AdaptiveBalanceController(E)
+    bal = torch.full((E,), 1.0 / E)
+    aux_early = float(ctrl({'expert_usage': bal}, torch.tensor(0)))
+    aux_late = float(ctrl({'expert_usage': bal}, torch.tensor(10 ** 6)))
+    assert aux_early >= 0.0 and aux_late >= 0.0, "aux must be non-negative"
+    assert aux_late >= 0.05, f"late-stage balanced aux collapsed to {aux_late} (should stay O(0.1))"
+    col = torch.zeros(E); col[0] = 1.0
+    assert float(ctrl({'expert_usage': col}, torch.tensor(0))) > aux_early  # collapse penalized more
+
+
+def test_controller_block_not_dominated_when_mixed():
+    """A controller-based block summed with a GShard block must keep a meaningful share."""
+    torch.manual_seed(0)
+    MOE_LOSS_REGISTRY.clear()
+
+    class Mixed(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.a = OptimizedMOE(64, 64, num_experts=4, top_k=2)
+            self.b = HyperFusedMoE(64, 64, num_experts=4, top_k=2)
+
+        def forward(self, x):
+            return self.b(self.a(x))
+
+    m = Mixed().train()
+    m(torch.randn(2, 64, 16, 16))
+    total = float(_collect_moe_aux_loss(m, torch.device("cpu")))
+    b = float(MOE_LOSS_REGISTRY.get(m.b).detach())
+    assert b / max(total, 1e-9) > 0.05, f"controller block share {b/total:.4f} too small (silently dominated)"
+
+
+def _first_router_weight(m):
+    routing = getattr(m, "routing", None) or m
+    for layer in routing.modules():
+        if isinstance(layer, (nn.Linear, nn.Conv2d)) and layer.weight.requires_grad:
+            return layer.weight
+    for p in routing.parameters():
+        if p.requires_grad:
+            return p
+    return None
+
+
+def test_controller_balance_loss_grad_reaches_router():
+    """rev7 C1: balance loss gradient must flow to the router (was broken).
+
+    The ZeroCostRouter route fed a pure-count `expert_usage` (no grad) into the
+    balance loss, so the router never learned to balance. importance must now use
+    mean(router_probs) and keep the gradient path alive.
+    """
+    torch.manual_seed(0)
+    MOE_LOSS_REGISTRY.clear()
+    m = HyperFusedMoE(32, 32, num_experts=4, top_k=2).train()
+    x = torch.randn(2, 32, 16, 16)
+    out = m(x)
+    aux = m.aux_loss
+    assert isinstance(aux, torch.Tensor) and aux.requires_grad
+    w = _first_router_weight(m)
+    m.zero_grad(set_to_none=True)
+    (out.float().mean() + aux).backward()
+    assert w is not None and w.grad is not None and w.grad.abs().sum() > 0, \
+        "router weight received no gradient from the balance loss"
+
+
+def test_adaptive_controller_grad_to_router_probs():
+    """rev7 C1: AdaptiveBalanceController must backprop into router_probs."""
+    torch.manual_seed(0)
+    E = 6
+    ctrl = AdaptiveBalanceController(E)
+    p_leaf = torch.randn(16, E, requires_grad=True)
+    probs = torch.softmax(p_leaf, dim=1)
+    idx = probs.argmax(dim=1)
+    usage = torch.zeros(E).scatter_add_(0, idx, torch.ones(16)) / 16
+    loss = ctrl({"expert_usage": usage, "router_probs": probs}, torch.tensor(0.0))
+    loss.backward()
+    assert p_leaf.grad is not None and p_leaf.grad.abs().sum() > 0
+    assert float(loss) >= -1e-6
+
+
+def test_registry_clear_prevents_double_backward():
+    """rev7 C2: clearing the registry each forward avoids stale double-backward."""
+    torch.manual_seed(0)
+    MOE_LOSS_REGISTRY.clear()
+    m = HyperFusedMoE(32, 32, num_experts=4, top_k=2).train()
+    x = torch.randn(2, 32, 16, 16)
+    (m(x).float().mean() + m.aux_loss).backward()
+    MOE_LOSS_REGISTRY.clear()  # mimic tasks.py per-step reset
+    out2 = m(x)
+    # must not raise "backward through the graph a second time"
+    (out2.float().mean() + m.aux_loss).backward()
+
+
+def test_eval_does_not_write_registry():
+    """rev7 C2: eval forward must not leave tensors in the global registry."""
+    MOE_LOSS_REGISTRY.clear()
+    m = HyperFusedMoE(32, 32, num_experts=4, top_k=2).eval()
+    with torch.no_grad():
+        m(torch.randn(2, 32, 16, 16))
+    assert len(MOE_LOSS_REGISTRY) == 0
 
 
 if __name__ == "__main__":

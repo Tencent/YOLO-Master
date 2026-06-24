@@ -30,7 +30,7 @@ def autocast(enabled=True, **kwargs):
     # On MPS/CPU, autocast is not fully supported; disable to avoid warnings/errors
     from contextlib import nullcontext
     return nullcontext() if not enabled else nullcontext()
-from .loss import MoELoss, gshard_balance_loss
+from .loss import MoELoss, gshard_balance_loss, weighted_gshard_balance_loss, differentiable_balance_loss
 
 # Global registry to store auxiliary losses for MoE modules
 # This prevents storing non-leaf tensors in the module instance, avoiding deepcopy errors
@@ -560,9 +560,9 @@ class ES_MOE(nn.Module):
         expert_usage = routing_weights.mean(dim=(0, 2, 3))
         load_balance_loss = gshard_balance_loss(expert_usage, self.num_experts)
 
-        # Guard against NaN loss
-        if torch.isnan(load_balance_loss):
-            load_balance_loss = torch.tensor(0.0, device=load_balance_loss.device, requires_grad=True)
+        # Guard against NaN loss (graph-safe: keep grad_fn instead of new leaf)
+        if not torch.isfinite(load_balance_loss).all():
+            load_balance_loss = torch.nan_to_num(load_balance_loss, nan=0.0, posinf=0.0, neginf=0.0)
             
         if not hasattr(self, "load_balancing_loss"):
             self.register_buffer("load_balancing_loss", torch.tensor(0.0), persistent=False)
@@ -573,8 +573,10 @@ class ES_MOE(nn.Module):
         self.load_balancing_loss.copy_(load_balance_loss.detach())
         self.expert_usage_counts.copy_(expert_usage.detach())
         
-        # Store in registry
-        MOE_LOSS_REGISTRY[self] = load_balance_loss
+        # Store in registry (training only — avoids leaving graph-detached eval
+        # tensors in the global registry that the loss collector could pick up).
+        if self.training:
+            MOE_LOSS_REGISTRY[self] = load_balance_loss
         
         return load_balance_loss
 
@@ -1751,7 +1753,15 @@ class HyperFusedMoE(nn.Module):
             self.current_top_k.fill_(self.top_k)
     
     def _compute_static_balance_loss(self, routing_stats):
-        """Static load balancing loss (GShard scale)."""
+        """Static load balancing loss (GShard scale).
+
+        Uses differentiable importance (mean router_probs) so the gradient
+        actually reaches the router; falls back to the (gradient-free) usage-only
+        form only when router_probs is unavailable.
+        """
+        probs = routing_stats.get('router_probs')
+        if isinstance(probs, torch.Tensor):
+            return differentiable_balance_loss(probs, routing_stats['expert_usage'], self.num_experts)
         return gshard_balance_loss(routing_stats['expert_usage'], self.num_experts)
     
     @property
@@ -2671,7 +2681,11 @@ class AdaptiveBalanceController(nn.Module):
     3. Late Training: Low weight, allowing expert differentiation.
     """
     
-    def __init__(self, num_experts, initial_coeff=0.1, final_coeff=0.001, decay_steps=50000):
+    def __init__(self, num_experts, initial_coeff=1.0, final_coeff=0.1, decay_steps=50000):
+        # NOTE(rev5): coeff raised from 0.1/0.001 -> 1.0/0.1 so the GShard-scale
+        # balance term stays O(0.1..1), on par with other MoE blocks. The old
+        # defaults shrank a ~1.0 balance to ~0.005 and got silently dominated
+        # when summed with GShard-scale aux losses.
         super().__init__()
         self.num_experts = num_experts
         self.initial_coeff = initial_coeff
@@ -2689,25 +2703,32 @@ class AdaptiveBalanceController(nn.Module):
         progress = min(1.0, training_step.float() / self.decay_steps)
         current_coeff = self.initial_coeff * (1 - progress) + self.final_coeff * progress
         
-        # === 2. Weighted Load Balancing ===
-        # Allow higher load for important experts
+        # === 2. Differentiable Load Balancing (GShard scale, grad -> router) ===
+        # importance = mean(router_probs) keeps the gradient path to the router;
+        # the learnable expert_importance acts as a (soft) target prior. Falls
+        # back to the usage-only weighted form if router_probs is missing.
         importance_weights = F.softmax(self.expert_importance, dim=0)
-        target_usage = importance_weights
-        
-        balance_loss = F.mse_loss(expert_usage, target_usage)
-        
-        # === 3. Entropy Regularization (Encourage Diversity) ===
-        # Use clamp for numerical stability in FP16
+        router_probs = routing_stats.get('router_probs')
+        if isinstance(router_probs, torch.Tensor):
+            balance_loss = differentiable_balance_loss(
+                router_probs, expert_usage, self.num_experts, target_usage=importance_weights
+            )
+        else:
+            balance_loss = weighted_gshard_balance_loss(expert_usage, importance_weights, self.num_experts)
+
+        # === 3. Entropy Regularization (Encourage Diversity, non-negative) ===
+        # Penalize LOW entropy (collapse); max entropy = log(N) -> penalty 0.
         expert_usage_safe = expert_usage.clamp(min=1e-6)
         entropy = -(expert_usage_safe * torch.log(expert_usage_safe)).sum()
-        entropy_loss = -0.01 * entropy  # Negative sign: Maximize entropy
-        
-        total_loss = current_coeff * (balance_loss + entropy_loss)
-        
-        # Guard against NaN loss
-        if torch.isnan(total_loss):
-            return torch.tensor(0.0, device=total_loss.device, requires_grad=True)
-            
+        max_entropy = math.log(max(self.num_experts, 2))
+        entropy_penalty = (max_entropy - entropy).clamp_min(0.0) / max_entropy  # in [0,1]
+
+        total_loss = current_coeff * (balance_loss + 0.1 * entropy_penalty)
+
+        # Guard against NaN loss (graph-safe: keep grad_fn instead of new leaf)
+        if not torch.isfinite(total_loss).all():
+            total_loss = torch.nan_to_num(total_loss, nan=0.0, posinf=0.0, neginf=0.0)
+
         return total_loss
 
 class UltraLightRouter(ZeroCostRouter):
@@ -2813,11 +2834,11 @@ class HyperUltimateMoE(nn.Module):
         self.register_buffer('current_top_k', torch.tensor(num_experts))
         self.warmup_steps = 5000
         
-        # Adaptive Load Balancing
+        # Adaptive Load Balancing (rev5: GShard-scale coeffs, see controller note)
         self.balance_controller = AdaptiveBalanceController(
-            num_experts, 
-            initial_coeff=0.1, 
-            final_coeff=0.001, 
+            num_experts,
+            initial_coeff=1.0,
+            final_coeff=0.1,
             decay_steps=50000
         )
         
@@ -3027,7 +3048,7 @@ class UltimateOptimizedMoE(nn.Module):
         self.warmup_steps = 5000
         
         # Adaptive Balancing (Add Entropy)
-        self.balance_controller = AdaptiveBalanceController(num_experts, initial_coeff=0.1, final_coeff=0.001, decay_steps=50000)
+        self.balance_controller = AdaptiveBalanceController(num_experts, initial_coeff=1.0, final_coeff=0.1, decay_steps=50000)  # rev5: GShard-scale
         self.balance_controller.entropy_coeff = entropy_coeff  # New: Inject entropy coefficient
 
         # Trainer-injectable hyperparameter bridges.

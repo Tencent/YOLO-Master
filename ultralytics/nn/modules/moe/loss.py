@@ -14,6 +14,61 @@ def gshard_balance_loss(expert_usage: torch.Tensor, num_experts: int) -> torch.T
     return num_experts * torch.sum(usage * usage)
 
 
+def weighted_gshard_balance_loss(
+    expert_usage: torch.Tensor,
+    target_usage: torch.Tensor,
+    num_experts: int,
+) -> torch.Tensor:
+    """GShard-scale balance loss with a learnable target distribution.
+
+    Reduces to `gshard_balance_loss` (==1.0 at balance) when `target` is uniform,
+    and reaches its minimum when `usage` matches `target`. Keeps the same O(1)
+    scale as the plain GShard loss so it can be summed with other MoE aux losses
+    without one term silently dominating.
+    """
+    usage = expert_usage.reshape(-1).float()
+    usage = usage / usage.sum().clamp_min(1e-6)
+    target = target_usage.reshape(-1).float().to(usage.dtype)
+    target = target / target.sum().clamp_min(1e-6)
+    # sum(usage^2 / target): ==1.0 when usage==target; reduces to plain GShard
+    # (uniform target -> N*sum(usage^2)) so it shares the same O(1) scale.
+    return torch.sum(usage * usage / target.clamp_min(1e-6))
+
+
+def differentiable_balance_loss(
+    router_probs: torch.Tensor,
+    expert_usage: torch.Tensor,
+    num_experts: int,
+    target_usage: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """GShard balance loss with gradient flowing to the router via `importance`.
+
+    Standard Switch/GShard form ``N * sum(importance * usage)``:
+      - ``importance = mean(router_probs)`` keeps grad -> router logits (the only
+        term that lets balancing actually steer the router).
+      - ``usage`` is the discrete selection share, detached (non-differentiable).
+      - ``target_usage`` (optional, e.g. a learnable importance prior) reweights
+        usage; defaults to uniform.
+
+    `router_probs` is normalized to ``[N, num_experts]`` mean before use, so it
+    accepts both ``[B, E]`` and ``[B, E, 1, 1]`` (mean-reduced) inputs.
+    """
+    probs = router_probs.reshape(router_probs.shape[0], router_probs.shape[1], -1).mean(-1) \
+        if router_probs.dim() == 4 else router_probs.reshape(-1, num_experts)
+    importance = probs.mean(dim=0)  # keeps grad
+    importance = importance / importance.sum().clamp_min(1e-6)
+
+    usage = expert_usage.reshape(-1).float().detach()
+    usage = usage / usage.sum().clamp_min(1e-6)
+
+    if target_usage is not None:
+        w = target_usage.reshape(-1).float()
+        w = w / w.sum().clamp_min(1e-6)
+        usage = usage * w * num_experts  # uniform w -> unchanged
+
+    return num_experts * torch.sum(importance * usage)
+
+
 class MoELoss(nn.Module):
     """
     Advanced Auxiliary losses for MoE models.

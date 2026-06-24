@@ -199,7 +199,17 @@ class BaseModel(torch.nn.Module):
         y, dt, embeddings = [], [], []  # outputs
         embed = frozenset(embed) if embed is not None else {-1}
         max_idx = max(embed)
-        
+
+        # Reset MoE aux-loss registry at the start of each training forward so the
+        # loss collector only sees this step's freshly-computed (graph-connected)
+        # tensors — prevents stale aux losses from triggering double-backward.
+        if self.training:
+            try:
+                from ultralytics.nn.modules.moe.modules import MOE_LOSS_REGISTRY
+                MOE_LOSS_REGISTRY.clear()
+            except Exception:
+                pass
+
         # Check if gradient checkpointing is enabled
         use_gc = getattr(self, 'use_gradient_checkpointing', False) and self.training
 
@@ -887,7 +897,17 @@ class RTDETRDetectionModel(DetectionModel):
         y, dt, embeddings = [], [], []  # outputs
         embed = frozenset(embed) if embed is not None else {-1}
         max_idx = max(embed)
-        
+
+        # Reset MoE aux-loss registry at the start of each training forward so the
+        # loss collector only sees this step's freshly-computed (graph-connected)
+        # tensors — prevents stale aux losses from triggering double-backward.
+        if self.training:
+            try:
+                from ultralytics.nn.modules.moe.modules import MOE_LOSS_REGISTRY
+                MOE_LOSS_REGISTRY.clear()
+            except Exception:
+                pass
+
         # Check if gradient checkpointing is enabled
         use_gc = getattr(self, 'use_gradient_checkpointing', False) and self.training
 
