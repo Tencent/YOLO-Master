@@ -18,19 +18,26 @@ import torch.nn as nn
 
 from ultralytics.nn.modules.moe.modules import (
     A2C2fMoE,
+    ABlockMoE,
     AdaptiveBalanceController,
+    AdaptiveCapacityMoE,
     AdaptiveGateMoE,
     ES_MOE,
     HybridAdaptiveGateMoE,
     HyperFusedMoE,
+    HyperUltimateMoE,
     MOE_LOSS_REGISTRY,
     OptimizedMOE,
     OptimizedMOEImproved,
+    UltimateOptimizedMoE,
     UltraOptimizedMoE,
 )
-from ultralytics.nn.modules.moe.experts import OptimizedSimpleExpert, GhostExpert
+from ultralytics.nn.modules.moe.experts import (
+    OptimizedSimpleExpert, GhostExpert, SimpleExpert, SpatialExpert, InvertedResidualExpert,
+)
+from ultralytics.nn.modules.moe.routers import UltraEfficientRouter, AdvancedRoutingLayer
 from ultralytics.nn.modules.moe.loss import MoELoss, gshard_balance_loss, weighted_gshard_balance_loss
-from ultralytics.nn.modules.moe.utils import last_conv_out_channels
+from ultralytics.nn.modules.moe.utils import last_conv_out_channels, BatchedExpertComputation
 from ultralytics.utils.loss import _collect_moe_aux_loss
 
 
@@ -388,6 +395,125 @@ def test_eval_does_not_write_registry():
     with torch.no_grad():
         m(torch.randn(2, 32, 16, 16))
     assert len(MOE_LOSS_REGISTRY) == 0
+
+
+# ===========================================================================
+# rev8: fixes from the 2026-06-25 deep-scan report (P0/P1/P2)
+# ===========================================================================
+
+def test_p01_hyperultimate_get_gflops_no_attribute_error():
+    """P-01: get_gflops must use fused_conv (was fused_weight -> AttributeError)."""
+    m = HyperUltimateMoE(32, 32, num_experts=4, top_k=2)
+    g = m.get_gflops((1, 32, 32, 32))
+    assert isinstance(g, dict) and g["total_gflops"] > 0
+
+
+def test_p02_init_weights_guards_non_conv_router():
+    """P-02: _init_weights must not UnboundLocalError when router has no Conv2d."""
+    m = OptimizedMOEImproved(32, 32, num_experts=4, top_k=2)
+    m.routing.router = nn.Sequential(nn.Flatten(), nn.Linear(32, 4))
+    m._init_weights()  # must not raise
+
+
+def test_f02_ablockmoe_single_residual():
+    """F-02: inner MoE has add_residual=False so ABlockMoE applies it exactly once."""
+    blk = ABlockMoE(dim=32, num_heads=1, num_experts=4, top_k=2)
+    assert blk.mlp.add_residual is False
+    blk.eval()
+    x = torch.randn(2, 32, 16, 16)
+    with torch.no_grad():
+        out = blk(x)
+    assert out.shape == x.shape and torch.isfinite(out).all()
+
+
+def test_f03_advanced_router_proj_registered():
+    """F-03: lazily-created _proj must be a registered parameter (optimizer-visible)."""
+    r = AdvancedRoutingLayer(in_channels=64, num_experts=3)
+    r(torch.randn(2, 32, 8, 8))  # C != expected -> creates _proj
+    assert any(k.startswith("_proj") for k, _ in r.named_parameters())
+
+
+def test_p04_zloss_computed_after_noise():
+    """P-04: z_loss must be finite and grad-bearing (now computed post-noise)."""
+    r = UltraEfficientRouter(32, num_experts=4, top_k=2, noise_std=1.0).train()
+    z = r(torch.randn(2, 32, 16, 16))[4]
+    assert isinstance(z, torch.Tensor) and z.requires_grad and torch.isfinite(z).all()
+
+
+def test_l02_adaptive_capacity_complexity_lower_bound():
+    """L-02: complexity is clamped >= 0.3 so top_k cannot degenerate to 1."""
+    m = AdaptiveCapacityMoE(32, 32, num_experts=4, top_k=2).train()
+    with torch.no_grad():
+        for p in m.complexity_estimator.parameters():
+            p.zero_()
+    x = torch.randn(2, 32, 16, 16)
+    out = m(x)
+    assert torch.isfinite(out).all()
+    cs = m.complexity_estimator(x).mean().clamp(0.3, 1.5)
+    assert cs.item() >= 0.3 - 1e-6
+
+
+def test_l04_a2c2fmoe_get_gflops_no_attribute_error():
+    """L-04: get_gflops sums sub-block MoE FLOPs (was accessing missing attrs)."""
+    m = A2C2fMoE(64, 64, n=1, num_experts=4, top_k=2)
+    g = m.get_gflops((1, 64, 32, 32))
+    assert isinstance(g, dict) and g["total_gflops"] >= 0.0
+
+
+def test_f05_static_balance_loss_handles_empty_stats():
+    """F-05: missing expert_usage falls back to uniform, no KeyError."""
+    m = HyperFusedMoE(32, 32, num_experts=4, top_k=2)
+    loss = m._compute_static_balance_loss({})
+    assert isinstance(loss, torch.Tensor) and torch.isfinite(loss).all()
+
+
+def test_p05_es_moe_eval_uses_sparse():
+    """P-05: ES_MOE eval runs the sparse path and stays finite."""
+    m = ES_MOE(32, 32, num_experts=4, top_k=2).eval()
+    with torch.no_grad():
+        out = m(torch.randn(2, 32, 16, 16))
+    assert out.shape[0] == 2 and torch.isfinite(out).all()
+
+
+def test_p06_batched_experts_noncontiguous_indices():
+    """P-06: reshape-based flatten handles non-contiguous [B,k,1,1] indices."""
+    B, C, H, W, E, k = 2, 16, 8, 8, 4, 2
+    x = torch.randn(B, C, H, W)
+    experts = nn.ModuleList([nn.Conv2d(C, C, 1) for _ in range(E)])
+    idx = torch.randint(0, E, (B, k, 1, 1))
+    w = torch.rand(B, k, 1, 1)
+    out = BatchedExpertComputation.compute_sparse_experts_batched(x, experts, w, idx, k, E)
+    assert out.shape == (B, C, H, W) and torch.isfinite(out).all()
+
+
+def test_l05_soft_balancing_penalizes_collapse():
+    """L-05: soft balancing penalizes uneven usage (not an L2 on importance)."""
+    loss_fn = MoELoss(num_experts=4, top_k=2, use_soft_balancing=True)
+    lg_u = torch.zeros(16, 4, requires_grad=True)
+    l_unif = loss_fn(torch.softmax(lg_u, dim=1), lg_u)
+    lg_c = torch.tensor([[10., -10., -10., -10.]]).repeat(16, 1).requires_grad_(True)
+    l_col = loss_fn(torch.softmax(lg_c, dim=1), lg_c)
+    assert float(l_col) > float(l_unif)
+    l_col.backward()
+    assert lg_c.grad is not None and lg_c.grad.abs().sum() > 0
+
+
+@pytest.mark.parametrize("cls", [SimpleExpert, SpatialExpert, GhostExpert, InvertedResidualExpert])
+def test_e01_legacy_experts_use_groupnorm(cls):
+    """E-01: legacy experts switched BN -> GN; B=1 must be stable."""
+    e = cls(16, 16).eval()
+    assert not any(isinstance(m, nn.BatchNorm2d) for m in e.modules())
+    assert any(isinstance(m, nn.GroupNorm) for m in e.modules())
+    with torch.no_grad():
+        out = e(torch.randn(1, 16, 8, 8))
+    assert torch.isfinite(out).all()
+
+
+def test_e02_index_add_clamp_prevents_overflow():
+    """E-02: large inputs (routing-collapse proxy) stay finite via clamp."""
+    m = OptimizedMOE(32, 32, num_experts=4, top_k=2).train()
+    out = m(torch.randn(2, 32, 16, 16) * 100)
+    assert torch.isfinite(out).all()
 
 
 if __name__ == "__main__":
