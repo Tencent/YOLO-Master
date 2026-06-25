@@ -99,6 +99,7 @@ from ultralytics.nn.modules import (
     VisualEnhancedAdaptiveGateMoE,
     A2C2fMoE,
     ABlockMoE,
+    C2fMoA,
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, LOGGER, YAML, colorstr, emojis
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
@@ -1699,6 +1700,7 @@ def parse_model(d, ch, verbose=True):
             ES_MOE,
             A2C2fMoE,
             ABlockMoE,
+            C2fMoA,
         }
     )
     repeat_modules = frozenset(  # modules with 'repeat' arguments
