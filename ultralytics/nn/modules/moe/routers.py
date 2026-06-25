@@ -280,8 +280,14 @@ class AdvancedRoutingLayer(nn.Module):
             if expected_in != C:
                 existing = getattr(self, "_proj", None)
                 if not isinstance(existing, nn.Conv2d) or existing.in_channels != C or existing.out_channels != expected_in:
+                    # Channel-mismatch fallback (rare; normal configs have
+                    # expected_in == C). Never create a new layer mid-trace,
+                    # which would break export with untrained params.
+                    if torch.onnx.is_in_onnx_export() or torch.jit.is_tracing():
+                        raise RuntimeError(
+                            f"AdvancedRoutingLayer input C={C} != router expects {expected_in} during export.")
                     # Register via add_module so the projection's params join the
-                    # module tree (optimizer-visible, DDP/ONNX-safe).
+                    # module tree (optimizer-visible, DDP-safe).
                     proj = nn.Conv2d(C, expected_in, 1, bias=False).to(pooled.device, pooled.dtype)
                     self.add_module("_proj", proj)
                 pooled = self._proj(pooled)

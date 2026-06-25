@@ -278,7 +278,10 @@ class EfficientExpertGroup(nn.Module):
         self.conv = DepthwiseSeparableConv(in_channels, out_channels, kernel_size, stride)
 
     def forward(self, x):
+        # ``self.conv`` is always built in __init__; rebuild only as a legacy
+        # checkpoint fallback and never while tracing (would break export).
         if not hasattr(self, "conv"):
-            out_c = x.shape[1]
-            self.conv = DepthwiseSeparableConv(x.shape[1], out_c, 3, 1)
+            if torch.onnx.is_in_onnx_export() or torch.jit.is_tracing():
+                raise RuntimeError("EfficientExpertGroup.conv missing during export.")
+            self.conv = DepthwiseSeparableConv(x.shape[1], x.shape[1], 3, 1).to(x.device, x.dtype)
         return self.conv(x)
