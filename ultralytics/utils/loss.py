@@ -50,9 +50,24 @@ def _collect_mot_aux_loss(model: nn.Module | None, device: torch.device) -> torc
     return mot_loss
 
 
+def _collect_moa_aux_loss(model: nn.Module | None, device: torch.device) -> torch.Tensor:
+    """Sum graph-connected MoA router aux losses from all MoA blocks."""
+    moa_loss = torch.tensor(0.0, device=device)
+    if model is None or not getattr(model, "training", True):
+        return moa_loss
+    try:
+        from ultralytics.nn.modules.moa import collect_moa_aux_loss
+    except Exception:
+        return moa_loss
+    loss_t = collect_moa_aux_loss(model)
+    if isinstance(loss_t, torch.Tensor):
+        moa_loss = moa_loss + loss_t.to(device)
+    return moa_loss
+
+
 def _collect_mixture_aux_loss(model: nn.Module | None, device: torch.device) -> torch.Tensor:
     """Collect all mixture-routing auxiliary losses that share the moe loss gain."""
-    return _collect_moe_aux_loss(model, device) + _collect_mot_aux_loss(model, device)
+    return _collect_moe_aux_loss(model, device) + _collect_mot_aux_loss(model, device) + _collect_moa_aux_loss(model, device)
 
 
 class VarifocalLoss(nn.Module):

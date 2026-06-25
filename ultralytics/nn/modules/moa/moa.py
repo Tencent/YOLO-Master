@@ -273,9 +273,23 @@ class _MoARouter(nn.Module):
         nn.init.zeros_(self.router[-1].weight)
         nn.init.zeros_(self.router[-1].bias)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, return_logits: bool = False) -> torch.Tensor | Tuple[torch.Tensor, torch.Tensor]:
         logits = self.router(x)                              # [B, M, H, W]
-        return F.softmax(logits / self.temperature, dim=1)
+        probs = F.softmax(logits / self.temperature, dim=1)
+        return (probs, logits) if return_logits else probs
+
+
+def _moa_router_aux_loss(weights: torch.Tensor, logits: torch.Tensor) -> torch.Tensor:
+    """Positive router aux loss that discourages MoA head collapse."""
+    num_groups = weights.shape[1]
+    importance = weights.mean(dim=(0, 2, 3))
+    importance = importance / importance.sum().clamp_min(1e-6)
+    balance_loss = num_groups * torch.sum(importance * importance)
+    log_z = torch.logsumexp(logits, dim=1)
+    z_loss = log_z.square().mean()
+    entropy = -torch.sum(weights * torch.log(weights.clamp_min(1e-8)), dim=1).mean()
+    entropy_deficit = math.log(num_groups) - entropy
+    return balance_loss + 0.1 * z_loss + 0.1 * entropy_deficit
 
 
 # ---------------------------------------------------------------------------
@@ -318,6 +332,7 @@ class MoABlock(nn.Module):
         temperature: float = 1.0,
         attn_drop: float = 0.0,
         shortcut: bool = True,
+        balance_loss_coeff: float = 0.01,
     ):
         super().__init__()
         assert num_heads % self.NUM_GROUPS == 0, (
@@ -350,6 +365,8 @@ class MoABlock(nn.Module):
             Conv(hidden, dim, 1, act=False),
         )
         self.ls_ffn = nn.Parameter(torch.ones(dim, 1, 1) * 0.1)
+        self.balance_loss_coeff = balance_loss_coeff
+        self.last_aux_loss: torch.Tensor = torch.zeros((), requires_grad=False)
 
         self._init_weights()
 
@@ -364,7 +381,11 @@ class MoABlock(nn.Module):
         B, C, H, W = x.shape
 
         # ── Routing weights ──────────────────────────────────────────────
-        weights = self.router(x)   # [B, 3, H, W],  sums-to-1 over dim=1
+        weights, logits = self.router(x, return_logits=True)   # [B, 3, H, W], sums-to-1 over dim=1
+        if self.training and self.balance_loss_coeff > 0:
+            self.last_aux_loss = _moa_router_aux_loss(weights, logits) * self.balance_loss_coeff
+        else:
+            self.last_aux_loss = x.new_zeros(())
 
         w_l = weights[:, 0:1]     # [B, 1, H, W]
         w_r = weights[:, 1:2]
@@ -427,6 +448,7 @@ class C2fMoA(nn.Module):
         temperature: float = 1.0,
         shortcut: bool = True,
         e: float = 0.5,
+        balance_loss_coeff: float = 0.01,
     ):
         super().__init__()
         self.c = int(c2 * e)
@@ -445,13 +467,20 @@ class C2fMoA(nn.Module):
             MoABlock(self.c, num_heads=eff_heads,
                      mlp_ratio=mlp_ratio,
                      temperature=temperature,
-                     shortcut=shortcut)
+                     shortcut=shortcut,
+                     balance_loss_coeff=balance_loss_coeff)
             for _ in range(n)
         )
+        self.last_aux_loss: torch.Tensor = torch.zeros((), requires_grad=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         y = list(self.cv1(x).chunk(2, dim=1))   # [identity, dynamic]
-        y.extend(m(y[-1]) for m in self.m)       # append MoABlock outputs
+        aux_total = x.new_zeros(())
+        for m in self.m:
+            out = m(y[-1])
+            y.append(out)
+            aux_total = aux_total + m.last_aux_loss
+        self.last_aux_loss = aux_total
         return self.cv2(torch.cat(y, dim=1))
 
 
@@ -576,7 +605,28 @@ class NeckMoAFusion(nn.Module):
 # Utility: update router temperature (call each epoch or step)
 # ---------------------------------------------------------------------------
 
-def anneal_moa_temperature(model: nn.Module, factor: float = 0.99,
+def collect_moa_aux_loss(model: nn.Module) -> torch.Tensor:
+    """Sum graph-connected MoA router aux losses without wrapper double-counting."""
+    total = None
+    found_wrapper = False
+    for m in model.modules():
+        if isinstance(m, C2fMoA):
+            found_wrapper = True
+            l = m.last_aux_loss
+            if isinstance(l, torch.Tensor) and l.requires_grad:
+                total = l if total is None else total + l
+    if found_wrapper:
+        return total if total is not None else torch.zeros(1)
+
+    for m in model.modules():
+        if isinstance(m, MoABlock):
+            l = m.last_aux_loss
+            if isinstance(l, torch.Tensor) and l.requires_grad:
+                total = l if total is None else total + l
+    return total if total is not None else torch.zeros(1)
+
+
+def anneal_moa_temperature(model: nn.Module, factor: float = 0.97,
                            min_temp: float = 0.3) -> None:
     """Multiplicatively anneal router temperatures in all MoA modules.
 

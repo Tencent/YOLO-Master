@@ -2,8 +2,9 @@ from pathlib import Path
 
 import torch
 
-from ultralytics.nn.modules.moa import C2fMoA, MoABlock, NeckMoAFusion, anneal_moa_temperature
+from ultralytics.nn.modules.moa import C2fMoA, MoABlock, NeckMoAFusion, anneal_moa_temperature, collect_moa_aux_loss
 from ultralytics.nn.tasks import DetectionModel
+from ultralytics.utils.loss import _collect_mixture_aux_loss, _collect_moa_aux_loss
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -38,6 +39,31 @@ def test_neck_moa_fusion_forward_backward():
     assert out.shape == (2, 64, 16, 16)
     out.mean().backward()
     assert _has_grad(module)
+
+
+def test_moa_aux_loss_collected_and_grad_connected():
+    torch.manual_seed(0)
+    module = C2fMoA(64, 64, n=2, num_heads=6, balance_loss_coeff=0.01).train()
+    x = torch.randn(2, 64, 8, 8)
+    out = module(x)
+    aux = collect_moa_aux_loss(module)
+    collected = _collect_moa_aux_loss(module, torch.device("cpu"))
+    mixed = _collect_mixture_aux_loss(module, torch.device("cpu"))
+
+    assert aux.requires_grad and torch.isfinite(aux)
+    assert collected.requires_grad and torch.allclose(collected, aux.cpu())
+    assert mixed.requires_grad and torch.allclose(mixed, collected)
+
+    module.zero_grad(set_to_none=True)
+    (out.mean() + aux).backward()
+    router_grads = [
+        p.grad
+        for m in module.modules()
+        if m.__class__.__name__ == "_MoARouter"
+        for p in m.parameters()
+        if p.requires_grad
+    ]
+    assert any(g is not None and g.abs().sum() > 0 for g in router_grads)
 
 
 def test_moa_temperature_anneal():
