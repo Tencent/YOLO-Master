@@ -7,10 +7,34 @@ import torch.distributed as dist
 from typing import Optional, Dict, Union, Tuple
 
 
-def gshard_balance_loss(expert_usage: torch.Tensor, num_experts: int) -> torch.Tensor:
-    """GShard-style balance loss: N * sum(usage^2). Equals 1.0 at uniform usage."""
+def all_reduce_mean(tensor: torch.Tensor) -> torch.Tensor:
+    """Average a tensor across DDP ranks (gradient-preserving, no-op on 1 GPU).
+
+    Returns the input unchanged when distributed is unavailable/uninitialised,
+    so single-GPU and CPU paths are untouched. Used to make per-block balance
+    statistics (expert usage) consistent across ranks, matching MoELoss.
+    """
+    if not (dist.is_available() and dist.is_initialized()):
+        return tensor
+    world = dist.get_world_size()
+    if world <= 1:
+        return tensor
+    out = tensor.clone()
+    dist.all_reduce(out, op=dist.ReduceOp.SUM)
+    return out / world
+
+
+def gshard_balance_loss(expert_usage: torch.Tensor, num_experts: int,
+                        reduce_ddp: bool = False) -> torch.Tensor:
+    """GShard-style balance loss: N * sum(usage^2). Equals 1.0 at uniform usage.
+
+    When ``reduce_ddp`` is True the (normalised) usage is averaged across DDP
+    ranks first, so all ranks optimise the same global balance target.
+    """
     usage = expert_usage.reshape(-1).float()
     usage = usage / usage.sum().clamp_min(1e-6)
+    if reduce_ddp:
+        usage = all_reduce_mean(usage)
     return num_experts * torch.sum(usage * usage)
 
 
@@ -18,16 +42,20 @@ def weighted_gshard_balance_loss(
     expert_usage: torch.Tensor,
     target_usage: torch.Tensor,
     num_experts: int,
+    reduce_ddp: bool = False,
 ) -> torch.Tensor:
     """GShard-scale balance loss with a learnable target distribution.
 
     Reduces to `gshard_balance_loss` (==1.0 at balance) when `target` is uniform,
     and reaches its minimum when `usage` matches `target`. Keeps the same O(1)
     scale as the plain GShard loss so it can be summed with other MoE aux losses
-    without one term silently dominating.
+    without one term silently dominating. ``reduce_ddp`` averages usage across
+    ranks (no-op on single GPU).
     """
     usage = expert_usage.reshape(-1).float()
     usage = usage / usage.sum().clamp_min(1e-6)
+    if reduce_ddp:
+        usage = all_reduce_mean(usage)
     target = target_usage.reshape(-1).float().to(usage.dtype)
     target = target / target.sum().clamp_min(1e-6)
     # sum(usage^2 / target): ==1.0 when usage==target; reduces to plain GShard
@@ -40,6 +68,7 @@ def differentiable_balance_loss(
     expert_usage: torch.Tensor,
     num_experts: int,
     target_usage: Optional[torch.Tensor] = None,
+    reduce_ddp: bool = False,
 ) -> torch.Tensor:
     """GShard balance loss with gradient flowing to the router via `importance`.
 
@@ -49,6 +78,8 @@ def differentiable_balance_loss(
       - ``usage`` is the discrete selection share, detached (non-differentiable).
       - ``target_usage`` (optional, e.g. a learnable importance prior) reweights
         usage; defaults to uniform.
+      - ``reduce_ddp`` averages both importance and usage across DDP ranks so
+        all GPUs optimise the same global balance (no-op on single GPU).
 
     `router_probs` is normalized to ``[N, num_experts]`` mean before use, so it
     accepts both ``[B, E]`` and ``[B, E, 1, 1]`` (mean-reduced) inputs.
@@ -60,6 +91,9 @@ def differentiable_balance_loss(
 
     usage = expert_usage.reshape(-1).float().detach()
     usage = usage / usage.sum().clamp_min(1e-6)
+    if reduce_ddp:
+        importance = all_reduce_mean(importance)
+        usage = all_reduce_mean(usage)
 
     if target_usage is not None:
         w = target_usage.reshape(-1).float()

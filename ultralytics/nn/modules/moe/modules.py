@@ -5,6 +5,8 @@ This module provides several MoE variants and routers optimized for inference ef
 plus backward-compatibility aliases so legacy checkpoints can be loaded without changes.
 All public class/function names are preserved; only comments/docstrings have been clarified.
 """
+import os
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -30,11 +32,26 @@ def autocast(enabled=True, **kwargs):
     # On MPS/CPU, autocast is not fully supported; disable to avoid warnings/errors
     from contextlib import nullcontext
     return nullcontext() if not enabled else nullcontext()
-from .loss import MoELoss, gshard_balance_loss, weighted_gshard_balance_loss, differentiable_balance_loss
+from .loss import MoELoss, gshard_balance_loss, weighted_gshard_balance_loss, differentiable_balance_loss, all_reduce_mean
 
 # Global registry to store auxiliary losses for MoE modules
 # This prevents storing non-leaf tensors in the module instance, avoiding deepcopy errors
 MOE_LOSS_REGISTRY = weakref.WeakKeyDictionary()
+
+# Diagnostic snapshot sampling: only every Nth forward per module performs the
+# (expensive) detach().cpu()/.item() D2H copies. Align this with the moe_diag
+# callback interval (default 10) so no consumed snapshot is missed. Set
+# MOE_SNAPSHOT_INTERVAL=1 to restore per-step recording.
+MOE_SNAPSHOT_INTERVAL = max(int(os.environ.get("MOE_SNAPSHOT_INTERVAL", "10")), 1)
+
+
+def _should_record_snapshot(module: nn.Module) -> bool:
+    """Per-module forward gate so snapshots are taken every Nth step only."""
+    if MOE_SNAPSHOT_INTERVAL <= 1:
+        return True
+    c = getattr(module, "_moe_snap_counter", 0) + 1
+    module._moe_snap_counter = c
+    return (c % MOE_SNAPSHOT_INTERVAL) == 0
 
 
 def _zero_aux_loss_like(module: nn.Module) -> torch.Tensor:
@@ -105,7 +122,13 @@ def _record_moe_snapshot(
     If both `expert_usage` and `topk_indices` are provided, `expert_usage` takes
     precedence because it reflects the router's actual computed usage frequencies.
     `topk_indices` is only used as a fallback to derive usage counts.
+
+    Sampled every ``MOE_SNAPSHOT_INTERVAL`` forwards per module to avoid a
+    GPU→CPU sync on every training step; existing snapshot is kept between
+    samples so consumers always see the most recent recorded value.
     """
+    if not _should_record_snapshot(module):
+        return
     # Prefer expert_usage when available; fallback to topk_indices-derived counts
     if isinstance(expert_usage, torch.Tensor):
         usage_tensor = expert_usage.detach().float().cpu()
@@ -298,8 +321,13 @@ class UltraOptimizedMoE(nn.Module):
             if z_loss_val is None:
                 z_loss_val = torch.tensor(0.0, device=x.device, dtype=x.dtype)
 
-            importance_mean = importance / B
-            balance_loss = self.num_experts * (importance_mean * usage_freq.detach()).sum()
+            # Standard GShard differentiable form N*sum(importance*usage),
+            # same as loss.differentiable_balance_loss. importance keeps grad
+            # to the router; usage is detached. DDP-average both so all ranks
+            # optimise one global balance target (no-op on single GPU).
+            importance_mean = all_reduce_mean(importance / B)
+            usage_freq = all_reduce_mean(usage_freq.detach())
+            balance_loss = self.num_experts * (importance_mean * usage_freq).sum()
 
             aux_loss = (self.balance_loss_coeff * balance_loss) + (self.router_z_loss_coeff * z_loss_val)
             MOE_LOSS_REGISTRY[self] = aux_loss
@@ -370,42 +398,52 @@ class UltraOptimizedMoE(nn.Module):
 # ==========================================
 
 class AdaptiveCapacityMoE(UltraOptimizedMoE):
-    """
-    Dynamic-capacity MoE that adapts expert capacity to input complexity.
-    Suitable for tasks with large variability in input complexity.
+    """Complexity-adaptive MoE: scales the expert-mixture contribution by a
+    learned input-complexity factor.
+
+    Design note (rev: 2026-06-25)
+    ─────────────────────────────
+    The previous implementation tried to vary the *discrete* ``top_k`` by
+    temporarily mutating ``self.routing.top_k`` inside ``forward``. That had
+    three defects: (1) the parent forward reads ``self.top_k`` (not
+    ``self.routing.top_k``) for expert computation, so the mutation had no real
+    effect; (2) ``min(self.top_k, …)`` capped capacity at the base value, so it
+    could only shrink and almost always saturated at ``top_k``, making the
+    "adaptive" knob inert; (3) ``int(score.item())`` forced a GPU→CPU sync and
+    mutating instance state mid-forward is not re-entrant / thread-safe.
+
+    This version keeps ``top_k`` fixed and instead modulates the *output*
+    expert contribution by a differentiable, sync-free complexity factor in a
+    band around 1.0 (``[1/cf, cf]``). Higher complexity → larger expert
+    contribution (more "capacity"); lower complexity → smaller. The factor is
+    computed without any ``.item()`` call, is re-entrant, and genuinely varies.
     """
 
     def __init__(self, *args, capacity_factor: float = 1.5, **kwargs):
         super().__init__(*args, **kwargs)
-        self.capacity_factor = capacity_factor
+        # capacity_factor > 1 defines the modulation band [1/cf, cf]
+        self.capacity_factor = max(float(capacity_factor), 1.0)
 
-        # Add complexity estimator
+        # Complexity estimator → scalar in (0, 1) per sample
         self.complexity_estimator = nn.Sequential(
             nn.AdaptiveAvgPool2d(1),
             nn.Conv2d(self.in_channels, 1, 1),
-            nn.Sigmoid()
+            nn.Sigmoid(),
         )
 
     def forward(self, x):
-        # Estimate input complexity; clamp lower bound (align with
-        # AdaptiveGateMoE._safe_complexity) so adaptive_top_k cannot collapse to
-        # 1 on low-texture inputs, which would degenerate load balancing.
-        complexity_score = self.complexity_estimator(x).mean().clamp(0.3, 1.5)
-
-        # Dynamically adjust top_k (optional)
-        adaptive_top_k = max(1, min(self.top_k, int(self.top_k * complexity_score * self.capacity_factor)))
-
-        # Temporarily modify routing.top_k
-        original_top_k = self.routing.top_k
-        self.routing.top_k = adaptive_top_k
-
-        # Call parent forward
+        # Parent returns the expert mixture (shared + sparse experts), top_k fixed.
         result = super().forward(x)
 
-        # Restore original top_k
-        self.routing.top_k = original_top_k
-
-        return result
+        # Differentiable, sync-free complexity factor mapped into [1/cf, cf]:
+        #   sigmoid∈(0,1) → exp((2*s-1)*ln(cf)) ∈ (1/cf, cf).
+        # No .item(), no instance-state mutation → re-entrant & export-safe.
+        # Higher complexity → larger expert contribution ("more capacity").
+        if self.capacity_factor <= 1.0:
+            return result
+        s = self.complexity_estimator(x).mean()
+        scale = torch.exp((2.0 * s - 1.0) * math.log(self.capacity_factor))
+        return result * scale
 
 
 class ES_MOE(nn.Module):
@@ -493,11 +531,16 @@ class ES_MOE(nn.Module):
         else:
             final_output = self._sparse_forward(x, routing_weights)
 
+        # ``self.norm`` is always built in __init__; a missing attribute can
+        # only come from an old partial checkpoint. Build it eagerly here only
+        # outside tracing (so export never bakes in a freshly-created layer).
         if not hasattr(self, "norm"):
+            if torch.onnx.is_in_onnx_export() or torch.jit.is_tracing():
+                raise RuntimeError("ES_MOE.norm missing during export; reload a complete checkpoint.")
             self.norm = nn.Sequential(
                 nn.BatchNorm2d(final_output.shape[1]),
                 nn.SiLU(inplace=True),
-            )
+            ).to(final_output.device, final_output.dtype)
         final_output = self.norm(final_output)
 
         return final_output
@@ -563,7 +606,9 @@ class ES_MOE(nn.Module):
     def _compute_load_balancing_loss(self, routing_weights, eps=1e-6):
         """Compute load-balancing loss (GShard scale, ~1.0 at balance)."""
         expert_usage = routing_weights.mean(dim=(0, 2, 3))
-        load_balance_loss = gshard_balance_loss(expert_usage, self.num_experts)
+        # reduce_ddp=True → usage averaged across ranks so all GPUs share one
+        # global balance target (matches MoELoss; no-op on single GPU).
+        load_balance_loss = gshard_balance_loss(expert_usage, self.num_experts, reduce_ddp=True)
 
         # Guard against NaN loss (graph-safe: keep grad_fn instead of new leaf)
         if not torch.isfinite(load_balance_loss).all():
@@ -1796,8 +1841,8 @@ class HyperFusedMoE(nn.Module):
             dev = probs.device if isinstance(probs, torch.Tensor) else None
             usage = torch.full((self.num_experts,), 1.0 / self.num_experts, device=dev)
         if isinstance(probs, torch.Tensor):
-            return differentiable_balance_loss(probs, usage, self.num_experts)
-        return gshard_balance_loss(usage, self.num_experts)
+            return differentiable_balance_loss(probs, usage, self.num_experts, reduce_ddp=True)
+        return gshard_balance_loss(usage, self.num_experts, reduce_ddp=True)
     
     @property
     def aux_loss(self):
@@ -2703,9 +2748,6 @@ class VisualEnhancedAdaptiveGateMoE(ContextRefinedLowRankHybridAdaptiveGateMoE):
         flops['total_gflops'] = sum(v for k, v in flops.items() if k != 'total_gflops')
         return flops
 
-
-import math
-
 class AdaptiveBalanceController(nn.Module):
     """
     Adaptive Load Balancing Controller.
@@ -2749,7 +2791,7 @@ class AdaptiveBalanceController(nn.Module):
                 router_probs, expert_usage, self.num_experts, target_usage=importance_weights
             )
         else:
-            balance_loss = weighted_gshard_balance_loss(expert_usage, importance_weights, self.num_experts)
+            balance_loss = weighted_gshard_balance_loss(expert_usage, importance_weights, self.num_experts, reduce_ddp=True)
 
         # === 3. Entropy Regularization (Encourage Diversity, non-negative) ===
         # Penalize LOW entropy (collapse); max entropy = log(N) -> penalty 0.
