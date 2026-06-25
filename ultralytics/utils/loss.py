@@ -35,6 +35,26 @@ def _collect_moe_aux_loss(model: nn.Module | None, device: torch.device) -> torc
     return moe_loss
 
 
+def _collect_mot_aux_loss(model: nn.Module | None, device: torch.device) -> torch.Tensor:
+    """Sum graph-connected MoT router z-loss terms from all C2fMoT blocks."""
+    mot_loss = torch.tensor(0.0, device=device)
+    if model is None or not getattr(model, "training", True):
+        return mot_loss
+    try:
+        from ultralytics.nn.modules.mot import collect_mot_aux_loss
+    except Exception:
+        return mot_loss
+    loss_t = collect_mot_aux_loss(model)
+    if isinstance(loss_t, torch.Tensor):
+        mot_loss = mot_loss + loss_t.to(device)
+    return mot_loss
+
+
+def _collect_mixture_aux_loss(model: nn.Module | None, device: torch.device) -> torch.Tensor:
+    """Collect all mixture-routing auxiliary losses that share the moe loss gain."""
+    return _collect_moe_aux_loss(model, device) + _collect_mot_aux_loss(model, device)
+
+
 class VarifocalLoss(nn.Module):
     """Varifocal loss by Zhang et al.
 
@@ -318,10 +338,10 @@ class v8DetectionLoss:
         loss[1] *= self.hyp.cls  # cls gain
         loss[2] *= self.hyp.dfl  # dfl gain
 
-        # MoE auxiliary loss
-        loss[3] = _collect_moe_aux_loss(getattr(self, "model", None), self.device) * self.hyp.moe
+        # Mixture-routing auxiliary loss (MoE + MoT)
+        loss[3] = _collect_mixture_aux_loss(getattr(self, "model", None), self.device) * self.hyp.moe
 
-        return loss * batch_size, loss.detach()  # loss(box, cls, dfl, moe)
+        return loss * batch_size, loss.detach()  # loss(box, cls, dfl, mixture_aux)
 
 
 class v8SegmentationLoss(v8DetectionLoss):
@@ -413,10 +433,10 @@ class v8SegmentationLoss(v8DetectionLoss):
         loss[2] *= self.hyp.cls  # cls gain
         loss[3] *= self.hyp.dfl  # dfl gain
 
-        # MoE auxiliary loss
-        loss[4] = _collect_moe_aux_loss(getattr(self, "model", None), self.device) * self.hyp.moe
+        # Mixture-routing auxiliary loss (MoE + MoT)
+        loss[4] = _collect_mixture_aux_loss(getattr(self, "model", None), self.device) * self.hyp.moe
 
-        return loss * batch_size, loss.detach()  # loss(box, seg, cls, dfl, moe)
+        return loss * batch_size, loss.detach()  # loss(box, seg, cls, dfl, mixture_aux)
 
     @staticmethod
     def single_mask_loss(
@@ -585,8 +605,8 @@ class v8PoseLoss(v8DetectionLoss):
         loss[3] *= self.hyp.cls  # cls gain
         loss[4] *= self.hyp.dfl  # dfl gain
 
-        # MoE auxiliary loss
-        loss[5] = _collect_moe_aux_loss(getattr(self, "model", None), self.device) * self.hyp.moe
+        # Mixture-routing auxiliary loss (MoE + MoT)
+        loss[5] = _collect_mixture_aux_loss(getattr(self, "model", None), self.device) * self.hyp.moe
 
         return loss * batch_size, loss.detach()  # loss(box, cls, dfl)
 
@@ -778,10 +798,10 @@ class v8OBBLoss(v8DetectionLoss):
         loss[1] *= self.hyp.cls  # cls gain
         loss[2] *= self.hyp.dfl  # dfl gain
 
-        # MoE auxiliary loss
-        loss[3] = _collect_moe_aux_loss(getattr(self, "model", None), self.device) * self.hyp.moe
+        # Mixture-routing auxiliary loss (MoE + MoT)
+        loss[3] = _collect_mixture_aux_loss(getattr(self, "model", None), self.device) * self.hyp.moe
 
-        return loss * batch_size, loss.detach()  # loss(box, cls, dfl, moe)
+        return loss * batch_size, loss.detach()  # loss(box, cls, dfl, mixture_aux)
 
     def bbox_decode(
         self, anchor_points: torch.Tensor, pred_dist: torch.Tensor, pred_angle: torch.Tensor
