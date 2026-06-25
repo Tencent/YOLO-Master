@@ -109,6 +109,7 @@ from .transformer import (
     TransformerEncoderLayer,
     TransformerLayer,
 )
+from .moa import MoABlock, C2fMoA, NeckMoAFusion, anneal_moa_temperature
 from .moe import (
     OptimizedMOE,
     OptimizedMOEImproved,
@@ -247,4 +248,8 @@ __all__ = (
     "VisualEnhancedAdaptiveGateMoE",
     "A2C2fMoE",
     "ABlockMoE",
+    "MoABlock",
+    "C2fMoA",
+    "NeckMoAFusion",
+    "anneal_moa_temperature",
 )
