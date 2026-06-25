@@ -172,24 +172,19 @@ class _GlobalAttnHead(nn.Module):
         self.norm = nn.GroupNorm(_safe_groups(dim, 8), dim)
         self.scale = self.head_dim ** -0.5
 
-        # Random orthogonal features for Performer approximation
-        # Re-generated at first forward (device-agnostic)
-        self.register_buffer("_rf_matrix", torch.empty(0), persistent=False)
+        # Orthogonal random features for the Performer approximation.
+        # Generated once at construction with a fixed seed and stored as a
+        # *persistent* buffer, so the basis is identical across processes,
+        # survives checkpoint save/load (reproducible runs, resume, ONNX),
+        # and never drifts with the first input's dtype/device.
+        eff_nb = min(self.nb_features, self.head_dim)  # QR yields ≤ head_dim cols
+        gen = torch.Generator().manual_seed(0x5F3759DF)
+        rf = torch.randn(self.head_dim, self.head_dim, generator=gen, dtype=torch.float32)
+        rf, _ = torch.linalg.qr(rf)        # [hd, hd] orthogonal
+        self.register_buffer("_rf_matrix", rf[:eff_nb].contiguous(), persistent=True)
 
     def _get_rf(self, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
-        """Lazily create random feature matrix [nb_features, head_dim].
-
-        Uses orthogonal random features (Performer-style). The effective
-        number of features is min(nb_features, head_dim).
-        """
-        nb, hd = self.nb_features, self.head_dim
-        # Effective features: can't exceed head_dim (QR produces at most hd cols)
-        eff_nb = min(nb, hd)
-        if self._rf_matrix.shape != (eff_nb, hd):
-            rf = torch.randn(hd, hd, device=device, dtype=torch.float32)
-            rf, _ = torch.linalg.qr(rf)     # [hd, hd] orthogonal
-            rf = rf[:eff_nb].to(dtype)       # [eff_nb, hd]
-            self._rf_matrix = rf
+        """Return the (fixed) random-feature matrix on the right device/dtype."""
         return self._rf_matrix.to(device=device, dtype=dtype)
 
     @staticmethod
@@ -301,7 +296,10 @@ class MoABlock(nn.Module):
         dim (int): Channel dimension (input == output).
         num_heads (int): Total attention heads, split equally over groups.
         mlp_ratio (float): FFN expansion ratio.
-        temperature (float): Router softmax temperature (anneal toward 0.5).
+        temperature (float): Router softmax temperature. Starts at 1.0 and
+            can be annealed toward min_temp (default 0.3) via
+            ``anneal_moa_temperature`` — note this must be called from the
+            training loop; it is not hooked automatically.
         attn_drop (float): Dropout on attention output.
         shortcut (bool): Residual connection around the block.
 
@@ -341,7 +339,8 @@ class MoABlock(nn.Module):
         self.fusion = Conv(dim, dim, 1, act=False)
         self.attn_drop = nn.Dropout2d(attn_drop) if attn_drop > 0 else nn.Identity()
 
-        # Layer-scale (initialised near 1 for stable early training)
+        # Layer-scale (initialised at 0.1: small residual contribution for
+        # stable early training, à la CaiT LayerScale).
         self.ls_attn = nn.Parameter(torch.ones(dim, 1, 1) * 0.1)
 
         # FFN
@@ -561,6 +560,10 @@ class NeckMoAFusion(nn.Module):
         w_cross = weights[:, 0:1]
         w_self  = weights[:, 1:2]
 
+        assert self_out.shape[1] == cross_out.shape[1], (
+            f"NeckMoAFusion channel mismatch before blend: "
+            f"self_out C={self_out.shape[1]} vs cross_out C={cross_out.shape[1]}"
+        )
         out = w_cross * cross_out + w_self * self_out
 
         if self.shortcut:
