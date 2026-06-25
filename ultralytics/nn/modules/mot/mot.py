@@ -16,10 +16,12 @@ distinct inductive bias for a specific aspect of visual feature processing:
   Expert 2 — DeformableTransformer  (sparse deformable sampling, best for irregular/occluded objects)
 
 A content-aware router (lightweight 1×1 MLP) assigns each spatial token a
-*sparse Top-K weight* (default K=1 hard dispatch or K=2 soft) over these
-experts.  Unlike MoA's fully soft routing, MoT uses hard Top-K dispatch
-(à la standard MoE) because each expert has a fundamentally different
-computational graph.
+*sparse Top-K weight* over these experts. The routing is **soft Top-K**:
+all experts are computed every forward and blended by their (Top-K-masked,
+renormalised) weights, so non-selected experts contribute 0 to the blend
+while the graph stays static and ONNX/TorchScript trace-stable. This is a
+deliberate trade-off — true sparse dispatch would save little here because
+the three experts have distinct, individually-cheap compute graphs.
 
 Key properties
 ──────────────
@@ -54,7 +56,14 @@ def _safe_groups(channels: int, desired: int) -> int:
 
 def _sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
           scale: float, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
-    """Scaled dot-product attention; uses Flash-Attention when available."""
+    """Scaled dot-product attention.
+
+    Uses ``F.scaled_dot_product_attention`` (Flash-Attention / memory-efficient
+    kernels) on PyTorch ≥ 2.0. On older PyTorch it falls back to an explicit
+    O(N²) softmax-attention, which can OOM on large token counts (e.g. P3-scale
+    full attention) — callers that may hit large N should prefer the window /
+    deformable experts there rather than the global path.
+    """
     if hasattr(F, "scaled_dot_product_attention"):
         return F.scaled_dot_product_attention(q, k, v, attn_mask=mask, scale=scale)
     attn = (q @ k.transpose(-2, -1)) * scale
@@ -157,19 +166,25 @@ class _LocalConvTransformerExpert(nn.Module):
 class _WindowTransformerExpert(nn.Module):
     """Swin-style window-partitioned Transformer expert.
 
-    Alternates between regular and shifted window attention via a running
-    step counter (no need to pair two layers — the shift is toggled each
-    forward call, providing both receptive fields over training steps).
+    The cyclic-shift used for cross-window connectivity is fixed at
+    construction time (``shift_size``), decided by the block's position in
+    the network rather than by a runtime step counter. This keeps inference
+    deterministic and the forward graph trace-stable (ONNX/TorchScript safe):
+    pairing a non-shifted block with a shifted block over the stack provides
+    both receptive fields, exactly as in Swin Transformer.
     """
 
     def __init__(self, dim: int, num_heads: int, window_size: int = 7,
-                 mlp_ratio: float = 2.0, dropout: float = 0.0):
+                 mlp_ratio: float = 2.0, dropout: float = 0.0,
+                 shift_size: int = 0):
         super().__init__()
         assert dim % num_heads == 0
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
         self.scale = self.head_dim ** -0.5
         self.win = window_size
+        # Fixed cyclic shift (0 = regular window, win//2 = shifted window).
+        self.shift_size = (window_size // 2) if shift_size else 0
 
         self.qkv = nn.Linear(dim, dim * 3, bias=False)
         self.proj = nn.Linear(dim, dim, bias=False)
@@ -186,9 +201,6 @@ class _WindowTransformerExpert(nn.Module):
         self.drop = nn.Dropout(dropout)
         self.ls1 = nn.Parameter(torch.ones(dim) * 0.1)
         self.ls2 = nn.Parameter(torch.ones(dim) * 0.1)
-
-        # running step toggle for shift
-        self.register_buffer("_step", torch.zeros(1, dtype=torch.long), persistent=False)
         self._init_weights()
 
     def _init_weights(self):
@@ -234,9 +246,8 @@ class _WindowTransformerExpert(nn.Module):
         x, pad_h, pad_w = self._pad_to_window(x, win)
         H, W = x.shape[1], x.shape[2]
 
-        # Cyclic shift (alternate each forward call)
-        shift = (win // 2) if (self._step.item() % 2 == 1) else 0
-        self._step += 1
+        # Cyclic shift (fixed at construction → deterministic & trace-stable)
+        shift = self.shift_size
         if shift > 0:
             x = torch.roll(x, shifts=(-shift, -shift), dims=(1, 2))
 
@@ -353,6 +364,8 @@ class _DeformableTransformerExpert(nn.Module):
         """
         B, N, C = q.shape
         nh, np_, hd = self.num_heads, self.n_points, self.head_dim
+        # Token→coordinate mapping below assumes N == H*W with no padding.
+        assert N == H * W, f"deformable expert expects N==H*W, got N={N}, H*W={H * W}"
 
         # Predict sampling offsets & attention weights from query
         offsets = self.offset_proj(q)                         # [B, N, nh*np*2]
@@ -435,7 +448,7 @@ class _MoTRouter(nn.Module):
     Args:
         dim (int): Input channels.
         num_experts (int): Number of transformer experts (default 3).
-        top_k (int): Number of active experts per token (1=hard, 2=soft).
+        top_k (int): Number of active experts per token (soft Top-K mask).
         use_spatial (bool): Token-level vs. image-level routing.
         temperature (float): Softmax temperature for soft routing.
     """
@@ -561,6 +574,7 @@ class MoTBlock(nn.Module):
         balance_loss_coeff: float = 0.01,
         dropout: float = 0.0,
         exploration_eps: float = 0.02,
+        window_shift: bool = False,
     ):
         super().__init__()
         assert 1 <= top_k <= self.NUM_EXPERTS
@@ -577,7 +591,8 @@ class MoTBlock(nn.Module):
         # Three Transformer experts
         self.experts = nn.ModuleList([
             _LocalConvTransformerExpert(dim, expert_heads, mlp_ratio, dropout),
-            _WindowTransformerExpert(dim, expert_heads, window_size, mlp_ratio, dropout),
+            _WindowTransformerExpert(dim, expert_heads, window_size, mlp_ratio, dropout,
+                                     shift_size=window_size // 2 if window_shift else 0),
             _DeformableTransformerExpert(dim, expert_heads, n_points, mlp_ratio, dropout),
         ])
 
@@ -608,21 +623,19 @@ class MoTBlock(nn.Module):
         weights, _ = self.router(x)   # [B, E, H, W]
 
         # ── Expert computation ───────────────────────────────────────────
-        # Compute all active experts and blend by routing weight.
-        # For soft Top-K routing, all experts forward but sparse weights
-        # zero-out inactive experts in the blend — gradient only flows
-        # through active experts (via weight sparsity).
-        expert_outs = []
+        # All experts forward unconditionally and are blended by routing
+        # weight. With soft Top-K routing the sparse weights zero-out the
+        # blend contribution of inactive experts, so gradients only flow
+        # through the selected experts via weight sparsity.
+        #
+        # No data-dependent scalar short-circuit (e.g. ``w.max().item()``):
+        # that forces a GPU→CPU sync every step and breaks ONNX/TorchScript
+        # tracing. The three experts have distinct compute graphs and are all
+        # cheap relative to the backbone, so unconditional compute is fastest.
+        out = x.new_zeros(x.shape)
         for e_idx, expert in enumerate(self.experts):
-            w = weights[:, e_idx:e_idx+1]   # [B, 1, H, W]
-            # Skip computation if max weight in batch is ~0 (hard dispatch speedup)
-            if w.max().item() < 1e-4:
-                expert_outs.append(torch.zeros_like(x))
-            else:
-                expert_outs.append(expert(x) * w)
-
-        # Blend
-        out = sum(expert_outs)                             # [B, C, H, W]
+            w = weights[:, e_idx:e_idx + 1]   # [B, 1, H, W]
+            out = out + expert(x) * w
         out = self.out_norm(self.out_proj(out))
 
         # Residual (block-level shortcut)
@@ -695,6 +708,9 @@ class C2fMoT(nn.Module):
             eff_heads -= 1
         eff_heads = max(1, eff_heads)
 
+        # Alternate window shift by block index (Swin-style): even blocks use
+        # regular windows, odd blocks use shifted windows. Fixed at build time
+        # → deterministic inference and trace-stable export.
         self.m = nn.ModuleList(
             MoTBlock(
                 dim=dim,
@@ -705,10 +721,14 @@ class C2fMoT(nn.Module):
                 mlp_ratio=mlp_ratio,
                 temperature=temperature,
                 balance_loss_coeff=balance_loss_coeff,
+                window_shift=bool(i % 2),
             )
-            for _ in range(n)
+            for i in range(n)
         )
-        self.last_aux_loss: torch.Tensor = torch.zeros(1)
+        # Lazily set on first forward (always overwritten there). Kept as a
+        # device-agnostic scalar so a pre-forward read never injects a stale,
+        # wrong-device tensor; requires_grad=False ⇒ filtered by the collector.
+        self.last_aux_loss: torch.Tensor = torch.zeros((), requires_grad=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         y = list(self.cv1(x).chunk(2, dim=1))
