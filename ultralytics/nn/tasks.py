@@ -100,6 +100,7 @@ from ultralytics.nn.modules import (
     A2C2fMoE,
     ABlockMoE,
     C2fMoA,
+    C2fMoT,
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, LOGGER, YAML, colorstr, emojis
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
@@ -1701,6 +1702,7 @@ def parse_model(d, ch, verbose=True):
             A2C2fMoE,
             ABlockMoE,
             C2fMoA,
+            C2fMoT,
         }
     )
     repeat_modules = frozenset(  # modules with 'repeat' arguments
