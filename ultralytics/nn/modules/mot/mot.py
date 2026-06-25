@@ -1,0 +1,748 @@
+# 🐧 YOLO-Master MoT Module — Mixture of Transformers
+# Copyright (C) 2026 Tencent. All rights reserved.
+"""Mixture-of-Transformers (MoT) for YOLO-Master.
+
+Design philosophy
+─────────────────
+MoA routes tokens to *different attention heads*;
+MoE routes tokens to *different FFN experts*;
+**MoT routes tokens to *different complete Transformer architectures*.**
+
+Each "Transformer Expert" is a full Transformer block (Attn + FFN) with a
+distinct inductive bias for a specific aspect of visual feature processing:
+
+  Expert 0 — LocalConvTransformer   (Conv-Attn, DW-biased, best for texture/edges)
+  Expert 1 — WindowTransformer      (Swin-style window partition, shifted, best for medium objects)
+  Expert 2 — DeformableTransformer  (sparse deformable sampling, best for irregular/occluded objects)
+
+A content-aware router (lightweight 1×1 MLP) assigns each spatial token a
+*sparse Top-K weight* (default K=1 hard dispatch or K=2 soft) over these
+experts.  Unlike MoA's fully soft routing, MoT uses hard Top-K dispatch
+(à la standard MoE) because each expert has a fundamentally different
+computational graph.
+
+Key properties
+──────────────
+- CNN-native I/O: input [B,C,H,W] → output [B,C,H,W]
+- Flash-Attention compatible (PyTorch ≥ 2.0)
+- Load-balancing aux loss (z-loss style, optional) for stable expert utilization
+- Drop-in for C3k2 / A2C2f via C2fMoT wrapper
+- Designed to *complement* MoA (different routing granularity) and MoE (different expert type)
+"""
+
+from __future__ import annotations
+
+import math
+from typing import List, Optional, Tuple
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+from ultralytics.nn.modules.conv import Conv
+
+# ---------------------------------------------------------------------------
+# Shared utilities
+# ---------------------------------------------------------------------------
+
+def _safe_groups(channels: int, desired: int) -> int:
+    for g in range(min(desired, channels), 0, -1):
+        if channels % g == 0:
+            return g
+    return 1
+
+
+def _sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
+          scale: float, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+    """Scaled dot-product attention; uses Flash-Attention when available."""
+    if hasattr(F, "scaled_dot_product_attention"):
+        return F.scaled_dot_product_attention(q, k, v, attn_mask=mask, scale=scale)
+    attn = (q @ k.transpose(-2, -1)) * scale
+    if mask is not None:
+        attn = attn + mask
+    return attn.softmax(dim=-1) @ v
+
+
+# ---------------------------------------------------------------------------
+# Expert 0: LocalConvTransformer
+# ─────────────────────────────
+# Attention with depthwise-conv-biased QKV + DW-7×7 positional encoding.
+# Best inductive bias for fine-grained texture, edges, and small-object detail.
+# Complexity: O(N²) — suitable for P4/P5 where spatial resolution is small.
+# ---------------------------------------------------------------------------
+
+class _LocalConvTransformerExpert(nn.Module):
+    """Transformer expert with convolutional inductive bias.
+
+    Uses depthwise-conv pre-processing for QKV to bias attention toward
+    spatially-local patterns.  The FFN uses a gated linear unit (GLU)
+    variant for stronger non-linearity.
+    """
+
+    def __init__(self, dim: int, num_heads: int, mlp_ratio: float = 2.0,
+                 dropout: float = 0.0):
+        super().__init__()
+        assert dim % num_heads == 0
+        self.num_heads = num_heads
+        self.head_dim = dim // num_heads
+        self.scale = self.head_dim ** -0.5
+
+        # DW-3×3 pre-mixing before QKV projection
+        self.dw_mix = nn.Conv2d(dim, dim, 3, padding=1, groups=dim, bias=False)
+        self.qkv = nn.Conv2d(dim, dim * 3, 1, bias=False)
+        self.pe = nn.Conv2d(dim, dim, 7, padding=3, groups=dim, bias=False)
+        self.proj = nn.Conv2d(dim, dim, 1, bias=False)
+
+        self.norm1 = nn.GroupNorm(_safe_groups(dim, 8), dim)
+        self.norm2 = nn.GroupNorm(_safe_groups(dim, 8), dim)
+        self.drop = nn.Dropout2d(dropout)
+
+        # Gated FFN: gate × value pattern (SwiGLU-inspired, 2-conv)
+        ffn_hidden = int(dim * mlp_ratio)
+        # split into gate + value projections
+        self.ffn_gate = nn.Sequential(Conv(dim, ffn_hidden, 1), nn.Sigmoid())
+        self.ffn_val  = Conv(dim, ffn_hidden, 1)
+        self.ffn_out  = Conv(ffn_hidden, dim, 1, act=False)
+
+        self.ls1 = nn.Parameter(torch.ones(dim, 1, 1) * 0.1)
+        self.ls2 = nn.Parameter(torch.ones(dim, 1, 1) * 0.1)
+        self._init_weights()
+
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.trunc_normal_(m.weight, std=0.02)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        B, C, H, W = x.shape
+        N = H * W
+        nh, hd = self.num_heads, self.head_dim
+
+        # ── Attention ────────────────────────────────────────────────────
+        xn = self.norm1(x)
+        qkv = self.qkv(self.dw_mix(xn)).flatten(2)       # [B, 3C, N]
+        q, k, v = qkv.split(C, dim=1)
+
+        def to_heads(t):
+            return t.view(B, nh, hd, N).transpose(2, 3)  # [B,nh,N,hd]
+
+        # Positional encoding on v
+        v_2d = v.reshape(B, C, H, W)
+        v_2d = v_2d + self.pe(v_2d)
+        v = v_2d.flatten(2)
+
+        out = _sdpa(to_heads(q), to_heads(k), to_heads(v), self.scale)
+        out = out.transpose(2, 3).reshape(B, C, H, W)
+        x = x + self.ls1 * self.drop(self.proj(out))
+
+        # ── Gated FFN ─────────────────────────────────────────────────────
+        xn = self.norm2(x)
+        ffn = self.ffn_gate(xn) * self.ffn_val(xn)
+        x = x + self.ls2 * self.ffn_out(ffn)
+        return x
+
+
+# ---------------------------------------------------------------------------
+# Expert 1: WindowTransformer (Swin-style)
+# ─────────────────────────────────────────
+# Partitions the feature map into non-overlapping windows of size win×win,
+# applies self-attention within each window, then applies shifted-window
+# attention in the next call (alternating via a stride buffer).
+# Best for medium objects with regular structure.
+# Complexity: O(N · win²) — scales linearly with image size.
+# ---------------------------------------------------------------------------
+
+class _WindowTransformerExpert(nn.Module):
+    """Swin-style window-partitioned Transformer expert.
+
+    Alternates between regular and shifted window attention via a running
+    step counter (no need to pair two layers — the shift is toggled each
+    forward call, providing both receptive fields over training steps).
+    """
+
+    def __init__(self, dim: int, num_heads: int, window_size: int = 7,
+                 mlp_ratio: float = 2.0, dropout: float = 0.0):
+        super().__init__()
+        assert dim % num_heads == 0
+        self.num_heads = num_heads
+        self.head_dim = dim // num_heads
+        self.scale = self.head_dim ** -0.5
+        self.win = window_size
+
+        self.qkv = nn.Linear(dim, dim * 3, bias=False)
+        self.proj = nn.Linear(dim, dim, bias=False)
+        self.norm1 = nn.LayerNorm(dim)
+        self.norm2 = nn.LayerNorm(dim)
+
+        ffn_hidden = int(dim * mlp_ratio)
+        self.ffn = nn.Sequential(
+            nn.Linear(dim, ffn_hidden),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(ffn_hidden, dim),
+        )
+        self.drop = nn.Dropout(dropout)
+        self.ls1 = nn.Parameter(torch.ones(dim) * 0.1)
+        self.ls2 = nn.Parameter(torch.ones(dim) * 0.1)
+
+        # running step toggle for shift
+        self.register_buffer("_step", torch.zeros(1, dtype=torch.long), persistent=False)
+        self._init_weights()
+
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.trunc_normal_(m.weight, std=0.02)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+    @staticmethod
+    def _pad_to_window(x: torch.Tensor, win: int) -> Tuple[torch.Tensor, int, int]:
+        """Pad spatial dims to be divisible by win."""
+        B, H, W, C = x.shape
+        pad_h = (win - H % win) % win
+        pad_w = (win - W % win) % win
+        if pad_h > 0 or pad_w > 0:
+            x = F.pad(x, (0, 0, 0, pad_w, 0, pad_h))
+        return x, pad_h, pad_w
+
+    @staticmethod
+    def _window_partition(x: torch.Tensor, win: int) -> torch.Tensor:
+        """[B, H, W, C] → [B*nH*nW, win*win, C]"""
+        B, H, W, C = x.shape
+        x = x.view(B, H // win, win, W // win, win, C)
+        return x.permute(0, 1, 3, 2, 4, 5).contiguous().view(-1, win * win, C)
+
+    @staticmethod
+    def _window_reverse(windows: torch.Tensor, win: int, H: int, W: int) -> torch.Tensor:
+        """[B*nH*nW, win*win, C] → [B, H, W, C]"""
+        B = int(windows.shape[0] / (H * W / win / win))
+        C = windows.shape[2]
+        x = windows.view(B, H // win, W // win, win, win, C)
+        return x.permute(0, 1, 3, 2, 4, 5).contiguous().view(B, H, W, C)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        B, C, H_orig, W_orig = x.shape
+        win = self.win
+
+        # NCHW → NHWC
+        x = x.permute(0, 2, 3, 1)  # [B, H, W, C]
+
+        # Pad
+        x, pad_h, pad_w = self._pad_to_window(x, win)
+        H, W = x.shape[1], x.shape[2]
+
+        # Cyclic shift (alternate each forward call)
+        shift = (win // 2) if (self._step.item() % 2 == 1) else 0
+        self._step += 1
+        if shift > 0:
+            x = torch.roll(x, shifts=(-shift, -shift), dims=(1, 2))
+
+        # ── Window Attention ─────────────────────────────────────────────
+        xn = self.norm1(x)
+        windows = self._window_partition(xn, win)        # [Bw, win², C]
+        Bw = windows.shape[0]
+        nh, hd = self.num_heads, self.head_dim
+
+        qkv = self.qkv(windows).reshape(Bw, win * win, 3, nh, hd).permute(2, 0, 3, 1, 4)
+        q, k, v = qkv.unbind(0)                         # each [Bw, nh, win², hd]
+
+        attn_out = _sdpa(q, k, v, self.scale)            # [Bw, nh, win², hd]
+        attn_out = attn_out.transpose(1, 2).reshape(Bw, win * win, C)
+        attn_out = self.drop(self.proj(attn_out))
+
+        # Reverse window partition
+        attn_out = self._window_reverse(attn_out, win, H, W)   # [B, H, W, C]
+
+        # Reverse shift
+        if shift > 0:
+            attn_out = torch.roll(attn_out, shifts=(shift, shift), dims=(1, 2))
+
+        # Remove padding
+        attn_out = attn_out[:, :H_orig, :W_orig, :]
+
+        x = x[:, :H_orig, :W_orig, :]   # also trim x
+        x = x + self.ls1 * attn_out
+
+        # ── FFN ──────────────────────────────────────────────────────────
+        x = x + self.ls2 * self.ffn(self.norm2(x))
+
+        return x.permute(0, 3, 1, 2).contiguous()   # NHWC → NCHW
+
+
+# ---------------------------------------------------------------------------
+# Expert 2: DeformableTransformerExpert
+# ──────────────────────────────────────
+# Sparse deformable attention: each query samples K learnable offset points
+# instead of attending to all positions. Best for irregular shapes and
+# occluded objects where the optimal attention region is content-dependent.
+# Complexity: O(N · K) where K is fixed (default 4) — very efficient.
+# ---------------------------------------------------------------------------
+
+class _DeformableTransformerExpert(nn.Module):
+    """Deformable-attention Transformer expert.
+
+    Each query predicts `n_points` sampling offsets and attention weights,
+    then aggregates sampled features.  This is a simplified single-scale
+    variant of MS-Deformable-DETR, adapted for CNN feature maps.
+
+    Reference:
+        Zhu et al., "Deformable DETR" (ICLR 2021)
+    """
+
+    def __init__(self, dim: int, num_heads: int, n_points: int = 4,
+                 mlp_ratio: float = 2.0, dropout: float = 0.0):
+        super().__init__()
+        assert dim % num_heads == 0
+        self.num_heads = num_heads
+        self.head_dim = dim // num_heads
+        self.n_points = n_points
+
+        # Query projection
+        self.q_proj = nn.Linear(dim, dim, bias=False)
+        # Value projection
+        self.v_proj = nn.Linear(dim, dim, bias=False)
+        # Sampling offsets: [nh, n_points, 2]
+        self.offset_proj = nn.Linear(dim, num_heads * n_points * 2, bias=True)
+        # Attention weights over sampled points
+        self.attn_proj = nn.Linear(dim, num_heads * n_points, bias=True)
+        self.out_proj = nn.Linear(dim, dim, bias=False)
+
+        self.norm1 = nn.LayerNorm(dim)
+        self.norm2 = nn.LayerNorm(dim)
+        ffn_hidden = int(dim * mlp_ratio)
+        self.ffn = nn.Sequential(
+            nn.Linear(dim, ffn_hidden), nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(ffn_hidden, dim),
+        )
+        self.drop = nn.Dropout(dropout)
+        self.ls1 = nn.Parameter(torch.ones(dim) * 0.1)
+        self.ls2 = nn.Parameter(torch.ones(dim) * 0.1)
+
+        self._init_weights()
+
+    def _init_weights(self):
+        # Zero-init offsets → initial grid sampling (identity-like)
+        nn.init.zeros_(self.offset_proj.weight)
+        nn.init.zeros_(self.offset_proj.bias)
+        # Uniform attention weights initially
+        nn.init.zeros_(self.attn_proj.weight)
+        nn.init.zeros_(self.attn_proj.bias)
+        for m in [self.q_proj, self.v_proj, self.out_proj]:
+            nn.init.trunc_normal_(m.weight, std=0.02)
+        for m in self.ffn:
+            if isinstance(m, nn.Linear):
+                nn.init.trunc_normal_(m.weight, std=0.02)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+    def _deform_attn(self, q: torch.Tensor, value: torch.Tensor,
+                     H: int, W: int) -> torch.Tensor:
+        """Core deformable attention.
+
+        Args:
+            q     : [B, N, C]    query tokens
+            value : [B, H*W, C]  value feature map (flattened)
+            H, W  : feature map spatial dims
+
+        Returns:
+            out   : [B, N, C]
+        """
+        B, N, C = q.shape
+        nh, np_, hd = self.num_heads, self.n_points, self.head_dim
+
+        # Predict sampling offsets & attention weights from query
+        offsets = self.offset_proj(q)                         # [B, N, nh*np*2]
+        offsets = offsets.reshape(B, N, nh, np_, 2)           # [B, N, nh, np, 2]
+        offsets = offsets.tanh()                               # clamp to [-1,1]
+
+        attn_w = self.attn_proj(q).reshape(B, N, nh, np_)     # [B, N, nh, np]
+        attn_w = F.softmax(attn_w, dim=-1)                    # normalize over points
+
+        # Build reference grid: each token's own position (normalised to [-1,1])
+        # Token index → (row, col) → (x_norm, y_norm)
+        idx = torch.arange(N, device=q.device)
+        row = (idx // W).float() / max(H - 1, 1) * 2 - 1    # y in [-1,1]
+        col = (idx %  W).float() / max(W - 1, 1) * 2 - 1    # x in [-1,1]
+        ref = torch.stack([col, row], dim=-1)                 # [N, 2]
+        ref = ref[None, :, None, None, :].expand(B, -1, nh, np_, -1)  # [B,N,nh,np,2]
+
+        # Sampling locations = reference + learned offsets (scaled by 0.5)
+        sample_locs = ref + offsets * 0.5                     # [B, N, nh, np, 2]
+
+        # Value: [B, H*W, C] → reshape for grid_sample [B, C, H, W]
+        v_4d = self.v_proj(value).permute(0, 2, 1).reshape(B, C, H, W)
+
+        # Sample per head: split C into heads
+        v_4d = v_4d.reshape(B * nh, hd, H, W)
+        # sample_locs: [B, N, nh, np, 2] → [B*nh, N, np, 2]
+        locs = sample_locs.permute(0, 2, 1, 3, 4).reshape(B * nh, N, np_, 2)
+
+        # grid_sample expects [B, C, H_out, W_out] query grid
+        # Here H_out=N, W_out=np  → treat N*np as 2D grid
+        # Reshape locs → [B*nh, N, np, 2] already correct for grid_sample
+        sampled = F.grid_sample(
+            v_4d,                                              # [B*nh, hd, H, W]
+            locs,                                              # [B*nh, N, np, 2]
+            mode="bilinear", align_corners=True, padding_mode="zeros"
+        )                                                      # [B*nh, hd, N, np]
+
+        # sampled: [B*nh, hd, N, np] → [B, nh, N, np, hd]
+        sampled = sampled.reshape(B, nh, hd, N, np_).permute(0, 2, 3, 4, 1)  # [B,hd,N,np,nh]
+        # Reorder: [B, N, nh, np, hd]
+        sampled = sampled.permute(0, 2, 4, 3, 1).contiguous()
+
+        # Weighted sum over sampling points: [B, N, nh, hd]
+        out = (attn_w.unsqueeze(-1) * sampled).sum(dim=3)    # [B, N, nh, hd]
+        out = out.reshape(B, N, C)
+        return self.out_proj(out)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        B, C, H, W = x.shape
+        N = H * W
+
+        # NCHW → NLC
+        x_flat = x.flatten(2).transpose(1, 2)  # [B, N, C]
+
+        # ── Deformable Attention ─────────────────────────────────────────
+        q = self.q_proj(self.norm1(x_flat))
+        attn_out = self.drop(self._deform_attn(q, self.norm1(x_flat), H, W))
+        x_flat = x_flat + self.ls1 * attn_out
+
+        # ── FFN ──────────────────────────────────────────────────────────
+        x_flat = x_flat + self.ls2 * self.ffn(self.norm2(x_flat))
+
+        return x_flat.transpose(1, 2).reshape(B, C, H, W)
+
+
+# ---------------------------------------------------------------------------
+# MoT Router
+# ---------------------------------------------------------------------------
+
+class _MoTRouter(nn.Module):
+    """Content-aware router for MoT: assigns each token to Top-K experts.
+
+    Architecture: global average pool → linear → softmax (soft) or
+    top-k + renormalize (hard).
+
+    For spatial routing (token-level), uses a lightweight 1×1 conv.
+    For image-level routing (same assignment for all tokens), uses GAP.
+    Default: token-level soft routing for stability; hard routing optional.
+
+    Args:
+        dim (int): Input channels.
+        num_experts (int): Number of transformer experts (default 3).
+        top_k (int): Number of active experts per token (1=hard, 2=soft).
+        use_spatial (bool): Token-level vs. image-level routing.
+        temperature (float): Softmax temperature for soft routing.
+    """
+
+    def __init__(self, dim: int, num_experts: int = 3, top_k: int = 2,
+                 use_spatial: bool = True, temperature: float = 1.0,
+                 exploration_eps: float = 0.02):
+        super().__init__()
+        self.num_experts = num_experts
+        self.top_k = top_k
+        self.use_spatial = use_spatial
+        self.temperature = max(temperature, 0.1)
+        self.exploration_eps = exploration_eps
+
+        hidden = max(dim // 8, num_experts * 4)
+        if use_spatial:
+            self.router = nn.Sequential(
+                nn.Conv2d(dim, hidden, 1, bias=False),
+                nn.GroupNorm(_safe_groups(hidden, 4), hidden),
+                nn.SiLU(inplace=True),
+                nn.Conv2d(hidden, num_experts, 1, bias=True),
+            )
+        else:
+            self.router = nn.Sequential(
+                nn.AdaptiveAvgPool2d(1),
+                nn.Flatten(),
+                nn.Linear(dim, hidden, bias=False),
+                nn.SiLU(inplace=True),
+                nn.Linear(hidden, num_experts, bias=True),
+            )
+        # init: near-uniform
+        nn.init.zeros_(self.router[-1].weight)
+        nn.init.zeros_(self.router[-1].bias)
+
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Returns:
+            weights : [B, num_experts, H, W] or [B, num_experts, 1, 1]  (soft, sum-to-1)
+            indices : [B, top_k, H, W] or [B, top_k, 1, 1]  (top-k expert ids)
+        """
+        logits = self.router(x)      # [B, E, H, W] or [B, E, 1, 1] after GAP
+        if not self.use_spatial:
+            logits = logits.unsqueeze(-1).unsqueeze(-1)   # [B, E, 1, 1]
+
+        # Soft weights (always computed for gradient flow)
+        weights = F.softmax(logits / self.temperature, dim=1)   # [B, E, H, W]
+        dense_weights = weights
+
+        # Top-K mask
+        if self.top_k < self.num_experts:
+            # get top-k indices [B, K, H, W]
+            topk_vals, topk_idx = weights.topk(self.top_k, dim=1)
+            # renormalize selected weights
+            topk_weights = topk_vals / topk_vals.sum(dim=1, keepdim=True).clamp(min=1e-6)
+            # scatter back to [B, E, H, W] sparse
+            sparse_w = torch.zeros_like(weights)
+            sparse_w.scatter_(1, topk_idx, topk_weights)
+            weights = sparse_w
+            if self.training and self.exploration_eps > 0:
+                eps = min(max(self.exploration_eps, 0.0), 0.2)
+                weights = weights * (1.0 - eps) + dense_weights * eps
+            indices = topk_idx
+        else:
+            indices = torch.arange(self.num_experts, device=x.device).view(
+                1, -1, 1, 1).expand(x.shape[0], -1, x.shape[2], x.shape[3])
+
+        return weights, indices
+
+    def router_z_loss(self, x: torch.Tensor) -> torch.Tensor:
+        """Z-loss for load balance: encourages router logits to be small."""
+        logits = self.router(x)
+        if not self.use_spatial:
+            logits = logits.unsqueeze(-1).unsqueeze(-1)
+        log_z = torch.logsumexp(logits, dim=1)   # [B, H, W]
+        return (log_z ** 2).mean()
+
+
+# ---------------------------------------------------------------------------
+# MoTBlock — core building block
+# ---------------------------------------------------------------------------
+
+class MoTBlock(nn.Module):
+    """Mixture-of-Transformers Block.
+
+    Routes each spatial token (or image) across K of E complete Transformer
+    experts, then softly combines their outputs via learned routing weights.
+
+    Experts:
+      0: LocalConvTransformer  — Conv-biased attention + Gated FFN
+      1: WindowTransformer     — Swin-style shifted window attention + FFN
+      2: DeformableTransformer — Deformable sparse sampling attention + FFN
+
+    Args:
+        dim (int): Channel dimension.
+        num_heads (int): Attention heads per expert.
+        top_k (int): Active experts per forward (1 or 2 recommended).
+        window_size (int): Window size for WindowTransformer expert.
+        n_points (int): Deformable sampling points per head.
+        mlp_ratio (float): FFN expansion ratio.
+        temperature (float): Router softmax temperature.
+        use_spatial_router (bool): Token-level vs image-level routing.
+        balance_loss_coeff (float): Weight of router z-loss (0 to disable).
+        dropout (float): Dropout for attention/FFN.
+        exploration_eps (float): Training-only dense routing floor that keeps all experts trainable.
+
+    Shape:
+        Input:  [B, dim, H, W]
+        Output: [B, dim, H, W]
+    """
+
+    NUM_EXPERTS: int = 3
+
+    def __init__(
+        self,
+        dim: int,
+        num_heads: int = 8,
+        top_k: int = 2,
+        window_size: int = 7,
+        n_points: int = 4,
+        mlp_ratio: float = 2.0,
+        temperature: float = 1.0,
+        use_spatial_router: bool = True,
+        balance_loss_coeff: float = 0.01,
+        dropout: float = 0.0,
+        exploration_eps: float = 0.02,
+    ):
+        super().__init__()
+        assert 1 <= top_k <= self.NUM_EXPERTS
+        self.top_k = top_k
+        self.balance_loss_coeff = balance_loss_coeff
+
+        # Each expert uses the *full* dim with its own num_heads.
+        # Find largest num_heads ≤ requested that divides dim.
+        expert_heads = num_heads
+        while dim % expert_heads != 0 and expert_heads > 1:
+            expert_heads -= 1
+        expert_heads = max(1, expert_heads)
+
+        # Three Transformer experts
+        self.experts = nn.ModuleList([
+            _LocalConvTransformerExpert(dim, expert_heads, mlp_ratio, dropout),
+            _WindowTransformerExpert(dim, expert_heads, window_size, mlp_ratio, dropout),
+            _DeformableTransformerExpert(dim, expert_heads, n_points, mlp_ratio, dropout),
+        ])
+
+        # Router
+        self.router = _MoTRouter(
+            dim, self.NUM_EXPERTS, top_k,
+            use_spatial=use_spatial_router,
+            temperature=temperature,
+            exploration_eps=exploration_eps,
+        )
+
+        # Final output norm & projection
+        self.out_norm = nn.GroupNorm(_safe_groups(dim, 8), dim)
+        self.out_proj = nn.Conv2d(dim, dim, 1, bias=False)
+
+        self._init_weights()
+
+    def _init_weights(self):
+        nn.init.trunc_normal_(self.out_proj.weight, std=0.02)
+
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Returns:
+            out           : [B, C, H, W]
+            aux_loss      : scalar (router z-loss, 0 if balance_loss_coeff==0)
+        """
+        # ── Routing weights ──────────────────────────────────────────────
+        weights, _ = self.router(x)   # [B, E, H, W]
+
+        # ── Expert computation ───────────────────────────────────────────
+        # Compute all active experts and blend by routing weight.
+        # For soft Top-K routing, all experts forward but sparse weights
+        # zero-out inactive experts in the blend — gradient only flows
+        # through active experts (via weight sparsity).
+        expert_outs = []
+        for e_idx, expert in enumerate(self.experts):
+            w = weights[:, e_idx:e_idx+1]   # [B, 1, H, W]
+            # Skip computation if max weight in batch is ~0 (hard dispatch speedup)
+            if w.max().item() < 1e-4:
+                expert_outs.append(torch.zeros_like(x))
+            else:
+                expert_outs.append(expert(x) * w)
+
+        # Blend
+        out = sum(expert_outs)                             # [B, C, H, W]
+        out = self.out_norm(self.out_proj(out))
+
+        # Residual (block-level shortcut)
+        out = out + x
+
+        # ── Auxiliary loss ───────────────────────────────────────────────
+        if self.balance_loss_coeff > 0 and self.training:
+            aux = self.router.router_z_loss(x) * self.balance_loss_coeff
+        else:
+            aux = x.new_zeros(())
+
+        return out, aux
+
+
+# ---------------------------------------------------------------------------
+# C2fMoT — C2f-style wrapper for backbone/neck (YAML-compatible)
+# ---------------------------------------------------------------------------
+
+class C2fMoT(nn.Module):
+    """C2f-style feature-flow wrapper around MoTBlock.
+
+    Provides the same [c1, c2, n, ...] interface as C3k2 / A2C2f / C2fMoA,
+    enabling direct YAML substitution.
+
+    The aux_loss from each MoTBlock is accumulated and accessible via
+    ``self.last_aux_loss`` after each forward call.
+
+    Args:
+        c1 (int): Input channels.
+        c2 (int): Output channels.
+        n (int): Number of stacked MoTBlock layers.
+        num_heads (int): Attention heads per expert.
+        top_k (int): Active experts per token (1 or 2).
+        window_size (int): Window size for WindowTransformer.
+        n_points (int): Deformable sampling points.
+        mlp_ratio (float): FFN expansion ratio.
+        temperature (float): Router temperature.
+        balance_loss_coeff (float): Router balance loss weight.
+        e (float): Internal channel expansion ratio.
+
+    Shape:
+        Input:  [B, c1, H, W]
+        Output: [B, c2, H, W]
+    """
+
+    def __init__(
+        self,
+        c1: int,
+        c2: int,
+        n: int = 1,
+        num_heads: int = 6,
+        top_k: int = 2,
+        window_size: int = 7,
+        n_points: int = 4,
+        mlp_ratio: float = 2.0,
+        temperature: float = 1.0,
+        balance_loss_coeff: float = 0.01,
+        e: float = 0.5,
+    ):
+        super().__init__()
+        self.c = int(c2 * e)
+        self.cv1 = Conv(c1, 2 * self.c, 1)
+        self.cv2 = Conv((2 + n) * self.c, c2, 1)
+
+        # Clamp num_heads to valid range
+        dim = self.c
+        # Find largest num_heads ≤ requested that divides dim and gives head_dim ≥ 8
+        eff_heads = num_heads
+        while eff_heads > 1 and (dim % eff_heads != 0 or dim // eff_heads < 8):
+            eff_heads -= 1
+        eff_heads = max(1, eff_heads)
+
+        self.m = nn.ModuleList(
+            MoTBlock(
+                dim=dim,
+                num_heads=eff_heads,
+                top_k=top_k,
+                window_size=window_size,
+                n_points=n_points,
+                mlp_ratio=mlp_ratio,
+                temperature=temperature,
+                balance_loss_coeff=balance_loss_coeff,
+            )
+            for _ in range(n)
+        )
+        self.last_aux_loss: torch.Tensor = torch.zeros(1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        y = list(self.cv1(x).chunk(2, dim=1))
+        aux_total = x.new_zeros(())
+        for m in self.m:
+            out, aux = m(y[-1])
+            y.append(out)
+            aux_total = aux_total + aux
+        self.last_aux_loss = aux_total
+        return self.cv2(torch.cat(y, dim=1))
+
+
+# ---------------------------------------------------------------------------
+# Utility: collect aux losses from all MoT modules
+# ---------------------------------------------------------------------------
+
+def collect_mot_aux_loss(model: nn.Module) -> torch.Tensor:
+    """Sum all MoT router aux losses in the model.
+
+    Call in the training loss function:
+        loss = det_loss + collect_mot_aux_loss(model)
+    """
+    total = None
+    for m in model.modules():
+        if isinstance(m, C2fMoT):
+            l = m.last_aux_loss
+            if isinstance(l, torch.Tensor) and l.requires_grad:
+                total = l if total is None else total + l
+    return total if total is not None else torch.zeros(1)
+
+
+def anneal_mot_temperature(model: nn.Module, factor: float = 0.97,
+                           min_temp: float = 0.3) -> None:
+    """Multiplicatively anneal MoT router temperatures each epoch."""
+    for m in model.modules():
+        if isinstance(m, _MoTRouter):
+            m.temperature = max(m.temperature * factor, min_temp)

@@ -167,12 +167,14 @@ class MoELoss(nn.Module):
         importance = self._get_global_mean(router_probs)
 
         if self.use_soft_balancing:
-            # === Soft Balancing (Differentiable, ST-MoE / Mixtral style) ===
-            # importance = mean(router_probs) keeps the gradient to the router.
-            # usage = per-expert soft token-assignment share (detached), so the
-            # balance term penalizes UNEVEN distribution rather than degenerating
-            # to an L2 norm on importance (which would push importance -> 0).
-            usage = (router_probs / router_probs.sum(dim=0, keepdim=True).clamp_min(1e-6)).mean(dim=0).detach()
+            # === Soft Balancing (Differentiable, GShard / Switch style) ===
+            # usage = mean(router_probs) over tokens (detached). Standard GShard
+            # soft form N*sum(importance*usage); grad flows only via importance,
+            # giving a true load-balancing signal to the router.
+            # NB: do NOT column-normalize usage across the batch — that forces
+            # every usage_e == 1/N (a constant), making the loss N*sum(imp/N)==1
+            # with zero gradient (the previous bug).
+            usage = importance.detach()
         else:
             # === Hard Balancing (GShard / Switch Style) ===
             # Usage is defined by the discrete selection count.

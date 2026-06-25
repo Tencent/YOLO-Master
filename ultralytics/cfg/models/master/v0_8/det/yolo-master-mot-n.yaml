@@ -1,0 +1,45 @@
+# YOLO-Master v0.8-MoT 🚀 AGPL-3.0 License
+# Backbone: LowRankHybridAdaptiveGateMoE (v0.7) + C2fMoT in neck
+# C2fMoT 替换 Neck 高层 C3k2，引入三专家 Transformer 路由
+
+nc: 80
+scales:
+  n: [0.50, 0.25, 1024]
+
+backbone:
+  - [-1, 1, Conv, [64, 3, 2]]
+  - [-1, 1, Conv, [128, 3, 2]]
+  - [-1, 2, C3k2, [256, False, 0.25]]
+  - [-1, 1, Conv, [256, 3, 2]]
+  - [-1, 2, C3k2, [512, False, 0.25]]
+  - [-1, 1, LowRankHybridAdaptiveGateMoE, [512, 4, 2, 0.5]]
+  - [-1, 1, Conv, [512, 3, 2]]
+  - [-1, 4, A2C2f, [512, True, 4]]
+  - [-1, 1, LowRankHybridAdaptiveGateMoE, [512, 8, 2, 0.5]]
+  - [-1, 1, Conv, [1024, 3, 2]]
+  - [-1, 4, A2C2f, [1024, True, 1]]
+  - [-1, 1, LowRankHybridAdaptiveGateMoE, [1024, 16, 2, 0.5]]
+
+head:
+  # P5 → P4
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
+  - [[-1, 8], 1, Concat, [1]]
+  # C2fMoT: [c2, n, num_heads, top_k, window_size, n_points, mlp_ratio, temp, balance_coeff, e]
+  - [-1, 2, C2fMoT, [512, 2, 8, 2, 7, 4, 2.0, 1.0, 0.01, 0.5]]
+
+  # P4 → P3
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
+  - [[-1, 5], 1, Concat, [1]]
+  - [-1, 2, C3k2, [256, True]]  # P3 保留轻量 C3k2
+
+  # P3 → P4 bottom-up
+  - [-1, 1, Conv, [256, 3, 2]]
+  - [[-1, 14], 1, Concat, [1]]
+  - [-1, 2, C2fMoT, [512, 2, 8, 2, 7, 4, 2.0, 0.8, 0.01, 0.5]]
+
+  # P4 → P5 bottom-up
+  - [-1, 1, Conv, [512, 3, 2]]
+  - [[-1, 11], 1, Concat, [1]]
+  - [-1, 2, C2fMoT, [512, 2, 8, 2, 7, 4, 2.0, 0.8, 0.01, 0.5]]
+
+  - [[17, 20, 23], 1, Detect, [nc]]
