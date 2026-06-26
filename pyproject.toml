@@ -106,7 +106,7 @@ solutions = [
     "flask>=3.0.1",  # for similarity search solution
 ]
 lora = [
-    "peft>=0.11.0",
+    "peft>=0.18.0,<0.19.0",
 ]
 logging = [
     "wandb", # https://docs.ultralytics.com/integrations/weights-biases/
