@@ -24,6 +24,7 @@ from .api import (
     _fast_parse_int_list,
     _fast_parse_str_list,
     _normalize_lora_init,
+    build_lora_target_audit,
     resolve_effective_lora_request,
 )
 
@@ -609,6 +610,14 @@ def apply_manual_lora(model: nn.Module, config: "LoRAConfig", include_head: bool
     model.lora_include_head = include_head
     model.lora_freeze_bn = bool(getattr(config, "freeze_bn", False))
     model.lora_target_modules = sorted(_collect_fallback_adapter_state(model)["modules"])
+    model.lora_target_audit = build_lora_target_audit(
+        valid_targets=model.lora_target_modules,
+        selected_targets=model.lora_target_modules,
+        requested_targets=getattr(config, "target_modules", None),
+        exclude_modules=getattr(config, "exclude_modules", None),
+        peft_type="lora",
+        rank=getattr(config, "r", None),
+    )
     model.lora_runtime_metadata = resolve_effective_lora_request(
         requested_backend=config.backend,
         effective_backend="fallback",
@@ -619,6 +628,7 @@ def apply_manual_lora(model: nn.Module, config: "LoRAConfig", include_head: bool
         include_head=include_head,
         freeze_bn=bool(getattr(config, "freeze_bn", False)),
         target_modules=model.lora_target_modules,
+        target_audit=model.lora_target_audit,
     )
 
     _unfreeze_detection_head(model)
@@ -735,6 +745,14 @@ def _load_fallback_adapter_state(model: nn.Module, path: Path, payload: Dict[str
     model.lora_include_head = payload.get("include_head", False)
     model.lora_freeze_bn = payload.get("freeze_bn", False)
     model.lora_target_modules = payload.get("target_modules", sorted(module_configs))
+    model.lora_target_audit = payload.get(
+        "target_audit",
+        build_lora_target_audit(
+            valid_targets=model.lora_target_modules,
+            selected_targets=model.lora_target_modules,
+            peft_type=model.lora_variant,
+        ),
+    )
     model.lora_runtime_metadata = payload.get("runtime_metadata", {})
     return model
 
@@ -793,6 +811,7 @@ def _clear_lora_runtime_state(model: "DetectionModel") -> None:
         "lora_include_head",
         "lora_freeze_bn",
         "lora_target_modules",
+        "lora_target_audit",
         "lora_runtime_metadata",
         "lora_original_class",
         "use_gradient_checkpointing",

@@ -46,6 +46,7 @@ def save_lora_adapters(model: "DetectionModel", path: Union[str, Path]) -> bool:
                 "freeze_bn": bool(getattr(model, "lora_freeze_bn", False)),
                 "include_head": bool(getattr(model, "lora_include_head", False)),
                 "target_modules": list(getattr(model, "lora_target_modules", sorted(fallback_state["modules"]))),
+                "target_audit": getattr(model, "lora_target_audit", {}),
                 "runtime_metadata": getattr(model, "lora_runtime_metadata", {}),
             }
             # P0 FIX: write fallback metadata to a dedicated filename so it does
@@ -75,6 +76,7 @@ def save_lora_adapters(model: "DetectionModel", path: Union[str, Path]) -> bool:
             "freeze_bn": bool(getattr(model, "lora_freeze_bn", False)),
             "include_head": bool(getattr(model, "lora_include_head", False)),
             "target_modules": list(getattr(model, "lora_target_modules", [])),
+            "target_audit": getattr(model, "lora_target_audit", {}),
             "runtime_metadata": getattr(model, "lora_runtime_metadata", {}),
         }
         (path / "runtime_metadata.json").write_text(json.dumps(runtime_payload, indent=2, ensure_ascii=False))
@@ -172,7 +174,13 @@ def load_lora_adapters(
         model.lora_include_head = runtime_payload.get("include_head", False)
         model.lora_freeze_bn = runtime_payload.get("freeze_bn", False)
         model.lora_target_modules = runtime_payload.get("target_modules", [])
+        model.lora_target_audit = runtime_payload.get("target_audit", {})
         model.lora_runtime_metadata = runtime_payload.get("runtime_metadata", {})
+        _lora_pkg()._validate_lora_runtime_model(
+            model,
+            expected_targets=model.lora_target_modules or None,
+            context="PEFT load_lora_adapters",
+        )
 
         LOGGER.info(f"[LoRA] 📥 Adapters loaded from {path}")
         if merge:

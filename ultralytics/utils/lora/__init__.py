@@ -17,9 +17,12 @@ from .api import (
     _merge_manual_lora_conv,
     _merge_fallback_modules,
     _unfreeze_detection_head,
+    _validate_lora_runtime_model,
     _wrap_top_level_lora_model,
     apply_lora,
+    build_lora_target_audit,
     get_lora_param_groups,
+    load_lora_compatible_state_dict,
     resolve_adalora_total_step,
     resolve_effective_lora_request,
     select_lora_backend,
@@ -27,6 +30,7 @@ from .api import (
     supports_peft_request,
 )
 from .io import _find_original_model_class, load_lora_adapters, merge_lora_weights, save_lora_adapters
+from .sensitivity import GradientSensitivitySelector, LayerSensitivity, SensitivityReport, select_targets_by_sensitivity
 from .training import LoraTrainingStrategy, get_lora_training_stats, suggest_lora_config_for_dataset
 
 __all__ = [
@@ -38,8 +42,14 @@ __all__ = [
     "LoRADetectionModel",
     "FewShotLoRAConv",
     "ManualLoRAConv",
+    "GradientSensitivitySelector",
+    "LayerSensitivity",
+    "SensitivityReport",
+    "select_targets_by_sensitivity",
     "apply_lora",
+    "build_lora_target_audit",
     "get_lora_param_groups",
+    "load_lora_compatible_state_dict",
     "resolve_adalora_total_step",
     "resolve_effective_lora_request",
     "select_lora_backend",
@@ -61,5 +71,6 @@ __all__ = [
     "_merge_fallback_modules",
     "_merge_manual_lora_conv",
     "_unfreeze_detection_head",
+    "_validate_lora_runtime_model",
     "_wrap_top_level_lora_model",
 ]

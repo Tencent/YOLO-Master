@@ -284,6 +284,168 @@ def resolve_effective_lora_request(**kwargs) -> Dict[str, Any]:
     return dict(kwargs)
 
 
+def build_lora_target_audit(
+    valid_targets: Optional[List[str]] = None,
+    selected_targets: Optional[List[str]] = None,
+    requested_targets: Optional[List[str]] = None,
+    exclude_modules: Optional[List[str]] = None,
+    incompatible_layers: Optional[List[str]] = None,
+    peft_type: str = "lora",
+    rank: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Build a compact, serializable summary of target selection decisions."""
+    valid = sorted(set(valid_targets or []))
+    selected = sorted(set(selected_targets or []))
+    requested = [str(x) for x in (requested_targets or [])]
+    excluded = [str(x) for x in (exclude_modules or [])]
+    incompatible = sorted(set(incompatible_layers or []))
+    filtered_by_user = sorted(set(valid) - set(selected)) if requested else []
+
+    return {
+        "peft_type": str(peft_type),
+        "rank": rank,
+        "valid_count": len(valid),
+        "selected_count": len(selected),
+        "requested_targets": requested,
+        "exclude_count": len(excluded),
+        "incompatible_grouped_conv_count": len(incompatible),
+        "filtered_by_user_count": len(filtered_by_user),
+        "selected_sample": selected[:20],
+        "incompatible_grouped_conv_sample": incompatible[:20],
+        "filtered_by_user_sample": filtered_by_user[:20],
+    }
+
+
+def _log_lora_target_audit(audit: Dict[str, Any]) -> None:
+    """Emit the most important target-selection audit counts."""
+    if not audit:
+        return
+    LOGGER.info(
+        "[LoRA] Target audit: "
+        f"selected={audit.get('selected_count', 0)}/valid={audit.get('valid_count', 0)}, "
+        f"user_filtered={audit.get('filtered_by_user_count', 0)}, "
+        f"grouped_conv_excluded={audit.get('incompatible_grouped_conv_count', 0)}"
+    )
+
+
+def _validate_lora_runtime_model(
+    model: nn.Module,
+    expected_targets: Optional[List[str]] = None,
+    context: str = "LoRA runtime",
+) -> bool:
+    """Validate that an adapted model still satisfies Ultralytics runtime assumptions."""
+    errors = []
+    backend = getattr(model, "lora_backend", None)
+    inner = getattr(model, "model", None)
+
+    if inner is None:
+        errors.append("missing top-level `.model` attribute")
+
+    if backend == "peft" and inner is not None:
+        try:
+            model_len = len(inner)
+            if model_len <= 0:
+                errors.append("PEFT proxy reports an empty model")
+        except Exception as exc:
+            errors.append(f"PEFT proxy does not support len(): {exc}")
+
+        try:
+            _ = inner[0]
+        except Exception as exc:
+            errors.append(f"PEFT proxy does not support index access: {exc}")
+
+        try:
+            _ = list(inner.children())
+        except Exception as exc:
+            errors.append(f"PEFT proxy does not expose children(): {exc}")
+
+    stats = _compute_param_stats(model)
+    if stats.adapter <= 0:
+        errors.append("no adapter parameters were found after wrapping")
+
+    if expected_targets is not None and len(expected_targets) == 0:
+        errors.append("target detection produced zero selected modules")
+
+    if errors:
+        detail = "; ".join(errors)
+        raise RuntimeError(f"{context} sanity check failed: {detail}")
+    return True
+
+
+def load_lora_compatible_state_dict(
+    model: nn.Module,
+    source_state: Dict[str, torch.Tensor],
+    context: str = "LoRA checkpoint",
+) -> Dict[str, int]:
+    """Load matching checkpoint tensors while making adapter mismatches explicit.
+
+    Full-model checkpoints and LoRA checkpoints use different key spaces. During
+    resume we load every tensor whose name and shape match the adapted model, but
+    adapter topology mismatches are treated as hard errors because silently
+    reinitializing a partially matching adapter is almost always a bad training
+    resume.
+    """
+    target_state = model.state_dict()
+    target_keys = set(target_state)
+    source_keys = set(source_state)
+    target_adapter_keys = {k for k in target_keys if _is_adapter_param(k)}
+    source_adapter_keys = {k for k in source_keys if _is_adapter_param(k)}
+
+    compatible = {}
+    shape_mismatch = []
+    for key, value in source_state.items():
+        target_value = target_state.get(key)
+        if target_value is None:
+            continue
+        if hasattr(value, "shape") and hasattr(target_value, "shape") and tuple(value.shape) != tuple(target_value.shape):
+            shape_mismatch.append(key)
+            continue
+        compatible[key] = value
+
+    adapter_shape_mismatch = sorted(k for k in shape_mismatch if _is_adapter_param(k))
+    missing_adapter = sorted(target_adapter_keys - source_adapter_keys)
+    unexpected_adapter = sorted(source_adapter_keys - target_adapter_keys)
+
+    if source_adapter_keys and (adapter_shape_mismatch or missing_adapter or unexpected_adapter):
+        def _sample(items: List[str]) -> str:
+            return ", ".join(items[:5]) + (" ..." if len(items) > 5 else "")
+
+        parts = []
+        if adapter_shape_mismatch:
+            parts.append(f"shape mismatch: {_sample(adapter_shape_mismatch)}")
+        if missing_adapter:
+            parts.append(f"missing in checkpoint: {_sample(missing_adapter)}")
+        if unexpected_adapter:
+            parts.append(f"unexpected in checkpoint: {_sample(unexpected_adapter)}")
+        raise RuntimeError(
+            f"{context} is incompatible with the current LoRA adapter topology "
+            f"({'; '.join(parts)}). Resume with the same lora_type, lora_r, "
+            "lora_target_modules, and safety filters, or start a fresh run."
+        )
+
+    if target_adapter_keys and not source_adapter_keys:
+        LOGGER.warning(
+            f"[LoRA] {context} has no adapter tensors. Base weights will be restored where keys match; "
+            "current adapters remain freshly initialized."
+        )
+
+    missing, unexpected = model.load_state_dict(compatible, strict=False)
+    adapter_loaded = sum(1 for key in compatible if _is_adapter_param(key))
+    LOGGER.info(
+        f"[LoRA] Restored {len(compatible)}/{len(target_state)} compatible tensors from {context} "
+        f"(adapter {adapter_loaded}/{len(target_adapter_keys)})."
+    )
+    if shape_mismatch:
+        LOGGER.debug(f"[LoRA] Skipped {len(shape_mismatch)} non-matching tensors while loading {context}.")
+    return {
+        "loaded": len(compatible),
+        "missing": len(missing),
+        "unexpected": len(unexpected),
+        "adapter_loaded": adapter_loaded,
+        "adapter_total": len(target_adapter_keys),
+    }
+
+
 
 from .config import LoRAConfig, LoRAConfigBuilder
 from .fallback import (
@@ -434,6 +596,13 @@ def apply_lora(
         config = args
     else:
         config = LoRAConfig.from_args(args, **kwargs)
+
+    # Inject the calibration data loader for gradient-sensitivity probing.
+    # Stashed on the config via a private attribute so from_args (which only
+    # reads known dataclass fields) does not swallow it.
+    _sens_loader = kwargs.get("sensitivity_data_loader")
+    if _sens_loader is not None:
+        config._sensitivity_data_loader = _sens_loader
 
     # Few-shot mode: auto-adjust hyperparameters for small datasets
     if config.few_shot_mode:
@@ -608,6 +777,16 @@ def apply_lora(
         "beta2": config.beta2,
         "orth_reg_weight": config.orth_reg_weight,
         "total_step": config.total_step,
+        # Architecture-aware sensitivity selection (opt-in). The data loader is
+        # injected via apply_lora(..., sensitivity_data_loader=loader) and stashed
+        # on the config object so we don't widen create_config's signature.
+        "sensitivity_select": getattr(config, "sensitivity_select", False),
+        "sensitivity_data_loader": getattr(config, "_sensitivity_data_loader", None),
+        "sensitivity_num_batches": getattr(config, "sensitivity_num_batches", 4),
+        "sensitivity_top_ratio": getattr(config, "sensitivity_top_ratio", 0.5),
+        "sensitivity_beta": getattr(config, "sensitivity_beta", 1.0),
+        "sensitivity_max_layers": getattr(config, "sensitivity_max_layers", None),
+        "sensitivity_keep_risky": getattr(config, "sensitivity_keep_risky", False),
     }
 
     # Identify incompatible layers to explicitly exclude
@@ -661,7 +840,14 @@ def apply_lora(
         detect_params = builder_params.copy()
         if "target_modules" in detect_params:
             del detect_params["target_modules"]
-            
+        # Sensitivity keys are consumed by create_config, not auto_detect_targets.
+        for _sk in (
+            "sensitivity_select", "sensitivity_data_loader", "sensitivity_num_batches",
+            "sensitivity_top_ratio", "sensitivity_beta", "sensitivity_max_layers",
+            "sensitivity_keep_risky",
+        ):
+            detect_params.pop(_sk, None)
+
         # Run auto-detect to get ALL structurally valid layers
         valid_targets = LoRAConfigBuilder.auto_detect_targets(model.model, **detect_params)
         
@@ -678,6 +864,17 @@ def apply_lora(
             builder_params["target_modules"] = final_targets
         else:
             builder_params["target_modules"] = None
+
+        target_audit = build_lora_target_audit(
+            valid_targets=valid_targets,
+            selected_targets=final_targets,
+            requested_targets=user_targets,
+            exclude_modules=builder_params.get("exclude_modules") or [],
+            incompatible_layers=incompatible_layers,
+            peft_type=config.peft_type,
+            rank=config.r,
+        )
+        _log_lora_target_audit(target_audit)
         
         # DEBUG: Print final targets passed to PEFT
         LOGGER.info(f"[LoRA] Final Targets Passed to PEFT (List Length: {len(final_targets) if final_targets else 0})")
@@ -708,6 +905,7 @@ def apply_lora(
         model.lora_include_head = config.include_head
         model.lora_freeze_bn = bool(getattr(config, "freeze_bn", False))
         model.lora_target_modules = sorted(final_targets)
+        model.lora_target_audit = target_audit
         model.lora_runtime_metadata = resolve_effective_lora_request(
             requested_backend=config.backend,
             effective_backend="peft",
@@ -719,9 +917,12 @@ def apply_lora(
             include_head=config.include_head,
             freeze_bn=bool(getattr(config, "freeze_bn", False)),
             target_modules=model.lora_target_modules,
+            target_audit=target_audit,
             safety_profile="rtdetr_lora" if rtdetr_safety_changes else None,
             safety_overrides=rtdetr_safety_changes or None,
         )
+
+        _validate_lora_runtime_model(model, expected_targets=final_targets, context="PEFT apply_lora")
         
         LOGGER.info(f"[LoRA] ✅ Successfully applied to {len(final_targets)} modules.")
         if final_targets:
@@ -969,6 +1170,8 @@ __all__ = [
     "ManualLoRAConv",
     "apply_lora",
     "get_lora_param_groups",
+    "build_lora_target_audit",
+    "load_lora_compatible_state_dict",
     "resolve_adalora_total_step",
     "resolve_effective_lora_request",
     "select_lora_backend",
@@ -983,6 +1186,7 @@ __all__ = [
     "_apply_rtdetr_lora_safety",
     "_get_mps_memory",
     "_is_adapter_param",
+    "_validate_lora_runtime_model",
     "_merge_manual_lora_conv",
     "_unfreeze_detection_head",
 ]
