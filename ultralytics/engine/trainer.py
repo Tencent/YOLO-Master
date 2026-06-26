@@ -47,6 +47,7 @@ from ultralytics.utils.lora import (
     _unfreeze_detection_head,
     apply_lora,
     get_lora_training_stats,
+    load_lora_compatible_state_dict,
     resolve_adalora_total_step,
     save_lora_adapters,
 )
@@ -113,6 +114,8 @@ def update_args_with_lora_runtime_metadata(args, model) -> None:
         args.lora_safety_profile = metadata["safety_profile"]
     if metadata.get("safety_overrides"):
         args.lora_safety_overrides = metadata["safety_overrides"]
+    if metadata.get("target_audit"):
+        args.lora_target_audit = metadata["target_audit"]
 
 
 class BaseTrainer:
@@ -1756,15 +1759,39 @@ class BaseTrainer:
                 ) from e
         self.resume = resume
 
+    def _restore_lora_resume_model(self, ckpt):
+        """Restore LoRA-aware model weights from a resume checkpoint before optimizer state loading."""
+        if not ckpt or not ckpt.get("ema"):
+            return
+        target = unwrap_model(self.model)
+        if not getattr(target, "lora_enabled", False):
+            return
+        source_state = ckpt["ema"].float().state_dict()
+        load_lora_compatible_state_dict(target, source_state, context="resume checkpoint EMA")
+
     def _load_checkpoint_state(self, ckpt):
         """Load optimizer, scaler, EMA, and best_fitness from checkpoint."""
         if ckpt.get("optimizer") is not None:
-            self.optimizer.load_state_dict(ckpt["optimizer"])
+            try:
+                self.optimizer.load_state_dict(ckpt["optimizer"])
+            except (KeyError, RuntimeError, ValueError) as e:
+                if getattr(unwrap_model(self.model), "lora_enabled", False):
+                    LOGGER.warning(
+                        "[LoRA] Optimizer state is incompatible with the current adapter layout; "
+                        f"starting with a freshly initialized optimizer. Original error: {e}"
+                    )
+                else:
+                    raise
         if ckpt.get("scaler") is not None:
             self.scaler.load_state_dict(ckpt["scaler"])
         if self.ema and ckpt.get("ema"):
             self.ema = ModelEMA(self.model)  # validation with EMA creates inference tensors that can't be updated
-            self.ema.ema.load_state_dict(ckpt["ema"].float().state_dict())
+            ema_state = ckpt["ema"].float().state_dict()
+            ema_target = unwrap_model(self.ema.ema)
+            if getattr(ema_target, "lora_enabled", False):
+                load_lora_compatible_state_dict(ema_target, ema_state, context="resume checkpoint EMA model")
+            else:
+                self.ema.ema.load_state_dict(ema_state)
             self.ema.updates = ckpt["updates"]
         self.best_fitness = ckpt.get("best_fitness", 0.0)
 
@@ -1793,7 +1820,11 @@ class BaseTrainer:
         ema_state = ckpt["ema"].float().state_dict()
         if not all(torch.isfinite(v).all() for v in ema_state.values() if isinstance(v, torch.Tensor)):
             raise RuntimeError(f"Checkpoint {self.last} is corrupted with NaN/Inf weights")
-        unwrap_model(self.model).load_state_dict(ema_state)  # Load EMA weights into model
+        target = unwrap_model(self.model)
+        if getattr(target, "lora_enabled", False):
+            load_lora_compatible_state_dict(target, ema_state, context="NaN recovery checkpoint EMA")
+        else:
+            target.load_state_dict(ema_state)  # Load EMA weights into model
         self._load_checkpoint_state(ckpt)  # Load optimizer/scaler/EMA/best_fitness
         del ckpt, ema_state
         self.scheduler.last_epoch = epoch - 1
@@ -1814,6 +1845,7 @@ class BaseTrainer:
                 f"{self.model} has been trained for {ckpt['epoch']} epochs. Fine-tuning for {self.epochs} more epochs."
             )
             self.epochs += ckpt["epoch"]  # finetune additional epochs
+        self._restore_lora_resume_model(ckpt)
         self._load_checkpoint_state(ckpt)
         self.start_epoch = start_epoch
         if start_epoch > (self.epochs - self.args.close_mosaic):

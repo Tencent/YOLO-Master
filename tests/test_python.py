@@ -44,6 +44,7 @@ from ultralytics.utils.torch_utils import TORCH_1_11, TORCH_1_13
 def make_stub_yolo():
     """Create a lightweight YOLO instance without loading weights from disk or network."""
     model = YOLO.__new__(YOLO)
+    torch.nn.Module.__init__(model)
     model._check_is_pytorch_model = lambda: None
     model.trainer = mock.Mock()
     model.model = mock.Mock()
@@ -157,6 +158,7 @@ def test_merge_lora_weights_clears_peft_runtime_state():
     model.lora_include_head = False
     model.lora_freeze_bn = True
     model.lora_target_modules = ["0.conv"]
+    model.lora_target_audit = {"selected_count": 1}
     model.lora_runtime_metadata = {"effective_backend": "peft"}
     model.use_gradient_checkpointing = True
 
@@ -171,6 +173,7 @@ def test_merge_lora_weights_clears_peft_runtime_state():
         "lora_include_head",
         "lora_freeze_bn",
         "lora_target_modules",
+        "lora_target_audit",
         "lora_runtime_metadata",
         "use_gradient_checkpointing",
     ):
@@ -205,6 +208,7 @@ def test_load_fallback_adapter_state_restores_runtime_metadata(tmp_path):
         "include_head": True,
         "freeze_bn": True,
         "target_modules": ["conv"],
+        "target_audit": {"selected_count": 1},
         "runtime_metadata": {"effective_backend": "fallback"},
     }
 
@@ -216,6 +220,7 @@ def test_load_fallback_adapter_state_restores_runtime_metadata(tmp_path):
     assert loaded.lora_include_head is True
     assert loaded.lora_freeze_bn is True
     assert loaded.lora_target_modules == ["conv"]
+    assert loaded.lora_target_audit["selected_count"] == 1
     assert loaded.lora_runtime_metadata == {"effective_backend": "fallback"}
 
 
@@ -234,6 +239,7 @@ def test_load_lora_force_replace_clears_stale_fallback_runtime_state(tmp_path):
     model.lora_include_head = True
     model.lora_freeze_bn = True
     model.lora_target_modules = ["old.conv"]
+    model.lora_target_audit = {"stale": True}
     model.lora_runtime_metadata = {"stale": True}
     model.use_gradient_checkpointing = True
 
@@ -241,6 +247,7 @@ def test_load_lora_force_replace_clears_stale_fallback_runtime_state(tmp_path):
         assert not hasattr(current_model, "lora_include_head")
         assert not hasattr(current_model, "lora_freeze_bn")
         assert not hasattr(current_model, "lora_target_modules")
+        assert not hasattr(current_model, "lora_target_audit")
         assert not hasattr(current_model, "lora_runtime_metadata")
         assert not hasattr(current_model, "use_gradient_checkpointing")
         return current_model
@@ -259,6 +266,7 @@ def test_load_lora_adapters_restores_peft_runtime_metadata(tmp_path):
         "include_head": True,
         "freeze_bn": True,
         "target_modules": ["0.conv"],
+        "target_audit": {"selected_count": 1},
         "runtime_metadata": {"effective_backend": "peft"},
     }
     (tmp_path / "runtime_metadata.json").write_text(json.dumps(runtime_payload))
@@ -266,12 +274,26 @@ def test_load_lora_adapters_restores_peft_runtime_metadata(tmp_path):
     model = torch.nn.Module()
     model.model = object()
 
-    class _DummyProxy:
+    class _DummyProxy(torch.nn.Module):
         peft_config = {"default": object()}
+
+        def __init__(self):
+            super().__init__()
+            self.layers = torch.nn.Sequential(torch.nn.Linear(1, 1))
+            self.lora_A = torch.nn.Parameter(torch.ones(1))
 
         @classmethod
         def from_pretrained(cls, base_model, path, is_trainable=False):
             return cls()
+
+        def __len__(self):
+            return len(self.layers)
+
+        def __getitem__(self, idx):
+            return self.layers[idx]
+
+        def children(self):
+            return self.layers.children()
 
     def _fake_wrap(current_model, config):
         current_model.lora_enabled = True
@@ -289,6 +311,7 @@ def test_load_lora_adapters_restores_peft_runtime_metadata(tmp_path):
     assert model.lora_include_head is True
     assert model.lora_freeze_bn is True
     assert model.lora_target_modules == ["0.conv"]
+    assert model.lora_target_audit == {"selected_count": 1}
     assert model.lora_runtime_metadata == {"effective_backend": "peft"}
 
 
@@ -299,12 +322,26 @@ def test_load_lora_adapters_merge_true_calls_merge_for_peft(tmp_path):
     model = torch.nn.Module()
     model.model = object()
 
-    class _DummyProxy:
+    class _DummyProxy(torch.nn.Module):
         peft_config = {"default": object()}
+
+        def __init__(self):
+            super().__init__()
+            self.layers = torch.nn.Sequential(torch.nn.Linear(1, 1))
+            self.lora_A = torch.nn.Parameter(torch.ones(1))
 
         @classmethod
         def from_pretrained(cls, base_model, path, is_trainable=False):
             return cls()
+
+        def __len__(self):
+            return len(self.layers)
+
+        def __getitem__(self, idx):
+            return self.layers[idx]
+
+        def children(self):
+            return self.layers.children()
 
     def _fake_wrap(current_model, config):
         current_model.lora_enabled = True
@@ -317,6 +354,52 @@ def test_load_lora_adapters_merge_true_calls_merge_for_peft(tmp_path):
          mock.patch.object(lora_utils, "merge_lora_weights", return_value=True) as merge_mock:
         assert lora_utils.load_lora_adapters(model, tmp_path, merge=True)
         merge_mock.assert_called_once_with(model)
+
+
+def test_load_lora_compatible_state_dict_restores_adapter_params():
+    """Test that LoRA-aware checkpoint loading restores compatible adapter tensors."""
+    from ultralytics.utils import lora as lora_utils
+
+    model = torch.nn.Module()
+    model.base = torch.nn.Linear(2, 2)
+    model.lora_A = torch.nn.Parameter(torch.zeros(2, 2))
+
+    source_state = {k: torch.ones_like(v) for k, v in model.state_dict().items()}
+    stats = lora_utils.load_lora_compatible_state_dict(model, source_state, context="unit-test")
+
+    assert stats["adapter_loaded"] == 1
+    assert torch.equal(model.lora_A, torch.ones_like(model.lora_A))
+
+
+def test_load_lora_compatible_state_dict_rejects_adapter_shape_mismatch():
+    """Test that changed LoRA rank/targets fail with a clear compatibility error."""
+    from ultralytics.utils import lora as lora_utils
+
+    model = torch.nn.Module()
+    model.lora_A = torch.nn.Parameter(torch.zeros(2, 2))
+    source_state = {"lora_A": torch.zeros(3, 2)}
+
+    with pytest.raises(RuntimeError, match="adapter topology"):
+        lora_utils.load_lora_compatible_state_dict(model, source_state, context="unit-test")
+
+
+def test_build_lora_target_audit_counts_filters():
+    """Test compact target audit accounting for user filtering and grouped-conv exclusions."""
+    from ultralytics.utils import lora as lora_utils
+
+    audit = lora_utils.build_lora_target_audit(
+        valid_targets=["0.conv", "1.conv", "2.cv1"],
+        selected_targets=["1.conv"],
+        requested_targets=["conv"],
+        incompatible_layers=["3.cv2"],
+        peft_type="lora",
+        rank=8,
+    )
+
+    assert audit["valid_count"] == 3
+    assert audit["selected_count"] == 1
+    assert audit["filtered_by_user_count"] == 2
+    assert audit["incompatible_grouped_conv_count"] == 1
 
 
 def test_merge_manual_lora_conv_preserves_forward_output():
