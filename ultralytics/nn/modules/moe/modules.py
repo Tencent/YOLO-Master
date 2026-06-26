@@ -38,9 +38,9 @@ from .loss import MoELoss, gshard_balance_loss, weighted_gshard_balance_loss, di
 # This prevents storing non-leaf tensors in the module instance, avoiding deepcopy errors
 MOE_LOSS_REGISTRY = weakref.WeakKeyDictionary()
 
-# Diagnostic snapshot sampling: only every Nth forward per module performs the
-# (expensive) detach().cpu()/.item() D2H copies. Align this with the moe_diag
-# callback interval (default 10) so no consumed snapshot is missed. Set
+# Diagnostic snapshot sampling: only every Nth forward per module records the
+# latest routing summary. Tensors stay on their current device; diagnostic
+# consumers move them to CPU only when they actually format/export them. Set
 # MOE_SNAPSHOT_INTERVAL=1 to restore per-step recording.
 MOE_SNAPSHOT_INTERVAL = max(int(os.environ.get("MOE_SNAPSHOT_INTERVAL", "10")), 1)
 
@@ -61,6 +61,13 @@ def _zero_aux_loss_like(module: nn.Module) -> torch.Tensor:
         return param.new_zeros(())
     except StopIteration:
         return torch.tensor(0.0)
+
+
+def _detached_zero_like(value) -> torch.Tensor:
+    """Return a detached scalar zero on the same device/dtype as a tensor when possible."""
+    if isinstance(value, torch.Tensor):
+        return value.detach().new_zeros(())
+    return torch.tensor(0.0)
 
 
 def _get_moe_aux_loss(module: nn.Module) -> torch.Tensor:
@@ -100,10 +107,16 @@ def _compute_usage_from_topk(topk_indices: Optional[torch.Tensor], num_experts: 
 
     flat_indices = _flatten_moe_topk(topk_indices)
     if flat_indices is None or flat_indices.numel() == 0:
-        zero = torch.zeros(num_experts, dtype=torch.float32)
+        zero = torch.zeros(num_experts, dtype=torch.float32, device=topk_indices.device)
         return zero, zero
 
-    counts = torch.bincount(flat_indices.reshape(-1).to(torch.long).cpu(), minlength=num_experts).to(torch.float32)
+    flat = flat_indices.reshape(-1).to(torch.long)
+    try:
+        counts = torch.bincount(flat, minlength=num_experts).to(torch.float32)
+    except RuntimeError:
+        # Some accelerator backends do not implement bincount; fall back without
+        # forcing CUDA users through a per-snapshot D2H sync.
+        counts = torch.bincount(flat.cpu(), minlength=num_experts).to(device=topk_indices.device, dtype=torch.float32)
     total = counts.sum().clamp_min(1.0)
     return counts / total, counts
 
@@ -123,15 +136,15 @@ def _record_moe_snapshot(
     precedence because it reflects the router's actual computed usage frequencies.
     `topk_indices` is only used as a fallback to derive usage counts.
 
-    Sampled every ``MOE_SNAPSHOT_INTERVAL`` forwards per module to avoid a
-    GPU→CPU sync on every training step; existing snapshot is kept between
-    samples so consumers always see the most recent recorded value.
+    Sampled every ``MOE_SNAPSHOT_INTERVAL`` forwards per module; existing
+    snapshot is kept between samples so consumers always see the most recent
+    recorded value.
     """
     if not _should_record_snapshot(module):
         return
     # Prefer expert_usage when available; fallback to topk_indices-derived counts
     if isinstance(expert_usage, torch.Tensor):
-        usage_tensor = expert_usage.detach().float().cpu()
+        usage_tensor = expert_usage.detach().float()
         counts_tensor = None
     elif topk_indices is not None:
         usage_tensor, counts_tensor = _compute_usage_from_topk(topk_indices, getattr(module, "num_experts", 0))
@@ -141,7 +154,7 @@ def _record_moe_snapshot(
 
     mean_probs = None
     if isinstance(router_probs, torch.Tensor):
-        probs = router_probs.detach().float().cpu()
+        probs = router_probs.detach().float()
         if probs.dim() == 4:
             mean_probs = probs.mean(dim=(0, 2, 3))
         elif probs.dim() == 2:
@@ -155,11 +168,11 @@ def _record_moe_snapshot(
         "expert_usage": usage_tensor,
         "topk_counts": counts_tensor,
         "mean_router_probs": mean_probs,
-        "aux_loss": float(aux_loss.detach().item()) if isinstance(aux_loss, torch.Tensor) else float(aux_loss or 0.0),
+        "aux_loss": aux_loss.detach().float() if isinstance(aux_loss, torch.Tensor) else float(aux_loss or 0.0),
     }
 
     if isinstance(topk_weights, torch.Tensor):
-        weights = _flatten_moe_topk(topk_weights.detach().float().cpu())
+        weights = _flatten_moe_topk(topk_weights.detach().float())
         if weights is not None and weights.numel():
             snapshot["mean_topk_weight"] = weights.mean(dim=0)
 
@@ -177,8 +190,8 @@ def _robust_deepcopy(obj, memo):
     for k, v in obj.__dict__.items():
         # Check for non-leaf tensor (has grad_fn)
         if isinstance(v, torch.Tensor) and v.grad_fn is not None:
-            # Replace with a safe scalar zero (detached)
-            setattr(new_obj, k, torch.tensor(0.0))
+            # Replace with a safe scalar zero on the same device/dtype.
+            setattr(new_obj, k, _detached_zero_like(v))
         else:
             try:
                 setattr(new_obj, k, copy.deepcopy(v, memo))
@@ -186,7 +199,7 @@ def _robust_deepcopy(obj, memo):
                 # Fallback: if deepcopy fails on a specific attribute, try to skip or reset it
                 if "Only Tensors created explicitly" in str(e):
                     print(f"WARNING: Skipped deepcopy for attribute '{k}' in {cls.__name__} due to non-leaf tensor error.")
-                    setattr(new_obj, k, torch.tensor(0.0))
+                    setattr(new_obj, k, _detached_zero_like(v))
                 else:
                     raise e
             except Exception:

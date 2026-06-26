@@ -251,20 +251,26 @@ class MoELoss(nn.Module):
         # 4. Diversity Loss (Penalize similar expert outputs) - Optional
         # Targets orthogonal experts: cosine similarity -> 0, not -1
         diversity_loss = torch.tensor(0.0, device=router_probs.device)
-        # Require E >= 2 (E == 1 makes num_pairs == 0 and blows up the divisor).
-        if self.diversity_loss_coeff > 0 and expert_outputs is not None and expert_outputs.shape[1] >= 2:
-            # expert_outputs: [B, num_experts, D]
-            B, E, D = expert_outputs.shape
-            # Normalize each expert output
-            outputs_norm = F.normalize(expert_outputs, dim=-1)  # [B, E, D]
-            # Compute pairwise cosine similarity: [B, E, E]
-            similarity = torch.bmm(outputs_norm, outputs_norm.transpose(1, 2))  # [B, E, E]
-            # Zero out diagonal (self-similarity)
-            mask = 1.0 - torch.eye(E, device=similarity.device)
-            masked_sim = similarity * mask.unsqueeze(0)  # [B, E, E]
-            # Target: similarity -> 0 (orthogonal), penalize deviation from 0
-            num_pairs = E * (E - 1)
-            diversity_loss = (masked_sim ** 2).sum() / (B * num_pairs + 1e-8)
+        if self.diversity_loss_coeff > 0:
+            if expert_outputs is None:
+                raise ValueError(
+                    "diversity_loss_coeff > 0 requires expert_outputs=[B, num_experts, D]. "
+                    "Leave diversity_loss_coeff at 0 for sparse MoE blocks that do not compute all expert outputs."
+                )
+            # Require E >= 2 (E == 1 makes num_pairs == 0 and blows up the divisor).
+            if expert_outputs.shape[1] >= 2:
+                # expert_outputs: [B, num_experts, D]
+                B, E, D = expert_outputs.shape
+                # Normalize each expert output
+                outputs_norm = F.normalize(expert_outputs, dim=-1)  # [B, E, D]
+                # Compute pairwise cosine similarity: [B, E, E]
+                similarity = torch.bmm(outputs_norm, outputs_norm.transpose(1, 2))  # [B, E, E]
+                # Zero out diagonal (self-similarity)
+                mask = 1.0 - torch.eye(E, device=similarity.device)
+                masked_sim = similarity * mask.unsqueeze(0)  # [B, E, E]
+                # Target: similarity -> 0 (orthogonal), penalize deviation from 0
+                num_pairs = E * (E - 1)
+                diversity_loss = (masked_sim ** 2).sum() / (B * num_pairs + 1e-8)
 
         # 5. Variance Loss (Direct usage variance penalty) - Optional
         # Penalizes high variance in expert usage, encouraging uniform distribution
