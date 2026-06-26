@@ -365,6 +365,7 @@ class BaseTrainer:
         if RANK in {-1, 0}:
             save_trainer_args_yaml(self.save_dir, self.args)
         self.set_model_attributes()
+        self._detect_moa_mot_modules()
 
         # MoE Routing Collapse Detector (initialize if model has MoE layers)
         has_moe = any(hasattr(m, 'num_experts') for m in self.model.modules())
@@ -582,6 +583,35 @@ class BaseTrainer:
         self.resume_training(ckpt)
         self.scheduler.last_epoch = self.start_epoch - 1  # do not move
         self.run_callbacks("on_pretrain_routine_end")
+
+    def _detect_moa_mot_modules(self):
+        """Cache whether the model contains MoA/MoT modules that need temperature annealing."""
+        try:
+            from ultralytics.nn.modules.moa import C2fMoA
+            from ultralytics.nn.modules.mot import C2fMoT
+        except Exception:
+            self._has_moa_mot = False
+            return
+
+        model = unwrap_model(self.model)
+        self._has_moa_mot = any(isinstance(m, (C2fMoA, C2fMoT)) for m in model.modules())
+        if self._has_moa_mot and RANK in {-1, 0}:
+            factor = getattr(self.args, "moa_mot_temperature_factor", 0.97)
+            min_temp = getattr(self.args, "moa_mot_min_temperature", 0.3)
+            LOGGER.info(f"[MoA/MoT] Router temperature annealing enabled (factor={factor}, min_temp={min_temp}).")
+
+    def _anneal_moa_mot_temperature(self):
+        """Anneal MoA/MoT router temperatures once after each completed training epoch."""
+        if not getattr(self, "_has_moa_mot", False):
+            return
+        from ultralytics.nn.modules.moa import anneal_moa_temperature
+        from ultralytics.nn.modules.mot import anneal_mot_temperature
+
+        factor = float(getattr(self.args, "moa_mot_temperature_factor", 0.97))
+        min_temp = float(getattr(self.args, "moa_mot_min_temperature", 0.3))
+        model = unwrap_model(self.model)
+        anneal_moa_temperature(model, factor=factor, min_temp=min_temp)
+        anneal_mot_temperature(model, factor=factor, min_temp=min_temp)
 
     def _do_train(self):
         """Train the model with the specified world size."""
@@ -901,6 +931,7 @@ class BaseTrainer:
                 self.run_callbacks("on_train_batch_end")
 
             self.lr = {f"lr/pg{ir}": x["lr"] for ir, x in enumerate(self.optimizer.param_groups)}  # for loggers
+            self._anneal_moa_mot_temperature()
 
             # ── LoRA Training Stats (per-epoch logging) ──
             if self.lora_strategy is not None and RANK in {-1, 0} and (epoch % 5 == 0 or epoch == self.epochs - 1):

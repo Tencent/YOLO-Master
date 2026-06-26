@@ -26,11 +26,14 @@ from ultralytics.nn.modules.moe.modules import (
     HybridAdaptiveGateMoE,
     HyperFusedMoE,
     HyperUltimateMoE,
+    MOE_SNAPSHOT_INTERVAL,
     MOE_LOSS_REGISTRY,
     OptimizedMOE,
     OptimizedMOEImproved,
     UltimateOptimizedMoE,
     UltraOptimizedMoE,
+    _compute_usage_from_topk,
+    _record_moe_snapshot,
 )
 from ultralytics.nn.modules.moe.experts import (
     OptimizedSimpleExpert, GhostExpert, SimpleExpert, SpatialExpert, InvertedResidualExpert,
@@ -151,6 +154,37 @@ def test_registry_no_leak_across_forwards():
     assert size_after_n == size_after_1, "registry grew across forwards (leak)"
 
 
+def test_moe_snapshot_tensors_remain_on_source_device():
+    """Routing snapshots should not force a CPU sync when recorded."""
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    module = nn.Module()
+    module.num_experts = 4
+    module.top_k = 2
+    topk_indices = torch.tensor([[0, 1], [1, 3]], device=device)
+    topk_weights = torch.rand(2, 2, device=device)
+    router_probs = torch.softmax(torch.randn(2, 4, device=device), dim=1)
+    aux_loss = router_probs.sum()
+
+    usage, counts = _compute_usage_from_topk(topk_indices, module.num_experts)
+    assert usage.device == device
+    assert counts.device == device
+
+    for _ in range(MOE_SNAPSHOT_INTERVAL):
+        _record_moe_snapshot(
+            module,
+            topk_indices=topk_indices,
+            topk_weights=topk_weights,
+            router_probs=router_probs,
+            aux_loss=aux_loss,
+        )
+
+    snapshot = module.last_routing_snapshot
+    for key in ("expert_usage", "topk_counts", "mean_router_probs", "mean_topk_weight", "aux_loss"):
+        value = snapshot[key]
+        if isinstance(value, torch.Tensor):
+            assert value.device == device
+
+
 # ---------------------------------------------------------------------------
 # deepcopy safety (EMA / checkpoint load rely on this)
 # ---------------------------------------------------------------------------
@@ -226,6 +260,19 @@ def test_moeloss_diversity_skips_single_expert():
     out = loss_fn(probs, logits, idx, expert_outputs=expert_out, return_dict=True)
     assert torch.isfinite(out["loss"]).all()
     assert float(out["diversity_loss"]) == 0.0
+
+
+def test_moeloss_diversity_requires_expert_outputs():
+    """diversity_loss_coeff should not silently become a dead no-op."""
+    torch.manual_seed(0)
+    E, K, B = 4, 2, 8
+    logits = torch.randn(B, E)
+    probs = torch.softmax(logits, dim=1)
+    idx = torch.topk(probs, K, dim=1).indices
+    loss_fn = MoELoss(balance_loss_coeff=1.0, z_loss_coeff=0.0, diversity_loss_coeff=1.0,
+                      num_experts=E, top_k=K)
+    with pytest.raises(ValueError, match="requires expert_outputs"):
+        loss_fn(probs, logits, idx)
 
 
 # ---------------------------------------------------------------------------
@@ -337,6 +384,31 @@ def _first_router_weight(m):
         if p.requires_grad:
             return p
     return None
+
+
+def test_gradient_checkpointing_skips_moe_registry_modules(monkeypatch):
+    """MoE aux-loss publishers should not be recomputed through checkpointing."""
+    import torch.utils.checkpoint as checkpoint_mod
+    from ultralytics.nn.tasks import BaseModel
+
+    def fail_checkpoint(*args, **kwargs):
+        raise AssertionError("MoE modules must bypass torch.utils.checkpoint")
+
+    monkeypatch.setattr(checkpoint_mod, "checkpoint", fail_checkpoint)
+    torch.manual_seed(0)
+    MOE_LOSS_REGISTRY.clear()
+    base = BaseModel()
+    m = OptimizedMOE(32, 32, num_experts=4, top_k=2).train()
+    x = torch.randn(2, 32, 8, 8, requires_grad=True)
+
+    out = base._apply_checkpointing(m, x)
+    aux = MOE_LOSS_REGISTRY.get(m)
+    assert isinstance(aux, torch.Tensor) and aux.requires_grad
+
+    router_weight = next(p for p in m.router.parameters() if p.requires_grad)
+    m.zero_grad(set_to_none=True)
+    (out.float().mean() + aux).backward()
+    assert router_weight.grad is not None and router_weight.grad.abs().sum() > 0
 
 
 def test_controller_balance_loss_grad_reaches_router():

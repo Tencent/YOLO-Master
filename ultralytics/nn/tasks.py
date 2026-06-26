@@ -258,6 +258,14 @@ class BaseModel(torch.nn.Module):
         if not requires_grad:
             return m(x)
 
+        # MoE blocks publish graph-connected auxiliary losses through the global
+        # MOE_LOSS_REGISTRY during forward. Checkpoint recomputation would run the
+        # forward again during backward and can overwrite the registry after the
+        # main loss has already collected it, so keep these modules on the normal
+        # path and preserve aux-loss graph ownership.
+        if self._has_moe_aux_registry_module(m):
+            return m(x)
+
         # 2. Check if module supports checkpointing (has state to save)
         is_heavy = len(list(m.parameters())) > 0 
         
@@ -282,6 +290,15 @@ class BaseModel(torch.nn.Module):
                 return torch.utils.checkpoint.checkpoint(m, x, use_reentrant=False)
         else:
             return m(x)
+
+    @staticmethod
+    def _has_moe_aux_registry_module(m):
+        """Return True for MoE modules that may publish aux losses to MOE_LOSS_REGISTRY."""
+        return any(
+            getattr(child, "num_experts", 0) > 0
+            and child.__class__.__module__.startswith("ultralytics.nn.modules.moe")
+            for child in m.modules()
+        )
 
     def _predict_augment(self, x):
         """Perform augmentations on input image x and return augmented inference."""
