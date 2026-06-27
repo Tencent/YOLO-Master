@@ -70,6 +70,13 @@ def test_moa_temperature_anneal():
     assert after == [max(t * 0.5, 0.3) for t in before]
 
 
+def test_moa_global_head_per_block_seed():
+    """Relocated from test_mot.py — verifies per-block RF seed diversity."""
+    b0 = MoABlock(64, num_heads=6, block_index=0)
+    b1 = MoABlock(64, num_heads=6, block_index=1)
+    assert not torch.allclose(b0.global_head._rf_matrix, b1.global_head._rf_matrix)
+
+
 def test_moa_model_configs_parse():
     configs = [
         ROOT / "ultralytics/cfg/models/master/v0_8/det/yolo-master-moa-n.yaml",

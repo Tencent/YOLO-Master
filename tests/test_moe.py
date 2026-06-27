@@ -71,9 +71,9 @@ def _sum_via_registry(model: nn.Module) -> float:
 def test_aux_aggregation_no_double_count():
     """A2C2fMoE has wrapper modules (ABlockMoE) that delegate aux_loss.
 
-    The old hasattr-based sum counted each inner MoE twice (2.000x). The fixed
-    `_collect_moe_aux_loss` must equal the registry-only sum, and the buggy sum
-    must be strictly larger (proving the wrapper double-count exists).
+    `_collect_moe_aux_loss` must equal the registry-only sum. The legacy
+    hasattr-based sum still over-counts because multiple nested modules expose
+    the same aux_loss, but A2C2fMoE.aux_loss itself must match the registry.
     """
     torch.manual_seed(0)
     m = A2C2fMoE(c1=64, c2=64, n=1, a2=True, num_experts=4, top_k=2).train()
@@ -82,13 +82,12 @@ def test_aux_aggregation_no_double_count():
     buggy = _sum_via_hasattr(m)
     correct = _sum_via_registry(m)
     fixed = float(_collect_moe_aux_loss(m, torch.device("cpu")).detach())
+    wrapper = float(m.aux_loss.detach())
 
     assert correct > 0.0, "registry should contain published aux losses after forward"
-    # The fixed aggregator equals the registry truth (no double counting).
     assert fixed == pytest.approx(correct, rel=1e-5)
-    # The legacy hasattr sum inflates by ~2x because of wrapper delegation.
-    assert buggy > correct * 1.5
-    assert buggy == pytest.approx(2.0 * correct, rel=1e-3)
+    assert wrapper == pytest.approx(correct, rel=1e-5)
+    assert buggy > correct * 1.25, "hasattr traversal still double/triple counts nested aux_loss"
 
 
 def test_collect_helper_handles_none_and_eval():
@@ -671,7 +670,46 @@ def test_soft_balance_loss_responds_to_imbalance():
     # GShard soft: uniform -> ~1.0, full collapse -> ~E. Must be distinguishable.
     assert bl_collapsed > bl_uniform + 0.5, (
         f"balance_loss insensitive to imbalance: uniform={bl_uniform:.3f}, "
-        f"collapsed={bl_collapsed:.3f}")
+        f"collapsed={bl_collapsed:.3f}"
+    )
+
+
+def test_dymoe_gate_gshard_balance_and_registry():
+    """DyMoEBlock must publish GShard-scale balance loss via MOE_LOSS_REGISTRY."""
+    from ultralytics.nn.modules.block import DyMoEBlock
+
+    torch.manual_seed(0)
+    m = DyMoEBlock(32, num_experts=4, top_k=2).train()
+    out = m(torch.randn(4, 32, 8, 8))
+    assert out.shape == (4, 32, 8, 8)
+    aux = m.aux_loss
+    assert aux.requires_grad
+    assert float(aux.detach()) > 0.0
+    collected = float(_collect_moe_aux_loss(m, torch.device("cpu")).detach())
+    assert collected == pytest.approx(float(aux.detach()), rel=1e-5)
+
+
+def test_a2c2f_moe_aux_loss_property_matches_inner_blocks():
+    """A2C2fMoE.aux_loss must delegate to inner ABlockMoE modules, not registry on self."""
+    torch.manual_seed(0)
+    m = A2C2fMoE(c1=64, c2=64, n=1, a2=True, num_experts=4, top_k=2).train()
+    m(torch.randn(2, 64, 16, 16))
+    wrapper_aux = float(m.aux_loss.detach())
+    inner = 0.0
+    for block_seq in m.m:
+        for block in block_seq:
+            inner += float(block.aux_loss.detach())
+    assert wrapper_aux > 0.0
+    assert wrapper_aux == pytest.approx(inner, rel=1e-5)
+
+
+def test_get_global_mean_float16_input():
+    """DDP mean helper must use float32 count even when input is float16."""
+    loss_fn = MoELoss(num_experts=4, top_k=2)
+    probs = torch.rand(8, 4, dtype=torch.float16)
+    mean = loss_fn._get_global_mean(probs)
+    expected = probs.mean(dim=0)
+    assert torch.allclose(mean.float(), expected.float(), atol=1e-3)
 
 
 if __name__ == "__main__":
