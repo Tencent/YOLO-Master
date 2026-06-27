@@ -42,16 +42,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from ultralytics.nn.modules.conv import Conv
+from ultralytics.nn.modules.moe.utils import get_safe_groups as _safe_groups
 
 # ---------------------------------------------------------------------------
 # Shared utilities
 # ---------------------------------------------------------------------------
-
-def _safe_groups(channels: int, desired: int) -> int:
-    for g in range(min(desired, channels), 0, -1):
-        if channels % g == 0:
-            return g
-    return 1
 
 
 def _sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
@@ -388,8 +383,8 @@ class _DeformableTransformerExpert(nn.Module):
         ref = torch.stack([col, row], dim=-1)                 # [N, 2]
         ref = ref[None, :, None, None, :].expand(B, -1, nh, np_, -1)  # [B,N,nh,np,2]
 
-        # Sampling locations = reference + learned offsets (scaled by 0.5)
-        sample_locs = ref + offsets * 0.5                     # [B, N, nh, np, 2]
+        # Sampling locations = reference + learned offsets (scaled, clamped to valid range)
+        sample_locs = (ref + offsets * 0.25).clamp(-1.0, 1.0)   # [B, N, nh, np, 2]
 
         # Value: [B, H*W, C] → reshape for grid_sample [B, C, H, W]
         v_4d = self.v_proj(value).permute(0, 2, 1).reshape(B, C, H, W)
@@ -505,8 +500,11 @@ class _MoTRouter(nn.Module):
         """
         logits = self._compute_logits(x)      # [B, E, H, W] or [B, E, 1, 1] after GAP
 
+        # Use training temperature during train; fixed 1.0 at eval for stable routing.
+        temp = self.temperature if self.training else 1.0
+
         # Soft weights (always computed for gradient flow)
-        weights = F.softmax(logits / self.temperature, dim=1)   # [B, E, H, W]
+        weights = F.softmax(logits / temp, dim=1)   # [B, E, H, W]
         dense_weights = weights
 
         # Top-K mask
@@ -631,22 +629,26 @@ class MoTBlock(nn.Module):
             aux_loss      : scalar (router z-loss, 0 if balance_loss_coeff==0)
         """
         # ── Routing weights ──────────────────────────────────────────────
-        weights, _, router_logits = self.router(x, return_logits=True)   # [B, E, H, W]
+        weights, indices, router_logits = self.router(x, return_logits=True)   # [B, E, H, W]
 
         # ── Expert computation ───────────────────────────────────────────
-        # All experts forward unconditionally and are blended by routing
-        # weight. With soft Top-K routing the sparse weights zero-out the
-        # blend contribution of inactive experts, so gradients only flow
-        # through the selected experts via weight sparsity.
-        #
-        # No data-dependent scalar short-circuit (e.g. ``w.max().item()``):
-        # that forces a GPU→CPU sync every step and breaks ONNX/TorchScript
-        # tracing. The three experts have distinct compute graphs and are all
-        # cheap relative to the backbone, so unconditional compute is fastest.
-        out = x.new_zeros(x.shape)
-        for e_idx, expert in enumerate(self.experts):
-            w = weights[:, e_idx:e_idx + 1]   # [B, 1, H, W]
-            out = out + expert(x) * w
+        if not self.training:
+            # Inference: sparse batch dispatch — only active experts per sample.
+            out = x.new_zeros(x.shape)
+            B = x.shape[0]
+            for e_idx, expert in enumerate(self.experts):
+                active = weights[:, e_idx].reshape(B, -1).sum(dim=1) > 0
+                batch_idx = torch.nonzero(active, as_tuple=True)[0]
+                if batch_idx.numel() == 0:
+                    continue
+                w = weights[batch_idx, e_idx:e_idx + 1]
+                out[batch_idx] = out[batch_idx] + expert(x[batch_idx]) * w
+        else:
+            # Training: dense compute keeps all experts in the graph for exploration.
+            out = x.new_zeros(x.shape)
+            for e_idx, expert in enumerate(self.experts):
+                w = weights[:, e_idx:e_idx + 1]   # [B, 1, H, W]
+                out = out + expert(x) * w
         out = self.out_norm(self.out_proj(out))
 
         # Residual (block-level shortcut)
@@ -757,6 +759,14 @@ class C2fMoT(nn.Module):
 # Utility: collect aux losses from all MoT modules
 # ---------------------------------------------------------------------------
 
+def _aux_loss_device(model: nn.Module) -> torch.device:
+    """Best-effort device lookup for zero aux-loss fallbacks."""
+    try:
+        return next(model.parameters()).device
+    except StopIteration:
+        return torch.device("cpu")
+
+
 def collect_mot_aux_loss(model: nn.Module) -> torch.Tensor:
     """Sum all MoT router aux losses in the model.
 
@@ -779,7 +789,7 @@ def collect_mot_aux_loss(model: nn.Module) -> torch.Tensor:
             l = getattr(m, 'last_aux_loss', None)
             if isinstance(l, torch.Tensor) and l.requires_grad:
                 total = l if total is None else total + l
-    return total if total is not None else torch.zeros(1, device=next(model.parameters()).device)
+    return total if total is not None else torch.zeros(1, device=_aux_loss_device(model))
 
 
 def anneal_mot_temperature(model: nn.Module, factor: float = 0.97,
