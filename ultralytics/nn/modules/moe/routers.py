@@ -48,9 +48,10 @@ class UltraEfficientRouter(nn.Module):
         )
         self.softmax = nn.Softmax(dim=1)
 
-    def forward(self, x) -> Tuple[
+    def forward(self, x, top_k: Optional[int] = None) -> Tuple[
         torch.Tensor, torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor], Optional[torch.Tensor]]:
         B, C, H, W = x.shape
+        current_top_k = max(1, min(int(self.top_k if top_k is None else top_k), self.num_experts))
 
         # 1) Aggressive downsampling (core optimization)
         if H > self.pool_scale and W > self.pool_scale:
@@ -71,15 +72,16 @@ class UltraEfficientRouter(nn.Module):
         # 5) Z-loss on the SAME logits that drive routing (post-noise, post-clamp),
         # so the regularizer constrains the real routing decision (was computed
         # on the pre-noise logits before, weakening its effect).
+        scaled_logits = logits_clamped / self.temperature
         z_loss_metric = None
         if self.training:
-            z_loss_metric = torch.logsumexp(logits_clamped, dim=1).pow(2).mean()
+            z_loss_metric = torch.logsumexp(scaled_logits.float(), dim=1).pow(2).mean()
 
         # 6) Softmax + TopK (fused operation)
-        weights = F.softmax((logits_clamped / self.temperature).float(), dim=1).type_as(x)
+        weights = F.softmax(scaled_logits.float(), dim=1).type_as(x)
         pooled_weights = weights.mean(dim=[2, 3], keepdim=True)
         
-        topk_vals, topk_indices = torch.topk(pooled_weights, self.top_k, dim=1)
+        topk_vals, topk_indices = torch.topk(pooled_weights, current_top_k, dim=1)
         
         # In-place normalization
         topk_vals.div_(topk_vals.sum(dim=1, keepdim=True).add_(1e-6))
@@ -88,9 +90,9 @@ class UltraEfficientRouter(nn.Module):
             importance = pooled_weights.sum(dim=0).view(self.num_experts)
 
             # Optimization: use one_hot instead of scatter
-            topk_indices_flat = topk_indices.view(B, self.top_k, 1, 1)[:, :, 0, 0]
+            topk_indices_flat = topk_indices.view(B, current_top_k, 1, 1)[:, :, 0, 0]
             mask = F.one_hot(topk_indices_flat, num_classes=self.num_experts).float()
-            usage_frequency = mask.sum(dim=[0, 1]) / (B * self.top_k)
+            usage_frequency = mask.sum(dim=[0, 1]) / (B * current_top_k)
 
             return topk_vals, topk_indices, usage_frequency, importance, z_loss_metric
         else:
@@ -122,10 +124,12 @@ class BaseRouter(nn.Module):
         self.top_k = top_k
         self.softmax = nn.Softmax(dim=1)
 
-    def _process_logits(self, logits: torch.Tensor, noise_std: float, training: bool) -> Tuple[
+    def _process_logits(self, logits: torch.Tensor, noise_std: float, training: bool,
+                        top_k: Optional[int] = None) -> Tuple[
         torch.Tensor, torch.Tensor, Dict]:
         """Unified logic to process logits into Top-K selection."""
         B = logits.shape[0]
+        effective_top_k = self.top_k if top_k is None else max(1, min(int(top_k), self.num_experts))
 
         # 1) Add noise during training (simplified Gumbel-Softmax trick)
         if training and noise_std > 0:
@@ -135,7 +139,7 @@ class BaseRouter(nn.Module):
         probs = F.softmax(logits.float(), dim=1).type_as(logits)
 
         # 3) Select Top-K
-        topk_vals, topk_indices = torch.topk(probs, self.top_k, dim=1)
+        topk_vals, topk_indices = torch.topk(probs, effective_top_k, dim=1)
 
         # 4) Normalize weights
         sum_vals = topk_vals.sum(dim=1, keepdim=True) + 1e-6
@@ -166,7 +170,7 @@ class EfficientSpatialRouter(BaseRouter):
             nn.BatchNorm2d(num_experts)  # numerical stability
         )
 
-    def forward(self, x):
+    def forward(self, x, top_k: Optional[int] = None):
         B, C, H, W = x.shape
         # Pre-pooling optimization
         if H > self.pool_scale and W > self.pool_scale:
@@ -177,7 +181,7 @@ class EfficientSpatialRouter(BaseRouter):
         out = self.router(x_in)  # [B, E, H', W']
         global_logits = torch.mean(out, dim=[2, 3])  # [B, E]
 
-        return self._process_logits(global_logits, self.noise_std, self.training)
+        return self._process_logits(global_logits, self.noise_std, self.training, top_k=top_k)
 
     def compute_flops(self, input_shape):
         B, C, H, W = input_shape
@@ -200,10 +204,10 @@ class AdaptiveRoutingLayer(BaseRouter):
             nn.BatchNorm2d(num_experts)
         )
 
-    def forward(self, x):
+    def forward(self, x, top_k: Optional[int] = None):
         pooled = self.avg_pool(x)
         logits = self.router(pooled).squeeze(-1).squeeze(-1)  # [B, E]
-        return self._process_logits(logits, self.noise_std, self.training)
+        return self._process_logits(logits, self.noise_std, self.training, top_k=top_k)
 
     def compute_flops(self, input_shape):
         # FLOPs here are minimal
@@ -226,7 +230,7 @@ class LocalRoutingLayer(BaseRouter):
             nn.BatchNorm2d(num_experts)
         )
 
-    def forward(self, x):
+    def forward(self, x, top_k: Optional[int] = None):
         # Moderate downsampling to accelerate
         if x.shape[2] > self.pool_scale:
             x_in = F.avg_pool2d(x, kernel_size=self.pool_scale, stride=self.pool_scale)
@@ -235,7 +239,7 @@ class LocalRoutingLayer(BaseRouter):
 
         out = self.router(x_in)
         global_logits = torch.mean(out, dim=[2, 3])
-        return self._process_logits(global_logits, self.noise_std, self.training)
+        return self._process_logits(global_logits, self.noise_std, self.training, top_k=top_k)
 
     def compute_flops(self, input_shape):
         B, C, H, W = input_shape

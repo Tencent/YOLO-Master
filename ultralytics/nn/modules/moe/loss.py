@@ -161,6 +161,18 @@ class MoELoss(nn.Module):
             return indices.reshape(-1, indices.shape[-1])  # [B, H, W, K]
         return indices.reshape(indices.shape[0], -1)
 
+    def _usage_from_expert_indices(self, expert_indices: torch.Tensor) -> torch.Tensor:
+        """Return detached expert usage from discrete Top-K selections."""
+        flat_indices = expert_indices.reshape(-1).to(torch.long)
+        local_expert_counts = F.one_hot(flat_indices, num_classes=self.num_experts).float().sum(dim=0)
+        local_count = local_expert_counts.new_tensor(float(flat_indices.numel()))
+
+        if dist.is_available() and dist.is_initialized():
+            dist.all_reduce(local_expert_counts, op=dist.ReduceOp.SUM)
+            dist.all_reduce(local_count, op=dist.ReduceOp.SUM)
+
+        return (local_expert_counts / local_count.clamp_min(1.0)).detach()
+
     def _get_global_mean(self, tensor: torch.Tensor) -> torch.Tensor:
         """Computes the mean of a tensor across all distributed processes."""
         if not (dist.is_available() and dist.is_initialized()):
@@ -169,7 +181,7 @@ class MoELoss(nn.Module):
         # Sum locally first
         local_sum = tensor.sum(dim=0)
         # We need the global batch size count
-        local_count = torch.tensor(tensor.size(0), device=tensor.device, dtype=tensor.dtype)
+        local_count = torch.tensor(tensor.size(0), device=tensor.device, dtype=torch.float32)
         
         dist.all_reduce(local_sum, op=dist.ReduceOp.SUM)
         dist.all_reduce(local_count, op=dist.ReduceOp.SUM)
@@ -202,13 +214,11 @@ class MoELoss(nn.Module):
 
         if self.use_soft_balancing:
             # === Soft Balancing (Differentiable, GShard / Switch style) ===
-            # usage = mean(router_probs) over tokens (detached). Standard GShard
-            # soft form N*sum(importance*usage); grad flows only via importance,
-            # giving a true load-balancing signal to the router.
-            # NB: do NOT column-normalize usage across the batch — that forces
-            # every usage_e == 1/N (a constant), making the loss N*sum(imp/N)==1
-            # with zero gradient (the previous bug).
-            usage = importance.detach()
+            # Prefer discrete Top-K counts when available; this matches the
+            # Switch/GShard signal used by hard balancing while keeping gradient
+            # flow through `importance`. If a legacy caller has no indices, fall
+            # back to detached importance rather than failing the training step.
+            usage = self._usage_from_expert_indices(expert_indices) if expert_indices is not None else importance.detach()
         else:
             # === Hard Balancing (GShard / Switch Style) ===
             # Usage is defined by the discrete selection count.
@@ -216,22 +226,7 @@ class MoELoss(nn.Module):
             if expert_indices is None:
                 raise ValueError("expert_indices is required for hard load balancing.")
                 
-            B = expert_indices.shape[0]
-            flat_indices = expert_indices.view(-1)
-            
-            # Vectorized count using one_hot
-            local_expert_counts = F.one_hot(flat_indices, num_classes=self.num_experts).float().sum(dim=0)
-            
-            # Sync counts across GPUs
-            if dist.is_available() and dist.is_initialized():
-                dist.all_reduce(local_expert_counts, op=dist.ReduceOp.SUM)
-                total_samples = B * self.top_k * dist.get_world_size()
-            else:
-                total_samples = B * self.top_k
-            
-            usage = local_expert_counts / max(total_samples, 1.0)
-            # Detach usage because discrete selection is non-differentiable here
-            usage = usage.detach()
+            usage = self._usage_from_expert_indices(expert_indices)
 
         # Balance Loss: N * sum(importance * usage)
         balance_loss = self.num_experts * torch.sum(importance * usage)

@@ -29,7 +29,9 @@ def autocast(enabled=True, **kwargs):
     """Device-agnostic autocast wrapper. Falls back gracefully on non-CUDA devices."""
     if torch.cuda.is_available():
         return _autocast('cuda', enabled=enabled, **kwargs)
-    # On MPS/CPU, autocast is not fully supported; disable to avoid warnings/errors
+    if torch.backends.mps.is_available():
+        return _autocast('mps', enabled=enabled, **kwargs)
+    # On CPU, autocast is not fully supported; disable to avoid warnings/errors
     from contextlib import nullcontext
     return nullcontext() if not enabled else nullcontext()
 from .loss import MoELoss, gshard_balance_loss, weighted_gshard_balance_loss, differentiable_balance_loss, all_reduce_mean
@@ -968,17 +970,11 @@ class OptimizedMOEImproved(nn.Module):
             
         # Use current_top_k for routing
         adaptive_top_k = int(self.current_top_k.item()) if self.training and self.progressive_sparsity else self.top_k
-        
-        # Temporarily modify routing.top_k
-        original_top_k = self.routing.top_k
-        self.routing.top_k = adaptive_top_k
 
-        # 1) Routing (standardized interface)
+        # 1) Routing (standardized interface) — pass top_k as parameter instead of
+        #    mutating self.routing.top_k (thread-safe, ONNX-traceable).
         # loss_dict contains training loss inputs; empty during inference
-        routing_weights, routing_indices, loss_dict = self.routing(x)
-        
-        # Restore routing.top_k
-        self.routing.top_k = original_top_k
+        routing_weights, routing_indices, loss_dict = self.routing(x, top_k=adaptive_top_k)
 
         # 2) Shared expert compute (always active)
         shared_out = self.shared_expert(x)
@@ -992,7 +988,12 @@ class OptimizedMOEImproved(nn.Module):
         # Only after warmup so it doesn't fight progressive-sparsity scheduling.
         active_experts = list(range(self.num_experts))
         _step = int(self.training_step.item())
-        if self.training and _step >= self.warmup_steps and _step % self.dropout_interval == 0:
+        ddp_active = (
+            torch.distributed.is_available()
+            and torch.distributed.is_initialized()
+            and torch.distributed.get_world_size() > 1
+        )
+        if self.training and not ddp_active and _step >= self.warmup_steps and _step % self.dropout_interval == 0:
             num_drop = max(1, int(self.num_experts * self.expert_dropout_rate))
             drop_indices = torch.randperm(self.num_experts)[:num_drop].tolist()
             active_experts = [i for i in active_experts if i not in drop_indices]
@@ -1783,22 +1784,11 @@ class HyperFusedMoE(nn.Module):
         if self.training and self.progressive_sparsity:
             self._update_sparsity()
         
+        adaptive_top_k = int(self.current_top_k.item()) if self.training and self.progressive_sparsity else self.top_k
+
         # === 1. Zero-cost Routing ===
         # routing_weights: [B, k, 1, 1], routing_indices: [B, k, 1, 1]
-        # But we need to be careful about current_top_k if progressive sparsity is used
-        # The router uses self.top_k fixed.
-        # However, progressive sparsity changes self.current_top_k for EXPERT COMPUTATION.
-        # The router should ideally route top_k experts, and then we might only use current_top_k of them?
-        # Or should the router also respect current_top_k?
-        # Let's check _update_sparsity: it updates self.current_top_k.
-        
-        # If we use ZeroCostRouter, it uses self.top_k.
-        # If we want progressive sparsity, we should probably pass current_top_k to router?
-        # But ZeroCostRouter signature is fixed in init.
-        # Let's just use self.top_k for routing, and slice later if needed, or update ZeroCostRouter to be dynamic.
-        # For simplicity, let's assume routing returns top_k (e.g. 2 or 4).
-        
-        routing_weights, routing_indices, routing_stats = self.routing(x)
+        routing_weights, routing_indices, routing_stats = self.routing(x, adaptive_top_k)
         
         # === 2. Shared Path (Parallel Computation) ===
         shared_out = self.shared_path(x)
@@ -1809,7 +1799,7 @@ class HyperFusedMoE(nn.Module):
         
         expert_out = self.fused_experts(
             x, routing_weights, routing_indices, 
-            self.top_k # Use static top_k for now to match router output
+            adaptive_top_k
         )
         
         # === 4. Output Fusion ===
@@ -1893,8 +1883,9 @@ class ZeroCostRouter(nn.Module):
         # Initialize with moderate variance for input-dependent routing
         nn.init.normal_(self.router[0].weight, std=0.05)
     
-    def forward(self, x):
+    def forward(self, x, top_k=None):
         B, C, H, W = x.shape
+        current_top_k = max(1, min(int(self.top_k if top_k is None else top_k), self.num_experts))
         
         # === Zero-cost Feature Extraction ===
         # Global statistics (Overlaps with BN computation, near zero cost)
@@ -1912,20 +1903,20 @@ class ZeroCostRouter(nn.Module):
         router_probs = F.softmax(router_logits, dim=1)
         
         # Top-K Selection
-        topk_probs, topk_indices = torch.topk(router_probs, self.top_k, dim=1)
+        topk_probs, topk_indices = torch.topk(router_probs, current_top_k, dim=1)
         
         # Renormalization
         topk_probs = topk_probs / (topk_probs.sum(dim=1, keepdim=True) + 1e-6)
         
         # Expand to spatial dimensions
-        routing_weights = topk_probs.view(B, self.top_k, 1, 1)
-        routing_indices = topk_indices.view(B, self.top_k, 1, 1)
+        routing_weights = topk_probs.view(B, current_top_k, 1, 1)
+        routing_indices = topk_indices.view(B, current_top_k, 1, 1)
         
         # Statistical Information
         expert_usage = torch.zeros(self.num_experts, device=x.device)
         expert_usage.scatter_add_(0, topk_indices.view(-1), 
                                   torch.ones_like(topk_indices.view(-1), dtype=torch.float32))
-        expert_usage = expert_usage / (B * self.top_k)
+        expert_usage = expert_usage / (B * current_top_k)
         
         routing_stats = {
             'router_probs': router_probs,
@@ -2813,7 +2804,7 @@ class AdaptiveBalanceController(nn.Module):
         max_entropy = math.log(max(self.num_experts, 2))
         entropy_penalty = (max_entropy - entropy).clamp_min(0.0) / max_entropy  # in [0,1]
 
-        total_loss = current_coeff * (balance_loss + 0.1 * entropy_penalty)
+        total_loss = current_coeff * (balance_loss + getattr(self, 'entropy_coeff', 0.1) * entropy_penalty)
 
         # Guard against NaN loss (graph-safe: keep grad_fn instead of new leaf)
         if not torch.isfinite(total_loss).all():
@@ -2831,25 +2822,9 @@ class UltraLightRouter(ZeroCostRouter):
         self.cache = None
 
     def forward(self, x, top_k=None):
-        # Allow dynamic top_k overrides
-        original_top_k = self.top_k
-        if top_k is not None:
-            self.top_k = top_k
-            
-        # Basic implementation relying on ZeroCostRouter logic
-        # For now, we skip complex caching to avoid shape mismatch issues during training
-        # But we implement the interface required by HyperUltimateMoE
-        
-        # ZeroCostRouter.forward returns (weights, indices, stats)
-        # But ZeroCostRouter.forward doesn't take top_k arg in my previous impl.
-        # So I need to handle that.
-        
-        res = super().forward(x)
-        
-        if top_k is not None:
-            self.top_k = original_top_k
-            
-        return res
+        # Basic implementation relying on ZeroCostRouter logic. Caching is skipped
+        # to avoid shape mismatch issues during training.
+        return super().forward(x, top_k=top_k)
 
 class MatMulFusedExperts(FusedExpertGroup):
     """

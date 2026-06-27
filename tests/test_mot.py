@@ -57,6 +57,23 @@ def test_mot_router_z_loss_uses_expert_axis():
     assert torch.allclose(z_loss, expected, atol=1e-5)
 
 
+def test_mot_block_reuses_router_logits_for_z_loss(monkeypatch):
+    torch.manual_seed(0)
+    module = MoTBlock(24, num_heads=3, top_k=2, window_size=4, n_points=2, balance_loss_coeff=0.01).train()
+    calls = {"n": 0}
+    original = module.router._compute_logits
+
+    def wrapped(x):
+        calls["n"] += 1
+        return original(x)
+
+    monkeypatch.setattr(module.router, "_compute_logits", wrapped)
+    out, aux = module(torch.randn(1, 24, 4, 4))
+    assert out.shape == (1, 24, 4, 4)
+    assert aux.requires_grad
+    assert calls["n"] == 1
+
+
 def test_mot_temperature_anneal():
     module = C2fMoT(64, 64, n=2, num_heads=4)
     before = [m.router.temperature for m in module.m]

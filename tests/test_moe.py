@@ -512,6 +512,33 @@ def test_p04_zloss_computed_after_noise():
     assert isinstance(z, torch.Tensor) and z.requires_grad and torch.isfinite(z).all()
 
 
+def test_ultra_router_zloss_uses_temperature_scaled_logits():
+    """Router z-loss must regularize the logits actually used by softmax."""
+    r = UltraEfficientRouter(4, num_experts=4, top_k=2, noise_std=0.0, temperature=0.5).train()
+    r.router = nn.Identity()
+    z = r(torch.ones(2, 4, 2, 2))[4]
+    expected = (torch.tensor(2.0) + torch.log(torch.tensor(4.0))).square()
+    assert torch.allclose(z, expected, atol=1e-6)
+
+
+def test_hyperfused_progressive_sparsity_uses_current_top_k(monkeypatch):
+    """Warmup should route/compute with current_top_k, not the static final top_k."""
+    torch.manual_seed(0)
+    m = HyperFusedMoE(32, 32, num_experts=4, top_k=2, progressive_sparsity=True).train()
+    captured = {}
+    original = m.fused_experts.forward
+
+    def wrapped(x, routing_weights, routing_indices, top_k):
+        captured["top_k"] = top_k
+        captured["routing_shape"] = routing_indices.shape
+        return original(x, routing_weights, routing_indices, top_k)
+
+    monkeypatch.setattr(m.fused_experts, "forward", wrapped)
+    m(torch.randn(2, 32, 8, 8))
+    assert captured["top_k"] == 4
+    assert captured["routing_shape"][1] == 4
+
+
 def test_l02_adaptive_capacity_complexity_lower_bound():
     """L-02: complexity is clamped >= 0.3 so top_k cannot degenerate to 1."""
     m = AdaptiveCapacityMoE(32, 32, num_experts=4, top_k=2).train()
@@ -558,6 +585,19 @@ def test_p06_batched_experts_noncontiguous_indices():
     assert out.shape == (B, C, H, W) and torch.isfinite(out).all()
 
 
+def test_batched_experts_keeps_low_weight_training_routes():
+    """Training must not hard-drop low-weight routes before they can learn."""
+    B, C, H, W, E, k = 2, 8, 4, 4, 2, 1
+    x = torch.randn(B, C, H, W)
+    experts = nn.ModuleList([nn.Conv2d(C, C, 1, bias=False) for _ in range(E)]).train()
+    with torch.no_grad():
+        experts[0].weight.fill_(1.0)
+    idx = torch.zeros(B, k, 1, 1, dtype=torch.long)
+    w = torch.full((B, k, 1, 1), 0.005)
+    out = BatchedExpertComputation.compute_sparse_experts_batched(x, experts, w, idx, k, E)
+    assert out.abs().sum() > 0, "low-weight training routes were skipped by an inference threshold"
+
+
 def test_l05_soft_balancing_penalizes_collapse():
     """L-05: soft balancing penalizes uneven usage (not an L2 on importance)."""
     loss_fn = MoELoss(num_experts=4, top_k=2, use_soft_balancing=True)
@@ -601,6 +641,19 @@ def test_soft_balance_loss_grad_reaches_router():
     loss_fn(probs, logits, return_dict=True)["loss"].backward()
     assert logits.grad is not None
     assert logits.grad.abs().sum() > 1e-4, "soft balance gradient vanished (constant-usage bug)"
+
+
+def test_soft_balance_uses_topk_counts_when_available():
+    """Soft balancing should use detached discrete usage, not importance self-reference."""
+    E, K, N = 4, 2, 8
+    logits = torch.randn(N, E, requires_grad=True)
+    probs = torch.softmax(logits, dim=1)
+    indices = torch.zeros(N, K, dtype=torch.long)
+    loss_fn = MoELoss(num_experts=E, top_k=K, use_soft_balancing=True,
+                      balance_loss_coeff=1.0, z_loss_coeff=0.0)
+    out = loss_fn(probs, logits, indices, return_dict=True)
+    expected = E * probs.mean(dim=0)[0]
+    assert torch.allclose(out["balance_loss"], expected, atol=1e-6)
 
 
 def test_soft_balance_loss_responds_to_imbalance():

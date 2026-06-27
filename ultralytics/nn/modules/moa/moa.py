@@ -273,9 +273,25 @@ class _MoARouter(nn.Module):
         nn.init.zeros_(self.router[-1].weight)
         nn.init.zeros_(self.router[-1].bias)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        logits = self.router(x)                              # [B, M, H, W]
-        return F.softmax(logits / self.temperature, dim=1)
+    def forward(self, x: torch.Tensor, return_logits: bool = False) -> torch.Tensor:
+        logits = self.router(x) / self.temperature           # [B, M, H, W]
+        probs = F.softmax(logits, dim=1)
+        if return_logits:
+            return probs, logits
+        return probs
+
+
+def _moa_router_aux_loss(weights: torch.Tensor, logits: torch.Tensor, coeff: float) -> torch.Tensor:
+    """GShard-scale MoA router regularization with a small z/entropy stabilizer."""
+    num_groups = weights.shape[1]
+    importance = weights.float().mean(dim=(0, 2, 3))
+    importance = importance / importance.sum().clamp_min(1e-6)
+    balance_loss = num_groups * torch.sum(importance * importance)
+    z_loss = torch.logsumexp(logits.float(), dim=1).pow(2).mean()
+    entropy = -(importance * torch.log(importance.clamp_min(1e-6))).sum()
+    max_entropy = math.log(max(num_groups, 2))
+    entropy_deficit = (max_entropy - entropy).clamp_min(0.0) / max_entropy
+    return coeff * (balance_loss + 0.1 * z_loss + 0.1 * entropy_deficit)
 
 
 # ---------------------------------------------------------------------------
@@ -318,12 +334,14 @@ class MoABlock(nn.Module):
         temperature: float = 1.0,
         attn_drop: float = 0.0,
         shortcut: bool = True,
+        aux_loss_coeff: float = 0.01,
     ):
         super().__init__()
         assert num_heads % self.NUM_GROUPS == 0, (
             f"num_heads ({num_heads}) must be divisible by NUM_GROUPS ({self.NUM_GROUPS})"
         )
         self.shortcut = shortcut
+        self.aux_loss_coeff = aux_loss_coeff
         head_dim = max(dim // num_heads, 16)
         heads_per_group = num_heads // self.NUM_GROUPS
 
@@ -350,6 +368,7 @@ class MoABlock(nn.Module):
             Conv(hidden, dim, 1, act=False),
         )
         self.ls_ffn = nn.Parameter(torch.ones(dim, 1, 1) * 0.1)
+        self.last_aux_loss: torch.Tensor = torch.zeros((), requires_grad=False)
 
         self._init_weights()
 
@@ -364,7 +383,11 @@ class MoABlock(nn.Module):
         B, C, H, W = x.shape
 
         # ── Routing weights ──────────────────────────────────────────────
-        weights = self.router(x)   # [B, 3, H, W],  sums-to-1 over dim=1
+        weights, router_logits = self.router(x, return_logits=True)   # [B, 3, H, W]
+        if self.training and self.aux_loss_coeff > 0:
+            self.last_aux_loss = _moa_router_aux_loss(weights, router_logits, self.aux_loss_coeff)
+        else:
+            self.last_aux_loss = x.new_zeros(())
 
         w_l = weights[:, 0:1]     # [B, 1, H, W]
         w_r = weights[:, 1:2]
@@ -427,6 +450,7 @@ class C2fMoA(nn.Module):
         temperature: float = 1.0,
         shortcut: bool = True,
         e: float = 0.5,
+        aux_loss_coeff: float = 0.01,
     ):
         super().__init__()
         self.c = int(c2 * e)
@@ -440,18 +464,27 @@ class C2fMoA(nn.Module):
         # ensure head_dim ≥ 16
         while self.c // eff_heads < 16 and eff_heads > MoABlock.NUM_GROUPS:
             eff_heads -= MoABlock.NUM_GROUPS
+        eff_heads = max(eff_heads, MoABlock.NUM_GROUPS)
 
         self.m = nn.ModuleList(
             MoABlock(self.c, num_heads=eff_heads,
                      mlp_ratio=mlp_ratio,
                      temperature=temperature,
-                     shortcut=shortcut)
+                     shortcut=shortcut,
+                     aux_loss_coeff=aux_loss_coeff)
             for _ in range(n)
         )
+        self.last_aux_loss: torch.Tensor = torch.zeros((), requires_grad=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         y = list(self.cv1(x).chunk(2, dim=1))   # [identity, dynamic]
-        y.extend(m(y[-1]) for m in self.m)       # append MoABlock outputs
+        aux_total = x.new_zeros(())
+        for m in self.m:
+            y.append(m(y[-1]))
+            l = m.last_aux_loss
+            if isinstance(l, torch.Tensor):
+                aux_total = aux_total + l
+        self.last_aux_loss = aux_total
         return self.cv2(torch.cat(y, dim=1))
 
 
@@ -491,9 +524,11 @@ class NeckMoAFusion(nn.Module):
         c_out: int,
         num_heads: int = 4,
         shortcut: bool = True,
+        aux_loss_coeff: float = 0.01,
     ):
         super().__init__()
         self.shortcut = shortcut
+        self.aux_loss_coeff = aux_loss_coeff
         head_dim = max(c_hi // num_heads, 16)
         inner = head_dim * num_heads
         self.num_heads = num_heads
@@ -520,6 +555,7 @@ class NeckMoAFusion(nn.Module):
         # Channel alignment for residual
         self.res_proj = (nn.Conv2d(c_hi, c_out, 1, bias=False)
                          if c_hi != c_out else nn.Identity())
+        self.last_aux_loss: torch.Tensor = torch.zeros((), requires_grad=False)
 
         self._init_weights()
 
@@ -556,7 +592,11 @@ class NeckMoAFusion(nn.Module):
             self_out = self.res_proj(self_out)
 
         # ── Router blend ─────────────────────────────────────────────────
-        weights = self.router(hi)         # [B, 2, H, W]
+        weights, router_logits = self.router(hi, return_logits=True)         # [B, 2, H, W]
+        if self.training and self.aux_loss_coeff > 0:
+            self.last_aux_loss = _moa_router_aux_loss(weights, router_logits, self.aux_loss_coeff)
+        else:
+            self.last_aux_loss = hi.new_zeros(())
         w_cross = weights[:, 0:1]
         w_self  = weights[:, 1:2]
 
@@ -586,3 +626,24 @@ def anneal_moa_temperature(model: nn.Module, factor: float = 0.99,
     for m in model.modules():
         if isinstance(m, _MoARouter):
             m.temperature = max(m.temperature * factor, min_temp)
+
+
+def collect_moa_aux_loss(model: nn.Module) -> torch.Tensor:
+    """Sum graph-connected MoA router auxiliary losses without wrapper double-counting."""
+    total = None
+    covered: set[int] = set()
+    for m in model.modules():
+        if isinstance(m, C2fMoA):
+            l = m.last_aux_loss
+            if isinstance(l, torch.Tensor) and l.requires_grad:
+                total = l if total is None else total + l
+            covered.update(id(child) for child in m.modules())
+        elif isinstance(m, NeckMoAFusion):
+            l = m.last_aux_loss
+            if isinstance(l, torch.Tensor) and l.requires_grad:
+                total = l if total is None else total + l
+        elif isinstance(m, MoABlock) and id(m) not in covered:
+            l = m.last_aux_loss
+            if isinstance(l, torch.Tensor) and l.requires_grad:
+                total = l if total is None else total + l
+    return total if total is not None else torch.zeros(1, device=next(model.parameters()).device)

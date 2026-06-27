@@ -50,9 +50,39 @@ def _collect_mot_aux_loss(model: nn.Module | None, device: torch.device) -> torc
     return mot_loss
 
 
+def _collect_moa_aux_loss(model: nn.Module | None, device: torch.device) -> torch.Tensor:
+    """Sum graph-connected MoA router aux losses from C2fMoA/NeckMoAFusion blocks."""
+    moa_loss = torch.tensor(0.0, device=device)
+    if model is None or not getattr(model, "training", True):
+        return moa_loss
+    try:
+        from ultralytics.nn.modules.moa import collect_moa_aux_loss
+    except Exception:
+        return moa_loss
+    loss_t = collect_moa_aux_loss(model)
+    if isinstance(loss_t, torch.Tensor):
+        moa_loss = moa_loss + loss_t.to(device)
+    return moa_loss
+
+
 def _collect_mixture_aux_loss(model: nn.Module | None, device: torch.device) -> torch.Tensor:
-    """Collect all mixture-routing auxiliary losses that share the moe loss gain."""
-    return _collect_moe_aux_loss(model, device) + _collect_mot_aux_loss(model, device)
+    """Collect all mixture-routing auxiliary losses that share the moe loss gain.
+
+    Per-type normalization prevents large-scale losses (e.g. MoE GShard ~1.0)
+    from drowning out smaller-scale losses (e.g. MoA/MoT ~0.01-0.1).  Each
+    sub-loss is divided by its own detached magnitude (clamped to a small floor)
+    so that the combined signal is balanced.
+    """
+    moe_l = _collect_moe_aux_loss(model, device)
+    mot_l = _collect_mot_aux_loss(model, device)
+    moa_l = _collect_moa_aux_loss(model, device)
+
+    # Detached magnitude normalization (prevents any single term from dominating)
+    moe_scale = moe_l.detach().clamp(min=1e-4)
+    mot_scale = mot_l.detach().clamp(min=1e-4)
+    moa_scale = moa_l.detach().clamp(min=1e-4)
+
+    return (moe_l / moe_scale) + (mot_l / mot_scale) + (moa_l / moa_scale)
 
 
 class VarifocalLoss(nn.Module):

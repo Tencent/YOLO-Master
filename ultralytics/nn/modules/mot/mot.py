@@ -274,7 +274,12 @@ class _WindowTransformerExpert(nn.Module):
         # Remove padding
         attn_out = attn_out[:, :H_orig, :W_orig, :]
 
-        x = x[:, :H_orig, :W_orig, :]   # also trim x
+        # Reverse shift on x BEFORE residual addition so spatial positions align.
+        # Without this, the shifted input x is added to the un-shifted attention
+        # output, causing a cyclic spatial misalignment in all shifted blocks.
+        if shift > 0:
+            x = torch.roll(x, shifts=(shift, shift), dims=(1, 2))
+        x = x[:, :H_orig, :W_orig, :]
         x = x + self.ls1 * attn_out
 
         # ── FFN ──────────────────────────────────────────────────────────
@@ -404,9 +409,7 @@ class _DeformableTransformerExpert(nn.Module):
         )                                                      # [B*nh, hd, N, np]
 
         # sampled: [B*nh, hd, N, np] → [B, nh, N, np, hd]
-        sampled = sampled.reshape(B, nh, hd, N, np_).permute(0, 2, 3, 4, 1)  # [B,hd,N,np,nh]
-        # Reorder: [B, N, nh, np, hd]
-        sampled = sampled.permute(0, 2, 4, 3, 1).contiguous()
+        sampled = sampled.reshape(B, nh, hd, N, np_).permute(0, 3, 1, 4, 2).contiguous()
 
         # Weighted sum over sampling points: [B, N, nh, hd]
         out = (attn_w.unsqueeze(-1) * sampled).sum(dim=3)    # [B, N, nh, hd]
@@ -483,15 +486,24 @@ class _MoTRouter(nn.Module):
         nn.init.zeros_(self.router[-1].weight)
         nn.init.zeros_(self.router[-1].bias)
 
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def _compute_logits(self, x: torch.Tensor) -> torch.Tensor:
+        logits = self.router(x)
+        if not self.use_spatial:
+            logits = logits.unsqueeze(-1).unsqueeze(-1)
+        return logits
+
+    @staticmethod
+    def z_loss_from_logits(logits: torch.Tensor) -> torch.Tensor:
+        log_z = torch.logsumexp(logits, dim=1)
+        return (log_z ** 2).mean()
+
+    def forward(self, x: torch.Tensor, return_logits: bool = False) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Returns:
             weights : [B, num_experts, H, W] or [B, num_experts, 1, 1]  (soft, sum-to-1)
             indices : [B, top_k, H, W] or [B, top_k, 1, 1]  (top-k expert ids)
         """
-        logits = self.router(x)      # [B, E, H, W] or [B, E, 1, 1] after GAP
-        if not self.use_spatial:
-            logits = logits.unsqueeze(-1).unsqueeze(-1)   # [B, E, 1, 1]
+        logits = self._compute_logits(x)      # [B, E, H, W] or [B, E, 1, 1] after GAP
 
         # Soft weights (always computed for gradient flow)
         weights = F.softmax(logits / self.temperature, dim=1)   # [B, E, H, W]
@@ -515,15 +527,13 @@ class _MoTRouter(nn.Module):
             indices = torch.arange(self.num_experts, device=x.device).view(
                 1, -1, 1, 1).expand(x.shape[0], -1, x.shape[2], x.shape[3])
 
+        if return_logits:
+            return weights, indices, logits
         return weights, indices
 
     def router_z_loss(self, x: torch.Tensor) -> torch.Tensor:
         """Z-loss for load balance: encourages router logits to be small."""
-        logits = self.router(x)
-        if not self.use_spatial:
-            logits = logits.unsqueeze(-1).unsqueeze(-1)
-        log_z = torch.logsumexp(logits, dim=1)   # [B, H, W]
-        return (log_z ** 2).mean()
+        return self.z_loss_from_logits(self._compute_logits(x))
 
 
 # ---------------------------------------------------------------------------
@@ -609,6 +619,7 @@ class MoTBlock(nn.Module):
         self.out_proj = nn.Conv2d(dim, dim, 1, bias=False)
 
         self._init_weights()
+        self.last_aux_loss: torch.Tensor | None = None
 
     def _init_weights(self):
         nn.init.trunc_normal_(self.out_proj.weight, std=0.02)
@@ -620,7 +631,7 @@ class MoTBlock(nn.Module):
             aux_loss      : scalar (router z-loss, 0 if balance_loss_coeff==0)
         """
         # ── Routing weights ──────────────────────────────────────────────
-        weights, _ = self.router(x)   # [B, E, H, W]
+        weights, _, router_logits = self.router(x, return_logits=True)   # [B, E, H, W]
 
         # ── Expert computation ───────────────────────────────────────────
         # All experts forward unconditionally and are blended by routing
@@ -643,10 +654,11 @@ class MoTBlock(nn.Module):
 
         # ── Auxiliary loss ───────────────────────────────────────────────
         if self.balance_loss_coeff > 0 and self.training:
-            aux = self.router.router_z_loss(x) * self.balance_loss_coeff
+            aux = self.router.z_loss_from_logits(router_logits) * self.balance_loss_coeff
         else:
             aux = x.new_zeros(())
 
+        self.last_aux_loss = aux
         return out, aux
 
 
@@ -748,16 +760,26 @@ class C2fMoT(nn.Module):
 def collect_mot_aux_loss(model: nn.Module) -> torch.Tensor:
     """Sum all MoT router aux losses in the model.
 
+    Scans both C2fMoT wrappers and standalone MoTBlock instances.
+    Uses id-based deduplication so blocks nested inside C2fMoT are not
+    double-counted.
+
     Call in the training loss function:
         loss = det_loss + collect_mot_aux_loss(model)
     """
     total = None
+    covered: set[int] = set()
     for m in model.modules():
         if isinstance(m, C2fMoT):
             l = m.last_aux_loss
             if isinstance(l, torch.Tensor) and l.requires_grad:
                 total = l if total is None else total + l
-    return total if total is not None else torch.zeros(1)
+            covered.update(id(child) for child in m.modules())
+        elif isinstance(m, MoTBlock) and id(m) not in covered:
+            l = getattr(m, 'last_aux_loss', None)
+            if isinstance(l, torch.Tensor) and l.requires_grad:
+                total = l if total is None else total + l
+    return total if total is not None else torch.zeros(1, device=next(model.parameters()).device)
 
 
 def anneal_mot_temperature(model: nn.Module, factor: float = 0.97,
