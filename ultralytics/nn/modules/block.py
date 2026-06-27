@@ -2254,6 +2254,7 @@ class MoEGate(nn.Module):
         
         # 负载平衡损失权重
         self.balance_loss_weight = 0.01
+        self.last_balance_loss: torch.Tensor | None = None
         
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         B = x.shape[0]
@@ -2261,16 +2262,24 @@ class MoEGate(nn.Module):
         # 计算门控分数
         scores = self.gate(x)  # (B, num_experts)
         
-        # Top-K选择
-        top_k_scores, top_k_indices = torch.topk(scores, self.top_k, dim=1)
-        top_k_scores = F.softmax(top_k_scores, dim=1)
-        
-        # 负载平衡损失 (训练时使用)
+        # Top-K selection: softmax first (full distribution), then topk.
+        # Doing topk before softmax biases the probability distribution because
+        # the softmax denominator only sees the top-k logits, not all experts.
+        probs = F.softmax(scores, dim=1)
+        top_k_scores, top_k_indices = torch.topk(probs, self.top_k, dim=1)
+        top_k_scores = top_k_scores / (top_k_scores.sum(dim=1, keepdim=True) + 1e-8)
+
+        # Load-balancing loss (Switch/GShard form, gradient flows via probs).
         if self.training:
-            expert_usage = F.one_hot(top_k_indices, self.num_experts).float().sum(0)
-            load_balance_loss = expert_usage.var()
-            # 可在外部累加到总损失
-        
+            from ultralytics.nn.modules.moe.loss import differentiable_balance_loss
+
+            expert_usage = F.one_hot(top_k_indices.reshape(-1), self.num_experts).float().sum(0)
+            self.last_balance_loss = differentiable_balance_loss(
+                probs, expert_usage, self.num_experts, reduce_ddp=True,
+            )
+        else:
+            self.last_balance_loss = None
+
         return top_k_scores, top_k_indices
 
 
@@ -2299,28 +2308,40 @@ class DyMoEBlock(nn.Module):
         
         self.gamma1 = nn.Parameter(1e-4 * torch.ones(dim))
         self.gamma2 = nn.Parameter(1e-4 * torch.ones(dim))
-        
+        self.last_aux_loss: torch.Tensor | None = None
+
+    @property
+    def aux_loss(self) -> torch.Tensor:
+        """Return the registered MoE aux loss, or a device-safe zero."""
+        from ultralytics.nn.modules.moe.modules import _registry_get, _zero_aux_loss_like
+
+        loss = _registry_get(self)
+        return loss if isinstance(loss, torch.Tensor) else _zero_aux_loss_like(self)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        B, C, H, W = x.shape
-        
         # 专家选择
         top_k_scores, top_k_indices = self.gate(x)  # (B, top_k)
-        
-        # 专家计算
-        expert_outputs = torch.stack([expert(x) for expert in self.experts], dim=1)  # (B, num_experts, C, H, W)
-        
-        # 加权聚合
-        selected_experts = torch.gather(
-            expert_outputs, 1, 
-            top_k_indices.view(B, self.top_k, 1, 1, 1).expand(-1, -1, C, H, W)
-        )  # (B, top_k, C, H, W)
-        
-        moe_output = (selected_experts * top_k_scores.view(B, self.top_k, 1, 1, 1)).sum(dim=1)
-        
+
+        # Sparse expert dispatch — batch by expert index (no per-sample Python loop).
+        from ultralytics.nn.modules.moe.utils import BatchedExpertComputation
+
+        moe_output = BatchedExpertComputation.compute_sparse_experts_batched(
+            x, self.experts, top_k_scores, top_k_indices, self.top_k, self.num_experts,
+        )
+
+        if self.training and self.gate.last_balance_loss is not None:
+            from ultralytics.nn.modules.moe.modules import _registry_set
+
+            aux = self.gate.balance_loss_weight * self.gate.last_balance_loss
+            _registry_set(self, aux)
+            self.last_aux_loss = aux
+        else:
+            self.last_aux_loss = None
+
         # 残差连接
         x = x + self.gamma1.view(1, -1, 1, 1) * moe_output
         x = x + self.gamma2.view(1, -1, 1, 1) * self.mlp(x)
-        
+
         return x
 
 

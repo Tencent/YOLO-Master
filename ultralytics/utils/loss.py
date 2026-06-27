@@ -50,9 +50,74 @@ def _collect_mot_aux_loss(model: nn.Module | None, device: torch.device) -> torc
     return mot_loss
 
 
+def _collect_moa_aux_loss(model: nn.Module | None, device: torch.device) -> torch.Tensor:
+    """Sum graph-connected MoA router aux losses from C2fMoA/NeckMoAFusion blocks."""
+    moa_loss = torch.tensor(0.0, device=device)
+    if model is None or not getattr(model, "training", True):
+        return moa_loss
+    try:
+        from ultralytics.nn.modules.moa import collect_moa_aux_loss
+    except Exception:
+        return moa_loss
+    loss_t = collect_moa_aux_loss(model)
+    if isinstance(loss_t, torch.Tensor):
+        moa_loss = moa_loss + loss_t.to(device)
+    return moa_loss
+
+
+_MIXTURE_LOSS_EMA_DECAY = 0.99
+_MIXTURE_LOSS_EMA_FLOOR = 1e-4
+_MIXTURE_LOSS_EMA_DEFAULTS = {"moe": 1.0, "mot": 0.1, "moa": 0.1}
+
+
+def _get_mixture_loss_ema(model: nn.Module | None) -> dict[str, float] | None:
+    """Return (and lazily init) EMA scales for MoE/MoT/MoA aux-loss magnitudes."""
+    if model is None:
+        return None
+    ema = getattr(model, "_mixture_loss_ema", None)
+    if ema is None:
+        ema = dict(_MIXTURE_LOSS_EMA_DEFAULTS)
+        model._mixture_loss_ema = ema
+    return ema
+
+
+def _update_mixture_loss_ema(model: nn.Module | None, key: str, loss_t: torch.Tensor) -> None:
+    """Update one EMA entry from a detached scalar loss magnitude."""
+    ema = _get_mixture_loss_ema(model)
+    if ema is None or not getattr(model, "training", False):
+        return
+    with torch.no_grad():
+        val = float(loss_t.detach().abs().reshape(-1)[0]) if loss_t.numel() else 0.0
+        if val > _MIXTURE_LOSS_EMA_FLOOR:
+            ema[key] = _MIXTURE_LOSS_EMA_DECAY * ema[key] + (1.0 - _MIXTURE_LOSS_EMA_DECAY) * val
+
+
 def _collect_mixture_aux_loss(model: nn.Module | None, device: torch.device) -> torch.Tensor:
-    """Collect all mixture-routing auxiliary losses that share the moe loss gain."""
-    return _collect_moe_aux_loss(model, device) + _collect_mot_aux_loss(model, device)
+    """Collect all mixture-routing auxiliary losses that share the moe loss gain.
+
+    Per-type EMA normalization prevents large-scale losses (e.g. MoE GShard ~1.0)
+    from drowning out smaller-scale losses (e.g. MoA/MoT ~0.01-0.1) while keeping
+    gradient ratios stable across batches (unlike per-step detached magnitudes).
+    """
+    moe_l = _collect_moe_aux_loss(model, device)
+    mot_l = _collect_mot_aux_loss(model, device)
+    moa_l = _collect_moa_aux_loss(model, device)
+
+    _update_mixture_loss_ema(model, "moe", moe_l)
+    _update_mixture_loss_ema(model, "mot", mot_l)
+    _update_mixture_loss_ema(model, "moa", moa_l)
+
+    ema = _get_mixture_loss_ema(model)
+    if ema is not None:
+        moe_scale = moe_l.new_tensor(max(ema["moe"], _MIXTURE_LOSS_EMA_FLOOR))
+        mot_scale = mot_l.new_tensor(max(ema["mot"], _MIXTURE_LOSS_EMA_FLOOR))
+        moa_scale = moa_l.new_tensor(max(ema["moa"], _MIXTURE_LOSS_EMA_FLOOR))
+    else:
+        moe_scale = moe_l.detach().clamp(min=_MIXTURE_LOSS_EMA_FLOOR)
+        mot_scale = mot_l.detach().clamp(min=_MIXTURE_LOSS_EMA_FLOOR)
+        moa_scale = moa_l.detach().clamp(min=_MIXTURE_LOSS_EMA_FLOOR)
+
+    return (moe_l / moe_scale) + (mot_l / mot_scale) + (moa_l / moa_scale)
 
 
 class VarifocalLoss(nn.Module):

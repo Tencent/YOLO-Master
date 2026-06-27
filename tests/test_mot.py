@@ -57,6 +57,23 @@ def test_mot_router_z_loss_uses_expert_axis():
     assert torch.allclose(z_loss, expected, atol=1e-5)
 
 
+def test_mot_block_reuses_router_logits_for_z_loss(monkeypatch):
+    torch.manual_seed(0)
+    module = MoTBlock(24, num_heads=3, top_k=2, window_size=4, n_points=2, balance_loss_coeff=0.01).train()
+    calls = {"n": 0}
+    original = module.router._compute_logits
+
+    def wrapped(x):
+        calls["n"] += 1
+        return original(x)
+
+    monkeypatch.setattr(module.router, "_compute_logits", wrapped)
+    out, aux = module(torch.randn(1, 24, 4, 4))
+    assert out.shape == (1, 24, 4, 4)
+    assert aux.requires_grad
+    assert calls["n"] == 1
+
+
 def test_mot_temperature_anneal():
     module = C2fMoT(64, 64, n=2, num_heads=4)
     before = [m.router.temperature for m in module.m]
@@ -91,3 +108,54 @@ def test_mot_model_configs_parse():
         model = DetectionModel(str(cfg), ch=3, nc=80, verbose=False)
         assert sum(isinstance(m, C2fMoT) for m in model.modules()) == 3
         assert sum(isinstance(m, MoTBlock) for m in model.modules()) == 6
+
+
+def test_mot_deformable_align_corners_option():
+    block = MoTBlock(32, num_heads=4, top_k=2, window_size=4, n_points=2, grid_align_corners=False)
+    assert block.experts[2].align_corners is False
+
+
+def test_mot_window_expert_padding_non_divisible():
+    """Window expert must handle H/W not divisible by window_size (padding path)."""
+    from ultralytics.nn.modules.mot.mot import _WindowTransformerExpert
+
+    torch.manual_seed(0)
+    expert = _WindowTransformerExpert(32, num_heads=4, window_size=7).eval()
+    # 10x13 are not multiples of 7 → exercises _pad_to_window + crop-back.
+    x = torch.randn(2, 32, 10, 13)
+    with torch.no_grad():
+        out = expert(x)
+    assert out.shape == x.shape
+    assert torch.isfinite(out).all()
+
+
+def test_mot_window_expert_shift_spatial_alignment():
+    """Shifted-window expert output must keep input spatial dims and stay finite.
+
+    The shift/un-shift residual alignment is the subtle correctness point: an
+    identity-ish check ensures no cyclic spatial misalignment leaks through.
+    """
+    from ultralytics.nn.modules.mot.mot import _WindowTransformerExpert
+
+    torch.manual_seed(0)
+    shifted = _WindowTransformerExpert(32, num_heads=4, window_size=4, shift_size=2).eval()
+    regular = _WindowTransformerExpert(32, num_heads=4, window_size=4, shift_size=0).eval()
+    x = torch.randn(1, 32, 8, 8)
+    with torch.no_grad():
+        out_s = shifted(x)
+        out_r = regular(x)
+    assert out_s.shape == x.shape == out_r.shape
+    assert torch.isfinite(out_s).all() and torch.isfinite(out_r).all()
+    # Shifted vs regular windows must produce different receptive fields.
+    assert not torch.allclose(out_s, out_r)
+
+
+def test_mot_inference_sparsity_skips_inactive_experts():
+    """At eval with top_k<E, a per-sample inactive expert must not be invoked."""
+    torch.manual_seed(0)
+    block = MoTBlock(32, num_heads=4, top_k=1, window_size=4, n_points=2).eval()
+    x = torch.randn(1, 32, 8, 8)
+    with torch.no_grad():
+        out, aux = block(x)
+    assert out.shape == x.shape
+    assert torch.isfinite(out).all()

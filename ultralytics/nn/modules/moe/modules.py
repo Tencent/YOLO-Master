@@ -29,14 +29,34 @@ def autocast(enabled=True, **kwargs):
     """Device-agnostic autocast wrapper. Falls back gracefully on non-CUDA devices."""
     if torch.cuda.is_available():
         return _autocast('cuda', enabled=enabled, **kwargs)
-    # On MPS/CPU, autocast is not fully supported; disable to avoid warnings/errors
+    if torch.backends.mps.is_available():
+        return _autocast('mps', enabled=enabled, **kwargs)
+    # On CPU, autocast is not fully supported; disable to avoid warnings/errors
     from contextlib import nullcontext
     return nullcontext() if not enabled else nullcontext()
 from .loss import MoELoss, gshard_balance_loss, weighted_gshard_balance_loss, differentiable_balance_loss, all_reduce_mean
 
 # Global registry to store auxiliary losses for MoE modules
-# This prevents storing non-leaf tensors in the module instance, avoiding deepcopy errors
+# This prevents storing non-leaf tensors in the module instance, avoiding deepcopy errors.
+# Guarded by a lock: WeakKeyDictionary mutation is not atomic, and concurrent
+# forward passes (e.g. multi-threaded eval / hook callbacks) could otherwise
+# corrupt its internal weakref bookkeeping.
+import threading as _threading
+
 MOE_LOSS_REGISTRY = weakref.WeakKeyDictionary()
+_MOE_LOSS_REGISTRY_LOCK = _threading.Lock()
+
+
+def _registry_set(module: nn.Module, value: torch.Tensor) -> None:
+    """Thread-safe write to the MoE aux-loss registry."""
+    with _MOE_LOSS_REGISTRY_LOCK:
+        MOE_LOSS_REGISTRY[module] = value
+
+
+def _registry_get(module: nn.Module):
+    """Thread-safe read from the MoE aux-loss registry."""
+    with _MOE_LOSS_REGISTRY_LOCK:
+        return MOE_LOSS_REGISTRY.get(module)
 
 # Diagnostic snapshot sampling: only every Nth forward per module records the
 # latest routing summary. Tensors stay on their current device; diagnostic
@@ -72,7 +92,7 @@ def _detached_zero_like(value) -> torch.Tensor:
 
 def _get_moe_aux_loss(module: nn.Module) -> torch.Tensor:
     """Read the registered MoE aux loss, defaulting to a device-safe zero."""
-    loss = MOE_LOSS_REGISTRY.get(module)
+    loss = _registry_get(module)
     return loss if isinstance(loss, torch.Tensor) else _zero_aux_loss_like(module)
 
 
@@ -338,12 +358,15 @@ class UltraOptimizedMoE(nn.Module):
             # same as loss.differentiable_balance_loss. importance keeps grad
             # to the router; usage is detached. DDP-average both so all ranks
             # optimise one global balance target (no-op on single GPU).
-            importance_mean = all_reduce_mean(importance / B)
-            usage_freq = all_reduce_mean(usage_freq.detach())
-            balance_loss = self.num_experts * (importance_mean * usage_freq).sum()
+            balance_loss = differentiable_balance_loss(
+                importance.unsqueeze(0),
+                usage_freq,
+                self.num_experts,
+                reduce_ddp=True,
+            )
 
             aux_loss = (self.balance_loss_coeff * balance_loss) + (self.router_z_loss_coeff * z_loss_val)
-            MOE_LOSS_REGISTRY[self] = aux_loss
+            _registry_set(self, aux_loss)
             _record_moe_snapshot(
                 self,
                 expert_usage=usage_freq,
@@ -445,18 +468,52 @@ class AdaptiveCapacityMoE(UltraOptimizedMoE):
         )
 
     def forward(self, x):
-        # Parent returns the expert mixture (shared + sparse experts), top_k fixed.
-        result = super().forward(x)
-
-        # Differentiable, sync-free complexity factor mapped into [1/cf, cf]:
-        #   sigmoid∈(0,1) → exp((2*s-1)*ln(cf)) ∈ (1/cf, cf).
-        # No .item(), no instance-state mutation → re-entrant & export-safe.
-        # Higher complexity → larger expert contribution ("more capacity").
+        # Parent computes shared + sparse experts; scale only the sparse path.
+        B, C, H, W = x.shape
+        routing_result = self.routing(x)
+        routing_weights, routing_indices = routing_result[:2]
+        shared_output = self.shared_expert(x)
+        expert_output = BatchedExpertComputation.compute_sparse_experts_batched(
+            x,
+            self.experts,
+            routing_weights,
+            routing_indices,
+            self.top_k,
+            self.num_experts,
+        )
         if self.capacity_factor <= 1.0:
-            return result
-        s = self.complexity_estimator(x).mean()
-        scale = torch.exp((2.0 * s - 1.0) * math.log(self.capacity_factor))
-        return result * scale
+            result = shared_output + expert_output
+        else:
+            s = self.complexity_estimator(x).mean()
+            scale = torch.exp((2.0 * s - 1.0) * math.log(self.capacity_factor))
+            result = shared_output + expert_output * scale
+
+        if self.training:
+            usage_freq, importance, z_loss_val = routing_result[2:]
+            if importance is None:
+                importance = torch.zeros(self.num_experts, device=x.device)
+            if z_loss_val is None:
+                z_loss_val = torch.tensor(0.0, device=x.device, dtype=x.dtype)
+            balance_loss = differentiable_balance_loss(
+                importance.unsqueeze(0),
+                usage_freq,
+                self.num_experts,
+                reduce_ddp=True,
+            )
+            aux_loss = (self.balance_loss_coeff * balance_loss) + (self.router_z_loss_coeff * z_loss_val)
+            _registry_set(self, aux_loss)
+            _record_moe_snapshot(
+                self,
+                expert_usage=usage_freq.detach(),
+                topk_indices=routing_indices,
+                topk_weights=routing_weights,
+                aux_loss=aux_loss,
+            )
+            self.last_aux_loss = aux_loss.detach().item()
+            self.last_balance_loss = balance_loss.detach().item()
+            self.last_z_loss = z_loss_val.detach().item()
+
+        return result
 
 
 class ES_MOE(nn.Module):
@@ -511,7 +568,8 @@ class ES_MOE(nn.Module):
         self.register_buffer('expert_usage_counts', torch.zeros(num_experts), persistent=False)
         self.last_routing_snapshot = {}
 
-    def forward(self, x):
+    def _ensure_compat_attrs(self):
+        """One-time legacy checkpoint attribute repair (not per-forward)."""
         if not hasattr(self, "use_top_k"):
             self.use_top_k = False
         if not hasattr(self, "use_sparse_inference"):
@@ -520,6 +578,9 @@ class ES_MOE(nn.Module):
             self.num_experts = len(self.experts) if hasattr(self, "experts") else 1
         if not hasattr(self, "top_k"):
             self.top_k = self.num_experts
+
+    def forward(self, x):
+        self._ensure_compat_attrs()
         # Get routing weights
         routing_weights = self.routing(x)
 
@@ -588,13 +649,11 @@ class ES_MOE(nn.Module):
 
         # Iterate over experts (vectorized over batch)
         for expert_idx in range(self.num_experts):
-            # Find batch samples that selected this expert
+            # Find batch samples that selected this expert (avoid .any() GPU sync)
             mask = (topk_indices == expert_idx)
-            if not mask.any():
-                continue
-
             batch_indices, k_ranks = torch.where(mask)
-
+            if batch_indices.numel() == 0:
+                continue
             # === Dynamic Pruning ===
             if hasattr(self, 'dynamic_threshold') and self.dynamic_threshold > 0:
                 current_weights = routing_weights[batch_indices, expert_idx:expert_idx + 1, :, :]
@@ -639,7 +698,7 @@ class ES_MOE(nn.Module):
         # Store in registry (training only — avoids leaving graph-detached eval
         # tensors in the global registry that the loss collector could pick up).
         if self.training:
-            MOE_LOSS_REGISTRY[self] = load_balance_loss
+            _registry_set(self, load_balance_loss)
         
         return load_balance_loss
 
@@ -806,7 +865,7 @@ class OptimizedMOE(nn.Module):
         if self.training and loss_info:
             aux_loss = self.moe_loss_fn(loss_info['router_probs'], loss_info['router_logits'],
                                              loss_info['topk_indices'])
-            MOE_LOSS_REGISTRY[self] = aux_loss
+            _registry_set(self, aux_loss)
             _record_moe_snapshot(
                 self,
                 expert_usage=loss_info['router_probs'].detach().mean(dim=0) if isinstance(loss_info.get('router_probs'), torch.Tensor) else None,
@@ -878,9 +937,9 @@ class OptimizedMOEImproved(nn.Module):
         # True: isolate router from main-task grads (legacy); False (default): let them flow.
         self.detach_routing = detach_routing
 
-        # Progressive Sparsity
-        self.register_buffer('training_step', torch.tensor(0))
-        self.register_buffer('current_top_k', torch.tensor(num_experts))
+        # Progressive Sparsity (Python ints — no GPU→CPU sync from .item())
+        self._training_step = 0
+        self._current_top_k = num_experts
         self.warmup_steps = 5000
 
         # 1) Instantiate Router
@@ -952,33 +1011,27 @@ class OptimizedMOEImproved(nn.Module):
 
     def _update_sparsity(self):
         """Progressive Sparsity Scheduling"""
-        if self.training_step < self.warmup_steps:
-            progress = self.training_step.float() / self.warmup_steps
+        if self._training_step < self.warmup_steps:
+            progress = self._training_step / self.warmup_steps
             current_k = self.num_experts - progress * (self.num_experts - self.top_k)
-            self.current_top_k.fill_(max(self.top_k, int(current_k)))
+            self._current_top_k = max(self.top_k, int(current_k))
         else:
-            self.current_top_k.fill_(self.top_k)
+            self._current_top_k = self.top_k
 
     def forward(self, x):
         B, C, H, W = x.shape
 
         if self.training and self.progressive_sparsity:
             self._update_sparsity()
-            self.training_step += 1
+            self._training_step += 1
             
         # Use current_top_k for routing
-        adaptive_top_k = int(self.current_top_k.item()) if self.training and self.progressive_sparsity else self.top_k
-        
-        # Temporarily modify routing.top_k
-        original_top_k = self.routing.top_k
-        self.routing.top_k = adaptive_top_k
+        adaptive_top_k = self._current_top_k if self.training and self.progressive_sparsity else self.top_k
 
-        # 1) Routing (standardized interface)
+        # 1) Routing (standardized interface) — pass top_k as parameter instead of
+        #    mutating self.routing.top_k (thread-safe, ONNX-traceable).
         # loss_dict contains training loss inputs; empty during inference
-        routing_weights, routing_indices, loss_dict = self.routing(x)
-        
-        # Restore routing.top_k
-        self.routing.top_k = original_top_k
+        routing_weights, routing_indices, loss_dict = self.routing(x, top_k=adaptive_top_k)
 
         # 2) Shared expert compute (always active)
         shared_out = self.shared_expert(x)
@@ -991,10 +1044,23 @@ class OptimizedMOEImproved(nn.Module):
         # Expert dropout: randomly disable experts to prevent collapse.
         # Only after warmup so it doesn't fight progressive-sparsity scheduling.
         active_experts = list(range(self.num_experts))
-        _step = int(self.training_step.item())
+        _step = self._training_step
+        ddp_active = (
+            torch.distributed.is_available()
+            and torch.distributed.is_initialized()
+            and torch.distributed.get_world_size() > 1
+        )
         if self.training and _step >= self.warmup_steps and _step % self.dropout_interval == 0:
             num_drop = max(1, int(self.num_experts * self.expert_dropout_rate))
-            drop_indices = torch.randperm(self.num_experts)[:num_drop].tolist()
+            # Draw the drop set on a fixed-seed generator keyed by the global
+            # step so every DDP rank disables the *same* experts. Without this,
+            # ranks would skip different experts, leaving some experts with no
+            # gradient on a subset of ranks → DDP "found unused parameters" /
+            # gradient-bucket desync. (Previously dropout was disabled entirely
+            # under DDP, which silently changed training dynamics vs single-GPU.)
+            g = torch.Generator(device='cpu')
+            g.manual_seed(_step)
+            drop_indices = torch.randperm(self.num_experts, generator=g)[:num_drop].tolist()
             active_experts = [i for i in active_experts if i not in drop_indices]
 
         indices_flat = routing_indices.view(B, adaptive_top_k)
@@ -1032,7 +1098,7 @@ class OptimizedMOEImproved(nn.Module):
         if self.training and loss_dict:
             aux_loss = self.moe_loss_fn(loss_dict['router_probs'], loss_dict['router_logits'],
                                              loss_dict['topk_indices'])
-            MOE_LOSS_REGISTRY[self] = aux_loss
+            _registry_set(self, aux_loss)
             _record_moe_snapshot(
                 self,
                 expert_usage=loss_dict.get('router_probs').detach().mean(dim=0) if isinstance(loss_dict.get('router_probs'), torch.Tensor) else None,
@@ -1124,8 +1190,14 @@ class A2C2fMoE(A2C2f):
 
     @property
     def aux_loss(self):
-        """Retrieve the auxiliary loss from the registry."""
-        return _get_moe_aux_loss(self)
+        """Sum aux losses from inner ABlockMoE modules (registry is on inner MoE MLPs)."""
+        total = _zero_aux_loss_like(self)
+        for block_seq in self.m:
+            modules = block_seq if hasattr(block_seq, "__iter__") else [block_seq]
+            for block in modules:
+                if hasattr(block, "aux_loss"):
+                    total = total + block.aux_loss
+        return total
 
     def get_gflops(self, input_shape: Tuple[int, int, int, int]) -> Dict[str, float]:
         """Accurate GFLOPs calculation.
@@ -1364,7 +1436,7 @@ class AdaptiveGateMoE(nn.Module):
         self.bn = nn.GroupNorm(get_safe_groups(out_channels, num_groups), out_channels)
 
         # ── Training state ──
-        self.register_buffer('training_step', torch.tensor(0))
+        self.register_buffer('training_step', torch.tensor(0), persistent=False)
         self._training_step_value = 0
 
         self._init_weights()
@@ -1487,7 +1559,7 @@ class AdaptiveGateMoE(nn.Module):
 
             if isinstance(router_probs, torch.Tensor) and isinstance(router_logits, torch.Tensor):
                 aux_loss = self.moe_loss_fn(router_probs, router_logits, topk_indices)
-                MOE_LOSS_REGISTRY[self] = aux_loss
+                _registry_set(self, aux_loss)
                 _record_moe_snapshot(
                     self,
                     expert_usage=routing_stats.get('expert_usage'),
@@ -1656,7 +1728,7 @@ class HyperSplitMoE(nn.Module):
                 'topk_indices': topk_indices
             }
             aux_loss = self.moe_loss_fn(router_probs, router_logits, topk_indices)
-            MOE_LOSS_REGISTRY[self] = aux_loss
+            _registry_set(self, aux_loss)
 
         # 3.4 Expert Computation (Batched Sparse Computation)
         # Reuse BatchedExpertComputation for maximum efficiency
@@ -1758,7 +1830,7 @@ class HyperFusedMoE(nn.Module):
             self.balance_controller = AdaptiveBalanceController(num_experts)
         
         # Progressive sparsity control
-        self.register_buffer('training_step', torch.tensor(0))
+        self.register_buffer('training_step', torch.tensor(0), persistent=False)
         self.register_buffer('current_top_k', torch.tensor(num_experts))
         
         self._init_weights()
@@ -1783,22 +1855,11 @@ class HyperFusedMoE(nn.Module):
         if self.training and self.progressive_sparsity:
             self._update_sparsity()
         
+        adaptive_top_k = int(self.current_top_k.item()) if self.training and self.progressive_sparsity else self.top_k
+
         # === 1. Zero-cost Routing ===
         # routing_weights: [B, k, 1, 1], routing_indices: [B, k, 1, 1]
-        # But we need to be careful about current_top_k if progressive sparsity is used
-        # The router uses self.top_k fixed.
-        # However, progressive sparsity changes self.current_top_k for EXPERT COMPUTATION.
-        # The router should ideally route top_k experts, and then we might only use current_top_k of them?
-        # Or should the router also respect current_top_k?
-        # Let's check _update_sparsity: it updates self.current_top_k.
-        
-        # If we use ZeroCostRouter, it uses self.top_k.
-        # If we want progressive sparsity, we should probably pass current_top_k to router?
-        # But ZeroCostRouter signature is fixed in init.
-        # Let's just use self.top_k for routing, and slice later if needed, or update ZeroCostRouter to be dynamic.
-        # For simplicity, let's assume routing returns top_k (e.g. 2 or 4).
-        
-        routing_weights, routing_indices, routing_stats = self.routing(x)
+        routing_weights, routing_indices, routing_stats = self.routing(x, adaptive_top_k)
         
         # === 2. Shared Path (Parallel Computation) ===
         shared_out = self.shared_path(x)
@@ -1809,7 +1870,7 @@ class HyperFusedMoE(nn.Module):
         
         expert_out = self.fused_experts(
             x, routing_weights, routing_indices, 
-            self.top_k # Use static top_k for now to match router output
+            adaptive_top_k
         )
         
         # === 4. Output Fusion ===
@@ -1824,7 +1885,7 @@ class HyperFusedMoE(nn.Module):
             else:
                 balance_loss = self._compute_static_balance_loss(routing_stats)
             
-            MOE_LOSS_REGISTRY[self] = balance_loss
+            _registry_set(self, balance_loss)
             self.training_step += 1
         
         return output
@@ -1893,8 +1954,9 @@ class ZeroCostRouter(nn.Module):
         # Initialize with moderate variance for input-dependent routing
         nn.init.normal_(self.router[0].weight, std=0.05)
     
-    def forward(self, x):
+    def forward(self, x, top_k=None):
         B, C, H, W = x.shape
+        current_top_k = max(1, min(int(self.top_k if top_k is None else top_k), self.num_experts))
         
         # === Zero-cost Feature Extraction ===
         # Global statistics (Overlaps with BN computation, near zero cost)
@@ -1912,20 +1974,20 @@ class ZeroCostRouter(nn.Module):
         router_probs = F.softmax(router_logits, dim=1)
         
         # Top-K Selection
-        topk_probs, topk_indices = torch.topk(router_probs, self.top_k, dim=1)
+        topk_probs, topk_indices = torch.topk(router_probs, current_top_k, dim=1)
         
         # Renormalization
         topk_probs = topk_probs / (topk_probs.sum(dim=1, keepdim=True) + 1e-6)
         
         # Expand to spatial dimensions
-        routing_weights = topk_probs.view(B, self.top_k, 1, 1)
-        routing_indices = topk_indices.view(B, self.top_k, 1, 1)
+        routing_weights = topk_probs.view(B, current_top_k, 1, 1)
+        routing_indices = topk_indices.view(B, current_top_k, 1, 1)
         
         # Statistical Information
         expert_usage = torch.zeros(self.num_experts, device=x.device)
         expert_usage.scatter_add_(0, topk_indices.view(-1), 
                                   torch.ones_like(topk_indices.view(-1), dtype=torch.float32))
-        expert_usage = expert_usage / (B * self.top_k)
+        expert_usage = expert_usage / (B * current_top_k)
         
         routing_stats = {
             'router_probs': router_probs,
@@ -2238,7 +2300,7 @@ def _run_visual_hybrid_moe_forward(module, x, detail_gate=None, context_mixer=No
         topk_indices = routing_stats.get('topk_indices')
         if isinstance(router_probs, torch.Tensor) and isinstance(router_logits, torch.Tensor):
             aux_loss = module.moe_loss_fn(router_probs, router_logits, topk_indices)
-            MOE_LOSS_REGISTRY[module] = aux_loss
+            _registry_set(module, aux_loss)
             _record_moe_snapshot(
                 module,
                 expert_usage=routing_stats.get('expert_usage'),
@@ -2391,7 +2453,7 @@ class HybridAdaptiveGateMoE(AdaptiveGateMoE):
             topk_indices = routing_stats.get('topk_indices')
             if isinstance(router_probs, torch.Tensor) and isinstance(router_logits, torch.Tensor):
                 aux_loss = self.moe_loss_fn(router_probs, router_logits, topk_indices)
-                MOE_LOSS_REGISTRY[self] = aux_loss
+                _registry_set(self, aux_loss)
                 _record_moe_snapshot(
                     self,
                     expert_usage=routing_stats.get('expert_usage'),
@@ -2557,7 +2619,7 @@ class RefinedLowRankHybridAdaptiveGateMoE(LowRankHybridAdaptiveGateMoE):
             topk_indices = routing_stats.get('topk_indices')
             if isinstance(router_probs, torch.Tensor) and isinstance(router_logits, torch.Tensor):
                 aux_loss = self.moe_loss_fn(router_probs, router_logits, topk_indices)
-                MOE_LOSS_REGISTRY[self] = aux_loss
+                _registry_set(self, aux_loss)
                 _record_moe_snapshot(
                     self,
                     expert_usage=routing_stats.get('expert_usage'),
@@ -2813,7 +2875,7 @@ class AdaptiveBalanceController(nn.Module):
         max_entropy = math.log(max(self.num_experts, 2))
         entropy_penalty = (max_entropy - entropy).clamp_min(0.0) / max_entropy  # in [0,1]
 
-        total_loss = current_coeff * (balance_loss + 0.1 * entropy_penalty)
+        total_loss = current_coeff * (balance_loss + getattr(self, 'entropy_coeff', 0.1) * entropy_penalty)
 
         # Guard against NaN loss (graph-safe: keep grad_fn instead of new leaf)
         if not torch.isfinite(total_loss).all():
@@ -2831,25 +2893,9 @@ class UltraLightRouter(ZeroCostRouter):
         self.cache = None
 
     def forward(self, x, top_k=None):
-        # Allow dynamic top_k overrides
-        original_top_k = self.top_k
-        if top_k is not None:
-            self.top_k = top_k
-            
-        # Basic implementation relying on ZeroCostRouter logic
-        # For now, we skip complex caching to avoid shape mismatch issues during training
-        # But we implement the interface required by HyperUltimateMoE
-        
-        # ZeroCostRouter.forward returns (weights, indices, stats)
-        # But ZeroCostRouter.forward doesn't take top_k arg in my previous impl.
-        # So I need to handle that.
-        
-        res = super().forward(x)
-        
-        if top_k is not None:
-            self.top_k = original_top_k
-            
-        return res
+        # Basic implementation relying on ZeroCostRouter logic. Caching is skipped
+        # to avoid shape mismatch issues during training.
+        return super().forward(x, top_k=top_k)
 
 class MatMulFusedExperts(FusedExpertGroup):
     """
@@ -2920,7 +2966,7 @@ class HyperUltimateMoE(nn.Module):
         )
         
         # Progressive Sparsity
-        self.register_buffer('training_step', torch.tensor(0))
+        self.register_buffer('training_step', torch.tensor(0), persistent=False)
         self.register_buffer('current_top_k', torch.tensor(num_experts))
         self.warmup_steps = 5000
         
@@ -3017,7 +3063,7 @@ class HyperUltimateMoE(nn.Module):
         # 7. Adaptive Load Balancing Loss
         if self.training:
             balance_loss = self.balance_controller(routing_stats, self.training_step)
-            MOE_LOSS_REGISTRY[self] = balance_loss
+            _registry_set(self, balance_loss)
         
         return out
     
@@ -3135,7 +3181,7 @@ class UltimateOptimizedMoE(nn.Module):
         )
         
         # Progressive Sparsity
-        self.register_buffer('training_step', torch.tensor(0))
+        self.register_buffer('training_step', torch.tensor(0), persistent=False)
         self.register_buffer('current_top_k', torch.tensor(num_experts))
         self.warmup_steps = 5000
         
@@ -3220,7 +3266,7 @@ class UltimateOptimizedMoE(nn.Module):
             # Sync trainer-injected coefficient into the controller before computing loss
             self.balance_controller.initial_coeff = self.balance_loss_coeff
             balance_loss = self.balance_controller(routing_stats, self.training_step)
-            MOE_LOSS_REGISTRY[self] = balance_loss
+            _registry_set(self, balance_loss)
         
         return out
     
@@ -3232,8 +3278,10 @@ class UltimateOptimizedMoE(nn.Module):
         B, C, H, W = input_shape
         flops = {}
         
-        # Static path (consider skipping)
-        flops['static_path'] = FlopsUtils.count_conv2d(self.static_net, (B, self.static_channels, H, W)) / 1e9 * 0.9  # Assume 10% skipping
+        # Static path — always fully computed in forward(); no skipping mechanism
+        # exists, so report the true FLOPs (the previous *0.9 "assume 10% skip"
+        # factor was fictitious and understated real cost).
+        flops['static_path'] = FlopsUtils.count_conv2d(self.static_net, (B, self.static_channels, H, W)) / 1e9
         
         # Router
         flops['router'] = self.routing.compute_flops((B, self.dynamic_channels, H, W)) / 1e9

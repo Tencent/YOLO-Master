@@ -42,16 +42,20 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from ultralytics.nn.modules.conv import Conv
+from ultralytics.nn.modules.moe.utils import get_safe_groups as _safe_groups
+from ultralytics.utils import LOGGER
+
+# Maximum token count for explicit O(N²) SDPA fallback (PyTorch < 2.0).
+_SDPA_EXPLICIT_MAX_TOKENS = 4096
 
 # ---------------------------------------------------------------------------
 # Shared utilities
 # ---------------------------------------------------------------------------
 
-def _safe_groups(channels: int, desired: int) -> int:
-    for g in range(min(desired, channels), 0, -1):
-        if channels % g == 0:
-            return g
-    return 1
+
+# Query-chunk size used by the memory-bounded fallback so peak memory stays
+# O(chunk·N) instead of O(N²) on PyTorch < 2.0.
+_SDPA_FALLBACK_CHUNK = 1024
 
 
 def _sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
@@ -59,13 +63,30 @@ def _sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
     """Scaled dot-product attention.
 
     Uses ``F.scaled_dot_product_attention`` (Flash-Attention / memory-efficient
-    kernels) on PyTorch ≥ 2.0. On older PyTorch it falls back to an explicit
-    O(N²) softmax-attention, which can OOM on large token counts (e.g. P3-scale
-    full attention) — callers that may hit large N should prefer the window /
-    deformable experts there rather than the global path.
+    kernels) on PyTorch ≥ 2.0. On older PyTorch it falls back to softmax
+    attention. For large token counts (N > ``_SDPA_EXPLICIT_MAX_TOKENS``) the
+    fallback automatically switches to a **query-chunked** computation that
+    bounds peak memory to O(chunk·N) instead of materialising the full N×N
+    matrix — so it no longer crashes at high resolution, only runs slower.
     """
     if hasattr(F, "scaled_dot_product_attention"):
         return F.scaled_dot_product_attention(q, k, v, attn_mask=mask, scale=scale)
+    n_tokens = q.shape[-2]
+    if n_tokens > _SDPA_EXPLICIT_MAX_TOKENS:
+        # Memory-bounded chunked softmax-attention fallback (PyTorch < 2.0).
+        LOGGER.warning(
+            f"PyTorch < 2.0 SDPA fallback: N={n_tokens} > {_SDPA_EXPLICIT_MAX_TOKENS}; "
+            f"using query-chunked attention (chunk={_SDPA_FALLBACK_CHUNK}). "
+            "Upgrade to PyTorch ≥ 2.0 for fast memory-efficient SDPA."
+        )
+        outs = []
+        for start in range(0, n_tokens, _SDPA_FALLBACK_CHUNK):
+            end = min(start + _SDPA_FALLBACK_CHUNK, n_tokens)
+            attn = (q[..., start:end, :] @ k.transpose(-2, -1)) * scale
+            if mask is not None:
+                attn = attn + (mask[..., start:end, :] if mask.dim() == q.dim() else mask)
+            outs.append(attn.softmax(dim=-1) @ v)
+        return torch.cat(outs, dim=-2)
     attn = (q @ k.transpose(-2, -1)) * scale
     if mask is not None:
         attn = attn + mask
@@ -84,8 +105,9 @@ class _LocalConvTransformerExpert(nn.Module):
     """Transformer expert with convolutional inductive bias.
 
     Uses depthwise-conv pre-processing for QKV to bias attention toward
-    spatially-local patterns.  The FFN uses a gated linear unit (GLU)
-    variant for stronger non-linearity.
+    spatially-local patterns.  The FFN is a standard Gated Linear Unit (GLU):
+    ``out = (Sigmoid(W_g x)) ⊙ (W_v x)``. (This is GLU proper — *not* SwiGLU,
+    which would gate with SiLU/Swish instead of Sigmoid.)
     """
 
     def __init__(self, dim: int, num_heads: int, mlp_ratio: float = 2.0,
@@ -106,7 +128,7 @@ class _LocalConvTransformerExpert(nn.Module):
         self.norm2 = nn.GroupNorm(_safe_groups(dim, 8), dim)
         self.drop = nn.Dropout2d(dropout)
 
-        # Gated FFN: gate × value pattern (SwiGLU-inspired, 2-conv)
+        # Gated FFN: standard GLU (Sigmoid gate × value), 2-conv split.
         ffn_hidden = int(dim * mlp_ratio)
         # split into gate + value projections
         self.ffn_gate = nn.Sequential(Conv(dim, ffn_hidden, 1), nn.Sigmoid())
@@ -274,7 +296,12 @@ class _WindowTransformerExpert(nn.Module):
         # Remove padding
         attn_out = attn_out[:, :H_orig, :W_orig, :]
 
-        x = x[:, :H_orig, :W_orig, :]   # also trim x
+        # Reverse shift on x BEFORE residual addition so spatial positions align.
+        # Without this, the shifted input x is added to the un-shifted attention
+        # output, causing a cyclic spatial misalignment in all shifted blocks.
+        if shift > 0:
+            x = torch.roll(x, shifts=(shift, shift), dims=(1, 2))
+        x = x[:, :H_orig, :W_orig, :]
         x = x + self.ls1 * attn_out
 
         # ── FFN ──────────────────────────────────────────────────────────
@@ -304,12 +331,14 @@ class _DeformableTransformerExpert(nn.Module):
     """
 
     def __init__(self, dim: int, num_heads: int, n_points: int = 4,
-                 mlp_ratio: float = 2.0, dropout: float = 0.0):
+                 mlp_ratio: float = 2.0, dropout: float = 0.0,
+                 align_corners: bool = True):
         super().__init__()
         assert dim % num_heads == 0
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
         self.n_points = n_points
+        self.align_corners = align_corners
 
         # Query projection
         self.q_proj = nn.Linear(dim, dim, bias=False)
@@ -383,8 +412,8 @@ class _DeformableTransformerExpert(nn.Module):
         ref = torch.stack([col, row], dim=-1)                 # [N, 2]
         ref = ref[None, :, None, None, :].expand(B, -1, nh, np_, -1)  # [B,N,nh,np,2]
 
-        # Sampling locations = reference + learned offsets (scaled by 0.5)
-        sample_locs = ref + offsets * 0.5                     # [B, N, nh, np, 2]
+        # Sampling locations = reference + learned offsets (scaled, clamped to valid range)
+        sample_locs = (ref + offsets * 0.25).clamp(-1.0, 1.0)   # [B, N, nh, np, 2]
 
         # Value: [B, H*W, C] → reshape for grid_sample [B, C, H, W]
         v_4d = self.v_proj(value).permute(0, 2, 1).reshape(B, C, H, W)
@@ -400,13 +429,11 @@ class _DeformableTransformerExpert(nn.Module):
         sampled = F.grid_sample(
             v_4d,                                              # [B*nh, hd, H, W]
             locs,                                              # [B*nh, N, np, 2]
-            mode="bilinear", align_corners=True, padding_mode="zeros"
+            mode="bilinear", align_corners=self.align_corners, padding_mode="zeros"
         )                                                      # [B*nh, hd, N, np]
 
         # sampled: [B*nh, hd, N, np] → [B, nh, N, np, hd]
-        sampled = sampled.reshape(B, nh, hd, N, np_).permute(0, 2, 3, 4, 1)  # [B,hd,N,np,nh]
-        # Reorder: [B, N, nh, np, hd]
-        sampled = sampled.permute(0, 2, 4, 3, 1).contiguous()
+        sampled = sampled.reshape(B, nh, hd, N, np_).permute(0, 3, 1, 4, 2).contiguous()
 
         # Weighted sum over sampling points: [B, N, nh, hd]
         out = (attn_w.unsqueeze(-1) * sampled).sum(dim=3)    # [B, N, nh, hd]
@@ -483,18 +510,30 @@ class _MoTRouter(nn.Module):
         nn.init.zeros_(self.router[-1].weight)
         nn.init.zeros_(self.router[-1].bias)
 
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def _compute_logits(self, x: torch.Tensor) -> torch.Tensor:
+        logits = self.router(x)
+        if not self.use_spatial:
+            logits = logits.unsqueeze(-1).unsqueeze(-1)
+        return logits
+
+    @staticmethod
+    def z_loss_from_logits(logits: torch.Tensor) -> torch.Tensor:
+        log_z = torch.logsumexp(logits, dim=1)
+        return (log_z ** 2).mean()
+
+    def forward(self, x: torch.Tensor, return_logits: bool = False) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Returns:
             weights : [B, num_experts, H, W] or [B, num_experts, 1, 1]  (soft, sum-to-1)
             indices : [B, top_k, H, W] or [B, top_k, 1, 1]  (top-k expert ids)
         """
-        logits = self.router(x)      # [B, E, H, W] or [B, E, 1, 1] after GAP
-        if not self.use_spatial:
-            logits = logits.unsqueeze(-1).unsqueeze(-1)   # [B, E, 1, 1]
+        logits = self._compute_logits(x)      # [B, E, H, W] or [B, E, 1, 1] after GAP
+
+        # Use training temperature during train; fixed 1.0 at eval for stable routing.
+        temp = self.temperature if self.training else 1.0
 
         # Soft weights (always computed for gradient flow)
-        weights = F.softmax(logits / self.temperature, dim=1)   # [B, E, H, W]
+        weights = F.softmax(logits / temp, dim=1)   # [B, E, H, W]
         dense_weights = weights
 
         # Top-K mask
@@ -515,15 +554,13 @@ class _MoTRouter(nn.Module):
             indices = torch.arange(self.num_experts, device=x.device).view(
                 1, -1, 1, 1).expand(x.shape[0], -1, x.shape[2], x.shape[3])
 
+        if return_logits:
+            return weights, indices, logits
         return weights, indices
 
     def router_z_loss(self, x: torch.Tensor) -> torch.Tensor:
         """Z-loss for load balance: encourages router logits to be small."""
-        logits = self.router(x)
-        if not self.use_spatial:
-            logits = logits.unsqueeze(-1).unsqueeze(-1)
-        log_z = torch.logsumexp(logits, dim=1)   # [B, H, W]
-        return (log_z ** 2).mean()
+        return self.z_loss_from_logits(self._compute_logits(x))
 
 
 # ---------------------------------------------------------------------------
@@ -575,6 +612,7 @@ class MoTBlock(nn.Module):
         dropout: float = 0.0,
         exploration_eps: float = 0.02,
         window_shift: bool = False,
+        grid_align_corners: bool = True,
     ):
         super().__init__()
         assert 1 <= top_k <= self.NUM_EXPERTS
@@ -587,13 +625,21 @@ class MoTBlock(nn.Module):
         while dim % expert_heads != 0 and expert_heads > 1:
             expert_heads -= 1
         expert_heads = max(1, expert_heads)
+        if expert_heads != num_heads:
+            LOGGER.warning(
+                f"MoTBlock(dim={dim}): num_heads {num_heads} reduced to {expert_heads} "
+                f"(must divide dim and yield head_dim ≥ 1)"
+            )
 
         # Three Transformer experts
         self.experts = nn.ModuleList([
             _LocalConvTransformerExpert(dim, expert_heads, mlp_ratio, dropout),
             _WindowTransformerExpert(dim, expert_heads, window_size, mlp_ratio, dropout,
                                      shift_size=window_size // 2 if window_shift else 0),
-            _DeformableTransformerExpert(dim, expert_heads, n_points, mlp_ratio, dropout),
+            _DeformableTransformerExpert(
+                dim, expert_heads, n_points, mlp_ratio, dropout,
+                align_corners=grid_align_corners,
+            ),
         ])
 
         # Router
@@ -609,6 +655,7 @@ class MoTBlock(nn.Module):
         self.out_proj = nn.Conv2d(dim, dim, 1, bias=False)
 
         self._init_weights()
+        self.last_aux_loss: torch.Tensor | None = None
 
     def _init_weights(self):
         nn.init.trunc_normal_(self.out_proj.weight, std=0.02)
@@ -620,22 +667,26 @@ class MoTBlock(nn.Module):
             aux_loss      : scalar (router z-loss, 0 if balance_loss_coeff==0)
         """
         # ── Routing weights ──────────────────────────────────────────────
-        weights, _ = self.router(x)   # [B, E, H, W]
+        weights, indices, router_logits = self.router(x, return_logits=True)   # [B, E, H, W]
 
         # ── Expert computation ───────────────────────────────────────────
-        # All experts forward unconditionally and are blended by routing
-        # weight. With soft Top-K routing the sparse weights zero-out the
-        # blend contribution of inactive experts, so gradients only flow
-        # through the selected experts via weight sparsity.
-        #
-        # No data-dependent scalar short-circuit (e.g. ``w.max().item()``):
-        # that forces a GPU→CPU sync every step and breaks ONNX/TorchScript
-        # tracing. The three experts have distinct compute graphs and are all
-        # cheap relative to the backbone, so unconditional compute is fastest.
-        out = x.new_zeros(x.shape)
-        for e_idx, expert in enumerate(self.experts):
-            w = weights[:, e_idx:e_idx + 1]   # [B, 1, H, W]
-            out = out + expert(x) * w
+        if not self.training:
+            # Inference: sparse batch dispatch — only active experts per sample.
+            out = x.new_zeros(x.shape)
+            B = x.shape[0]
+            for e_idx, expert in enumerate(self.experts):
+                active = weights[:, e_idx].reshape(B, -1).sum(dim=1) > 0
+                batch_idx = torch.nonzero(active, as_tuple=True)[0]
+                if batch_idx.numel() == 0:
+                    continue
+                w = weights[batch_idx, e_idx:e_idx + 1]
+                out[batch_idx] = out[batch_idx] + expert(x[batch_idx]) * w
+        else:
+            # Training: dense compute keeps all experts in the graph for exploration.
+            out = x.new_zeros(x.shape)
+            for e_idx, expert in enumerate(self.experts):
+                w = weights[:, e_idx:e_idx + 1]   # [B, 1, H, W]
+                out = out + expert(x) * w
         out = self.out_norm(self.out_proj(out))
 
         # Residual (block-level shortcut)
@@ -643,10 +694,11 @@ class MoTBlock(nn.Module):
 
         # ── Auxiliary loss ───────────────────────────────────────────────
         if self.balance_loss_coeff > 0 and self.training:
-            aux = self.router.router_z_loss(x) * self.balance_loss_coeff
+            aux = self.router.z_loss_from_logits(router_logits) * self.balance_loss_coeff
         else:
             aux = x.new_zeros(())
 
+        self.last_aux_loss = aux
         return out, aux
 
 
@@ -707,6 +759,11 @@ class C2fMoT(nn.Module):
         while eff_heads > 1 and (dim % eff_heads != 0 or dim // eff_heads < 8):
             eff_heads -= 1
         eff_heads = max(1, eff_heads)
+        if eff_heads != num_heads:
+            LOGGER.warning(
+                f"C2fMoT(c={dim}): num_heads {num_heads} reduced to {eff_heads} "
+                f"(must divide channels and yield head_dim ≥ 8)"
+            )
 
         # Alternate window shift by block index (Swin-style): even blocks use
         # regular windows, odd blocks use shifted windows. Fixed at build time
@@ -745,19 +802,37 @@ class C2fMoT(nn.Module):
 # Utility: collect aux losses from all MoT modules
 # ---------------------------------------------------------------------------
 
+def _aux_loss_device(model: nn.Module) -> torch.device:
+    """Best-effort device lookup for zero aux-loss fallbacks."""
+    try:
+        return next(model.parameters()).device
+    except StopIteration:
+        return torch.device("cpu")
+
+
 def collect_mot_aux_loss(model: nn.Module) -> torch.Tensor:
     """Sum all MoT router aux losses in the model.
+
+    Scans both C2fMoT wrappers and standalone MoTBlock instances.
+    Uses id-based deduplication so blocks nested inside C2fMoT are not
+    double-counted.
 
     Call in the training loss function:
         loss = det_loss + collect_mot_aux_loss(model)
     """
     total = None
+    covered: set[int] = set()
     for m in model.modules():
         if isinstance(m, C2fMoT):
             l = m.last_aux_loss
             if isinstance(l, torch.Tensor) and l.requires_grad:
                 total = l if total is None else total + l
-    return total if total is not None else torch.zeros(1)
+            covered.update(id(child) for child in m.modules())
+        elif isinstance(m, MoTBlock) and id(m) not in covered:
+            l = getattr(m, 'last_aux_loss', None)
+            if isinstance(l, torch.Tensor) and l.requires_grad:
+                total = l if total is None else total + l
+    return total if total is not None else torch.zeros(1, device=_aux_loss_device(model))
 
 
 def anneal_mot_temperature(model: nn.Module, factor: float = 0.97,

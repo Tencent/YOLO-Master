@@ -19,9 +19,15 @@ def all_reduce_mean(tensor: torch.Tensor) -> torch.Tensor:
     world = dist.get_world_size()
     if world <= 1:
         return tensor
-    out = tensor.clone()
+    # Reduce in float32 to avoid catastrophic precision loss when the model
+    # runs in float16/bfloat16 under AMP/DDP — summing low-precision tensors
+    # across many ranks accumulates large rounding error that cannot be
+    # recovered. Cast back to the original dtype after averaging.
+    orig_dtype = tensor.dtype
+    out = tensor.float().clone()  # gradient-preserving; float32 for stable reduce
     dist.all_reduce(out, op=dist.ReduceOp.SUM)
-    return out / world
+    out = out / world
+    return out.to(orig_dtype)
 
 
 def gshard_balance_loss(expert_usage: torch.Tensor, num_experts: int,
@@ -135,6 +141,7 @@ class MoELoss(nn.Module):
         self.top_k = top_k
         self.use_soft_balancing = use_soft_balancing
         self.coeff_floor = coeff_floor  # 0 = no floor (trainer already guards stale configs)
+        self._nan_guard_hits = 0
 
     @staticmethod
     def _flatten_router_tensor(tensor: torch.Tensor) -> torch.Tensor:
@@ -161,20 +168,40 @@ class MoELoss(nn.Module):
             return indices.reshape(-1, indices.shape[-1])  # [B, H, W, K]
         return indices.reshape(indices.shape[0], -1)
 
+    def _usage_from_expert_indices(self, expert_indices: torch.Tensor) -> torch.Tensor:
+        """Return detached expert usage from discrete Top-K selections."""
+        flat_indices = expert_indices.reshape(-1).to(torch.long)
+        local_expert_counts = F.one_hot(flat_indices, num_classes=self.num_experts).float().sum(dim=0)
+        total = flat_indices.numel()
+
+        if dist.is_available() and dist.is_initialized():
+            # Counts are integer-valued; reduce in float32 so float16 models do
+            # not lose precision when summing large counts across ranks.
+            counts32 = local_expert_counts.float()
+            local_count = counts32.new_tensor(float(total))
+            dist.all_reduce(counts32, op=dist.ReduceOp.SUM)
+            dist.all_reduce(local_count, op=dist.ReduceOp.SUM)
+            return (counts32 / local_count.clamp_min(1.0)).to(local_expert_counts.dtype).detach()
+
+        return (local_expert_counts / max(total, 1)).detach()
+
     def _get_global_mean(self, tensor: torch.Tensor) -> torch.Tensor:
         """Computes the mean of a tensor across all distributed processes."""
         if not (dist.is_available() and dist.is_initialized()):
             return tensor.mean(dim=0)
-            
-        # Sum locally first
-        local_sum = tensor.sum(dim=0)
+
+        # Sum locally in float32 to keep the cross-rank reduction numerically
+        # stable under float16/bfloat16 AMP+DDP, then cast back. Without this,
+        # all_reduce on half-precision sums loses precision irrecoverably.
+        orig_dtype = tensor.dtype
+        local_sum = tensor.float().sum(dim=0)
         # We need the global batch size count
-        local_count = torch.tensor(tensor.size(0), device=tensor.device, dtype=tensor.dtype)
-        
+        local_count = torch.tensor(tensor.size(0), device=tensor.device, dtype=torch.float32)
+
         dist.all_reduce(local_sum, op=dist.ReduceOp.SUM)
         dist.all_reduce(local_count, op=dist.ReduceOp.SUM)
-        
-        return local_sum / local_count.clamp(min=1.0)
+
+        return (local_sum / local_count.clamp(min=1.0)).to(orig_dtype)
 
     def forward(
         self,
@@ -202,13 +229,11 @@ class MoELoss(nn.Module):
 
         if self.use_soft_balancing:
             # === Soft Balancing (Differentiable, GShard / Switch style) ===
-            # usage = mean(router_probs) over tokens (detached). Standard GShard
-            # soft form N*sum(importance*usage); grad flows only via importance,
-            # giving a true load-balancing signal to the router.
-            # NB: do NOT column-normalize usage across the batch — that forces
-            # every usage_e == 1/N (a constant), making the loss N*sum(imp/N)==1
-            # with zero gradient (the previous bug).
-            usage = importance.detach()
+            # Prefer discrete Top-K counts when available; this matches the
+            # Switch/GShard signal used by hard balancing while keeping gradient
+            # flow through `importance`. If a legacy caller has no indices, fall
+            # back to detached importance rather than failing the training step.
+            usage = self._usage_from_expert_indices(expert_indices) if expert_indices is not None else importance.detach()
         else:
             # === Hard Balancing (GShard / Switch Style) ===
             # Usage is defined by the discrete selection count.
@@ -216,22 +241,7 @@ class MoELoss(nn.Module):
             if expert_indices is None:
                 raise ValueError("expert_indices is required for hard load balancing.")
                 
-            B = expert_indices.shape[0]
-            flat_indices = expert_indices.view(-1)
-            
-            # Vectorized count using one_hot
-            local_expert_counts = F.one_hot(flat_indices, num_classes=self.num_experts).float().sum(dim=0)
-            
-            # Sync counts across GPUs
-            if dist.is_available() and dist.is_initialized():
-                dist.all_reduce(local_expert_counts, op=dist.ReduceOp.SUM)
-                total_samples = B * self.top_k * dist.get_world_size()
-            else:
-                total_samples = B * self.top_k
-            
-            usage = local_expert_counts / max(total_samples, 1.0)
-            # Detach usage because discrete selection is non-differentiable here
-            usage = usage.detach()
+            usage = self._usage_from_expert_indices(expert_indices)
 
         # Balance Loss: N * sum(importance * usage)
         balance_loss = self.num_experts * torch.sum(importance * usage)
@@ -285,6 +295,18 @@ class MoELoss(nn.Module):
         floor = float(getattr(self, "coeff_floor", 0.0))
         bl_coeff = max(self.balance_loss_coeff, floor)
         zl_coeff = max(self.z_loss_coeff, floor)
+        # Warn once if the floor silently overrode a deliberately-small user
+        # coefficient, so an intended near-zero weight isn't masked unnoticed.
+        if floor > 0 and not getattr(self, "_coeff_floor_warned", False):
+            if self.balance_loss_coeff < floor or self.z_loss_coeff < floor:
+                from ultralytics.utils import LOGGER
+
+                LOGGER.warning(
+                    f"MoELoss.coeff_floor={floor} raised balance/z coeff "
+                    f"(balance={self.balance_loss_coeff}, z={self.z_loss_coeff}); "
+                    "set coeff_floor=0 to honour small user coefficients exactly."
+                )
+                self._coeff_floor_warned = True
 
         # 6. Total Loss
         total_loss = (bl_coeff * balance_loss) + \
@@ -293,8 +315,16 @@ class MoELoss(nn.Module):
                      (self.diversity_loss_coeff * diversity_loss) + \
                      (self.variance_loss_coeff * variance_loss)
         
-        # NaN Guard (Graph Safe)
+        # NaN Guard (Graph Safe) — count hits for periodic diagnostics.
         if not torch.isfinite(total_loss).all():
+            self._nan_guard_hits += 1
+            if self._nan_guard_hits == 1 or self._nan_guard_hits % 100 == 0:
+                from ultralytics.utils import LOGGER
+
+                LOGGER.warning(
+                    f"MoELoss produced non-finite total (hit #{self._nan_guard_hits}); "
+                    "replacing with 0 for this step — check router logits / expert outputs."
+                )
             total_loss = torch.nan_to_num(total_loss, nan=0.0, posinf=0.0, neginf=0.0)
 
         if return_dict:

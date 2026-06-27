@@ -71,9 +71,9 @@ def _sum_via_registry(model: nn.Module) -> float:
 def test_aux_aggregation_no_double_count():
     """A2C2fMoE has wrapper modules (ABlockMoE) that delegate aux_loss.
 
-    The old hasattr-based sum counted each inner MoE twice (2.000x). The fixed
-    `_collect_moe_aux_loss` must equal the registry-only sum, and the buggy sum
-    must be strictly larger (proving the wrapper double-count exists).
+    `_collect_moe_aux_loss` must equal the registry-only sum. The legacy
+    hasattr-based sum still over-counts because multiple nested modules expose
+    the same aux_loss, but A2C2fMoE.aux_loss itself must match the registry.
     """
     torch.manual_seed(0)
     m = A2C2fMoE(c1=64, c2=64, n=1, a2=True, num_experts=4, top_k=2).train()
@@ -82,13 +82,12 @@ def test_aux_aggregation_no_double_count():
     buggy = _sum_via_hasattr(m)
     correct = _sum_via_registry(m)
     fixed = float(_collect_moe_aux_loss(m, torch.device("cpu")).detach())
+    wrapper = float(m.aux_loss.detach())
 
     assert correct > 0.0, "registry should contain published aux losses after forward"
-    # The fixed aggregator equals the registry truth (no double counting).
     assert fixed == pytest.approx(correct, rel=1e-5)
-    # The legacy hasattr sum inflates by ~2x because of wrapper delegation.
-    assert buggy > correct * 1.5
-    assert buggy == pytest.approx(2.0 * correct, rel=1e-3)
+    assert wrapper == pytest.approx(correct, rel=1e-5)
+    assert buggy > correct * 1.25, "hasattr traversal still double/triple counts nested aux_loss"
 
 
 def test_collect_helper_handles_none_and_eval():
@@ -512,6 +511,33 @@ def test_p04_zloss_computed_after_noise():
     assert isinstance(z, torch.Tensor) and z.requires_grad and torch.isfinite(z).all()
 
 
+def test_ultra_router_zloss_uses_temperature_scaled_logits():
+    """Router z-loss must regularize the logits actually used by softmax."""
+    r = UltraEfficientRouter(4, num_experts=4, top_k=2, noise_std=0.0, temperature=0.5).train()
+    r.router = nn.Identity()
+    z = r(torch.ones(2, 4, 2, 2))[4]
+    expected = (torch.tensor(2.0) + torch.log(torch.tensor(4.0))).square()
+    assert torch.allclose(z, expected, atol=1e-6)
+
+
+def test_hyperfused_progressive_sparsity_uses_current_top_k(monkeypatch):
+    """Warmup should route/compute with current_top_k, not the static final top_k."""
+    torch.manual_seed(0)
+    m = HyperFusedMoE(32, 32, num_experts=4, top_k=2, progressive_sparsity=True).train()
+    captured = {}
+    original = m.fused_experts.forward
+
+    def wrapped(x, routing_weights, routing_indices, top_k):
+        captured["top_k"] = top_k
+        captured["routing_shape"] = routing_indices.shape
+        return original(x, routing_weights, routing_indices, top_k)
+
+    monkeypatch.setattr(m.fused_experts, "forward", wrapped)
+    m(torch.randn(2, 32, 8, 8))
+    assert captured["top_k"] == 4
+    assert captured["routing_shape"][1] == 4
+
+
 def test_l02_adaptive_capacity_complexity_lower_bound():
     """L-02: complexity is clamped >= 0.3 so top_k cannot degenerate to 1."""
     m = AdaptiveCapacityMoE(32, 32, num_experts=4, top_k=2).train()
@@ -556,6 +582,19 @@ def test_p06_batched_experts_noncontiguous_indices():
     w = torch.rand(B, k, 1, 1)
     out = BatchedExpertComputation.compute_sparse_experts_batched(x, experts, w, idx, k, E)
     assert out.shape == (B, C, H, W) and torch.isfinite(out).all()
+
+
+def test_batched_experts_keeps_low_weight_training_routes():
+    """Training must not hard-drop low-weight routes before they can learn."""
+    B, C, H, W, E, k = 2, 8, 4, 4, 2, 1
+    x = torch.randn(B, C, H, W)
+    experts = nn.ModuleList([nn.Conv2d(C, C, 1, bias=False) for _ in range(E)]).train()
+    with torch.no_grad():
+        experts[0].weight.fill_(1.0)
+    idx = torch.zeros(B, k, 1, 1, dtype=torch.long)
+    w = torch.full((B, k, 1, 1), 0.005)
+    out = BatchedExpertComputation.compute_sparse_experts_batched(x, experts, w, idx, k, E)
+    assert out.abs().sum() > 0, "low-weight training routes were skipped by an inference threshold"
 
 
 def test_l05_soft_balancing_penalizes_collapse():
@@ -603,6 +642,19 @@ def test_soft_balance_loss_grad_reaches_router():
     assert logits.grad.abs().sum() > 1e-4, "soft balance gradient vanished (constant-usage bug)"
 
 
+def test_soft_balance_uses_topk_counts_when_available():
+    """Soft balancing should use detached discrete usage, not importance self-reference."""
+    E, K, N = 4, 2, 8
+    logits = torch.randn(N, E, requires_grad=True)
+    probs = torch.softmax(logits, dim=1)
+    indices = torch.zeros(N, K, dtype=torch.long)
+    loss_fn = MoELoss(num_experts=E, top_k=K, use_soft_balancing=True,
+                      balance_loss_coeff=1.0, z_loss_coeff=0.0)
+    out = loss_fn(probs, logits, indices, return_dict=True)
+    expected = E * probs.mean(dim=0)[0]
+    assert torch.allclose(out["balance_loss"], expected, atol=1e-6)
+
+
 def test_soft_balance_loss_responds_to_imbalance():
     """soft balancing: a collapsed router must yield a larger balance_loss."""
     N, E, K = 16, 4, 2
@@ -618,7 +670,46 @@ def test_soft_balance_loss_responds_to_imbalance():
     # GShard soft: uniform -> ~1.0, full collapse -> ~E. Must be distinguishable.
     assert bl_collapsed > bl_uniform + 0.5, (
         f"balance_loss insensitive to imbalance: uniform={bl_uniform:.3f}, "
-        f"collapsed={bl_collapsed:.3f}")
+        f"collapsed={bl_collapsed:.3f}"
+    )
+
+
+def test_dymoe_gate_gshard_balance_and_registry():
+    """DyMoEBlock must publish GShard-scale balance loss via MOE_LOSS_REGISTRY."""
+    from ultralytics.nn.modules.block import DyMoEBlock
+
+    torch.manual_seed(0)
+    m = DyMoEBlock(32, num_experts=4, top_k=2).train()
+    out = m(torch.randn(4, 32, 8, 8))
+    assert out.shape == (4, 32, 8, 8)
+    aux = m.aux_loss
+    assert aux.requires_grad
+    assert float(aux.detach()) > 0.0
+    collected = float(_collect_moe_aux_loss(m, torch.device("cpu")).detach())
+    assert collected == pytest.approx(float(aux.detach()), rel=1e-5)
+
+
+def test_a2c2f_moe_aux_loss_property_matches_inner_blocks():
+    """A2C2fMoE.aux_loss must delegate to inner ABlockMoE modules, not registry on self."""
+    torch.manual_seed(0)
+    m = A2C2fMoE(c1=64, c2=64, n=1, a2=True, num_experts=4, top_k=2).train()
+    m(torch.randn(2, 64, 16, 16))
+    wrapper_aux = float(m.aux_loss.detach())
+    inner = 0.0
+    for block_seq in m.m:
+        for block in block_seq:
+            inner += float(block.aux_loss.detach())
+    assert wrapper_aux > 0.0
+    assert wrapper_aux == pytest.approx(inner, rel=1e-5)
+
+
+def test_get_global_mean_float16_input():
+    """DDP mean helper must use float32 count even when input is float16."""
+    loss_fn = MoELoss(num_experts=4, top_k=2)
+    probs = torch.rand(8, 4, dtype=torch.float16)
+    mean = loss_fn._get_global_mean(probs)
+    expected = probs.mean(dim=0)
+    assert torch.allclose(mean.float(), expected.float(), atol=1e-3)
 
 
 if __name__ == "__main__":

@@ -41,6 +41,24 @@ class ExpertUsageTracker:
     # Keywords to identify router modules
     ROUTER_KEYWORDS = ('routing', 'router')
 
+    @staticmethod
+    def _router_type_whitelist() -> tuple:
+        """Concrete router classes recognised by type (robust to renamed attrs).
+
+        Name-keyword matching alone can both miss routers attached under an
+        unconventional attribute name and accidentally hook unrelated modules
+        whose name happens to contain 'router'. Matching the known router base
+        classes by type closes both gaps. Imported lazily to avoid a circular
+        import at module load.
+        """
+        try:
+            from ultralytics.nn.modules.moe.routers import (
+                BaseRouter, UltraEfficientRouter, AdvancedRoutingLayer, DynamicRoutingLayer,
+            )
+            return (BaseRouter, UltraEfficientRouter, AdvancedRoutingLayer, DynamicRoutingLayer)
+        except Exception:
+            return tuple()
+
     def __init__(self, model: torch.nn.Module):
         """
         Initialize the expert usage tracker
@@ -170,10 +188,14 @@ class ExpertUsageTracker:
         Returns:
             True if module is a router
         """
-        # Check if name contains router keywords
-        has_keyword = any(keyword in name.lower() for keyword in self.ROUTER_KEYWORDS)
+        # Type-based whitelist: recognise concrete router classes regardless of
+        # the attribute name they are bound under (most reliable signal).
+        router_types = self._router_type_whitelist()
+        if router_types and isinstance(module, router_types):
+            return True
 
-        # Exclude basic layer types
+        # Fallback: name-keyword heuristic, excluding basic layer types.
+        has_keyword = any(keyword in name.lower() for keyword in self.ROUTER_KEYWORDS)
         is_skip_type = isinstance(module, self.SKIP_TYPES)
 
         return has_keyword and not is_skip_type
@@ -461,9 +483,7 @@ def main():
     )
     parser.add_argument(
         "model_path",
-        nargs='?',
-        default="/Users/gatilin/Downloads/master-v0.0-yolomoe-v1-small.pt",
-        help="Path to .pt model file"
+        help="Path to .pt model file (required)"
     )
     parser.add_argument(
         "--dataset",

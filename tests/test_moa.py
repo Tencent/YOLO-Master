@@ -2,8 +2,9 @@ from pathlib import Path
 
 import torch
 
-from ultralytics.nn.modules.moa import C2fMoA, MoABlock, NeckMoAFusion, anneal_moa_temperature
+from ultralytics.nn.modules.moa import C2fMoA, MoABlock, NeckMoAFusion, anneal_moa_temperature, collect_moa_aux_loss
 from ultralytics.nn.tasks import DetectionModel
+from ultralytics.utils.loss import _collect_moa_aux_loss
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,12 +41,40 @@ def test_neck_moa_fusion_forward_backward():
     assert _has_grad(module)
 
 
+def test_moa_aux_loss_collected_for_c2f_and_neck():
+    torch.manual_seed(0)
+    c2f = C2fMoA(32, 32, n=1, num_heads=3).train()
+    out = c2f(torch.randn(2, 32, 6, 6))
+    aux = collect_moa_aux_loss(c2f)
+    assert out.shape == (2, 32, 6, 6)
+    assert aux.requires_grad and torch.isfinite(aux)
+    assert _collect_moa_aux_loss(c2f, torch.device("cpu")).requires_grad
+
+    neck = NeckMoAFusion(32, 64, 32, num_heads=2).train()
+    neck(torch.randn(2, 32, 8, 8), torch.randn(2, 64, 4, 4))
+    neck_aux = collect_moa_aux_loss(neck)
+    assert neck_aux.requires_grad and torch.isfinite(neck_aux)
+
+
+def test_c2fmoa_small_channels_keep_valid_head_count():
+    module = C2fMoA(8, 8, n=1, num_heads=6, e=0.5).train()
+    out = module(torch.randn(1, 8, 4, 4))
+    assert out.shape == (1, 8, 4, 4)
+
+
 def test_moa_temperature_anneal():
     module = C2fMoA(64, 64, n=1, num_heads=6)
     before = [m.router.temperature for m in module.m]
     anneal_moa_temperature(module, factor=0.5, min_temp=0.3)
     after = [m.router.temperature for m in module.m]
     assert after == [max(t * 0.5, 0.3) for t in before]
+
+
+def test_moa_global_head_per_block_seed():
+    """Relocated from test_mot.py — verifies per-block RF seed diversity."""
+    b0 = MoABlock(64, num_heads=6, block_index=0)
+    b1 = MoABlock(64, num_heads=6, block_index=1)
+    assert not torch.allclose(b0.global_head._rf_matrix, b1.global_head._rf_matrix)
 
 
 def test_moa_model_configs_parse():

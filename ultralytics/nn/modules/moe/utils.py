@@ -82,9 +82,10 @@ class BatchedExpertComputation:
         indices_flat = routing_indices.reshape(B, -1)[:, :current_top_k]  # [B, top_k]
         weights_flat = routing_weights.reshape(B, -1)[:, :current_top_k]  # [B, top_k]
 
-        # Plan A: conditional computation (skip low-weight experts)
-        # Threshold is tunable (accuracy vs speed)
-        weight_threshold = 0.01
+        # Plan A: conditional computation (skip low-weight experts). Keep all
+        # selected experts during training so low-weight routes can still learn;
+        # thresholding is an inference-only speed trade-off.
+        weight_threshold = 0.0 if experts.training else 0.01
         valid_mask = weights_flat > weight_threshold
 
         # Initialize outputs

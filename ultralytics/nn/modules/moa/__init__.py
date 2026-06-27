@@ -8,6 +8,6 @@ Provides three progressive variants:
   - NeckMoAFusion     : cross-scale MoA fusion for FPN/PAN neck
 """
 
-from .moa import MoABlock, C2fMoA, NeckMoAFusion, anneal_moa_temperature
+from .moa import MoABlock, C2fMoA, NeckMoAFusion, anneal_moa_temperature, collect_moa_aux_loss
 
-__all__ = ("MoABlock", "C2fMoA", "NeckMoAFusion", "anneal_moa_temperature")
+__all__ = ("MoABlock", "C2fMoA", "NeckMoAFusion", "anneal_moa_temperature", "collect_moa_aux_loss")
