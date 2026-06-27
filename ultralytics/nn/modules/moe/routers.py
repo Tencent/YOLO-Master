@@ -87,7 +87,7 @@ class UltraEfficientRouter(nn.Module):
         topk_vals.div_(topk_vals.sum(dim=1, keepdim=True).add_(1e-6))
 
         if self.training:
-            importance = pooled_weights.sum(dim=0).view(self.num_experts)
+            importance = pooled_weights.mean(dim=0).view(self.num_experts)
 
             # Optimization: use one_hot instead of scatter
             topk_indices_flat = topk_indices.view(B, current_top_k, 1, 1)[:, :, 0, 0]

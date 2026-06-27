@@ -165,13 +165,15 @@ class MoELoss(nn.Module):
         """Return detached expert usage from discrete Top-K selections."""
         flat_indices = expert_indices.reshape(-1).to(torch.long)
         local_expert_counts = F.one_hot(flat_indices, num_classes=self.num_experts).float().sum(dim=0)
-        local_count = local_expert_counts.new_tensor(float(flat_indices.numel()))
+        total = flat_indices.numel()
 
         if dist.is_available() and dist.is_initialized():
+            local_count = local_expert_counts.new_tensor(float(total))
             dist.all_reduce(local_expert_counts, op=dist.ReduceOp.SUM)
             dist.all_reduce(local_count, op=dist.ReduceOp.SUM)
+            return (local_expert_counts / local_count.clamp_min(1.0)).detach()
 
-        return (local_expert_counts / local_count.clamp_min(1.0)).detach()
+        return (local_expert_counts / max(total, 1)).detach()
 
     def _get_global_mean(self, tensor: torch.Tensor) -> torch.Tensor:
         """Computes the mean of a tensor across all distributed processes."""
