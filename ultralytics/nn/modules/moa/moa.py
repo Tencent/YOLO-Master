@@ -155,7 +155,7 @@ class _GlobalAttnHead(nn.Module):
     """
 
     def __init__(self, dim: int, num_heads: int, head_dim: Optional[int] = None,
-                 nb_features: int = 64):
+                 nb_features: int = 64, rf_seed: int = 0x5F3759DF):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = head_dim or max(dim // num_heads, 16)
@@ -168,12 +168,10 @@ class _GlobalAttnHead(nn.Module):
         self.scale = self.head_dim ** -0.5
 
         # Orthogonal random features for the Performer approximation.
-        # Generated once at construction with a fixed seed and stored as a
-        # *persistent* buffer, so the basis is identical across processes,
-        # survives checkpoint save/load (reproducible runs, resume, ONNX),
-        # and never drifts with the first input's dtype/device.
+        # Per-block seed keeps bases diverse across layers while remaining
+        # deterministic for checkpoint resume and multi-process training.
         eff_nb = min(self.nb_features, self.head_dim)  # QR yields ≤ head_dim cols
-        gen = torch.Generator().manual_seed(0x5F3759DF)
+        gen = torch.Generator().manual_seed(rf_seed)
         rf = torch.randn(self.head_dim, self.head_dim, generator=gen, dtype=torch.float32)
         rf, _ = torch.linalg.qr(rf)        # [hd, hd] orthogonal
         self.register_buffer("_rf_matrix", rf[:eff_nb].contiguous(), persistent=True)
@@ -337,6 +335,7 @@ class MoABlock(nn.Module):
         attn_drop: float = 0.0,
         shortcut: bool = True,
         aux_loss_coeff: float = 0.01,
+        block_index: int = 0,
     ):
         super().__init__()
         assert num_heads % self.NUM_GROUPS == 0, (
@@ -347,10 +346,11 @@ class MoABlock(nn.Module):
         head_dim = max(dim // num_heads, 16)
         heads_per_group = num_heads // self.NUM_GROUPS
 
-        # Three attention head-groups
+        # Three attention head-groups (global head uses a per-block RF seed).
+        global_rf_seed = block_index * 7919 + 2 * 65537
         self.local_head   = _LocalAttnHead(dim, heads_per_group, head_dim)
         self.region_head  = _RegionalAttnHead(dim, heads_per_group, head_dim)
-        self.global_head  = _GlobalAttnHead(dim, heads_per_group, head_dim)
+        self.global_head  = _GlobalAttnHead(dim, heads_per_group, head_dim, rf_seed=global_rf_seed)
 
         # Router
         self.router = _MoARouter(dim, self.NUM_GROUPS, temperature=temperature)
@@ -405,12 +405,16 @@ class MoABlock(nn.Module):
         mixed = self.attn_drop(self.fusion(mixed))
 
         # ── Residual + layer-scale ────────────────────────────────────────
+        # `shortcut` controls *all* block-level residual paths consistently:
+        #   True  → pre-activation residual around both attention and FFN
+        #   False → pure feed-forward transform (no residual anywhere), so the
+        #           block fully replaces its input rather than refining it.
         if self.shortcut:
             x = x + self.ls_attn * mixed
             x = x + self.ls_ffn * self.ffn(x)
         else:
             x = self.ls_attn * mixed
-            x = x + self.ls_ffn * self.ffn(x)
+            x = self.ls_ffn * self.ffn(x)
 
         return x
 
@@ -473,8 +477,9 @@ class C2fMoA(nn.Module):
                      mlp_ratio=mlp_ratio,
                      temperature=temperature,
                      shortcut=shortcut,
-                     aux_loss_coeff=aux_loss_coeff)
-            for _ in range(n)
+                     aux_loss_coeff=aux_loss_coeff,
+                     block_index=i)
+            for i in range(n)
         )
         self.last_aux_loss: torch.Tensor = torch.zeros((), requires_grad=False)
 
