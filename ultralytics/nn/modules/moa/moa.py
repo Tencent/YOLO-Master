@@ -40,12 +40,7 @@ from ultralytics.nn.modules.conv import Conv
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _safe_groups(channels: int, desired: int) -> int:
-    """Return the largest divisor of *channels* that is ≤ *desired*."""
-    for g in range(min(desired, channels), 0, -1):
-        if channels % g == 0:
-            return g
-    return 1
+from ultralytics.nn.modules.moe.utils import get_safe_groups as _safe_groups
 
 
 def _flash_attn(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
@@ -204,8 +199,9 @@ class _GlobalAttnHead(nn.Module):
         scale = eff_nb ** -0.5
 
         # Project to feature space: [B, nh, N, eff_nb]
-        q_feat = self._relu_kernel(q @ rf.T * scale)
-        k_feat = self._relu_kernel(k @ rf.T * scale)
+        # Clamp kernel features to prevent float16 overflow in AMP training.
+        q_feat = self._relu_kernel(q @ rf.T * scale).clamp(max=1e4)
+        k_feat = self._relu_kernel(k @ rf.T * scale).clamp(max=1e4)
 
         # Reshape to [B*nh, N, eff_nb] and [B*nh, N, hd]
         k_flat = k_feat.reshape(B * nh, N, eff_nb)
@@ -214,10 +210,13 @@ class _GlobalAttnHead(nn.Module):
 
         # kv = k^T @ v → [B*nh, eff_nb, hd]
         kv = k_flat.transpose(1, 2) @ v_flat
+        # L2-normalize kv accumulator to keep matmul chain stable in float16
+        kv_norm = kv.norm(dim=-1, keepdim=True).clamp(min=1e-6)
+        kv = kv / kv_norm
         # normalizer: sum of k features over N → [B*nh, eff_nb]
         k_sum = k_flat.sum(dim=1)
         # numerator: q @ kv → [B*nh, N, hd]
-        numer = q_flat @ kv
+        numer = (q_flat @ kv).clamp(min=-1e4, max=1e4)
         # denominator: q @ k_sum^T → [B*nh, N, 1]
         denom = (q_flat @ k_sum.unsqueeze(-1)).clamp(min=1e-6)
 
@@ -274,7 +273,8 @@ class _MoARouter(nn.Module):
         nn.init.zeros_(self.router[-1].bias)
 
     def forward(self, x: torch.Tensor, return_logits: bool = False) -> torch.Tensor:
-        logits = self.router(x) / self.temperature           # [B, M, H, W]
+        temp = self.temperature if self.training else 1.0
+        logits = self.router(x) / temp           # [B, M, H, W]
         probs = F.softmax(logits, dim=1)
         if return_logits:
             return probs, logits
@@ -291,7 +291,9 @@ def _moa_router_aux_loss(weights: torch.Tensor, logits: torch.Tensor, coeff: flo
     entropy = -(importance * torch.log(importance.clamp_min(1e-6))).sum()
     max_entropy = math.log(max(num_groups, 2))
     entropy_deficit = (max_entropy - entropy).clamp_min(0.0) / max_entropy
-    return coeff * (balance_loss + 0.1 * z_loss + 0.1 * entropy_deficit)
+    # Lower entropy weight (0.01) avoids over-constraining the router toward
+    # uniform mixing when balance_loss already encourages load balance.
+    return coeff * (balance_loss + 0.1 * z_loss + 0.01 * entropy_deficit)
 
 
 # ---------------------------------------------------------------------------
@@ -552,7 +554,9 @@ class NeckMoAFusion(nn.Module):
         self.proj = nn.Conv2d(inner, c_out, 1, bias=False)
         self.norm = nn.GroupNorm(_safe_groups(c_out, 8), c_out)
 
-        # Channel alignment for residual
+        # Separate channel projections: self-attn path vs residual shortcut
+        self.self_out_proj = (nn.Conv2d(c_hi, c_out, 1, bias=False)
+                              if c_hi != c_out else nn.Identity())
         self.res_proj = (nn.Conv2d(c_hi, c_out, 1, bias=False)
                          if c_hi != c_out else nn.Identity())
         self.last_aux_loss: torch.Tensor = torch.zeros((), requires_grad=False)
@@ -589,7 +593,7 @@ class NeckMoAFusion(nn.Module):
         # Align channels if needed for self-attn
         self_out = self.self_attn(hi)                            # [B, c_hi, H, W]
         if self_out.shape[1] != cross_out.shape[1]:
-            self_out = self.res_proj(self_out)
+            self_out = self.self_out_proj(self_out)
 
         # ── Router blend ─────────────────────────────────────────────────
         weights, router_logits = self.router(hi, return_logits=True)         # [B, 2, H, W]
@@ -628,6 +632,14 @@ def anneal_moa_temperature(model: nn.Module, factor: float = 0.99,
             m.temperature = max(m.temperature * factor, min_temp)
 
 
+def _aux_loss_device(model: nn.Module) -> torch.device:
+    """Best-effort device lookup for zero aux-loss fallbacks."""
+    try:
+        return next(model.parameters()).device
+    except StopIteration:
+        return torch.device("cpu")
+
+
 def collect_moa_aux_loss(model: nn.Module) -> torch.Tensor:
     """Sum graph-connected MoA router auxiliary losses without wrapper double-counting."""
     total = None
@@ -646,4 +658,4 @@ def collect_moa_aux_loss(model: nn.Module) -> torch.Tensor:
             l = m.last_aux_loss
             if isinstance(l, torch.Tensor) and l.requires_grad:
                 total = l if total is None else total + l
-    return total if total is not None else torch.zeros(1, device=next(model.parameters()).device)
+    return total if total is not None else torch.zeros(1, device=_aux_loss_device(model))
