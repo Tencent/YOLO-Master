@@ -347,8 +347,16 @@ class DynamicRoutingLayer(nn.Module):
             # No Top-K: direct Softmax
             routing_weights = F.softmax(routing_logits.float(), dim=1).type_as(x)
         else:
-            # Unified soft Top-K (ONNX-safe, gradient-friendly)
-            routing_weights = self._soft_top_k(routing_logits)
+            # Training / export: soft Top-K keeps gradient flow and a static
+            # graph that traces cleanly for ONNX/TorchScript.
+            # Eager-mode inference: hard Top-K gives true sparsity (non-selected
+            # experts get exactly 0 weight, identical numerics to soft Top-K's
+            # masked renormalisation) so callers can skip those experts.
+            export = torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()
+            if self.training or export:
+                routing_weights = self._soft_top_k(routing_logits)
+            else:
+                routing_weights = self._hard_top_k(routing_logits)
 
         return routing_weights.repeat(1, 1, x.size(2), x.size(3))
 
