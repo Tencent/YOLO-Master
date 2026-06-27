@@ -11,7 +11,8 @@ from .analysis import ExpertUsageTracker
 class MoEPruner:
     """Pruner for Mixture-of-Experts models based on usage statistics"""
     
-    def __init__(self, model_path: str, threshold: float = 0.15, dataset: str = 'coco8.yaml'):
+    def __init__(self, model_path: str, threshold: float = 0.15, dataset: str = 'coco8.yaml',
+                 device: str | None = None):
         """
         Initialize MoE pruner
         
@@ -19,13 +20,27 @@ class MoEPruner:
             model_path: Path to the model file
             threshold: Minimum usage percentage to keep an expert (0.0-1.0)
             dataset: Dataset configuration for validation
+            device: Device for validation. ``None`` (default) auto-detects CUDA,
+                falling back to CPU — previously hard-coded to 'cpu', which was
+                needlessly slow on GPU boxes.
         """
         self.model_path = model_path
         self.threshold = threshold
         self.dataset = dataset
+        self.device = device if device is not None else self._auto_device()
         self.model = None
         self.usage_stats: Dict[str, Dict[int, Any]] = {}
         self.pruning_plan: Dict[str, List[int]] = {}
+
+    @staticmethod
+    def _auto_device() -> str:
+        """Pick CUDA when available, else MPS, else CPU."""
+        import torch
+        if torch.cuda.is_available():
+            return '0'
+        if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+            return 'mps'
+        return 'cpu'
         
     def _load_model(self) -> None:
         """Load YOLO model from file"""
@@ -48,7 +63,7 @@ class MoEPruner:
                     split='val', 
                     batch=1, 
                     verbose=False, 
-                    device='cpu'
+                    device=self.device
                 )
                 self.usage_stats = tracker.usage_stats
                 print(f"✅ Collected usage stats for {len(self.usage_stats)} layers")
@@ -343,7 +358,7 @@ class MoEPruner:
                 split='val', 
                 batch=1, 
                 verbose=False, 
-                device='cpu'
+                device=self.device
             )
             print("   ✅ Validation check: OK")
             
