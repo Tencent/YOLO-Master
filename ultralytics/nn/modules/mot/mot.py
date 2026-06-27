@@ -43,10 +43,19 @@ import torch.nn.functional as F
 
 from ultralytics.nn.modules.conv import Conv
 from ultralytics.nn.modules.moe.utils import get_safe_groups as _safe_groups
+from ultralytics.utils import LOGGER
+
+# Maximum token count for explicit O(N²) SDPA fallback (PyTorch < 2.0).
+_SDPA_EXPLICIT_MAX_TOKENS = 4096
 
 # ---------------------------------------------------------------------------
 # Shared utilities
 # ---------------------------------------------------------------------------
+
+
+# Query-chunk size used by the memory-bounded fallback so peak memory stays
+# O(chunk·N) instead of O(N²) on PyTorch < 2.0.
+_SDPA_FALLBACK_CHUNK = 1024
 
 
 def _sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
@@ -54,13 +63,30 @@ def _sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
     """Scaled dot-product attention.
 
     Uses ``F.scaled_dot_product_attention`` (Flash-Attention / memory-efficient
-    kernels) on PyTorch ≥ 2.0. On older PyTorch it falls back to an explicit
-    O(N²) softmax-attention, which can OOM on large token counts (e.g. P3-scale
-    full attention) — callers that may hit large N should prefer the window /
-    deformable experts there rather than the global path.
+    kernels) on PyTorch ≥ 2.0. On older PyTorch it falls back to softmax
+    attention. For large token counts (N > ``_SDPA_EXPLICIT_MAX_TOKENS``) the
+    fallback automatically switches to a **query-chunked** computation that
+    bounds peak memory to O(chunk·N) instead of materialising the full N×N
+    matrix — so it no longer crashes at high resolution, only runs slower.
     """
     if hasattr(F, "scaled_dot_product_attention"):
         return F.scaled_dot_product_attention(q, k, v, attn_mask=mask, scale=scale)
+    n_tokens = q.shape[-2]
+    if n_tokens > _SDPA_EXPLICIT_MAX_TOKENS:
+        # Memory-bounded chunked softmax-attention fallback (PyTorch < 2.0).
+        LOGGER.warning(
+            f"PyTorch < 2.0 SDPA fallback: N={n_tokens} > {_SDPA_EXPLICIT_MAX_TOKENS}; "
+            f"using query-chunked attention (chunk={_SDPA_FALLBACK_CHUNK}). "
+            "Upgrade to PyTorch ≥ 2.0 for fast memory-efficient SDPA."
+        )
+        outs = []
+        for start in range(0, n_tokens, _SDPA_FALLBACK_CHUNK):
+            end = min(start + _SDPA_FALLBACK_CHUNK, n_tokens)
+            attn = (q[..., start:end, :] @ k.transpose(-2, -1)) * scale
+            if mask is not None:
+                attn = attn + (mask[..., start:end, :] if mask.dim() == q.dim() else mask)
+            outs.append(attn.softmax(dim=-1) @ v)
+        return torch.cat(outs, dim=-2)
     attn = (q @ k.transpose(-2, -1)) * scale
     if mask is not None:
         attn = attn + mask
@@ -79,8 +105,9 @@ class _LocalConvTransformerExpert(nn.Module):
     """Transformer expert with convolutional inductive bias.
 
     Uses depthwise-conv pre-processing for QKV to bias attention toward
-    spatially-local patterns.  The FFN uses a gated linear unit (GLU)
-    variant for stronger non-linearity.
+    spatially-local patterns.  The FFN is a standard Gated Linear Unit (GLU):
+    ``out = (Sigmoid(W_g x)) ⊙ (W_v x)``. (This is GLU proper — *not* SwiGLU,
+    which would gate with SiLU/Swish instead of Sigmoid.)
     """
 
     def __init__(self, dim: int, num_heads: int, mlp_ratio: float = 2.0,
@@ -101,7 +128,7 @@ class _LocalConvTransformerExpert(nn.Module):
         self.norm2 = nn.GroupNorm(_safe_groups(dim, 8), dim)
         self.drop = nn.Dropout2d(dropout)
 
-        # Gated FFN: gate × value pattern (SwiGLU-inspired, 2-conv)
+        # Gated FFN: standard GLU (Sigmoid gate × value), 2-conv split.
         ffn_hidden = int(dim * mlp_ratio)
         # split into gate + value projections
         self.ffn_gate = nn.Sequential(Conv(dim, ffn_hidden, 1), nn.Sigmoid())
@@ -304,12 +331,14 @@ class _DeformableTransformerExpert(nn.Module):
     """
 
     def __init__(self, dim: int, num_heads: int, n_points: int = 4,
-                 mlp_ratio: float = 2.0, dropout: float = 0.0):
+                 mlp_ratio: float = 2.0, dropout: float = 0.0,
+                 align_corners: bool = True):
         super().__init__()
         assert dim % num_heads == 0
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
         self.n_points = n_points
+        self.align_corners = align_corners
 
         # Query projection
         self.q_proj = nn.Linear(dim, dim, bias=False)
@@ -400,7 +429,7 @@ class _DeformableTransformerExpert(nn.Module):
         sampled = F.grid_sample(
             v_4d,                                              # [B*nh, hd, H, W]
             locs,                                              # [B*nh, N, np, 2]
-            mode="bilinear", align_corners=True, padding_mode="zeros"
+            mode="bilinear", align_corners=self.align_corners, padding_mode="zeros"
         )                                                      # [B*nh, hd, N, np]
 
         # sampled: [B*nh, hd, N, np] → [B, nh, N, np, hd]
@@ -583,6 +612,7 @@ class MoTBlock(nn.Module):
         dropout: float = 0.0,
         exploration_eps: float = 0.02,
         window_shift: bool = False,
+        grid_align_corners: bool = True,
     ):
         super().__init__()
         assert 1 <= top_k <= self.NUM_EXPERTS
@@ -595,13 +625,21 @@ class MoTBlock(nn.Module):
         while dim % expert_heads != 0 and expert_heads > 1:
             expert_heads -= 1
         expert_heads = max(1, expert_heads)
+        if expert_heads != num_heads:
+            LOGGER.warning(
+                f"MoTBlock(dim={dim}): num_heads {num_heads} reduced to {expert_heads} "
+                f"(must divide dim and yield head_dim ≥ 1)"
+            )
 
         # Three Transformer experts
         self.experts = nn.ModuleList([
             _LocalConvTransformerExpert(dim, expert_heads, mlp_ratio, dropout),
             _WindowTransformerExpert(dim, expert_heads, window_size, mlp_ratio, dropout,
                                      shift_size=window_size // 2 if window_shift else 0),
-            _DeformableTransformerExpert(dim, expert_heads, n_points, mlp_ratio, dropout),
+            _DeformableTransformerExpert(
+                dim, expert_heads, n_points, mlp_ratio, dropout,
+                align_corners=grid_align_corners,
+            ),
         ])
 
         # Router
@@ -721,6 +759,11 @@ class C2fMoT(nn.Module):
         while eff_heads > 1 and (dim % eff_heads != 0 or dim // eff_heads < 8):
             eff_heads -= 1
         eff_heads = max(1, eff_heads)
+        if eff_heads != num_heads:
+            LOGGER.warning(
+                f"C2fMoT(c={dim}): num_heads {num_heads} reduced to {eff_heads} "
+                f"(must divide channels and yield head_dim ≥ 8)"
+            )
 
         # Alternate window shift by block index (Swin-style): even blocks use
         # regular windows, odd blocks use shifted windows. Fixed at build time
