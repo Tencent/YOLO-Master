@@ -97,12 +97,9 @@ For a deep dive into the design philosophy of MoE modules, detailed routing mech
   - [LoRA Fine-Tuning](#2%EF%B8%8F⃣-lora-support---parameter-efficient-fine-tuning)
   - [Sparse SAHI](#3%EF%B8%8F⃣-sparse-sahi-mode)
   - [Cluster-Weighted NMS](#4%EF%B8%8F⃣-cluster-weighted-nms-cw-nms)
-<<<<<<< HEAD
-=======
   - [Mixture-of-Attention (MoA)](#5%EF%B8%8F⃣-mixture-of-attention-%28moa%29-support)
   - [Mixture-of-Transformers (MoT)](#6%EF%B8%8F⃣-mixture-of-transformers-%28mot%29-support)
   - [Agent Skill System](#7%EF%B8%8F⃣-agent-skill-system)
->>>>>>> 1cb6bea (feat: sync README with MoA/MoT/Agent Skill milestones + fix end2end AttributeError)
 - [Main Results](#-main-results)
   - [Detection](#detection)
   - [Segmentation](#segmentation)
@@ -344,9 +341,6 @@ results = model.predict(
 
 ---
 
-<<<<<<< HEAD
-## 📊 Main Results
-=======
 5️⃣ **Mixture-of-Attention (MoA) Support**
 
 YOLO-Master introduces **Mixture-of-Attention (MoA)**, a CNN-native multi-scale attention fusion mechanism. A lightweight 1×1 conv router assigns soft probabilities to each spatial token across three attention head groups with different receptive fields: **Local** (depthwise-3×3), **Regional** (pooled-stride=2), and **Global** (linear-attention). Zero sequence-dimension reshape, fully Flash-Attention compatible.
@@ -425,8 +419,9 @@ python agent/scripts/run_yolo_master_skill.py \
     --json '{"skill":"yolo.train","inputs":{"model":"yolo11n.pt","data":"coco8.yaml"},"params":{"epochs":1,"imgsz":640}}'
 ```
 
-📊 Main Results
->>>>>>> 1cb6bea (feat: sync README with MoA/MoT/Agent Skill milestones + fix end2end AttributeError)
+---
+
+## 📊 Main Results
 ### Detection
 <div align="center">
   <img width="450" alt="Radar chart comparing YOLO models on various datasets" src="https://github.com/user-attachments/assets/743fa632-659b-43b1-accf-f865c8b66754"/>
