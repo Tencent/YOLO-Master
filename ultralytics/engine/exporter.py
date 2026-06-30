@@ -401,6 +401,35 @@ class Exporter:
         if not hasattr(model, "names"):
             model.names = default_class_names()
         model.names = check_class_names(model.names)
+        if hasattr(model, "end2end"):
+            if getattr(self.args, "end2end", None) is not None:
+                model.end2end = self.args.end2end
+            if fmt in {"rknn", "ncnn", "executorch", "paddle", "imx", "edgetpu", "qnn"}:
+                # Disable end2end branch for certain export formats as they does not support topk
+                model.end2end = False
+                LOGGER.warning(f"{fmt.upper()} export does not support end2end models, disabling end2end branch.")
+            if fmt == "engine":
+                try:
+                    import tensorrt as trt
+
+                    if check_version(trt.__version__, "<8.5.0"):
+                        # https://github.com/ultralytics/ultralytics/issues/24607
+                        model.end2end = False
+                        LOGGER.warning(
+                            "TensorRT versions earlier than 8.5.0 do not support the Mod operator in end-to-end models, disabling the end2end branch. "
+                            "Please upgrade TensorRT to 8.5.0 or later to enable end2end export."
+                        )
+
+                    if self.args.int8 and check_version(trt.__version__, "==10.3.0") and is_jetson(jetpack=6):
+                        # https://github.com/ultralytics/ultralytics/issues/23841
+                        model.end2end = False
+                        LOGGER.warning(
+                            "TensorRT 10.3.0 on JetPack 6 with int8 has known end2end build issues, disabling end2end branch. "
+                            "For a fix, see https://docs.ultralytics.com/guides/nvidia-jetson/#why-does-my-tensorrt-int8-export-disable-end2end-on-jetpack-6"
+                            ""
+                        )
+                except ImportError:
+                    pass
         if self.args.half and self.args.int8:
             LOGGER.warning("half=True and int8=True are mutually exclusive, setting half=False.")
             self.args.half = False
