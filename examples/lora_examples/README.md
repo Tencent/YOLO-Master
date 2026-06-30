@@ -18,6 +18,8 @@ We provide optimized LoRA configurations for the following model families:
 | **YOLO12** | `yolo12_lora.yaml` | Hybrid (CNN+Attn) | `include_attention=True` |
 | **RT-DETR** | `rtdetr_lora.yaml` | Transformer | `include_attention=True` |
 | **YOLO-World** | `yoloworld_lora.yaml` | Multi-modal | `include_attention=True` |
+| **YOLO-Master-EsMoE-N / VisDrone** | `yolo_master_visdrone_lora.yaml` | MoE dense aerial detection | `r=16`, `include_moe=True`, `include_attention=True` |
+| **YOLO-Master-EsMoE-N / brain-tumor** | `yolo_master_brain_tumor_lora.yaml` | MoE sparse medical detection | `r=8`, `include_moe=True`, `include_attention=False` |
 
 ## 🚀 Usage Guide
 
@@ -67,6 +69,27 @@ Notes:
 - On Apple Silicon, `PYTORCH_ENABLE_MPS_FALLBACK=1` avoids MPS backward kernel gaps during RT-DETR training.
 - If all requested targets are non-linear layers, AdaLoRA target selection will be filtered to an empty set and adapter creation will stop.
 
+### 5. YOLO-Master-EsMoE-N Domain LoRA Sweeps
+
+Two domain-specific configs are provided for quick 20-50 epoch LoRA iteration on visually different scenarios:
+
+```bash
+# Dense aerial small-object detection
+yolo train cfg=examples/lora_examples/yolo_master_visdrone_lora.yaml
+
+# Sparse medical detection
+yolo train cfg=examples/lora_examples/yolo_master_brain_tumor_lora.yaml
+```
+
+Run the standard rank comparison (`r=4,8,16`) and collect a CSV summary:
+
+```bash
+python examples/lora_examples/domain_lora_rank_sweep.py --scenario visdrone --device 0
+python examples/lora_examples/domain_lora_rank_sweep.py --scenario brain_tumor --device 0
+```
+
+Use `--dry-run` to inspect the exact `yolo train` commands without launching training.
+
 ---
 
 ## 🛠️ Configuration Guide
@@ -91,6 +114,44 @@ Each `.yaml` file follows the standard Ultralytics configuration structure, divi
 | `lora_target_modules` | Regex for modules to target. | `["conv"]` | `["linear", "conv"]` |
 | `lora_only_3x3` | Skip `1x1` convs during auto target detection. | **True** | False |
 | `lora_total_step` | AdaLoRA total steps. `0` lets the trainer auto-resolve it. | N/A | `0` |
+
+## YOLO-Master-EsMoE-N Domain Adaptation Guide
+
+### Scenario Defaults
+
+| Scenario | Config | Dataset | Epochs | Default rank | Recommended rank | Target modules | Routing policy |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| VisDrone dense aerial | `yolo_master_visdrone_lora.yaml` | `VisDrone.yaml` | 30 | 16 | 16 | `conv`, `linear` | Do not explicitly target `routing`; adapt features/experts while keeping top-k routing stable. |
+| Brain-tumor sparse medical | `yolo_master_brain_tumor_lora.yaml` | `brain-tumor.yaml` | 40 | 8 | 8 | `conv`, `linear` | Do not explicitly target `routing`; sparse data can overfit router logits quickly. |
+
+### Rank Comparison Table
+
+The sweep script writes `examples/lora_examples/domain_lora_rank_results.csv`. Record the final validation row from each run using the following format:
+
+| Scenario | Rank | mAP50-95 | Trainable params | Train time | Peak VRAM | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| VisDrone | 4 | fill from sweep output | fill from trainer log | fill from sweep output | fill from `GPU_mem`/monitor | Lowest memory, may underfit tiny dense objects. |
+| VisDrone | 8 | fill from sweep output | fill from trainer log | fill from sweep output | fill from `GPU_mem`/monitor | Balanced fallback if r=16 exceeds VRAM. |
+| VisDrone | 16 | fill from sweep output | fill from trainer log | fill from sweep output | fill from `GPU_mem`/monitor | Default recommendation for scale and density shift. |
+| brain-tumor | 4 | fill from sweep output | fill from trainer log | fill from sweep output | fill from `GPU_mem`/monitor | Strong regularization, safest for very small subsets. |
+| brain-tumor | 8 | fill from sweep output | fill from trainer log | fill from sweep output | fill from `GPU_mem`/monitor | Default recommendation for sparse medical detection. |
+| brain-tumor | 16 | fill from sweep output | fill from trainer log | fill from sweep output | fill from `GPU_mem`/monitor | Use only if validation mAP improves without overfitting. |
+
+### Target Module Selection
+
+- `lora_include_moe=True` is enabled in both configs so LoRA can adapt YOLO-Master v0.5 MoE feature transforms and expert/projection paths.
+- `lora_target_modules=["conv", "linear"]` keeps the search broad enough for Conv-heavy YOLO blocks and Linear SE/gating projections.
+- Routing layers are not explicitly named in `lora_target_modules`. The router controls expert assignment and can collapse under short few-shot training if aggressively adapted.
+- VisDrone enables `lora_include_attention=True` because dense aerial detection benefits from context and scale adaptation.
+- Brain-tumor keeps `lora_include_attention=False` to reduce overfitting risk on a small grayscale-like medical dataset.
+
+### Common Pitfalls
+
+- Medical grayscale inputs: keep the dataset loader/image conversion consistent with YOLO's expected 3-channel input. If custom DICOM/PNG preprocessing is used, convert grayscale to RGB before label alignment.
+- Medical augmentations: avoid mosaic-heavy augmentation on sparse lesions; `close_mosaic=0` is set in the brain-tumor config.
+- Aerial scale variation: keep larger `imgsz` and `multi_scale=True` for VisDrone when GPU memory allows; reduce `imgsz` before lowering rank if OOM occurs.
+- Dense scenes: increase `max_det` for VisDrone because many frames contain hundreds of small objects.
+- MoE stability: do not combine high rank, router adaptation, and very short schedules unless you also monitor expert usage and MoE balance loss.
 
 ## Backend Behavior
 
