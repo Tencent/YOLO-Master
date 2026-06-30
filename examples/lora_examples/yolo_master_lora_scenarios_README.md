@@ -66,7 +66,7 @@ All runs use YOLO-Master-EsMoE-N with the scene configs above, `lora_use_rslora=
 | brain-tumor | 8 | 40 | 1.0 | 0.31259 | 40 | 596,782 | 251,608 | 13.74 min | 3.21 GB |
 | brain-tumor | 16 | 40 | 1.0 | 0.33535 | 37 | 848,390 | 503,216 | 14.82 min | 3.30 GB |
 | VisDrone | 4 | 30 | 0.25 | 0.01239 | 20 | 472,410 | 123,116 | 34.82 min | 12.50 GB |
-| VisDrone | 8 | 30 | 0.25 | pending | pending | 600,902 | 251,608 | running | 11.10 GB so far |
+| VisDrone | 8 | 30 | 0.25 | 0.0149 | 23 | 600,902 | 251,608 | 35.12 min | 12.50 GB |
 | VisDrone | 16 | 30 | 0.25 | 0.02615 | 26 | 852,510 | 503,216 | 36.04 min | 12.60 GB |
 
 ## Rank Recommendations

@@ -3,4 +3,5 @@ brain_tumor,4,8,40,1.0,0.27129,36,468290,123116,13.31,3.200,0,runs/lora_rank_swe
 brain_tumor,8,16,40,1.0,0.31259,40,596782,251608,13.74,3.210,0,runs/lora_rank_sweeps/logs/yolo_master_brain_tumor_lora_r8.log,runs/lora_rank_sweeps/yolo_master_brain_tumor_lora_r8
 brain_tumor,16,32,40,1.0,0.33535,37,848390,503216,14.82,3.300,0,runs/lora_rank_sweeps/logs/yolo_master_brain_tumor_lora_r16.log,runs/lora_rank_sweeps/yolo_master_brain_tumor_lora_r16
 visdrone,4,8,30,0.25,0.01239,20,472410,123116,34.82,12.500,0,runs/lora_rank_sweeps/logs/yolo_master_visdrone_lora_r4.log,runs/lora_rank_sweeps/yolo_master_visdrone_lora_r4
+visdrone,8,16,30,0.25,0.0149,23,600902,251608,34.71,12.500,0,runs/lora_rank_sweeps/logs/yolo_master_visdrone_lora_r8.log,runs/lora_rank_sweeps/yolo_master_visdrone_lora_r8
 visdrone,16,32,30,0.25,0.02615,26,852510,503216,36.04,12.600,0,runs/lora_rank_sweeps/logs/yolo_master_visdrone_lora_r16.log,runs/lora_rank_sweeps/yolo_master_visdrone_lora_r16
