@@ -71,6 +71,7 @@ iou_type: iou # (str) NMS IoU type (iou, diou, ciou)
 classes: # (int | list[int], optional) filter by class id(s), e.g. 0 or [0,2,3]
 retina_masks: False # (bool) use high-resolution segmentation masks (segment)
 embed: # (list[int], optional) return feature embeddings from given layer indices
+end2end: null # (bool | None) enable end-to-end detection (True/False) or None to auto-detect from model
 sparse_sahi: False # (bool) use Sparse SAHI inference
 slice_size: 640 # (int) slice size for SAHI
 overlap_ratio: 0.2 # (float) overlap ratio for SAHI slices
