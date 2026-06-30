@@ -413,7 +413,8 @@ python agent/scripts/run_yolo_master_skill.py \
     --json '{"skill":"yolo.train","inputs":{"model":"yolo11n.pt","data":"coco8.yaml"},"params":{"epochs":1,"imgsz":640}}'
 ```
 
-📊 主要结果
+## 📊 主要结果
+
 ### 检测
 <div align="center">
   <img width="450" alt="Radar chart comparing YOLO models on various datasets" src="https://github.com/user-attachments/assets/743fa632-659b-43b1-accf-f865c8b66754"/>
