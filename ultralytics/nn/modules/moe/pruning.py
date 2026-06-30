@@ -12,7 +12,7 @@ class MoEPruner:
     """Pruner for Mixture-of-Experts models based on usage statistics"""
     
     def __init__(self, model_path: str, threshold: float = 0.15, dataset: str = 'coco8.yaml',
-                 device: str | None = None):
+                 device: Optional[str] = None):
         """
         Initialize MoE pruner
         
