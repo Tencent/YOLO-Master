@@ -1,0 +1,46 @@
+# YOLO26-Master n 🚀 AGPL-3.0 License
+# YOLO26 backbone + A2C2fMoE (Area-Attention C2f with MoE-FFN)
+# Compatible with upstream YOLO26 (v8.4.71+) channel structure
+
+# Parameters
+nc: 80 # number of classes
+end2end: True # whether to use end-to-end mode
+reg_max: 1 # DFL bins
+scales: # model compound scaling constants
+  # [depth, width, max_channels]
+  n: [0.50, 0.25, 1024] # summary: 260 layers, ~2.6M parameters, ~6.1 GFLOPs
+
+# YOLO26-Master backbone
+backbone:
+  # [from, repeats, module, args]
+  - [-1, 1, Conv, [64, 3, 2]] # 0-P1/2
+  - [-1, 1, Conv, [128, 3, 2]] # 1-P2/4
+  - [-1, 2, C3k2, [256, False, 0.25]] # 2
+  - [-1, 1, Conv, [256, 3, 2]] # 3-P3/8
+  - [-1, 2, A2C2fMoE, [512, True, 1, False, 2.0, 0.5, 1, True, 4, 2]] # 4 - MoE at P3 (num_experts=4, top_k=2)
+  - [-1, 1, Conv, [512, 3, 2]] # 5-P4/16
+  - [-1, 2, A2C2fMoE, [512, True, 1, False, 2.0, 0.5, 1, True, 8, 2]] # 6 - MoE at P4 (num_experts=8, top_k=2)
+  - [-1, 1, Conv, [1024, 3, 2]] # 7-P5/32
+  - [-1, 2, A2C2fMoE, [1024, True, 1, False, 2.0, 0.5, 1, True, 16, 2]] # 8 - MoE at P5 (num_experts=16, top_k=2)
+  - [-1, 1, SPPF, [1024, 5, 3, True]] # 9
+  - [-1, 2, C2PSA, [1024]] # 10
+
+# YOLO26-Master detection head
+head:
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]] # 11
+  - [[-1, 6], 1, Concat, [1]] # 12 - cat backbone P4 (A2C2fMoE at layer 6)
+  - [-1, 2, C3k2, [512, True]] # 13
+
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]] # 14
+  - [[-1, 4], 1, Concat, [1]] # 15 - cat backbone P3 (A2C2fMoE at layer 4)
+  - [-1, 2, C3k2, [256, True]] # 16 (P3/8-small)
+
+  - [-1, 1, Conv, [256, 3, 2]] # 17
+  - [[-1, 13], 1, Concat, [1]] # 18 - cat head P4
+  - [-1, 2, C3k2, [512, True]] # 19 (P4/16-medium)
+
+  - [-1, 1, Conv, [512, 3, 2]] # 20
+  - [[-1, 10], 1, Concat, [1]] # 21 - cat head P5
+  - [-1, 1, C3k2, [1024, True, 0.5, True]] # 22 (P5/32-large)
+
+  - [[16, 19, 22], 1, Detect, [nc]] # Detect(P3, P4, P5)
