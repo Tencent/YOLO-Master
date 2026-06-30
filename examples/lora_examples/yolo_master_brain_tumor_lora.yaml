@@ -1,0 +1,92 @@
+# Ultralytics YOLO 🚀, AGPL-3.0 license
+# YOLO-Master-EsMoE-N LoRA configuration for sparse brain-tumor medical detection.
+# Usage: yolo train cfg=examples/lora_examples/yolo_master_brain_tumor_lora.yaml
+
+# Global settings ------------------------------------------------------------------------------------------------------
+task: detect
+mode: train
+device: 0
+
+# Train settings -------------------------------------------------------------------------------------------------------
+model: ultralytics/cfg/models/master/v0_5/det/yolo-master-n.yaml
+data: brain-tumor.yaml
+epochs: 40 # 20-50 epoch quick adaptation window for small medical datasets
+time:
+patience: 15
+batch: 16
+imgsz: 640
+save: True
+save_period: -1
+cache: False
+workers: 4
+project: runs/lora_examples
+name: yolo_master_brain_tumor_lora_r8
+exist_ok: False
+pretrained: True
+optimizer: AdamW
+lr0: 0.0005
+lrf: 0.01
+momentum: 0.937
+weight_decay: 0.0001
+warmup_epochs: 3.0
+verbose: True
+seed: 0
+deterministic: True
+single_cls: False
+rect: False
+cos_lr: True
+close_mosaic: 0 # avoid mosaic artifacts on sparse medical images
+resume: False
+amp: True
+fraction: 1.0
+profile: False
+freeze:
+multi_scale: False
+compile: False
+
+# Val/Test settings ----------------------------------------------------------------------------------------------------
+val: True
+split: val
+save_json: False
+conf:
+iou: 0.7
+max_det: 50
+half: False
+dnn: False
+plots: True
+
+# LoRA settings --------------------------------------------------------------------------------------------------------
+lora_r: 8 # compare with r=4 and r=16 via domain_lora_rank_sweep.py
+lora_alpha: 16
+lora_dropout: 0.02
+lora_bias: "none"
+lora_backend: "auto"
+lora_variant: "lora"
+lora_include_head: False
+lora_freeze_bn: True # small medical batches benefit from stable BN statistics
+lora_target_modules: ["conv", "linear"] # Keep both Conv feature extractors and SE/linear gates adaptable.
+lora_save_adapters: True
+lora_adapter_dir: "lora_adapter"
+lora_auto_r_ratio: 0.0
+lora_use_dora: False
+lora_use_rslora: True
+lora_init_lora_weights: "gaussian"
+lora_type: "lora"
+lora_quantization: "none"
+lora_include_moe: True # Include MoE expert/projection layers; medical texture shift is concentrated in feature blocks.
+lora_include_attention: False # Keep attention-like paths frozen to reduce overfitting on the small grayscale-like dataset.
+lora_only_backbone: False
+lora_only_3x3: False
+lora_skip_stem: True
+lora_min_channels: 32
+lora_exclude_modules:
+lora_last_n:
+lora_from_layer: 3
+lora_to_layer:
+lora_allow_depthwise: False
+lora_kernels:
+lora_gradient_checkpointing: True
+lora_lr_mult: 1.5
+
+# Routing policy: do not explicitly target `routing` modules. Brain-tumor data is sparse and low-diversity, so adapting
+# router logits can overfit expert assignment; adapt experts/features and keep routing decisions stable.

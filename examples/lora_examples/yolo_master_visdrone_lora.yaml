@@ -1,0 +1,92 @@
+# Ultralytics YOLO 🚀, AGPL-3.0 license
+# YOLO-Master-EsMoE-N LoRA configuration for VisDrone dense aerial detection.
+# Usage: yolo train cfg=examples/lora_examples/yolo_master_visdrone_lora.yaml
+
+# Global settings ------------------------------------------------------------------------------------------------------
+task: detect
+mode: train
+device: 0
+
+# Train settings -------------------------------------------------------------------------------------------------------
+model: ultralytics/cfg/models/master/v0_5/det/yolo-master-n.yaml
+data: VisDrone.yaml
+epochs: 30 # 20-50 epoch quick adaptation window for dense aerial few-shot iteration
+time:
+patience: 20
+batch: 8
+imgsz: 960 # preserve small-object detail in aerial frames; lower to 768 on 12GB GPUs
+save: True
+save_period: -1
+cache: False
+workers: 8
+project: runs/lora_examples
+name: yolo_master_visdrone_lora_r16
+exist_ok: False
+pretrained: True
+optimizer: AdamW
+lr0: 0.001
+lrf: 0.01
+momentum: 0.937
+weight_decay: 0.0005
+warmup_epochs: 3.0
+verbose: True
+seed: 0
+deterministic: True
+single_cls: False
+rect: False
+cos_lr: True
+close_mosaic: 10
+resume: False
+amp: True
+fraction: 1.0
+profile: False
+freeze:
+multi_scale: True # helps object scale changes across drone altitudes
+compile: False
+
+# Val/Test settings ----------------------------------------------------------------------------------------------------
+val: True
+split: val
+save_json: False
+conf:
+iou: 0.7
+max_det: 500 # VisDrone scenes can contain many tiny targets
+half: False
+dnn: False
+plots: True
+
+# LoRA settings --------------------------------------------------------------------------------------------------------
+lora_r: 16 # compare with r=4 and r=8 via domain_lora_rank_sweep.py
+lora_alpha: 32
+lora_dropout: 0.05
+lora_bias: "none"
+lora_backend: "auto"
+lora_variant: "lora"
+lora_include_head: False
+lora_freeze_bn: False
+lora_target_modules: ["conv", "linear"] # Conv adapts scale/texture; Linear covers SE gates in MoE blocks.
+lora_save_adapters: True
+lora_adapter_dir: "lora_adapter"
+lora_auto_r_ratio: 0.0
+lora_use_dora: False
+lora_use_rslora: True
+lora_init_lora_weights: "gaussian"
+lora_type: "lora"
+lora_quantization: "none"
+lora_include_moe: True # Include MoE expert/projection layers for aerial density and scale shifts.
+lora_include_attention: True # YOLO-Master-N uses A2C2f attention-like blocks; keep them adaptable for dense scenes.
+lora_only_backbone: False
+lora_only_3x3: False
+lora_skip_stem: True
+lora_min_channels: 32
+lora_exclude_modules:
+lora_last_n:
+lora_from_layer: 3
+lora_to_layer:
+lora_allow_depthwise: False
+lora_kernels:
+lora_gradient_checkpointing: True
+lora_lr_mult: 2.0
+
+# Routing policy: do not explicitly target `routing` modules. Router logits/top-k decisions are highly sensitive on
+# short VisDrone runs; this config adapts Conv/Linear feature transforms and MoE experts while leaving routing stable.
