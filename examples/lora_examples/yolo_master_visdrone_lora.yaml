@@ -1,0 +1,100 @@
+# Ultralytics YOLO 🚀, AGPL-3.0 license
+# LoRA Training Configuration for YOLO-Master-EsMoE-N on VisDrone
+# Usage: yolo train cfg=examples/lora_examples/yolo_master_visdrone_lora.yaml lora_r=8 lora_alpha=16
+
+# Global settings ------------------------------------------------------------------------------------------------------
+task: detect # (str) YOLO task, i.e. detect, segment, classify, pose, obb
+mode: train # (str) YOLO mode, i.e. train, val, predict, export, track, benchmark
+device: 0 # (int | str | list) device: 0 or [0,1,2,3] for CUDA, 'cpu'/'mps', or -1/[-1,-1] to auto-select idle GPUs
+
+# Train settings -------------------------------------------------------------------------------------------------------
+model: YOLO-Master-EsMoE-N.pt # (str) YOLO-Master EsMoE-N release weight; override with a local path if needed
+data: VisDrone.yaml # (str) dense aerial detection dataset
+epochs: 30 # (int) 20-50 epochs for few-shot/rapid domain adaptation comparisons
+time: # (float, optional) max hours to train; overrides epochs if set
+patience: 15 # (int) early stop after N epochs without val improvement
+batch: 8 # (int) batch size; use -1 for AutoBatch
+imgsz: 960 # (int | list) larger resolution helps VisDrone small-object recall; lower to 640 if memory-bound
+save: True # (bool) save train checkpoints and predict results
+save_period: -1 # (int) save checkpoint every N epochs; disabled if < 1
+cache: False # (bool | str) cache images in RAM (True/'ram') or on 'disk' to speed dataloading; False disables
+workers: 8 # (int) dataloader workers (per RANK if DDP)
+project: runs/lora_examples # (str, optional) project name for results root
+name: yolo_master_visdrone_lora_r8 # (str, optional) experiment name; override for r4/r8/r16 sweeps
+exist_ok: False # (bool) overwrite existing 'project/name' if True
+pretrained: True # (bool | str) use pretrained weights (bool) or load weights from path (str)
+optimizer: auto # (str) optimizer: SGD, Adam, Adamax, AdamW, NAdam, RAdam, RMSProp, or auto
+verbose: True # (bool) print verbose logs during training/val
+seed: 0 # (int) random seed for reproducibility
+deterministic: True # (bool) enable deterministic ops; reproducible but may be slower
+single_cls: False # (bool) treat all classes as a single class
+rect: False # (bool) rectangular batches for train; rectangular batching for val when mode='val'
+cos_lr: True # (bool) cosine learning rate scheduler
+close_mosaic: 10 # (int) disable mosaic augmentation for final N epochs
+resume: False # (bool) resume training from last checkpoint in the run dir
+amp: True # (bool) Automatic Mixed Precision (AMP) training; True runs AMP capability check
+fraction: 1.0 # (float) fraction of training dataset to use (1.0 = all)
+profile: False # (bool) profile ONNX/TensorRT speeds during training for loggers
+freeze: # (int | list, optional) freeze first N layers (int) or specific layer indices (list)
+multi_scale: True # (bool) multiscale training helps aerial scale variation
+compile: False # (bool | str) enable torch.compile() backend='inductor'; True="default", False=off, or "default|reduce-overhead|max-autotune-no-cudagraphs"
+
+# Val/Test settings ----------------------------------------------------------------------------------------------------
+val: True # (bool) run validation/testing during training
+split: val # (str) dataset split to evaluate: 'val', 'test' or 'train'
+save_json: False # (bool) save results to COCO JSON for external evaluation
+conf: # (float, optional) confidence threshold; defaults: predict=0.25, val=0.001
+iou: 0.7 # (float) IoU threshold used for NMS
+max_det: 1000 # (int) dense aerial scenes need a higher detection cap than COCO defaults
+half: False # (bool) use half precision (FP16) if supported
+dnn: False # (bool) use OpenCV DNN for ONNX inference
+plots: True # (bool) save plots and images during train/val
+
+# LoRA settings --------------------------------------------------------------------------------------------------------
+lora_r: 8 # (int) default rank for the sweep; compare r=4,8,16 with lora_alpha=2*r
+lora_alpha: 16 # (int) LoRA alpha
+lora_dropout: 0.05 # (float) LoRA dropout
+lora_bias: "none" # (str) LoRA bias type: "none", "all", "lora_only"
+lora_backend: "auto" # (str) LoRA backend: "auto", "peft", "fallback"
+lora_variant: "lora" # (str) Adapter variant: "lora", "loha", "dora"
+lora_include_head: False # (bool) keep prediction head trainable via trainer logic, but do not LoRA-wrap final heads
+lora_freeze_bn: True # (bool) freeze BatchNorm for stable short-run domain adaptation
+lora_target_modules: ["conv"] # (list[str]) target YOLO/EsMoE Conv2d layers after safety filtering
+lora_save_adapters: True # (bool) Save LoRA adapters
+lora_adapter_dir: "lora_adapter" # (str) Directory name for adapters
+lora_auto_r_ratio: 0.0 # (float) Auto calculate LoRA rank based on params ratio
+lora_use_dora: False # (bool) Enable DoRA (Weight-Decomposed Low-Rank Adaptation)
+lora_use_rslora: True # (bool) Enable RS-LoRA scaling for better high-rank stability
+lora_init_lora_weights: "gaussian" # (str) PEFT Conv2d-compatible init; PiSSA/OLoRA are Linear-oriented
+lora_type: "lora" # (str) PEFT type: "lora", "loha", "lokr"
+lora_quantization: "none" # (str) Quantization type: "none", "4bit", "8bit" (Requires bitsandbytes)
+lora_include_moe: True # (bool) include EsMoE expert convolutions as adaptation targets
+lora_include_attention: False # (bool) YOLO-Master-N detection config is Conv/MoE-heavy; attention targets are not required
+lora_only_backbone: False # (bool) allow neck convolutions; final Detect/DFL layers remain filtered by LoRA safety logic
+lora_only_3x3: True # (bool) skip 1x1 convs to keep adapter capacity focused and memory-efficient
+# MoE routing policy: router layers are excluded by default. Short VisDrone runs should adapt
+# visual/expert features without changing expert assignment dynamics; test routing separately as an ablation.
+lora_exclude_modules:
+  - 5.routing.local_conv.0
+  - 5.routing.local_conv.3
+  - 5.routing.local_conv.6
+  - 8.routing.local_conv.0
+  - 8.routing.local_conv.3
+  - 8.routing.local_conv.6
+  - 11.routing.local_conv.0
+  - 11.routing.local_conv.3
+  - 11.routing.local_conv.6
+lora_last_n: # (int, optional) Only apply to last N layers
+lora_from_layer: # (int, optional) Start applying from layer index
+lora_to_layer: # (int, optional) Stop applying at layer index
+lora_allow_depthwise: False # (bool) Allow depthwise convolution
+lora_kernels: # (list[int], optional) Filter by kernel size
+lora_skip_stem: True # (bool) avoid spending adapter capacity on low-level stem filters
+lora_min_channels: 32 # (int) avoid low-rank adapters on very narrow layers
+lora_gradient_checkpointing: True # (bool) Enable gradient checkpointing for LoRA memory optimization
+lora_lr_mult: 2.0 # (float) LoRA parameter LR multiplier
+lora_layer_decay: 0.9 # (float) mild layer-wise LR decay for stable transfer
+lora_alpha_warmup: 3 # (int) warm up LoRA contribution during early routing/expert adaptation
+lora_ortho_weight: 0.0001 # (float) discourage rank collapse in short training
+lora_dropout_end: 0.10 # (float) dynamic dropout endpoint
+lora_dropout_start_ratio: 0.3 # (float) start dropout schedule after early fitting
