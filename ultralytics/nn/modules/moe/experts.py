@@ -233,6 +233,22 @@ class SharedInvertedExpertGroup(nn.Module):
         valid_mask = weights > self.weight_threshold
 
         output = x.new_zeros(B, self.out_channels, H, W)
+
+        if torch.onnx.is_in_onnx_export():
+            # ONNX tracing cannot capture data-dependent ``torch.unique`` /
+            # dynamic-length loops. Dense path: compute every expert's
+            # projection for the full batch, gather Top-K, weighted-sum.
+            all_projs = torch.stack(
+                [proj(features) for proj in self.expert_projections], dim=1
+            )  # [B, E, out_C, H, W]
+            for k in range(top_k):
+                idx_k = indices[:, k]                                              # [B]
+                w_k = weights[:, k] * valid_mask[:, k].to(weights.dtype)           # [B]
+                idx_exp = idx_k.view(B, 1, 1, 1, 1).expand(B, 1, self.out_channels, H, W)
+                selected = torch.gather(all_projs, 1, idx_exp).squeeze(1)          # [B, out_C, H, W]
+                output = output + selected * w_k.view(B, 1, 1, 1)
+            return output
+
         active_experts = torch.unique(indices[valid_mask]).to(torch.long).tolist()
         for expert_idx in active_experts:
             projection = self.expert_projections[expert_idx]
