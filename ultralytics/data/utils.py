@@ -42,6 +42,18 @@ VID_FORMATS = {"asf", "avi", "gif", "m4v", "mkv", "mov", "mp4", "mpeg", "mpg", "
 FORMATS_HELP_MSG = f"Supported formats are:\nimages: {IMG_FORMATS}\nvideos: {VID_FORMATS}"
 
 
+def convert_ndjson_to_yolo_if_needed(data: str | Path) -> str | Path:
+    """Convert an NDJSON dataset path to a YOLO data.yaml path; return other dataset specs unchanged."""
+    if not isinstance(data, (str, Path)) or str(data).rsplit(".", 1)[-1].lower() != "ndjson":
+        return data
+
+    import asyncio
+
+    from ultralytics.data.converter import convert_ndjson_to_yolo
+
+    return str(asyncio.run(convert_ndjson_to_yolo(data)))
+
+
 def img2label_paths(img_paths: list[str]) -> list[str]:
     """Convert image paths to label paths by replacing 'images' with 'labels' and extension with '.txt'."""
     sa, sb = f"{os.sep}images{os.sep}", f"{os.sep}labels{os.sep}"  # /images/, /labels/ substrings
