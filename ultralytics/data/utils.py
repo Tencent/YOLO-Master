@@ -780,8 +780,10 @@ def load_dataset_cache_file(path: Path) -> dict:
     import gc
 
     gc.disable()  # reduce pickle load time https://github.com/ultralytics/ultralytics/pull/1585
-    cache = np.load(str(path), allow_pickle=True).item()  # load dict
-    gc.enable()
+    try:
+        cache = np.load(str(path), allow_pickle=True).item()  # load dict
+    finally:
+        gc.enable()
     return cache
 
 
@@ -789,10 +791,10 @@ def save_dataset_cache_file(prefix: str, path: Path, x: dict, version: str):
     """Save an Ultralytics dataset *.cache dictionary x to path."""
     x["version"] = version  # add cache version
     if is_dir_writeable(path.parent):
-        if path.exists():
-            path.unlink()  # remove *.cache file if exists
-        with open(str(path), "wb") as file:  # context manager here fixes windows async np.save bug
+        tmp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+        with open(str(tmp_path), "wb") as file:  # context manager here fixes windows async np.save bug
             np.save(file, x)
+        os.replace(tmp_path, path)
         LOGGER.info(f"{prefix}New cache created: {path}")
     else:
         LOGGER.warning(f"{prefix}Cache directory {path.parent} is not writable, cache not saved.")
