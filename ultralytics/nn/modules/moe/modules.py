@@ -520,7 +520,7 @@ class ES_MOE(nn.Module):
     """General MoE block with a routing network and multiple expert branches."""
 
     def __init__(self, in_channels, out_channels=None, num_experts=3, reduction=8,
-                 top_k=None, use_sparse_inference=True, dynamic_threshold=0.4):
+                 top_k=None, use_sparse_inference=False, dynamic_threshold=0.4):
         """
         Args:
             in_channels: Input channels
@@ -528,7 +528,9 @@ class ES_MOE(nn.Module):
             num_experts: Number of expert branches
             reduction: Channel reduction ratio for the routing network
             top_k: Number of active experts; None means use all experts
-            use_sparse_inference: Enable sparse Top-K expert computation during inference
+            use_sparse_inference: Enable sparse Top-K expert computation during inference.
+                Disabled by default so validation uses the same dense expert
+                aggregation as training. Enable explicitly for latency benchmarks.
             dynamic_threshold: Threshold for pruning low-confidence experts during inference
         """
         super(ES_MOE, self).__init__()
@@ -573,7 +575,7 @@ class ES_MOE(nn.Module):
         if not hasattr(self, "use_top_k"):
             self.use_top_k = False
         if not hasattr(self, "use_sparse_inference"):
-            self.use_sparse_inference = True
+            self.use_sparse_inference = False
         if not hasattr(self, "num_experts"):
             self.num_experts = len(self.experts) if hasattr(self, "experts") else 1
         if not hasattr(self, "top_k"):
@@ -596,9 +598,9 @@ class ES_MOE(nn.Module):
                 aux_loss=load_balance_loss,
             )
 
-        # Dense forward only during training (gradients to all experts) or when
-        # exporting to ONNX (sparse control-flow breaks tracing). For normal
-        # eval/inference use the Top-K sparse path to reclaim the MoE speedup.
+        # Use dense aggregation by default for train/val consistency. The sparse
+        # path drops low-confidence experts and is intended for explicit latency
+        # benchmarking, not for reporting validation accuracy.
         use_dense = self.training or torch.onnx.is_in_onnx_export() or not getattr(self, "use_sparse_inference", True)
         if use_dense:
             final_output = self._dense_forward(x, routing_weights)
