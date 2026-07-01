@@ -580,8 +580,14 @@ class NeckMoAFusion(nn.Module):
         nh, hd = self.num_heads, self.head_dim
         inner = nh * hd
 
-        # Align lo-res to hi-res resolution
-        lo_up = self.upsample(lo) if lo.shape[2:] != hi.shape[2:] else lo
+        # Align lo-res to hi-res resolution. FPN/PAN feature sizes are often
+        # odd after padding/stride rounding, so a fixed 2x upsample can produce
+        # 14x14 for a 15x15 target and break the attention reshape below.
+        lo_up = (
+            F.interpolate(lo, size=hi.shape[2:], mode="bilinear", align_corners=False)
+            if lo.shape[2:] != hi.shape[2:]
+            else lo
+        )
 
         # ── Cross-attention: hi queries lo context ──────────────────────
         q = self.q_proj(hi).flatten(2).view(B, nh, hd, H * W).transpose(2, 3)

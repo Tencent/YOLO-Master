@@ -3,6 +3,7 @@ from pathlib import Path
 import torch
 
 from ultralytics.nn.modules.moa import C2fMoA, MoABlock, NeckMoAFusion, anneal_moa_temperature, collect_moa_aux_loss
+from ultralytics.nn.modules.moa.moa import _GlobalAttnHead, _LocalAttnHead
 from ultralytics.nn.tasks import DetectionModel
 from ultralytics.utils.loss import _collect_moa_aux_loss
 
@@ -41,6 +42,21 @@ def test_neck_moa_fusion_forward_backward():
     assert _has_grad(module)
 
 
+def test_neck_moa_fusion_handles_non_2x_spatial_mismatch():
+    """NeckMoAFusion should align lo to hi size even when scales are not exactly 2x."""
+    torch.manual_seed(0)
+    module = NeckMoAFusion(32, 64, 32, num_heads=4).train()
+    hi = torch.randn(2, 32, 15, 15)
+    lo = torch.randn(2, 64, 7, 7)
+
+    out = module(hi, lo)
+
+    assert out.shape == hi.shape
+    assert torch.isfinite(out).all()
+    out.mean().backward()
+    assert _has_grad(module)
+
+
 def test_moa_aux_loss_collected_for_c2f_and_neck():
     torch.manual_seed(0)
     c2f = C2fMoA(32, 32, n=1, num_heads=3).train()
@@ -54,6 +70,50 @@ def test_moa_aux_loss_collected_for_c2f_and_neck():
     neck(torch.randn(2, 32, 8, 8), torch.randn(2, 64, 4, 4))
     neck_aux = collect_moa_aux_loss(neck)
     assert neck_aux.requires_grad and torch.isfinite(neck_aux)
+
+
+def test_moa_router_extreme_temperature_stays_finite_and_nonuniform():
+    """Very low router temperature should not create NaN/Inf or collapse to uniform probabilities."""
+    torch.manual_seed(0)
+    block = MoABlock(48, num_heads=6, temperature=1.0).train()
+    block.router.temperature = 1e-6
+    with torch.no_grad():
+        block.router.router[-1].weight.normal_(0, 0.02)
+        block.router.router[-1].bias.copy_(torch.tensor([0.25, -0.15, 0.05]))
+
+    probs, logits = block.router(torch.randn(2, 48, 5, 5), return_logits=True)
+
+    assert torch.isfinite(logits).all()
+    assert torch.isfinite(probs).all()
+    assert torch.allclose(probs.sum(dim=1), torch.ones_like(probs[:, 0]), atol=1e-5)
+    uniform = probs.new_full(probs.shape, 1.0 / probs.shape[1])
+    assert not torch.allclose(probs, uniform, atol=1e-3)
+
+
+def test_attention_heads_handle_dim_not_divisible_by_heads():
+    """Local/global heads should degrade safely when dim is not divisible by num_heads."""
+    x = torch.randn(1, 10, 4, 4)
+    for cls in (_LocalAttnHead, _GlobalAttnHead):
+        module = cls(dim=10, num_heads=3).train()
+        out = module(x)
+        assert out.shape == x.shape
+        assert torch.isfinite(out).all()
+
+
+def test_c2fmoa_aux_loss_not_double_counted_for_nested_blocks():
+    """C2fMoA wrapper aux loss should equal child block losses once, not wrapper + children twice."""
+    torch.manual_seed(0)
+    module = C2fMoA(32, 32, n=3, num_heads=3).train()
+    module(torch.randn(2, 32, 6, 6))
+
+    child_total = sum(m.last_aux_loss for m in module.m)
+    collected = collect_moa_aux_loss(module)
+    public_collected = _collect_moa_aux_loss(module, torch.device("cpu"))
+
+    assert torch.isfinite(collected)
+    assert torch.allclose(collected, child_total)
+    assert torch.allclose(public_collected, child_total)
+    assert not torch.allclose(collected, child_total * 2)
 
 
 def test_c2fmoa_small_channels_keep_valid_head_count():
