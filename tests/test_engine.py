@@ -10,6 +10,7 @@ from tests import MODEL
 from ultralytics import YOLO
 from ultralytics.cfg import get_cfg
 from ultralytics.engine import trainer as trainer_module
+from ultralytics.engine import validator as validator_module
 from ultralytics.engine.exporter import Exporter
 from ultralytics.models.yolo import classify, detect, segment
 from ultralytics.utils import ASSETS, DEFAULT_CFG, WEIGHTS_DIR, YAML
@@ -95,6 +96,24 @@ def test_update_args_with_lora_runtime_metadata_sets_requested_and_effective_fie
     assert args.effective_lora_init_lora_weights == "gaussian"
     assert args.lora_safety_profile == "rtdetr_lora"
     assert args.lora_safety_overrides == {"lora_lr_mult": {"from": 2.0, "to": 1.0}}
+
+
+def test_convert_ndjson_to_yolo_if_needed_leaves_yaml_unchanged():
+    """Test that validator dataset conversion is a no-op for YAML paths."""
+    assert validator_module.convert_ndjson_to_yolo_if_needed("coco8.yaml") == "coco8.yaml"
+
+
+def test_convert_ndjson_to_yolo_if_needed_converts_ndjson(monkeypatch, tmp_path):
+    """Test that validator dataset conversion resolves NDJSON paths to generated YOLO YAML paths."""
+    converted_yaml = tmp_path / "coco8-ndjson" / "data.yaml"
+
+    async def fake_convert_ndjson_to_yolo(path):
+        assert path == "coco8-ndjson.ndjson"
+        return converted_yaml
+
+    monkeypatch.setattr(validator_module, "convert_ndjson_to_yolo", fake_convert_ndjson_to_yolo)
+
+    assert validator_module.convert_ndjson_to_yolo_if_needed("coco8-ndjson.ndjson") == str(converted_yaml)
 
 
 def test_rtdetr_lora_safety_guard_mutates_training_args():
