@@ -9,9 +9,9 @@ The script compares three groups:
 
 Example:
 
-    python scripts/reproduce/reproduce_issue52_dynamic_schedule.py --dry-run
-    python scripts/reproduce/reproduce_issue52_dynamic_schedule.py --variant dynamic --epochs 100 --wandb offline
-    python scripts/reproduce/reproduce_issue52_dynamic_schedule.py --summary-only
+    python scripts/run_moe_dynamic_schedule_ablation.py --dry-run
+    python scripts/run_moe_dynamic_schedule_ablation.py --variant dynamic --epochs 100 --wandb offline
+    python scripts/run_moe_dynamic_schedule_ablation.py --summary-only
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 os.environ.setdefault("YOLO_CONFIG_DIR", str(ROOT / "runs/reproduce/_runtime/ultralytics"))
 os.environ.setdefault("MPLCONFIGDIR", str(ROOT / "runs/reproduce/_runtime/matplotlib"))

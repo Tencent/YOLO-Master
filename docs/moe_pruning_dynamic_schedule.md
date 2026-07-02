@@ -1,14 +1,15 @@
-# Rhino-Bird Issue #52 MoE Pruning and Dynamic Schedule
+# MoE Pruning and Dynamic Schedule
 
-This directory contains reproducible scripts for Tencent Rhino-Bird issue #52. The experiments use VisDrone and a trained YOLO-Master-EsMoE-N checkpoint.
+This guide documents the Tencent Rhino-Bird issue #52 workflow for MoE expert pruning and dynamic MoE hyperparameter scheduling. The experiments use VisDrone and a trained YOLO-Master-EsMoE-N checkpoint.
 
 ## Files
 
 | file | purpose |
 | --- | --- |
-| `scripts/reproduce/reproduce_issue52_moe_pruning.py` | Runs MoEPruner threshold sweeps, direct validation, LoRA 10-epoch recovery, metrics, and plots. |
-| `scripts/reproduce/reproduce_issue52_dynamic_schedule.py` | Runs baseline, dynamic schedule, and low-balance ablation training; summarizes convergence speed. |
-| `scripts/reproduce/ISSUE52_DISCUSSION_DRAFT.md` | Draft GitHub Discussion summary. |
+| `scripts/moe_pruning_sweep.py` | Runs MoEPruner threshold sweeps, direct validation, LoRA 10-epoch recovery, metrics, and plots. |
+| `scripts/run_moe_dynamic_schedule_ablation.py` | Runs baseline, dynamic schedule, and low-balance ablation training; summarizes convergence speed. |
+| `scripts/issue52_pruning_results.csv` | Compact pruning-sweep result table for review. |
+| `scripts/issue52_dynamic_schedule_results.csv` | Compact dynamic-schedule result table for review. |
 | `ultralytics/nn/modules/moe/schedule.py` | Implements expert-usage Gini, EMA scheduling, and balance-loss coefficient application. |
 
 ## Commands
@@ -16,7 +17,7 @@ This directory contains reproducible scripts for Tencent Rhino-Bird issue #52. T
 Pruning sweep:
 
 ```bash
-python scripts/reproduce/reproduce_issue52_moe_pruning.py \
+python scripts/moe_pruning_sweep.py \
   --project runs/reproduce/issue52_moe_pruning_full \
   --thresholds 0.05 0.10 0.15 0.20 0.30 \
   --lora-epochs 10 \
@@ -36,7 +37,7 @@ python scripts/reproduce/reproduce_issue52_moe_pruning.py \
 Dynamic schedule comparison:
 
 ```bash
-python scripts/reproduce/reproduce_issue52_dynamic_schedule.py \
+python scripts/run_moe_dynamic_schedule_ablation.py \
   --variant all \
   --project runs/reproduce/issue52_dynamic_schedule_full \
   --epochs 100 \
@@ -67,7 +68,7 @@ base=1.0, target=0.25, alpha=1.0, beta=0.8, min_coeff=0.5, max_coeff=2.0
 
 ## Results
 
-Settings: VisDrone, `imgsz=640`, base checkpoint `runs/reproduce/visdrone/visdrone_100e_denseeval_esmoe/weights/best.pt`. FLOPs below are MoE-layer GFLOPs collected through module `get_gflops()` hooks, not total model GFLOPs.
+Settings: VisDrone, `imgsz=640`, base checkpoint `runs/reproduce/visdrone/visdrone_100e_denseeval_esmoe/weights/best.pt`. FLOPs below are MoE-layer GFLOPs collected through module `get_gflops()` hooks, not total model GFLOPs. Machine-readable result tables are provided in `scripts/issue52_pruning_results.csv` and `scripts/issue52_dynamic_schedule_results.csv`.
 
 | Threshold | Stage | mAP50 | mAP50-95 | MoE GFLOPs | Latency mean ms | Params M | Gini mean |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -96,6 +97,16 @@ Dynamic schedule comparison:
 - Direct inference is stronger than LoRA10 recovery in this run. The LoRA adapter adds parameters and latency, while 10 epochs did not recover or improve accuracy.
 - The dynamic Gini schedule reaches 95% of the fixed baseline final mAP50-95 faster: 58 epochs vs 65 epochs, a convergence ratio of 0.892.
 - For server inference, use a conservative direct threshold such as `0.05` or `0.15`. For edge pruning, test higher thresholds or a checkpoint with less uniform expert utilization before claiming a clear Pareto gain.
+
+## Plot Artifacts
+
+The pruning script writes the following plots when `--plots` is enabled:
+
+| artifact | purpose |
+| --- | --- |
+| `plots/threshold_map_latency_3d.png` | Threshold to mAP/FLOPs/latency 3D view. |
+| `plots/threshold_curves.png` | Threshold curves for mAP, MoE GFLOPs, and latency. |
+| `plots/pareto_accuracy_latency.png` | Accuracy-latency Pareto front with the selected sweet spot. |
 
 ## W&B Links
 

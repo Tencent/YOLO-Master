@@ -3,9 +3,9 @@
 
 The default setup uses the VisDrone EsMoE checkpoint produced by issue #49:
 
-    python scripts/reproduce/reproduce_issue52_moe_pruning.py --dry-run
-    python scripts/reproduce/reproduce_issue52_moe_pruning.py --thresholds 0.10 --direct-only --limit-val-batches smoke
-    python scripts/reproduce/reproduce_issue52_moe_pruning.py --plot-only
+    python scripts/moe_pruning_sweep.py --dry-run
+    python scripts/moe_pruning_sweep.py --thresholds 0.10 --direct-only --limit-val-batches smoke
+    python scripts/moe_pruning_sweep.py --plot-only
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 os.environ.setdefault("YOLO_CONFIG_DIR", str(ROOT / "runs/reproduce/_runtime/ultralytics"))
 os.environ.setdefault("MPLCONFIGDIR", str(ROOT / "runs/reproduce/_runtime/matplotlib"))
