@@ -170,6 +170,8 @@ cython_debug/
 
 # YOLO-Master agent runtime artifacts
 runs/
+datasets/
+wandb/
 agent/logs/
 
 # LoRA/PEFT validation artifacts

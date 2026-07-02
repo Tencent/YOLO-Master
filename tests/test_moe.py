@@ -565,9 +565,21 @@ def test_f05_static_balance_loss_handles_empty_stats():
     assert isinstance(loss, torch.Tensor) and torch.isfinite(loss).all()
 
 
-def test_p05_es_moe_eval_uses_sparse():
-    """P-05: ES_MOE eval runs the sparse path and stays finite."""
+def test_p05_es_moe_eval_defaults_to_dense_validation_path():
+    """P-05: ES_MOE eval defaults to dense aggregation for correct validation metrics."""
     m = ES_MOE(32, 32, num_experts=4, top_k=2).eval()
+    x = torch.randn(2, 32, 16, 16)
+    with torch.no_grad():
+        routing_weights = m.routing(x)
+        expected = m.norm(m._dense_forward(x, routing_weights))
+        out = m(x)
+    assert torch.allclose(out, expected, atol=1e-5, rtol=1e-4)
+
+
+def test_p05_es_moe_sparse_inference_is_explicit_opt_in():
+    """P-05: ES_MOE sparse path is still available when explicitly enabled."""
+    m = ES_MOE(32, 32, num_experts=4, top_k=2).eval()
+    m.enable_sparse_inference(True)
     with torch.no_grad():
         out = m(torch.randn(2, 32, 16, 16))
     assert out.shape[0] == 2 and torch.isfinite(out).all()
