@@ -1,5 +1,9 @@
 # YOLO-Master Domain-Specific LoRA Tuning
 
+#TODO: 要给出一些运行环境的配置信息，可以使用表格展示
+# Ultralytics 8.3.240 🚀 Python-3.12.13 torch-2.10.0+cu128 CUDA:0 (NVIDIA GeForce RTX 5060 Ti, 15848MiB)
+
+
 This document tracks the domain-specific LoRA tuning experiments for YOLO-Master
 models. It is intended to make the Brain Tumor and VisDrone runs reproducible,
 document the LoRA target policy for MoE-based YOLO-Master variants, and provide a
@@ -112,9 +116,9 @@ yolo train cfg=examples/lora_examples/yolo_master_brain_tumor_lora.yaml \
 
 | Run | Rank | Trainable params | Adapter params | Best epoch | mAP50 | mAP50-95 | Train time | Peak GPU mem |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `brain_tumor_r4` | 4 | 468,290 | 123,116 | 30 | 0.43492 | 0.28312 | 0.664 h | 3.95G |
-| `brain_tumor_r8` | 8 | 596,782 | 251,608 | 35 | 0.46004 | 0.31215 | 0.664 h | 3.99G |
-| `brain_tumor_r16` | 16 | 848,390 | 503,216 | 37 | 0.48212 | 0.34044 | 0.664 h | 4.03G |
+| `brain_tumor_r4` | 4 | 468,290 | 123,116 | 30 | 0.43492 | 0.28312 | 39.84 min | 3.95G |
+| `brain_tumor_r8` | 8 | 596,782 | 251,608 | 35 | 0.46004 | 0.31215 | 39.91 min | 3.99G |
+| `brain_tumor_r16` | 16 | 848,390 | 503,216 | 37 | 0.48212 | 0.34044 | 40.27 min | 4.03G |
 
 Notes:
 
@@ -171,6 +175,15 @@ stats_re = re.compile(r"Trainable: ([\d,]+).*Adapter Params: ([\d,]+)")
 time_re = re.compile(r"epochs completed in ([0-9.]+) hours")
 mem_re = re.compile(r"\b\d+\s*/\s*\d+\s+([0-9.]+)G\b")
 
+def format_hours(hours):
+    minutes = float(hours) * 60
+    if minutes < 60:
+        return f"{minutes:.2f} min"
+    h = int(minutes // 60)
+    m = minutes - h * 60
+    unit = "hour" if h == 1 else "hours"
+    return f"{h} {unit} {m:.2f} min" if m else f"{h} {unit}"
+
 for run_dir in sorted(Path("runs/lora_examples").glob("brain_tumor_r*")):
     results = run_dir / "results.csv"
     if not results.exists():
@@ -185,7 +198,7 @@ for run_dir in sorted(Path("runs/lora_examples").glob("brain_tumor_r*")):
         if m := stats_re.search(text):
             trainable, adapter = m.groups()
         if m := time_re.search(text):
-            train_time = f"{m.group(1)} h"
+            train_time = format_hours(m.group(1))
         mem_values = [float(x) for x in mem_re.findall(text)]
         if mem_values:
             peak_mem = f"{max(mem_values):.2f}G"
