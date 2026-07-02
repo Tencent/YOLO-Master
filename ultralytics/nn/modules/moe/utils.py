@@ -71,6 +71,12 @@ class BatchedExpertComputation:
         1) Pre-allocate outputs for all experts
         2) Compute all activated experts in parallel
         3) Aggregate using efficient scatter/index_add
+
+        ONNX export note: ``torch.onnx.export`` uses tracing, which cannot
+        capture data-dependent control flow (``if not mask.any(): continue``).
+        When exporting, fall back to a dense path that computes *all* experts
+        and selects outputs via ``torch.gather`` — fully traceable, no dynamic
+        skips.  The sparse path remains for normal training/eval.
         """
         B, C, H, W = x.shape
         out_channels = last_conv_out_channels(experts[0])
@@ -82,6 +88,28 @@ class BatchedExpertComputation:
         indices_flat = routing_indices.reshape(B, -1)[:, :current_top_k]  # [B, top_k]
         weights_flat = routing_weights.reshape(B, -1)[:, :current_top_k]  # [B, top_k]
 
+        # ── ONNX-safe dense path ──────────────────────────────────────────
+        # Compute every expert for the full batch (static Python loop over
+        # ``num_experts`` → traceable), then gather the Top-K selected outputs
+        # and weight-sum them.  No ``if mask.any()`` / ``continue`` guards.
+        if torch.onnx.is_in_onnx_export():
+            all_outs = torch.stack(
+                [experts[i](x) for i in range(num_experts)], dim=1
+            )  # [B, E, out_C, H, W]
+
+            expert_output = torch.zeros(
+                B, out_channels, H, W, device=x.device, dtype=x.dtype
+            )
+            for k in range(current_top_k):
+                idx_k = indices_flat[:, k]                                   # [B]
+                w_k = weights_flat[:, k]                                     # [B]
+                idx_exp = idx_k.view(B, 1, 1, 1, 1).expand(B, 1, out_channels, H, W)
+                selected = torch.gather(all_outs, 1, idx_exp).squeeze(1)     # [B, out_C, H, W]
+                expert_output = expert_output + selected * w_k.view(B, 1, 1, 1)
+
+            return expert_output.clamp_(-1e4, 1e4)
+
+        # ── Sparse path (training / normal eval) ──────────────────────────
         # Plan A: conditional computation (skip low-weight experts). Keep all
         # selected experts during training so low-weight routes can still learn;
         # thresholding is an inference-only speed trade-off.

@@ -824,34 +824,51 @@ class OptimizedMOE(nn.Module):
         flat_indices = routing_indices.view(B, self.top_k)  # [B, k]
         flat_weights = routing_weights.view(B, self.top_k)  # [B, k]
 
-        # Iterate over all experts
-        for i in range(self.num_experts):
-            # Find samples in batch that selected expert i
-            # mask shape: [B, k]
-            mask = (flat_indices == i)
+        if torch.onnx.is_in_onnx_export():
+            # ONNX tracing cannot capture data-dependent ``if mask.any()``
+            # skips. Use a dense path: compute all experts, gather Top-K, sum.
+            all_outs = torch.stack(
+                [self.experts[i](x) for i in range(self.num_experts)], dim=1
+            )  # [B, E, out_C, H, W]
+            for k in range(self.top_k):
+                idx_k = flat_indices[:, k]                                        # [B]
+                w_k = flat_weights[:, k]                                          # [B]
+                idx_exp = idx_k.view(B, 1, 1, 1, 1).expand(B, 1, self.out_channels, H, W)
+                selected = torch.gather(all_outs, 1, idx_exp).squeeze(1)          # [B, out_C, H, W]
+                if selected.dtype != expert_output.dtype:
+                    selected = selected.to(expert_output.dtype)
+                if w_k.dtype != expert_output.dtype:
+                    w_k = w_k.to(expert_output.dtype)
+                expert_output = expert_output + selected * w_k.view(B, 1, 1, 1)
+        else:
+            # Iterate over all experts
+            for i in range(self.num_experts):
+                # Find samples in batch that selected expert i
+                # mask shape: [B, k]
+                mask = (flat_indices == i)
 
-            if mask.any():
-                # batch_idx: which sample
-                # k_idx: which choice (top-1 or top-2)
-                batch_idx, k_idx = torch.where(mask)
+                if mask.any():
+                    # batch_idx: which sample
+                    # k_idx: which choice (top-1 or top-2)
+                    batch_idx, k_idx = torch.where(mask)
 
-                # Extract per-sample input
-                inp = x[batch_idx]
+                    # Extract per-sample input
+                    inp = x[batch_idx]
 
-                # Expert compute
-                out = self.experts[i](inp)
+                    # Expert compute
+                    out = self.experts[i](inp)
 
-                # Extract weights and reshape for broadcast: [selected_count, 1, 1, 1]
-                w = flat_weights[batch_idx, k_idx].view(-1, 1, 1, 1)
+                    # Extract weights and reshape for broadcast: [selected_count, 1, 1, 1]
+                    w = flat_weights[batch_idx, k_idx].view(-1, 1, 1, 1)
 
-                # Accumulate results (index_add_ faster than per-loop assignment)
-                # Note: convert dtype if mismatched
-                if out.dtype != expert_output.dtype:
-                    out = out.to(expert_output.dtype)
-                if w.dtype != expert_output.dtype:
-                    w = w.to(expert_output.dtype)
+                    # Accumulate results (index_add_ faster than per-loop assignment)
+                    # Note: convert dtype if mismatched
+                    if out.dtype != expert_output.dtype:
+                        out = out.to(expert_output.dtype)
+                    if w.dtype != expert_output.dtype:
+                        w = w.to(expert_output.dtype)
 
-                expert_output.index_add_(0, batch_idx, out * w)
+                    expert_output.index_add_(0, batch_idx, out * w)
 
         # Guard against activation explosion on routing collapse (all tokens -> 1 expert)
         expert_output = expert_output.clamp_(-1e4, 1e4)
@@ -1068,21 +1085,34 @@ class OptimizedMOEImproved(nn.Module):
         if getattr(self, "detach_routing", False):
             weights_flat = weights_flat.detach()
 
-        for i in active_experts:
-            # Find all samples assigned to expert i
-            mask = (indices_flat == i)
-            if mask.any():
-                batch_idx, k_idx = torch.where(mask)
+        if torch.onnx.is_in_onnx_export():
+            # ONNX tracing cannot capture ``if mask.any()`` skips.
+            # Dense path: compute all experts, gather Top-K, weighted-sum.
+            all_outs = torch.stack(
+                [self.experts[i](x) for i in range(self.num_experts)], dim=1
+            )  # [B, E, out_C, H, W]
+            for k in range(adaptive_top_k):
+                idx_k = indices_flat[:, k]                                        # [B]
+                w_k = weights_flat[:, k]                                          # [B]
+                idx_exp = idx_k.view(B, 1, 1, 1, 1).expand(B, 1, self.out_channels, H, W)
+                selected = torch.gather(all_outs, 1, idx_exp).squeeze(1)          # [B, out_C, H, W]
+                expert_output = expert_output + selected * w_k.view(B, 1, 1, 1)
+        else:
+            for i in active_experts:
+                # Find all samples assigned to expert i
+                mask = (indices_flat == i)
+                if mask.any():
+                    batch_idx, k_idx = torch.where(mask)
 
-                # Select input and compute
-                inp = x[batch_idx]
-                out = self.experts[i](inp)
+                    # Select input and compute
+                    inp = x[batch_idx]
+                    out = self.experts[i](inp)
 
-                # Select weights and broadcast (no gradient to router)
-                w = weights_flat[batch_idx, k_idx].view(-1, 1, 1, 1)
+                    # Select weights and broadcast (no gradient to router)
+                    w = weights_flat[batch_idx, k_idx].view(-1, 1, 1, 1)
 
-                # Accumulate results
-                expert_output.index_add_(0, batch_idx, out.to(expert_output.dtype) * w.to(expert_output.dtype))
+                    # Accumulate results
+                    expert_output.index_add_(0, batch_idx, out.to(expert_output.dtype) * w.to(expert_output.dtype))
 
         # Guard against activation explosion on routing collapse (all tokens -> 1 expert)
         expert_output = expert_output.clamp_(-1e4, 1e4)
