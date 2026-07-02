@@ -16,8 +16,6 @@ We provide optimized LoRA configurations for the following model families:
 | **YOLOv10** | `yolov10_lora.yaml` | Conv-based | `gradient_checkpointing=True` |
 | **YOLO11** | `yolo11_lora.yaml` | Conv-based | `gradient_checkpointing=True` |
 | **YOLO12** | `yolo12_lora.yaml` | Hybrid (CNN+Attn) | `include_attention=True` |
-| **YOLO-Master-EsMoE-N VisDrone** | `yolo_master_visdrone_lora.yaml` | EsMoE dense detector | `rslora=True`, router LoRA excluded |
-| **YOLO-Master-EsMoE-N brain-tumor** | `yolo_master_brain_tumor_lora.yaml` | EsMoE sparse detector | `rslora=True`, router LoRA excluded |
 | **RT-DETR** | `rtdetr_lora.yaml` | Transformer | `include_attention=True` |
 | **YOLO-World** | `yoloworld_lora.yaml` | Multi-modal | `include_attention=True` |
 
@@ -40,13 +38,6 @@ You can override any parameter from the CLI without modifying the YAML:
 ```bash
 # Train YOLOv8n with a larger LoRA rank (r=32)
 yolo train cfg=examples/lora_examples/yolov8_lora.yaml lora_r=32
-```
-
-### YOLO-Master-EsMoE-N scenario sweeps
-The YOLO-Master examples cover two intentionally different few-shot transfer scenes: dense aerial VisDrone and sparse brain-tumor detection. See `yolo_master_lora_scenarios_README.md` for rank-sweep results, target-module guidance, and dataset-specific pitfalls.
-
-```bash
-python examples/lora_examples/run_yolo_master_lora_rank_sweep.py --scene all --device 0
 ```
 
 ### 3. Training on Custom Data
