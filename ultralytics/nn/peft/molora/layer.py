@@ -1,0 +1,489 @@
+"""MoLoRA layer implementation.
+
+Contains:
+  - MoLoRAExpert: a single LoRA expert (Conv2d or Linear low-rank pair)
+  - MoLoRALayer: a wrapper that replaces a base layer with top-k sparse experts
+"""
+from typing import Dict, List, Optional, Tuple, Any
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+from ultralytics.utils import LOGGER
+from .router import build_router
+from .loss import MoLoRALoss
+from .utils import (
+    _molora_scales,
+    init_lora_expert_a,
+    init_lora_expert_b,
+    _merge_conv_delta,
+    _merge_linear_delta,
+    _unmerge_conv_delta,
+    _unmerge_linear_delta,
+)
+
+
+class MoLoRAExpert(nn.Module):
+    """A single LoRA expert: low-rank A + B pair.
+
+    For Conv2d:
+      lora_A: 1x1 conv (C_in -> r)
+      lora_B: KxK conv (r -> C_out)  — same kernel size as base conv
+    For Linear:
+      lora_A: Linear (in_features -> r)
+      lora_B: Linear (r -> out_features)
+    """
+
+    def __init__(
+        self,
+        base_layer: nn.Module,
+        r: int,
+        alpha: int,
+        dropout: float = 0.0,
+        use_rslora: bool = True,
+        init_type: str = "default",
+    ):
+        super().__init__()
+        self.r = r
+        self.alpha = alpha
+        self.scaling = _molora_scales(r, alpha, use_rslora)
+        self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
+        self.init_type = init_type
+
+        if isinstance(base_layer, nn.Conv2d):
+            self.is_conv = True
+            in_c = base_layer.in_channels
+            out_c = base_layer.out_channels
+            k = base_layer.kernel_size
+            if isinstance(k, int):
+                k = (k, k)
+            stride = base_layer.stride
+            padding = base_layer.padding
+            dilation = base_layer.dilation
+            groups = base_layer.groups
+
+            # Conv2d LoRA convention: A is 1x1, B is KxK with same stride/pad as base
+            self.lora_A = nn.Conv2d(
+                in_c, r, kernel_size=1, bias=False,
+            )
+            self.lora_B = nn.Conv2d(
+                r, out_c, kernel_size=k,
+                stride=stride, padding=padding,
+                dilation=dilation, groups=groups, bias=False,
+            )
+        elif isinstance(base_layer, nn.Linear):
+            self.is_conv = False
+            in_f = base_layer.in_features
+            out_f = base_layer.out_features
+            self.lora_A = nn.Linear(in_f, r, bias=False)
+            self.lora_B = nn.Linear(r, out_f, bias=False)
+        else:
+            raise TypeError(f"MoLoRAExpert only supports Conv2d and Linear, got {type(base_layer)}")
+
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+        init_lora_expert_a(self.lora_A.weight, self.init_type)
+        init_lora_expert_b(self.lora_B.weight, self.init_type)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Compute delta = B @ A(x) for this expert."""
+        x = self.dropout(x)
+        return self.lora_B(self.lora_A(x)) * self.scaling
+
+    def delta_weight(self) -> torch.Tensor:
+        """Return the equivalent full-rank delta weight (for inspection / merge)."""
+        if self.is_conv:
+            a = self.lora_A.weight.squeeze(-1).squeeze(-1)  # [r, in_c]
+            b = self.lora_B.weight  # [out_c, r, kH, kW]
+            return torch.einsum("orkw,ri->oikw", b, a) * self.scaling
+        else:
+            return (self.lora_B.weight @ self.lora_A.weight) * self.scaling
+
+
+class MoLoRALayer(nn.Module):
+    """Wrapper that replaces a base Conv2d/Linear with a sparse mixture of LoRA experts.
+
+    Forward:
+      1. Compute base layer output
+      2. Route input -> top-k experts
+      3. Sum g_k * expert_k(x)
+      4. If share_moe_registry: write aux loss to MOE_LOSS_REGISTRY
+    """
+
+    def __init__(
+        self,
+        base_layer: nn.Module,
+        r: int = 8,
+        alpha: int = 16,
+        num_experts: int = 4,
+        top_k: int = 2,
+        router_type: str = "linear",
+        dropout: float = 0.0,
+        use_rslora: bool = True,
+        balance_loss_coef: float = 0.01,
+        z_loss_coef: float = 0.001,
+        diversity_loss_coef: float = 0.0,
+        expert_init: str = "default",
+        share_moe_registry: bool = True,
+        router_hidden_dim: Optional[int] = None,
+        capacity_factor: float = 1.0,
+        expert_dropout: float = 0.0,
+        top_k_warmup: Optional[int] = None,
+        warmup_steps: int = 0,
+        domain_experts: Optional[Dict[str, List[int]]] = None,
+    ):
+        super().__init__()
+        self.base_layer = base_layer
+        self.r = r
+        self.alpha = alpha
+        self.num_experts = num_experts
+        self.top_k = top_k
+        self.scaling = _molora_scales(r, alpha, use_rslora)
+        self.share_moe_registry = share_moe_registry
+        self.merged = False
+        self.capacity_factor = capacity_factor
+        self.expert_dropout = expert_dropout
+        self.top_k_warmup = top_k_warmup
+        self.warmup_steps = warmup_steps
+        self.domain_experts = domain_experts
+        self.register_buffer("_step_count", torch.tensor(0, dtype=torch.long), persistent=True)
+        # Active mask for domain pre-allocation
+        self._domain_active_mask: Optional[torch.Tensor] = None
+        # Expert frozen mask
+        self._expert_frozen_mask: Optional[torch.Tensor] = None
+
+        # Freeze base layer
+        for p in self.base_layer.parameters():
+            p.requires_grad = False
+
+        # Build experts
+        self.experts = nn.ModuleList(
+            MoLoRAExpert(
+                base_layer,
+                r=r,
+                alpha=alpha,
+                dropout=dropout,
+                use_rslora=use_rslora,
+                init_type=expert_init,
+            )
+            for _ in range(num_experts)
+        )
+
+        # Build router
+        if isinstance(base_layer, nn.Conv2d):
+            in_channels = base_layer.in_channels
+        elif isinstance(base_layer, nn.Linear):
+            in_channels = base_layer.in_features
+        else:
+            raise TypeError(f"Unsupported base layer: {type(base_layer)}")
+
+        self.router = build_router(
+            router_type=router_type,
+            in_channels=in_channels,
+            num_experts=num_experts,
+            hidden_dim=router_hidden_dim,
+        )
+
+        # Auxiliary loss module
+        self.loss_fn = MoLoRALoss(
+            num_experts=num_experts,
+            top_k=top_k,
+            balance_loss_coef=balance_loss_coef,
+            z_loss_coef=z_loss_coef,
+            diversity_loss_coef=diversity_loss_coef,
+            reduce_ddp=False,
+        )
+
+        # Routing stats for diagnostics (not persistent)
+        self._last_routing_stats: Optional[Dict[str, Any]] = None
+
+    # ------------------------------------------------------------------
+    # Dynamic top-k
+    # ------------------------------------------------------------------
+
+    def _current_top_k(self) -> int:
+        """Return current effective top_k considering warmup schedule.
+
+        During warmup, gradually increase from 1 to self.top_k over
+        self.warmup_steps steps. If top_k_warmup is set, use that as
+        the number of steps instead.
+        """
+        if not self.training:
+            return self.top_k
+        if self.top_k_warmup is None or self.top_k_warmup <= 0:
+            return self.top_k
+        if self.warmup_steps <= 0:
+            return self.top_k
+        steps = min(self._step_count.item(), self.warmup_steps)
+        return max(1, int(1 + (self.top_k - 1) * steps / self.warmup_steps))
+
+    # ------------------------------------------------------------------
+    # Expert dropout
+    # ------------------------------------------------------------------
+
+    def _apply_expert_dropout(self, router_probs: torch.Tensor) -> torch.Tensor:
+        """During training, randomly disable experts with probability expert_dropout.
+
+        Returns modified router_probs with disabled experts zeroed out and renormalized.
+        """
+        if not self.training or self.expert_dropout <= 0.0:
+            return router_probs
+        mask = torch.bernoulli(
+            torch.full((self.num_experts,), 1.0 - self.expert_dropout, device=router_probs.device)
+        ).to(router_probs.dtype)
+        if mask.sum().item() == 0:
+            mask = torch.ones_like(mask)
+        probs = router_probs * mask.unsqueeze(0)
+        return probs / probs.sum(dim=-1, keepdim=True).clamp_min(1e-6)
+
+    # ------------------------------------------------------------------
+    # Capacity factor
+    # ------------------------------------------------------------------
+
+    def _apply_capacity_limit(
+        self,
+        router_probs: torch.Tensor,
+        expert_indices: torch.Tensor,
+    ) -> torch.Tensor:
+        """Apply per-sample soft capacity penalty.
+
+        Note: This is a simplified per-sample soft penalty, not a global
+        hard capacity limit like standard MoE. When an expert is selected
+        by too many samples in a batch, its weights are scaled down.
+        """
+        if self.capacity_factor <= 0 or self.capacity_factor >= 1e6:
+            return router_probs
+        B = router_probs.shape[0]
+        capacity = max(1, int(self.capacity_factor * B / self.num_experts))
+        # Count selections per expert, zero out excess
+        weights = router_probs.gather(1, expert_indices)  # [B, K]
+        for e in range(self.num_experts):
+            mask = expert_indices == e
+            count = mask.sum(dim=1)  # [B]
+            # Simple per-expert capacity: if too many tokens select this expert, clip
+            # For simplicity, we apply a soft penalty by scaling down weights
+            scale = (capacity / (count + 1).clamp_min(1)).clamp_max(1.0)
+            weights = weights * scale.unsqueeze(1)
+        return weights
+
+    # ------------------------------------------------------------------
+    # Domain pre-allocation
+    # ------------------------------------------------------------------
+
+    def set_domain(self, domain: str) -> None:
+        """Restrict routing to a subset of experts for domain-specific inference.
+
+        Only experts assigned to the given domain will be active.
+        """
+        if self.domain_experts is None or domain not in self.domain_experts:
+            self._domain_active_mask = None
+            return
+        active = self.domain_experts[domain]
+        mask = torch.zeros(self.num_experts, dtype=torch.bool)
+        mask[active] = True
+        self._domain_active_mask = mask
+
+    def clear_domain(self) -> None:
+        """Clear domain restriction, restore all experts."""
+        self._domain_active_mask = None
+
+    # ------------------------------------------------------------------
+    # Expert freezing (continual learning)
+    # ------------------------------------------------------------------
+
+    def freeze_experts(self, expert_indices: List[int]) -> None:
+        """Freeze specific experts so their weights are not updated during training."""
+        mask = torch.zeros(self.num_experts, dtype=torch.bool)
+        mask[expert_indices] = True
+        self._expert_frozen_mask = mask
+        for idx in expert_indices:
+            for p in self.experts[idx].parameters():
+                p.requires_grad = False
+        LOGGER.info(f"[MoLoRA] Frozen experts {expert_indices}")
+
+    def unfreeze_experts(self, expert_indices: Optional[List[int]] = None) -> None:
+        """Unfreeze specific or all experts."""
+        if expert_indices is None:
+            expert_indices = list(range(self.num_experts))
+        for idx in expert_indices:
+            for p in self.experts[idx].parameters():
+                p.requires_grad = True
+        self._expert_frozen_mask = None
+        LOGGER.info(f"[MoLoRA] Unfrozen experts {expert_indices}")
+
+    # ------------------------------------------------------------------
+    # Forward
+    # ------------------------------------------------------------------
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            x: [B, C, H, W] for Conv2d, [B, C] or [B, C, *] for Linear
+        Returns:
+            y: same shape as x, adapted by top-k experts
+        """
+        # Base output (always frozen)
+        base_out = self.base_layer(x)
+
+        if self.merged:
+            return base_out
+
+        # Increment step counter during training
+        if self.training:
+            self._step_count.add_(1)
+
+        # Router
+        router_logits = self.router(x)  # [B, E]
+
+        # Apply domain restriction if set
+        if self._domain_active_mask is not None:
+            device = router_logits.device
+            mask = self._domain_active_mask.to(device).to(router_logits.dtype)
+            # Mask out inactive experts with large negative value
+            router_logits = router_logits + (1.0 - mask) * -1e9
+
+        router_probs = F.softmax(router_logits, dim=-1)  # [B, E]
+
+        # Apply expert dropout during training
+        router_probs = self._apply_expert_dropout(router_probs)
+
+        # Dynamic top-k (warmup support)
+        effective_k = self._current_top_k()
+
+        # Top-K gating
+        top_k_weights, top_k_indices = torch.topk(router_probs, effective_k, dim=-1)  # [B, K]
+        top_k_weights = top_k_weights / top_k_weights.sum(dim=-1, keepdim=True).clamp_min(1e-6)
+
+        # Apply capacity limit
+        if self.capacity_factor > 0 and self.capacity_factor < 1e6:
+            top_k_weights = self._apply_capacity_limit(router_probs, top_k_indices)
+
+        # Compute sparse expert outputs
+        adapted = self._compute_sparse_experts(x, top_k_weights, top_k_indices, base_out)
+
+        # Auxiliary loss (graph-connected to router_logits)
+        aux_loss = self.loss_fn(
+            router_probs=router_probs,
+            router_logits=router_logits,
+            expert_indices=top_k_indices,
+            expert_outputs=None,  # diversity loss disabled by default for efficiency
+        )
+
+        # Write to MOE_LOSS_REGISTRY if enabled
+        if self.share_moe_registry and self.training:
+            try:
+                from ultralytics.nn.modules.moe.modules import _registry_set
+                _registry_set(self, aux_loss)
+            except Exception:
+                pass
+
+        # Store diagnostics
+        self._last_routing_stats = {
+            "top_k_indices": top_k_indices.detach(),
+            "top_k_weights": top_k_weights.detach(),
+            "expert_usage": self._expert_usage(top_k_indices),
+            "effective_k": effective_k,
+            "domain_mask": self._domain_active_mask,
+        }
+
+        return base_out + adapted
+
+    def _compute_sparse_experts(
+        self,
+        x: torch.Tensor,
+        top_k_weights: torch.Tensor,
+        top_k_indices: torch.Tensor,
+        out_template: torch.Tensor,
+    ) -> torch.Tensor:
+        """Aggregate top-k expert outputs using batched expert indexing.
+
+        Optimized path: groups samples by expert to avoid per-sample loops.
+        """
+        B = x.shape[0]
+        K = top_k_indices.shape[1]
+        expert_out = torch.zeros_like(out_template)
+
+        for k in range(K):
+            expert_idx = top_k_indices[:, k]  # [B]
+            weights = top_k_weights[:, k]      # [B]
+
+            # Batched: group all samples selecting the same expert
+            for e in range(self.num_experts):
+                mask = expert_idx == e
+                if not mask.any():
+                    continue
+                # Check if expert is frozen (skip gradient for frozen experts)
+                if self._expert_frozen_mask is not None and self._expert_frozen_mask[e]:
+                    with torch.no_grad():
+                        x_e = x[mask]
+                        out_e = self.experts[e](x_e)
+                else:
+                    x_e = x[mask]
+                    out_e = self.experts[e](x_e)
+                w = weights[mask].view(-1, *([1] * (out_e.dim() - 1)))
+                expert_out[mask] += out_e * w
+
+        return expert_out
+
+    def _expert_usage(self, expert_indices: torch.Tensor) -> torch.Tensor:
+        """Normalized expert usage histogram."""
+        flat = expert_indices.reshape(-1).to(torch.long)
+        counts = torch.bincount(flat, minlength=self.num_experts).float()
+        return counts / counts.sum().clamp_min(1.0)
+
+    # ------------------------------------------------------------------
+    # Merge / Unmerge
+    # ------------------------------------------------------------------
+
+    def merge_weights(self) -> None:
+        """Merge all expert deltas into the base layer weight.
+
+        After merge, forward skips the LoRA path.  This is useful for
+        ONNX export / inference where you want zero adapter overhead.
+        """
+        if self.merged:
+            return
+
+        # For inference, compute expected delta across experts (uniform prior)
+        # or sum all if you want full capacity.  Here we use E[ΔW] = mean(delta).
+        with torch.no_grad():
+            if self.experts[0].is_conv:
+                for e in self.experts:
+                    _merge_conv_delta(self.base_layer.weight, e.lora_A, e.lora_B, e.scaling / self.num_experts)
+            else:
+                for e in self.experts:
+                    _merge_linear_delta(self.base_layer.weight, e.lora_A, e.lora_B, e.scaling / self.num_experts)
+
+        self.merged = True
+        LOGGER.debug(f"[MoLoRA] Merged {self.num_experts} experts into base layer.")
+
+    def unmerge_weights(self) -> None:
+        """Restore the original base layer weight."""
+        if not self.merged:
+            return
+        with torch.no_grad():
+            if self.experts[0].is_conv:
+                for e in self.experts:
+                    _unmerge_conv_delta(self.base_layer.weight, e.lora_A, e.lora_B, e.scaling / self.num_experts)
+            else:
+                for e in self.experts:
+                    _unmerge_linear_delta(self.base_layer.weight, e.lora_A, e.lora_B, e.scaling / self.num_experts)
+        self.merged = False
+        LOGGER.debug("[MoLoRA] Unmerged experts from base layer.")
+
+    # ------------------------------------------------------------------
+    # Properties
+    # ------------------------------------------------------------------
+
+    @property
+    def weight(self):
+        """Expose base layer weight for compatibility with PEFT / merge utils."""
+        return self.base_layer.weight
+
+    def extra_repr(self) -> str:
+        return (
+            f"r={self.r}, alpha={self.alpha}, num_experts={self.num_experts}, "
+            f"top_k={self.top_k}, merged={self.merged}"
+        )
