@@ -3,6 +3,7 @@ from pathlib import Path
 import torch
 
 from ultralytics.nn.modules.moa import C2fMoA, MoABlock, NeckMoAFusion, anneal_moa_temperature, collect_moa_aux_loss
+from ultralytics.nn.modules.moa.moa import _GlobalAttnHead, _LocalAttnHead
 from ultralytics.nn.tasks import DetectionModel
 from ultralytics.utils.loss import _collect_moa_aux_loss
 
@@ -41,6 +42,47 @@ def test_neck_moa_fusion_forward_backward():
     assert _has_grad(module)
 
 
+def test_neck_moa_fusion_handles_non_2x_spatial_mismatch():
+    torch.manual_seed(0)
+    module = NeckMoAFusion(32, 48, 32, num_heads=4).train()
+    hi = torch.randn(2, 32, 15, 15)
+    lo = torch.randn(2, 48, 7, 7)
+    out = module(hi, lo)
+    assert out.shape == hi.shape
+    assert torch.isfinite(out).all()
+    out.mean().backward()
+    assert _has_grad(module)
+
+
+def test_moa_router_tiny_temperature_remains_finite_and_non_uniform():
+    torch.manual_seed(0)
+    block = MoABlock(48, num_heads=6).train()
+    block.router.temperature = 1e-6
+    with torch.no_grad():
+        block.router.router[-1].bias.copy_(torch.tensor([-0.25, 0.0, 0.25]))
+
+    x = torch.randn(2, 48, 5, 5)
+    probs, logits = block.router(x, return_logits=True)
+    uniform = torch.full_like(probs, 1.0 / probs.shape[1])
+
+    assert torch.isfinite(logits).all()
+    assert torch.isfinite(probs).all()
+    assert torch.allclose(probs.sum(dim=1), torch.ones_like(probs[:, 0]), atol=1e-6)
+    assert not torch.allclose(probs, uniform, atol=1e-3)
+
+    out = block(x)
+    assert torch.isfinite(out).all()
+
+
+def test_attention_heads_degrade_when_heads_do_not_divide_dim():
+    torch.manual_seed(0)
+    x = torch.randn(1, 30, 6, 6)
+    for head in (_LocalAttnHead(30, num_heads=8), _GlobalAttnHead(30, num_heads=8)):
+        out = head(x)
+        assert out.shape == x.shape
+        assert torch.isfinite(out).all()
+
+
 def test_moa_aux_loss_collected_for_c2f_and_neck():
     torch.manual_seed(0)
     c2f = C2fMoA(32, 32, n=1, num_heads=3).train()
@@ -54,6 +96,23 @@ def test_moa_aux_loss_collected_for_c2f_and_neck():
     neck(torch.randn(2, 32, 8, 8), torch.randn(2, 64, 4, 4))
     neck_aux = collect_moa_aux_loss(neck)
     assert neck_aux.requires_grad and torch.isfinite(neck_aux)
+
+
+def test_c2fmoa_aux_loss_does_not_double_count_nested_blocks():
+    torch.manual_seed(0)
+    module = C2fMoA(32, 32, n=3, num_heads=6).train()
+    module(torch.randn(2, 32, 6, 6))
+
+    block_total = sum((m.last_aux_loss for m in module.m), module.last_aux_loss.new_zeros(()))
+    collected = collect_moa_aux_loss(module)
+    collected_via_loss = _collect_moa_aux_loss(module, torch.device("cpu"))
+    legacy_recursive_total = module.last_aux_loss + block_total
+
+    assert module.last_aux_loss.requires_grad
+    assert torch.allclose(module.last_aux_loss, block_total)
+    assert torch.allclose(collected, module.last_aux_loss)
+    assert torch.allclose(collected_via_loss, module.last_aux_loss)
+    assert legacy_recursive_total > collected * 1.5
 
 
 def test_c2fmoa_small_channels_keep_valid_head_count():

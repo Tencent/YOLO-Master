@@ -546,8 +546,6 @@ class NeckMoAFusion(nn.Module):
         self.q_proj = nn.Conv2d(c_hi, inner, 1, bias=False)
         # Project lo-res → K, V (after upsample to match hi-res)
         self.kv_proj = nn.Conv2d(c_lo, inner * 2, 1, bias=False)
-        self.upsample = nn.Upsample(scale_factor=2, mode="bilinear",
-                                    align_corners=False)
 
         # Router: decides how much cross-scale vs self-scale context to blend
         self.router = _MoARouter(c_hi, num_groups=2, temperature=1.0)
@@ -580,8 +578,9 @@ class NeckMoAFusion(nn.Module):
         nh, hd = self.num_heads, self.head_dim
         inner = nh * hd
 
-        # Align lo-res to hi-res resolution
-        lo_up = self.upsample(lo) if lo.shape[2:] != hi.shape[2:] else lo
+        # Align lo-res to hi-res resolution, including odd or non-2x feature maps.
+        lo_up = F.interpolate(lo, size=hi.shape[2:], mode="bilinear", align_corners=False) \
+            if lo.shape[2:] != hi.shape[2:] else lo
 
         # ── Cross-attention: hi queries lo context ──────────────────────
         q = self.q_proj(hi).flatten(2).view(B, nh, hd, H * W).transpose(2, 3)
