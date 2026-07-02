@@ -14,11 +14,16 @@ This directory contains reproducible training entry points for Tencent Rhino-Bir
 | `scripts/reproduce/reproduce_visdrone.py` | Reproduce VisDrone training and summary generation. |
 | `scripts/reproduce/reproduce_sku110k.py` | Reproduce SKU-110K training and summary generation. |
 | `scripts/reproduce/reproduce_common.py` | Shared dataset preparation, W&B setup, training, and summary helpers. |
+| `scripts/reproduce/issue49_results.csv` | Compact recorded-result table for PR review. |
 | `scripts/reproduce/README.md` | Commands, W&B links, results, and known issues for issue #49. |
 | `ultralytics/nn/modules/moe/modules.py` | Makes EsMoE validation use dense expert aggregation by default; sparse inference remains explicit opt-in. |
+| `ultralytics/data/dataset.py`, `ultralytics/data/utils.py` | Make dataset cache loading/writing robust when multiple reproduction jobs prepare the same dataset. |
+| `ultralytics/utils/lora/sensitivity.py` | Minimal compatibility shim for an import that is referenced by the current LoRA package but missing in this checkout. |
 | `tests/test_moe.py` | Regression coverage for the dense-by-default eval path and explicit sparse inference opt-in. |
 
 ## Environment
+
+Recorded runs used `imgsz=640`, `epochs=100`, `batch=8`, and one RTX 3090 per run. The local reproduction environment used Python 3.11.15 and PyTorch 2.3.1+cu121.
 
 ```bash
 conda activate yolo_master
@@ -130,29 +135,29 @@ The summary includes mAP50, mAP50-95, box loss, cls loss, dfl loss, and `moe_los
 
 ## Reproduction Run Records
 
-Settings: `imgsz=640`, `epochs=100`, `batch=8`, one RTX 3090 per run. W&B project: <https://wandb.ai/2063055270-harbin-institute-of-technology/yolo-master-issue-49>.
+Settings: `imgsz=640`, `epochs=100`, `batch=8`, one RTX 3090 per run. W&B project: <https://wandb.ai/2063055270-harbin-institute-of-technology/yolo-master-issue-49>. A machine-readable copy of the table is available at `scripts/reproduce/issue49_results.csv`.
 
-The table reports final-epoch metrics. `default, pre-fix sparse` records the old EsMoE eval behavior; `dense/no-sparse` records the fixed validation path.
+The table reports final-epoch metrics. `pre_fix_sparse` records the old EsMoE eval behavior that used sparse inference during validation; `dense_eval_fix` records the reviewer-requested rerun with dense expert aggregation during validation.
 
 | Model | Dataset | Eval | Epochs | mAP50 | mAP50-95 | box_loss | cls_loss | moe_loss | W&B |
 | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
 | YOLO-Master-v0.1-N | VisDrone | default | 100 | 0.29555 | 0.17046 | 1.34371 | 0.97464 | 0 | <https://wandb.ai/2063055270-harbin-institute-of-technology/yolo-master-issue-49/runs/5fi8avsl> |
-| YOLO-Master-EsMoE-N | VisDrone | default, pre-fix sparse | 100 | 0.08387 | 0.04225 | 1.32176 | 0.94683 | 0 | <https://wandb.ai/2063055270-harbin-institute-of-technology/yolo-master-issue-49/runs/mhoislnw> |
-| YOLO-Master-EsMoE-N | VisDrone | dense/no-sparse | 100 | 0.30612 | 0.17615 | 1.32176 | 0.94683 | 0 | <https://wandb.ai/2063055270-harbin-institute-of-technology/yolo-master-issue-49/runs/4v15e3o8> |
+| YOLO-Master-EsMoE-N | VisDrone | pre_fix_sparse | 100 | 0.08387 | 0.04225 | 1.32176 | 0.94683 | 0 | <https://wandb.ai/2063055270-harbin-institute-of-technology/yolo-master-issue-49/runs/mhoislnw> |
+| YOLO-Master-EsMoE-N | VisDrone | dense_eval_fix | 100 | 0.30612 | 0.17615 | 1.32176 | 0.94683 | 0 | <https://wandb.ai/2063055270-harbin-institute-of-technology/yolo-master-issue-49/runs/4v15e3o8> |
 | YOLO-Master-v0.1-N | SKU-110K | default | 100 | 0.89253 | 0.56774 | 1.32078 | 0.56805 | 0 | <https://wandb.ai/2063055270-harbin-institute-of-technology/yolo-master-issue-49/runs/6np8a4lu> |
-| YOLO-Master-EsMoE-N | SKU-110K | default, pre-fix sparse | 54 | 0.09703 | 0.04207 | 1.36981 | 0.61071 | 0.00982 | <https://wandb.ai/2063055270-harbin-institute-of-technology/yolo-master-issue-49/runs/oddia0uf> |
-| YOLO-Master-EsMoE-N | SKU-110K | dense/no-sparse | 100 | 0.89498 | 0.57162 | 1.30965 | 0.55994 | 0 | <https://wandb.ai/2063055270-harbin-institute-of-technology/yolo-master-issue-49/runs/oiomzvte> |
+| YOLO-Master-EsMoE-N | SKU-110K | pre_fix_sparse | 54 | 0.09703 | 0.04207 | 1.36981 | 0.61071 | 0.00982 | <https://wandb.ai/2063055270-harbin-institute-of-technology/yolo-master-issue-49/runs/oddia0uf> |
+| YOLO-Master-EsMoE-N | SKU-110K | dense_eval_fix | 100 | 0.89498 | 0.57162 | 1.30965 | 0.55994 | 0 | <https://wandb.ai/2063055270-harbin-institute-of-technology/yolo-master-issue-49/runs/oiomzvte> |
 
 Best-checkpoint metrics:
 
 | Model | Dataset | Eval | best mAP50 epoch | best mAP50 | best mAP50-95 epoch | best mAP50-95 |
 | --- | --- | --- | ---: | ---: | ---: | ---: |
 | YOLO-Master-v0.1-N | VisDrone | default | 90 | 0.29739 | 99 | 0.17080 |
-| YOLO-Master-EsMoE-N | VisDrone | default, pre-fix sparse | 45 | 0.09132 | 63 | 0.04318 |
-| YOLO-Master-EsMoE-N | VisDrone | dense/no-sparse | 90 | 0.30735 | 96 | 0.17664 |
+| YOLO-Master-EsMoE-N | VisDrone | pre_fix_sparse | 45 | 0.09132 | 63 | 0.04318 |
+| YOLO-Master-EsMoE-N | VisDrone | dense_eval_fix | 90 | 0.30735 | 96 | 0.17664 |
 | YOLO-Master-v0.1-N | SKU-110K | default | 99 | 0.89259 | 99 | 0.56782 |
-| YOLO-Master-EsMoE-N | SKU-110K | default, pre-fix sparse | 5 | 0.42847 | 4 | 0.19691 |
-| YOLO-Master-EsMoE-N | SKU-110K | dense/no-sparse | 82 | 0.89740 | 82 | 0.57266 |
+| YOLO-Master-EsMoE-N | SKU-110K | pre_fix_sparse | 5 | 0.42847 | 4 | 0.19691 |
+| YOLO-Master-EsMoE-N | SKU-110K | dense_eval_fix | 82 | 0.89740 | 82 | 0.57266 |
 
 ## Known Issues
 
@@ -166,14 +171,14 @@ Best-checkpoint metrics:
 - Concurrent dataset-cache creation can corrupt `labels.cache` if multiple independent training processes prepare the same dataset simultaneously. This reproduction includes atomic cache writes and corrupted-cache fallback handling.
 - The upstream checkout imports `ultralytics.utils.lora.sensitivity`, but that module is absent in this checkout. A lightweight compatibility shim is included so `from ultralytics import YOLO` works.
 
-## Dense-Eval Rerun Commands
+## Dense Eval Fix Rerun Commands
 
-Use these commands to reproduce the fixed EsMoE dense-eval runs:
+Use these commands to reproduce the fixed EsMoE `dense_eval_fix` runs:
 
 ```bash
 python scripts/reproduce/reproduce_visdrone.py \
   --model esmoe \
-  --name-prefix visdrone_100e_denseeval_ \
+  --name-prefix visdrone_100e_dense_eval_fix_ \
   --epochs 100 \
   --patience 0 \
   --imgsz 640 \
@@ -183,13 +188,13 @@ python scripts/reproduce/reproduce_visdrone.py \
   --plots \
   --wandb online \
   --wandb-project yolo-master-issue-49 \
-  --wandb-tags visdrone,100e,dense-eval,esmoe,rerun
+  --wandb-tags visdrone,100e,dense_eval_fix,esmoe,reviewer-rerun
 ```
 
 ```bash
 python scripts/reproduce/reproduce_sku110k.py \
   --model esmoe \
-  --name-prefix sku110k_100e_denseeval_offline_ \
+  --name-prefix sku110k_100e_dense_eval_fix_offline_ \
   --epochs 100 \
   --patience 0 \
   --imgsz 640 \
@@ -199,5 +204,5 @@ python scripts/reproduce/reproduce_sku110k.py \
   --plots \
   --wandb offline \
   --wandb-project yolo-master-issue-49 \
-  --wandb-tags sku110k,100e,dense-eval,esmoe,rerun,offline-sync
+  --wandb-tags sku110k,100e,dense_eval_fix,esmoe,reviewer-rerun,offline-sync
 ```

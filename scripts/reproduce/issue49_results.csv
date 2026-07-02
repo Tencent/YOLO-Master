@@ -1,0 +1,7 @@
+model,dataset,eval,epochs,mAP50,mAP50-95,box_loss,cls_loss,moe_loss,best_mAP50_epoch,best_mAP50,best_mAP50-95_epoch,best_mAP50-95,wandb_url
+YOLO-Master-v0.1-N,VisDrone,default,100,0.29555,0.17046,1.34371,0.97464,0,90,0.29739,99,0.17080,https://wandb.ai/2063055270-harbin-institute-of-technology/yolo-master-issue-49/runs/5fi8avsl
+YOLO-Master-EsMoE-N,VisDrone,pre_fix_sparse,100,0.08387,0.04225,1.32176,0.94683,0,45,0.09132,63,0.04318,https://wandb.ai/2063055270-harbin-institute-of-technology/yolo-master-issue-49/runs/mhoislnw
+YOLO-Master-EsMoE-N,VisDrone,dense_eval_fix,100,0.30612,0.17615,1.32176,0.94683,0,90,0.30735,96,0.17664,https://wandb.ai/2063055270-harbin-institute-of-technology/yolo-master-issue-49/runs/4v15e3o8
+YOLO-Master-v0.1-N,SKU-110K,default,100,0.89253,0.56774,1.32078,0.56805,0,99,0.89259,99,0.56782,https://wandb.ai/2063055270-harbin-institute-of-technology/yolo-master-issue-49/runs/6np8a4lu
+YOLO-Master-EsMoE-N,SKU-110K,pre_fix_sparse,54,0.09703,0.04207,1.36981,0.61071,0.00982,5,0.42847,4,0.19691,https://wandb.ai/2063055270-harbin-institute-of-technology/yolo-master-issue-49/runs/oddia0uf
+YOLO-Master-EsMoE-N,SKU-110K,dense_eval_fix,100,0.89498,0.57162,1.30965,0.55994,0,82,0.89740,82,0.57266,https://wandb.ai/2063055270-harbin-institute-of-technology/yolo-master-issue-49/runs/oiomzvte
