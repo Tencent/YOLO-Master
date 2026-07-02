@@ -105,7 +105,7 @@ YOLO-Master-v0.1-N reproduces the official results closely on both datasets
    `routers.py` (`_soft_top_k`, `_hard_top_k`); only `ES_MOE._sparse_forward` skips
    it.
 
-   This was first diagnosed by @skywalker-lt in **PR #81**, whose reproduce scripts
+   This was also diagnosed by @skywalker-lt in **PR #81**, whose reproduce scripts
    work around it with a `--no-sparse-eval` flag (a callback setting
    `use_sparse_inference=False` on all `ES_MOE` modules of the model and its EMA,
    so per-epoch validation and final eval use the dense path that matches
@@ -114,6 +114,12 @@ YOLO-Master-v0.1-N reproduces the official results closely on both datasets
    sparse-eval numbers independently confirm the diagnosis (our SKU-110K 0.1349 ≈
    #81's 0.136). The underlying `_sparse_forward` bug itself remains unfixed in
    the core library.
+
+   **I did a trial with renormalizing `_sparse_forward` and it is not enough.**
+   Adding the missing renormalization fixes the magnitude (unit-test verified) but
+   still does not recover eval mAP (VisDrone dense 0.139 vs renormalized-sparse
+   0.026). The router is near-uniform (experts didn't specialize), so it's a
+   dense-train / sparse-eval mismatch, not just a scaling bug. Therefore, the proposal made by #81 (`use_sparse_inference=False`) might be more reliable
 
 2. **SKU-110K `Corrupt JPEG data` warnings** — messages like
    `premature end of data segment` / `N extraneous bytes before marker 0xd9` come from
