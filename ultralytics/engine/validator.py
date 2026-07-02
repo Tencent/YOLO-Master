@@ -172,8 +172,6 @@ class BaseValidator:
                     model.end2end = self.args.end2end
                 if model.end2end:
                     model.set_head_attr(max_det=self.args.max_det, agnostic_nms=self.args.agnostic_nms)
-            with torch_distributed_zero_first(LOCAL_RANK):
-                self.args.data = convert_ndjson_to_yolo_if_needed(self.args.data)
             model = AutoBackend(
                 model=model or self.args.model,
                 device=select_device(self.args.device) if RANK == -1 else torch.device("cuda", RANK),
