@@ -520,7 +520,8 @@ class ES_MOE(nn.Module):
     """General MoE block with a routing network and multiple expert branches."""
 
     def __init__(self, in_channels, out_channels=None, num_experts=3, reduction=8,
-                 top_k=None, use_sparse_inference=True, dynamic_threshold=0.4):
+                 top_k=None, use_sparse_inference=True, dynamic_threshold=0.4,
+                 balance_loss_coeff=1.0, router_z_loss_coeff=0.0):
         """
         Args:
             in_channels: Input channels
@@ -530,6 +531,8 @@ class ES_MOE(nn.Module):
             top_k: Number of active experts; None means use all experts
             use_sparse_inference: Enable sparse Top-K expert computation during inference
             dynamic_threshold: Threshold for pruning low-confidence experts during inference
+            balance_loss_coeff: Multiplier for the auxiliary load-balancing loss.
+            router_z_loss_coeff: Reserved for trainer-wide MoE config compatibility.
         """
         super(ES_MOE, self).__init__()
 
@@ -543,6 +546,8 @@ class ES_MOE(nn.Module):
         self.use_top_k = (top_k is not None)
         self.use_sparse_inference = use_sparse_inference
         self.dynamic_threshold = dynamic_threshold
+        self.balance_loss_coeff = balance_loss_coeff
+        self.router_z_loss_coeff = router_z_loss_coeff
 
         # Dynamic routing (Top-K supported)
         self.routing = DynamicRoutingLayer(in_channels, num_experts, reduction, top_k)
@@ -578,6 +583,10 @@ class ES_MOE(nn.Module):
             self.num_experts = len(self.experts) if hasattr(self, "experts") else 1
         if not hasattr(self, "top_k"):
             self.top_k = self.num_experts
+        if not hasattr(self, "balance_loss_coeff"):
+            self.balance_loss_coeff = 1.0
+        if not hasattr(self, "router_z_loss_coeff"):
+            self.router_z_loss_coeff = 0.0
 
     def forward(self, x):
         self._ensure_compat_attrs()
@@ -697,10 +706,11 @@ class ES_MOE(nn.Module):
         
         # Store in registry (training only — avoids leaving graph-detached eval
         # tensors in the global registry that the loss collector could pick up).
+        scaled_loss = self.balance_loss_coeff * load_balance_loss
         if self.training:
-            _registry_set(self, load_balance_loss)
+            _registry_set(self, scaled_loss)
         
-        return load_balance_loss
+        return scaled_loss
 
     def get_load_balancing_loss(self):
         """Get load-balancing loss."""
@@ -720,6 +730,33 @@ class ES_MOE(nn.Module):
                 stats['theoretical_speedup'] = f"{self.num_experts / self.top_k:.2f}x"
             return stats
         return None
+
+    def get_gflops(self, input_shape):
+        """Estimate ES-MoE GFLOPs from router, dense experts, and normalization."""
+        B, _C, H, W = input_shape
+        router_flops = 0.0
+        if hasattr(self.routing, "compute_flops"):
+            router_flops = float(self.routing.compute_flops(input_shape))
+
+        expert_flops = 0.0
+        for expert in self.experts:
+            if hasattr(expert, "compute_flops"):
+                expert_flops += float(expert.compute_flops(input_shape))
+            else:
+                expert_flops += sum(
+                    FlopsUtils.count_conv2d(layer, input_shape)
+                    for layer in expert.modules()
+                    if isinstance(layer, nn.Conv2d)
+                )
+
+        norm_flops = float(B * self.out_channels * H * W * 4)
+        total = (router_flops + expert_flops + norm_flops) / 1e9
+        return {
+            "router": router_flops / 1e9,
+            "dense_experts": expert_flops / 1e9,
+            "norm": norm_flops / 1e9,
+            "total_gflops": total,
+        }
 
     def set_top_k(self, top_k):
         """Dynamically adjust Top-K value."""

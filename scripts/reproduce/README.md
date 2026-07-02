@@ -1,0 +1,120 @@
+# Rhino-Bird Issue #52 MoE Pruning and Dynamic Schedule
+
+This directory contains reproducible scripts for Tencent Rhino-Bird issue #52. The experiments use VisDrone and a trained YOLO-Master-EsMoE-N checkpoint.
+
+## Files
+
+| file | purpose |
+| --- | --- |
+| `scripts/reproduce/reproduce_issue52_moe_pruning.py` | Runs MoEPruner threshold sweeps, direct validation, LoRA 10-epoch recovery, metrics, and plots. |
+| `scripts/reproduce/reproduce_issue52_dynamic_schedule.py` | Runs baseline, dynamic schedule, and low-balance ablation training; summarizes convergence speed. |
+| `scripts/reproduce/ISSUE52_DISCUSSION_DRAFT.md` | Draft GitHub Discussion summary. |
+| `ultralytics/nn/modules/moe/schedule.py` | Implements expert-usage Gini, EMA scheduling, and balance-loss coefficient application. |
+
+## Commands
+
+Pruning sweep:
+
+```bash
+python scripts/reproduce/reproduce_issue52_moe_pruning.py \
+  --project runs/reproduce/issue52_moe_pruning_full \
+  --thresholds 0.05 0.10 0.15 0.20 0.30 \
+  --lora-epochs 10 \
+  --lora-r 8 \
+  --lora-alpha 16 \
+  --imgsz 640 \
+  --batch 8 \
+  --device 0 \
+  --workers 8 \
+  --latency-warmup 20 \
+  --latency-reps 100 \
+  --wandb offline \
+  --plots \
+  --exist-ok
+```
+
+Dynamic schedule comparison:
+
+```bash
+python scripts/reproduce/reproduce_issue52_dynamic_schedule.py \
+  --variant all \
+  --project runs/reproduce/issue52_dynamic_schedule_full \
+  --epochs 100 \
+  --imgsz 640 \
+  --batch 8 \
+  --device 0 \
+  --workers 8 \
+  --patience 0 \
+  --wandb offline \
+  --plots \
+  --exist-ok
+```
+
+## Dynamic Schedule
+
+The schedule is disabled by default with `moe_dynamic_schedule: "none"`. Enable it with `moe_dynamic_schedule=gini_balance`.
+
+```text
+gini_ema_t = beta * gini_ema_{t-1} + (1 - beta) * gini_t
+balance_loss_coeff_t = clip(base * exp(alpha * (gini_ema_t - target)), min_coeff, max_coeff)
+```
+
+Default values:
+
+```text
+base=1.0, target=0.25, alpha=1.0, beta=0.8, min_coeff=0.5, max_coeff=2.0
+```
+
+## Results
+
+Settings: VisDrone, `imgsz=640`, base checkpoint `runs/reproduce/visdrone/visdrone_100e_denseeval_esmoe/weights/best.pt`. FLOPs below are MoE-layer GFLOPs collected through module `get_gflops()` hooks, not total model GFLOPs.
+
+| Threshold | Stage | mAP50 | mAP50-95 | MoE GFLOPs | Latency mean ms | Params M | Gini mean |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0.05 | direct | 0.30747 | 0.17719 | 2.04288 | 16.81 | 2.653 | 0.00000 |
+| 0.05 | LoRA10 | 0.28568 | 0.16146 | 2.30830 | 31.67 | 2.883 | 0.24496 |
+| 0.10 | direct | 0.30747 | 0.17719 | 2.04288 | 17.56 | 2.653 | 0.00000 |
+| 0.10 | LoRA10 | 0.28568 | 0.16146 | 2.30830 | 33.26 | 2.883 | 0.24496 |
+| 0.15 | direct | 0.30747 | 0.17719 | 2.04288 | 16.75 | 2.653 | 0.00000 |
+| 0.15 | LoRA10 | 0.28568 | 0.16146 | 2.30830 | 32.28 | 2.883 | 0.24496 |
+| 0.20 | direct | 0.30747 | 0.17719 | 2.04288 | 17.73 | 2.653 | 0.00000 |
+| 0.20 | LoRA10 | 0.28568 | 0.16146 | 2.30830 | 31.89 | 2.883 | 0.24496 |
+| 0.30 | direct | 0.30747 | 0.17719 | 2.04288 | 16.90 | 2.653 | 0.00000 |
+| 0.30 | LoRA10 | 0.28568 | 0.16146 | 2.30830 | 31.03 | 2.883 | 0.24496 |
+
+Dynamic schedule comparison:
+
+| Variant | Final mAP50 | Final mAP50-95 | Best mAP50-95 | Epoch to 95% baseline | Convergence ratio |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| fixed baseline | 0.30612 | 0.17615 | 0.17664 | 65 | 1.000 |
+| gini_balance | 0.30571 | 0.17631 | 0.17755 | 58 | 0.892 |
+| low-balance ablation | 0.30677 | 0.17577 | 0.17623 | 63 | 0.969 |
+
+## Findings
+
+- The five pruning thresholds produced almost identical direct results. Expert usage is highly uniform in this checkpoint, so thresholds from 0.05 to 0.30 did not produce meaningful expert removal.
+- Direct inference is stronger than LoRA10 recovery in this run. The LoRA adapter adds parameters and latency, while 10 epochs did not recover or improve accuracy.
+- The dynamic Gini schedule reaches 95% of the fixed baseline final mAP50-95 faster: 58 epochs vs 65 epochs, a convergence ratio of 0.892.
+- For server inference, use a conservative direct threshold such as `0.05` or `0.15`. For edge pruning, test higher thresholds or a checkpoint with less uniform expert utilization before claiming a clear Pareto gain.
+
+## W&B Links
+
+| Run | W&B |
+| --- | --- |
+| dynamic fixed baseline | <https://wandb.ai/2063055270-harbin-institute-of-technology/-shared-node-ljs25S003031-tencent_rhino_bird_yolo_master_esmoe-YOLO-Master-runs-reproduce-issue52_dynamic_schedule_full/runs/y7eh0ibu> |
+| dynamic gini_balance | <https://wandb.ai/2063055270-harbin-institute-of-technology/-shared-node-ljs25S003031-tencent_rhino_bird_yolo_master_esmoe-YOLO-Master-runs-reproduce-issue52_dynamic_schedule_full/runs/mdw43bgw> |
+| dynamic low-balance ablation | <https://wandb.ai/2063055270-harbin-institute-of-technology/-shared-node-ljs25S003031-tencent_rhino_bird_yolo_master_esmoe-YOLO-Master-runs-reproduce-issue52_dynamic_schedule_full/runs/0cqpz8t1> |
+| pruning 0.05 LoRA10 | <https://wandb.ai/2063055270-harbin-institute-of-technology/-shared-node-ljs25S003031-tencent_rhino_bird_yolo_master_esmoe-YOLO-Master-runs-reproduce-issue52_moe_pruning_full/runs/3auquiwj> |
+| pruning 0.10 LoRA10 | <https://wandb.ai/2063055270-harbin-institute-of-technology/-shared-node-ljs25S003031-tencent_rhino_bird_yolo_master_esmoe-YOLO-Master-runs-reproduce-issue52_moe_pruning_full/runs/rjgqp23e> |
+| pruning 0.15 LoRA10 | <https://wandb.ai/2063055270-harbin-institute-of-technology/-shared-node-ljs25S003031-tencent_rhino_bird_yolo_master_esmoe-YOLO-Master-runs-reproduce-issue52_moe_pruning_full/runs/2aj9l005> |
+| pruning 0.20 LoRA10 | <https://wandb.ai/2063055270-harbin-institute-of-technology/-shared-node-ljs25S003031-tencent_rhino_bird_yolo_master_esmoe-YOLO-Master-runs-reproduce-issue52_moe_pruning_full/runs/8vp5z0fu> |
+| pruning 0.30 LoRA10 | <https://wandb.ai/2063055270-harbin-institute-of-technology/-shared-node-ljs25S003031-tencent_rhino_bird_yolo_master_esmoe-YOLO-Master-runs-reproduce-issue52_moe_pruning_full/runs/z37qrbxs> |
+
+Direct pruning validations are summarized in `summary.csv`; W&B links above correspond to training runs that create W&B records.
+
+## Known Issues
+
+- The pruning script reports MoE-layer GFLOPs gathered through `get_gflops()` hooks. It does not report total detector GFLOPs.
+- LoRA10 results include adapter parameters, so Params and latency can increase compared with direct pruned inference.
+- Since expert utilization is nearly uniform, the current threshold sweep is a negative result for pruning effectiveness rather than a strong pruning win.
+- This checkout imports `ultralytics.utils.lora.sensitivity`, but the file is absent in `origin/main`; a no-op compatibility shim is included so YOLO and LoRA paths import correctly.
