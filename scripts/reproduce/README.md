@@ -3,6 +3,8 @@
 
 Reproducible training strategy for the two YOLO-Master nano variants on two dense-scene vertical scenes, with per-epoch logging of the required metrics (mAP50, mAP50-95, box_loss, cls_loss, moe_loss)
 
+📊 **Live training curves for all six runs (Weights & Biases):** https://wandb.ai/yolo-master-reproduce/yolo-master-reproduce
+
 | Model | Config | # Params | MoE characteristics |
 | --- | --- | --- | --- |
 | `YOLO-Master-v0.1-N` | `ultralytics/cfg/models/master/v0_1/det/yolo-master-n.yaml` | 7.55 M | `ModularRouterExpertMoE` |
@@ -110,14 +112,14 @@ correctly** (its train losses track `v0.1-N`), ***but with the default sparse
 evaluation its validation mAP collapses***; `--no-sparse-eval` restores it to the
 `v0.1-N` level **(see Known issue 1 for the mechanism)**
 
-| Model | Dataset | Eval Method | mAP50 | mAP50-95 | Raw Results (I'm blocked by W&B) |
-| --- | --- | --- | --- | --- | --- |
-| v0.1-N | VisDrone | default | 0.344 | 0.201 | [Download](https://github.com/skywalker-lt/YOLO-Master/releases/download/v0.1.0/result-v0.1n-visdrone.zip) |
-| EsMoE-N | VisDrone | default (sparse) | 0.010 | 0.003 | [Download](https://github.com/skywalker-lt/YOLO-Master/releases/download/v0.1.0/result-esmoen-sparse-visdrone.zip) |
-| EsMoE-N | VisDrone | `--no-sparse-eval` | 0.350 | 0.203 | [Download](https://github.com/skywalker-lt/YOLO-Master/releases/download/v0.1.0/result-esmoen-visdrone.zip) |
-| v0.1-N | SKU-110K | default | 0.906 | 0.582 | [Download](https://github.com/skywalker-lt/YOLO-Master/releases/download/v0.1.0/result-v0.1n-sku110k.zip) |
-| EsMoE-N | SKU-110K | default (sparse) | 0.305 | 0.136 | [Download](https://github.com/skywalker-lt/YOLO-Master/releases/download/v0.1.0/result-esmoen-sparse-sku110k.zip) |
-| EsMoE-N | SKU-110K | `--no-sparse-eval` | 0.904 | 0.583 | [Download](https://github.com/skywalker-lt/YOLO-Master/releases/download/v0.1.0/result-esmoen-sku110k.zip) |
+| Model | Dataset | Eval Method | mAP50 | mAP50-95 | W&B Run | Raw Results |
+| --- | --- | --- | --- | --- | --- | --- |
+| v0.1-N | VisDrone | default | 0.344 | 0.201 | [View](https://wandb.ai/yolo-master-reproduce/yolo-master-reproduce/runs/rbmyjy6b) | [Download](https://github.com/skywalker-lt/YOLO-Master/releases/download/v0.1.0/result-v0.1n-visdrone.zip) |
+| EsMoE-N | VisDrone | default (sparse) | 0.010 | 0.003 | [View](https://wandb.ai/yolo-master-reproduce/yolo-master-reproduce/runs/49bmlyp2) | [Download](https://github.com/skywalker-lt/YOLO-Master/releases/download/v0.1.0/result-esmoen-sparse-visdrone.zip) |
+| EsMoE-N | VisDrone | `--no-sparse-eval` | 0.350 | 0.203 | [View](https://wandb.ai/yolo-master-reproduce/yolo-master-reproduce/runs/6rsdhsn9) | [Download](https://github.com/skywalker-lt/YOLO-Master/releases/download/v0.1.0/result-esmoen-visdrone.zip) |
+| v0.1-N | SKU-110K | default | 0.906 | 0.582 | [View](https://wandb.ai/yolo-master-reproduce/yolo-master-reproduce/runs/rogiamt4) | [Download](https://github.com/skywalker-lt/YOLO-Master/releases/download/v0.1.0/result-v0.1n-sku110k.zip) |
+| EsMoE-N | SKU-110K | default (sparse) | 0.305 | 0.136 | [View](https://wandb.ai/yolo-master-reproduce/yolo-master-reproduce/runs/7nofdfnb) | [Download](https://github.com/skywalker-lt/YOLO-Master/releases/download/v0.1.0/result-esmoen-sparse-sku110k.zip) |
+| EsMoE-N | SKU-110K | `--no-sparse-eval` | 0.904 | 0.583 | [View](https://wandb.ai/yolo-master-reproduce/yolo-master-reproduce/runs/yiz22jp3) | [Download](https://github.com/skywalker-lt/YOLO-Master/releases/download/v0.1.0/result-esmoen-sku110k.zip) |
 
 ### Visualization
 
@@ -179,36 +181,7 @@ tar -xzf SKU110K_fixed.tar.gz --no-same-owner --no-same-permissions -C <datasets
 
 Then let Ultralytics re-run `check_det_dataset('SKU-110K.yaml')` to build the labels and the `train.txt`, `val.txt`, and `test.txt` split files.
 
-### 3. Unable to make public W&B URL on organization accounts.
-
-This is a W&B problem I encountered when I try to log my trainings to wandb and make it public, **not affiliated with the repo.**
-
-**Mechanism.** W&B accounts bound to an organization — for example, through an institutional email — restrict project visibility to **Team / Restricted**. The **Public / Open** option is disabled by organization policy.
-
-The personal-profile entity is not a loggable target in the organization model. Attempts to log there via CLI can fail with:
-
-```bash
-CommError: entity <user> not found during upsertBucket
-```
-
-As a result, a publicly viewable project cannot be created from such an account.
-
-**Solution.** Log to W&B **privately** under the team entity:
-
-```bash
---wandb-entity <team>
-```
-
-Alternatively, publish the run logs directly by committing each run's `results.csv` and `results.png`.
-
-A public W&B project requires a non-organization personal account. **However, due to the bad frontend design of their website, I somehow cannot create any project without linking to a W&B team. And after trying to fix the issue, I'm accidentally blocked by W&B for no reason. 
-Screenshot:
-
-<img width="512" alt="Screenshot 2026-07-01 at 12 56 46 PM" src="https://github.com/user-attachments/assets/a9b46591-d203-4147-870b-61469d1f6d05" />
-
-I've already contacted their support and will update the W&B public URL as soon as they unblock me.**
-
-### 4. `model.val()` hangs/crashes with dataloader workers on Python 3.14 (minor)
+### 3. `model.val()` hangs/crashes with dataloader workers on Python 3.14 (minor)
 
 **Mechanism.** A standalone `model.val()` call with `workers >0` can hit a multiprocessing forkserver `ConnectionResetError` on Python 3.14.
 
