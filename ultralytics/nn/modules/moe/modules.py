@@ -35,6 +35,7 @@ def autocast(enabled=True, **kwargs):
     from contextlib import nullcontext
     return nullcontext() if not enabled else nullcontext()
 from .loss import MoELoss, gshard_balance_loss, weighted_gshard_balance_loss, differentiable_balance_loss, all_reduce_mean
+from .scheduler import MoEDynamicScheduler, MoEDynamicSchedulerConfig
 
 # Global registry to store auxiliary losses for MoE modules
 # This prevents storing non-leaf tensors in the module instance, avoiding deepcopy errors.
@@ -2863,7 +2864,15 @@ class AdaptiveBalanceController(nn.Module):
     3. Late Training: Low weight, allowing expert differentiation.
     """
     
-    def __init__(self, num_experts, initial_coeff=1.0, final_coeff=0.1, decay_steps=50000):
+    def __init__(
+        self,
+        num_experts,
+        initial_coeff=1.0,
+        final_coeff=0.1,
+        decay_steps=50000,
+        dynamic_scheduler=None,
+        dynamic_scheduler_config=None,
+    ):
         # NOTE(rev5): coeff raised from 0.1/0.001 -> 1.0/0.1 so the GShard-scale
         # balance term stays O(0.1..1), on par with other MoE blocks. The old
         # defaults shrank a ~1.0 balance to ~0.005 and got silently dominated
@@ -2873,6 +2882,10 @@ class AdaptiveBalanceController(nn.Module):
         self.initial_coeff = initial_coeff
         self.final_coeff = final_coeff
         self.decay_steps = decay_steps
+        self.dynamic_scheduler = dynamic_scheduler or (
+            MoEDynamicScheduler(dynamic_scheduler_config) if dynamic_scheduler_config is not None else None
+        )
+        self.last_dynamic_schedule = None
         
         # Learnable expert importance weights
         self.expert_importance = nn.Parameter(torch.ones(num_experts))
@@ -2884,6 +2897,10 @@ class AdaptiveBalanceController(nn.Module):
         # === 1. Dynamic Coefficient Decay ===
         progress = min(1.0, training_step.float() / self.decay_steps)
         current_coeff = self.initial_coeff * (1 - progress) + self.final_coeff * progress
+        if self.dynamic_scheduler is not None:
+            schedule_state = self.dynamic_scheduler.step(expert_usage, float(current_coeff))
+            current_coeff = schedule_state.balance_loss_coeff
+            self.last_dynamic_schedule = schedule_state.to_dict()
         
         # === 2. Differentiable Load Balancing (GShard scale, grad -> router) ===
         # importance = mean(router_probs) keeps the gradient path to the router;

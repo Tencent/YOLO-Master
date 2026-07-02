@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributed as dist
 from typing import Optional, Dict, Union, Tuple
+from .scheduler import MoEDynamicScheduler, MoEDynamicSchedulerConfig
 
 
 def all_reduce_mean(tensor: torch.Tensor) -> torch.Tensor:
@@ -130,6 +131,8 @@ class MoELoss(nn.Module):
         top_k: int = 2,
         use_soft_balancing: bool = False,
         coeff_floor: float = 0.0,
+        dynamic_scheduler: Optional[MoEDynamicScheduler] = None,
+        dynamic_scheduler_config: Optional[MoEDynamicSchedulerConfig] = None,
     ):
         super().__init__()
         self.balance_loss_coeff = balance_loss_coeff
@@ -142,6 +145,9 @@ class MoELoss(nn.Module):
         self.use_soft_balancing = use_soft_balancing
         self.coeff_floor = coeff_floor  # 0 = no floor (trainer already guards stale configs)
         self._nan_guard_hits = 0
+        self.dynamic_scheduler = dynamic_scheduler or (
+            MoEDynamicScheduler(dynamic_scheduler_config) if dynamic_scheduler_config is not None else None
+        )
 
     @staticmethod
     def _flatten_router_tensor(tensor: torch.Tensor) -> torch.Tensor:
@@ -295,6 +301,10 @@ class MoELoss(nn.Module):
         floor = float(getattr(self, "coeff_floor", 0.0))
         bl_coeff = max(self.balance_loss_coeff, floor)
         zl_coeff = max(self.z_loss_coeff, floor)
+        schedule_state = None
+        if self.dynamic_scheduler is not None:
+            schedule_state = self.dynamic_scheduler.step(usage, bl_coeff)
+            bl_coeff = schedule_state.balance_loss_coeff
         # Warn once if the floor silently overrode a deliberately-small user
         # coefficient, so an intended near-zero weight isn't masked unnoticed.
         if floor > 0 and not getattr(self, "_coeff_floor_warned", False):
@@ -334,7 +344,8 @@ class MoELoss(nn.Module):
                 "z_loss": z_loss.detach(),
                 "entropy_loss": entropy_loss.detach() if self.entropy_loss_coeff > 0 else 0.0,
                 "diversity_loss": diversity_loss.detach() if self.diversity_loss_coeff > 0 else 0.0,
-                "variance_loss": variance_loss.detach() if self.variance_loss_coeff > 0 else 0.0
+                "variance_loss": variance_loss.detach() if self.variance_loss_coeff > 0 else 0.0,
+                "dynamic_schedule": schedule_state.to_dict() if schedule_state is not None else None,
             }
             
         return total_loss
