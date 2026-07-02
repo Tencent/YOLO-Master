@@ -65,6 +65,7 @@ from .analysis import ExpertUsageTracker, diagnose_model, RoutingCollapseDetecto
 from .diagnostics import MoELayerDiagnostic, collect_moe_diagnostics, diagnostics_to_dict, format_moe_diagnostics
 from .history import MoEDiagnosticsRecorder, export_moe_history_plots
 from .pruning import prune_moe_model
+from .schedule import GiniBalanceScheduler, apply_balance_loss_coeff, mean_usage_gini_from_model, usage_gini
 
 __all__ = [
     "UltraOptimizedMoE",
@@ -119,5 +120,9 @@ __all__ = [
     "format_moe_diagnostics",
     "MoEDiagnosticsRecorder",
     "export_moe_history_plots",
-    "prune_moe_model"
+    "prune_moe_model",
+    "usage_gini",
+    "mean_usage_gini_from_model",
+    "GiniBalanceScheduler",
+    "apply_balance_loss_coeff",
 ]

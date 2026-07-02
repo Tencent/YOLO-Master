@@ -160,6 +160,11 @@ CFG_FLOAT_KEYS = frozenset(
         "workspace",
         "batch",
         "sigma",
+        "moe_dynamic_gini_target",
+        "moe_dynamic_gini_alpha",
+        "moe_dynamic_gini_beta",
+        "moe_dynamic_balance_min",
+        "moe_dynamic_balance_max",
     }
 )
 CFG_FRACTION_KEYS = frozenset(

@@ -26,6 +26,11 @@ from torch import nn, optim
 from ultralytics import __version__
 from ultralytics.cfg import get_cfg, get_save_dir
 from ultralytics.data.utils import check_cls_dataset, check_det_dataset
+from ultralytics.nn.modules.moe.schedule import (
+    GiniBalanceScheduler,
+    apply_balance_loss_coeff,
+    mean_usage_gini_from_model,
+)
 from ultralytics.nn.tasks import load_checkpoint
 from ultralytics.utils import (
     DEFAULT_CFG,
@@ -230,6 +235,8 @@ class BaseTrainer:
             self.csv.unlink()
         self.plot_idx = [0, 1, 2]
         self.nan_recovery_attempts = 0
+        self.moe_dynamic_scheduler = None
+        self.moe_dynamic_metrics = {}
 
         # Callbacks
         self.callbacks = _callbacks or callbacks.get_default_callbacks()
@@ -453,6 +460,7 @@ class BaseTrainer:
                 f"balance_loss={balance_loss_coeff}, z_loss={router_z_loss_coeff}, "
                 f"noise_std={noise_std}, temperature={temperature}"
             )
+            self._setup_moe_dynamic_scheduler(balance_loss_coeff)
 
         # MoLoRA injection (even if no MoE layers present)
         has_molora = any(
@@ -979,6 +987,7 @@ class BaseTrainer:
 
             self.lr = {f"lr/pg{ir}": x["lr"] for ir, x in enumerate(self.optimizer.param_groups)}  # for loggers
             self._anneal_moa_mot_temperature()
+            self._update_moe_dynamic_scheduler(epoch)
 
             # ── LoRA Training Stats (per-epoch logging) ──
             if self.lora_strategy is not None and RANK in {-1, 0} and (epoch % 5 == 0 or epoch == self.epochs - 1):
@@ -1029,7 +1038,7 @@ class BaseTrainer:
 
             self.nan_recovery_attempts = 0
             if RANK in {-1, 0}:
-                self.save_metrics(metrics={**self.label_loss_items(self.tloss), **self.metrics, **self.lr})
+                self.save_metrics(metrics={**self.label_loss_items(self.tloss), **self.metrics, **self.lr, **self.moe_dynamic_metrics})
                 self.stop |= self.stopper(epoch + 1, self.fitness) or final_epoch
                 if self.args.time:
                     self.stop |= (time.time() - self.train_time_start) > (self.args.time * 3600)
@@ -1072,6 +1081,53 @@ class BaseTrainer:
         self._clear_memory()
         unset_deterministic()
         self.run_callbacks("teardown")
+
+    def _setup_moe_dynamic_scheduler(self, base_balance_loss: float) -> None:
+        """Initialize optional dynamic MoE scheduling."""
+        schedule = str(getattr(self.args, "moe_dynamic_schedule", "none") or "none").lower()
+        if schedule in {"none", "false", "0", ""}:
+            self.moe_dynamic_scheduler = None
+            self.moe_dynamic_metrics = {}
+            return
+        if schedule != "gini_balance":
+            LOGGER.warning(f"[MoE] Unknown moe_dynamic_schedule={schedule!r}; dynamic scheduling disabled.")
+            self.moe_dynamic_scheduler = None
+            self.moe_dynamic_metrics = {}
+            return
+
+        self.moe_dynamic_scheduler = GiniBalanceScheduler(
+            base=float(base_balance_loss),
+            target=float(getattr(self.args, "moe_dynamic_gini_target", 0.25)),
+            alpha=float(getattr(self.args, "moe_dynamic_gini_alpha", 1.0)),
+            beta=float(getattr(self.args, "moe_dynamic_gini_beta", 0.8)),
+            min_coeff=float(getattr(self.args, "moe_dynamic_balance_min", 0.5)),
+            max_coeff=float(getattr(self.args, "moe_dynamic_balance_max", 2.0)),
+        )
+        LOGGER.info(
+            "[MoE] Dynamic schedule enabled: gini_balance "
+            f"target={self.moe_dynamic_scheduler.target}, base={self.moe_dynamic_scheduler.base}, "
+            f"range=[{self.moe_dynamic_scheduler.min_coeff}, {self.moe_dynamic_scheduler.max_coeff}]"
+        )
+
+    def _update_moe_dynamic_scheduler(self, epoch: int) -> None:
+        """Update dynamic MoE schedule from latest train-epoch routing snapshots."""
+        if self.moe_dynamic_scheduler is None:
+            self.moe_dynamic_metrics = {}
+            return
+
+        model = unwrap_model(self.model)
+        gini = mean_usage_gini_from_model(model)
+        coeff = self.moe_dynamic_scheduler.update(gini)
+        updated = apply_balance_loss_coeff(model, coeff)
+        self.moe_dynamic_metrics = {
+            "moe/dynamic_gini": gini,
+            "moe/dynamic_balance_loss_coeff": coeff,
+        }
+        if RANK in {-1, 0}:
+            LOGGER.info(
+                f"[MoE] Dynamic schedule epoch={epoch + 1}: "
+                f"gini={gini:.4f}, balance_loss_coeff={coeff:.4f}, modules={updated}"
+            )
 
     def auto_batch(self, max_num_obj=0):
         """Calculate optimal batch size based on model and device memory constraints."""
