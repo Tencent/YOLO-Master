@@ -11,6 +11,7 @@ This guide documents the Tencent Rhino-Bird issue #52 workflow for MoE expert pr
 | `scripts/issue52_pruning_results.csv` | Compact pruning-sweep result table for review. |
 | `scripts/issue52_dynamic_schedule_results.csv` | Compact dynamic-schedule result table for review. |
 | `ultralytics/nn/modules/moe/schedule.py` | Implements expert-usage Gini, EMA scheduling, and balance-loss coefficient application. |
+| `tests/test_moe_dynamic_schedule.py` | Focused regression tests for Gini, dynamic scheduling defaults, and ES-MoE FLOPs. |
 
 ## Commands
 
