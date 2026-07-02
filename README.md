@@ -97,6 +97,9 @@ For a deep dive into the design philosophy of MoE modules, detailed routing mech
   - [LoRA Fine-Tuning](#2%EF%B8%8F⃣-lora-support---parameter-efficient-fine-tuning)
   - [Sparse SAHI](#3%EF%B8%8F⃣-sparse-sahi-mode)
   - [Cluster-Weighted NMS](#4%EF%B8%8F⃣-cluster-weighted-nms-cw-nms)
+  - [Mixture-of-Attention (MoA)](#5%EF%B8%8F⃣-mixture-of-attention-%28moa%29-support)
+  - [Mixture-of-Transformers (MoT)](#6%EF%B8%8F⃣-mixture-of-transformers-%28mot%29-support)
+  - [Agent Skill System](#7%EF%B8%8F⃣-agent-skill-system)
 - [Main Results](#-main-results)
   - [Detection](#detection)
   - [Segmentation](#segmentation)
@@ -119,6 +122,13 @@ For a deep dive into the design philosophy of MoE modules, detailed routing mech
 
 
 ## 🚀 Updates (Latest First)
+
+- **2026-06-29**: 🤖✅ **Agent Skill System Validation Complete** — Full end-to-end validation of `yolo-master-agent` Skill with 50/50 test cases passing across 8 suites (quick / fast-smoke / cli-smoke / dry-run / contract / deep-smoke / extended / all). Fixed `AttributeError` from missing `end2end` field in `default.yaml`. Verified complete training → validation → inference pipeline with MPS auto-selection and workers=0 auto-completion. Skill runners: `yolo.train`, `yolo.val`, `yolo.predict`, `yolo.benchmark`, `yolo.export`, `yolo.lora.diagnose`, `yolo.eval.peft_compare`, `yolo.multimodal.infer`, `yolo.system.doctor`.
+- **2026-06-29**: 🦏🏆 **Selected for Tencent Rhino Bird Open Source Program 2026** — YOLO-Master has been officially selected for the [Tencent Rhino Bird Open Source Program](https://opensource.tencent.com/summer-of-code/) (Summer of Code 2026). This program aims to cultivate outstanding open-source talents and promote the prosperity and development of the open-source community. YOLO-Master will receive continuous support from the Tencent Open Source Fund, including mentorship, resource allocation, and community promotion, to further advance the integration of dynamic intelligence and MoE architecture in real-time object detection.
+- **2026-06-28**: 🔀 **MoA + MoT Integration** — Mixture-of-Attention (MoA) and Mixture-of-Transformers (MoT) modules merged into main with regression tests. **MoA**: lightweight router assigns tokens to attention heads with different receptive fields (Local / Regional / Global). **MoT**: content-aware router assigns tokens to distinct Transformer experts (LocalConvTransformer / WindowTransformer / DeformableTransformer) with soft Top-K blending and optional load-balancing aux loss. New model configs added under `ultralytics/cfg/models/master/v0_1/`.
+- **2026-06-25**: 🧠 **MoA Module Introduced** — Mixture-of-Attention (MoA) for CNN-native multi-scale attention fusion. 1×1 conv router assigns soft probabilities to Local (depthwise-3×3), Regional (pooled-stride=2), and Global (linear-attention) heads. Zero seq-dim reshape, Flash-Attention compatible. Supports `C2fMoA` wrapper and `NeckMoAFusion` cross-scale FPN/PAN fusion.
+- **2026-06-25**: 🔄 **MoT Module Introduced** — Mixture-of-Transformers (MoT) routing module. Three complete Transformer expert architectures with soft Top-K blending, static-graph trace stability for ONNX/TorchScript, and optional z-loss style load-balancing aux loss.
+- **2026-05-12**: 🤖 **Agent Skill System Introduced** — `yolo-master-agent` Skill Bundle with `SKILL.md`, autotrain validation suite (50+ cases), multimodal evaluation, async evaluation, MPS auto-selection, dry-run/contract/smoke tiered validation, and VLM/LLM cooperative inference (OpenAI / DashScope compatible).
 - **2026/02/21**: 🎉🎉 **Our paper has been accepted by CVPR 2026!** Thank you to all the contributors and community members for your support!
 - **2026/02/13**: 🧨🚀add LoRA support for model training and release [v2026.02 version](https://github.com/Tencent/YOLO-Master/releases/tag/YOLO-Master-v26.02).[Happy New Year!]
 - **2026/01/16**: [feature] Add pruning and analysis tools for MoE models.
@@ -327,6 +337,86 @@ results = model.predict(
     cluster=True,     # Enable CW-NMS
     sigma=0.1,        # Gaussian weight σ
 )
+```
+
+---
+
+5️⃣ **Mixture-of-Attention (MoA) Support**
+
+YOLO-Master introduces **Mixture-of-Attention (MoA)**, a CNN-native multi-scale attention fusion mechanism. A lightweight 1×1 conv router assigns soft probabilities to each spatial token across three attention head groups with different receptive fields: **Local** (depthwise-3×3), **Regional** (pooled-stride=2), and **Global** (linear-attention). Zero sequence-dimension reshape, fully Flash-Attention compatible.
+
+**Key Features:**
+- 🧠 **Multi-scale attention fusion**: Local detail + Regional context + Global semantics in one block
+- ⚡ **CNN-native**: `[B,C,H,W] → [B,C,H,W]`, no seq-dim reshape, compatible with all YOLO backbones
+- 🔗 **Flexible integration**: `C2fMoA` wrapper for direct C2f/C3k2 replacement; `NeckMoAFusion` for cross-scale FPN/PAN fusion
+
+**Usage:**
+```python
+from ultralytics import YOLO
+
+# Load MoA configuration
+model = YOLO("ultralytics/cfg/models/master/v0_1/det/yolo-master-n.yaml")
+
+# Training with MoA
+results = model.train(
+    data="coco8.yaml",
+    epochs=100,
+    imgsz=640,
+    batch=16,
+)
+```
+
+6️⃣ **Mixture-of-Transformers (MoT) Support**
+
+YOLO-Master introduces **Mixture-of-Transformers (MoT)**, a content-aware routing module that distributes tokens to specialized Transformer experts.
+
+**Three Expert Architectures:**
+- 🏠 **LocalConvTransformer**: Depth-wise convolutions for texture and edge detection
+- 🪟 **WindowTransformer**: Swin-style window partitioning for medium-scale objects
+- 🌀 **DeformableTransformer**: Sparse deformable sampling for irregular and occluded objects
+
+**Key Features:**
+- 🧭 **Soft Top-K Routing**: Static-graph computes all experts, blends outputs via Top-K mask weights — ONNX/TorchScript trace stable
+- ⚖️ **Optional Load-Balancing**: z-loss style auxiliary loss for stable expert utilization
+- 📦 **Out-of-the-Box**: Compatible with existing YOLO-Master training and export pipelines
+
+**Usage:**
+```python
+from ultralytics import YOLO
+
+# Load MoT configuration
+model = YOLO("ultralytics/cfg/models/master/v0_1/det/yolo-master-n.yaml")
+
+# Training with MoT
+results = model.train(
+    data="coco8.yaml",
+    epochs=100,
+    imgsz=640,
+    batch=16,
+)
+```
+
+7️⃣ **Agent Skill System**
+
+YOLO-Master introduces the **yolo-master-agent** Skill Bundle, enabling AI agents to orchestrate training, validation, inference, and evaluation through a structured Skill interface.
+
+**Key Features:**
+- 🤖 **9 Skill Runners**: `yolo.train`, `yolo.val`, `yolo.predict`, `yolo.benchmark`, `yolo.export`, `yolo.lora.diagnose`, `yolo.eval.peft_compare`, `yolo.multimodal.infer`, `yolo.system.doctor`
+- ✅ **50+ Test Cases**: 8 validation suites (quick / fast-smoke / cli-smoke / dry-run / contract / deep-smoke / extended / all)
+- 🧠 **Multimodal Inference**: YOLO detection + VLM/LLM cooperative reasoning, supporting OpenAI / DashScope compatible endpoints
+- 🔧 **Auto-Device**: MPS/CPU/CUDA auto-selection, workers=0 auto-completion, safe defaults
+- 📊 **Structured Output**: JSON manifest with training metrics, resource usage, error classification, and next-action recommendations
+
+**Usage:**
+```python
+# Via Python API
+from ultralytics import YOLO
+model = YOLO("yolo11n.pt")
+results = model.train(data="coco8.yaml", epochs=1, imgsz=640)
+
+# Via Skill CLI
+python agent/scripts/run_yolo_master_skill.py \
+    --json '{"skill":"yolo.train","inputs":{"model":"yolo11n.pt","data":"coco8.yaml"},"params":{"epochs":1,"imgsz":640}}'
 ```
 
 ---

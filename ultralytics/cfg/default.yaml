@@ -71,6 +71,7 @@ iou_type: iou # (str) NMS IoU type (iou, diou, ciou)
 classes: # (int | list[int], optional) filter by class id(s), e.g. 0 or [0,2,3]
 retina_masks: False # (bool) use high-resolution segmentation masks (segment)
 embed: # (list[int], optional) return feature embeddings from given layer indices
+end2end: null # (bool | None) enable end-to-end detection (True/False) or None to auto-detect from model
 sparse_sahi: False # (bool) use Sparse SAHI inference
 slice_size: 640 # (int) slice size for SAHI
 overlap_ratio: 0.2 # (float) overlap ratio for SAHI slices
@@ -249,3 +250,19 @@ moe_dynamic_gini_alpha: 1.0 # (float) Exponential gain for gini_balance schedule
 moe_dynamic_gini_beta: 0.8 # (float) EMA momentum for expert-usage Gini
 moe_dynamic_balance_min: 0.5 # (float) Min dynamic balance-loss coefficient
 moe_dynamic_balance_max: 2.0 # (float) Max dynamic balance-loss coefficient
+
+# MoLoRA (Mixture-of-LoRA) settings -----------------------------------------------------------------------------------------
+molora_num_experts: 0 # (int) Number of experts in MoLoRA layers (0 to disable)
+molora_top_k: 2 # (int) Number of experts to activate per forward
+molora_router_type: linear # (str) Router type: linear, spatial, hybrid
+molora_r: 8 # (int) LoRA rank for each expert
+molora_alpha: 16 # (int) LoRA alpha scaling
+molora_balance_loss: 0.01 # (float) Load balancing loss coefficient for MoLoRA
+molora_router_z_loss: 0.001 # (float) Router z-loss coefficient for MoLoRA
+molora_diversity_loss: 0.0 # (float) Diversity loss coefficient for MoLoRA
+molora_expert_init: default # (str) Expert init: default, orthogonal, gaussian
+molora_use_rslora: true # (bool) Use rsLoRA scaling
+molora_share_moe_registry: true # (bool) Share MOE_LOSS_REGISTRY with MoLoRA
+molora_capacity_factor: 1.0 # (float) Capacity factor for MoLoRA expert selection (1.0 = no limit)
+molora_expert_dropout: 0.0 # (float) Probability of disabling an expert during training
+molora_warmup_steps: 0 # (int) Steps to gradually increase top_k from 1 to target

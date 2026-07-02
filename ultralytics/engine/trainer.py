@@ -374,6 +374,20 @@ class BaseTrainer:
         update_args_with_lora_runtime_metadata(self.args, self.model)
         if RANK in {-1, 0}:
             save_trainer_args_yaml(self.save_dir, self.args)
+
+        # MoLoRA initialization (optional: if molora_num_experts > 0)
+        if getattr(self.args, 'molora_num_experts', 0) > 0:
+            from ultralytics.nn.peft.molora import get_peft_molora_model, MoLoRAConfig
+            molora_cfg = MoLoRAConfig.from_args(self.args)
+            self.model = get_peft_molora_model(self.model, molora_cfg)
+            LOGGER.info(
+                f"[MoLoRA] Initialized: num_experts={molora_cfg.num_experts}, "
+                f"top_k={molora_cfg.top_k}, router_type={molora_cfg.router_type}, "
+                f"r={molora_cfg.r}, alpha={molora_cfg.alpha}"
+            )
+            if RANK in {-1, 0}:
+                save_trainer_args_yaml(self.save_dir, self.args)
+
         self.set_model_attributes()
         self._detect_moa_mot_modules()
 
@@ -434,12 +448,42 @@ class BaseTrainer:
                 if hasattr(m, 'moe_loss_fn'):
                     m.moe_loss_fn.balance_loss_coeff = balance_loss_coeff
                     m.moe_loss_fn.z_loss_coeff = router_z_loss_coeff
+                # Propagate to MoLoRA layers
+                if hasattr(m, 'loss_fn') and hasattr(m.loss_fn, 'balance_loss_coef'):
+                    m.loss_fn.balance_loss_coef = getattr(self.args, 'molora_balance_loss', 0.01)
+                if hasattr(m, 'loss_fn') and hasattr(m.loss_fn, 'z_loss_coef'):
+                    m.loss_fn.z_loss_coef = getattr(self.args, 'molora_router_z_loss', 0.001)
+                if hasattr(m, 'loss_fn') and hasattr(m.loss_fn, 'diversity_loss_coef'):
+                    m.loss_fn.diversity_loss_coef = getattr(self.args, 'molora_diversity_loss', 0.0)
             LOGGER.info(
                 f"[MoE] Config injected into {injected} MoE modules: "
                 f"balance_loss={balance_loss_coeff}, z_loss={router_z_loss_coeff}, "
                 f"noise_std={noise_std}, temperature={temperature}"
             )
             self._setup_moe_dynamic_scheduler(balance_loss_coeff)
+
+        # MoLoRA injection (even if no MoE layers present)
+        has_molora = any(
+            getattr(m, 'molora_enabled', False) for m in self.model.modules()
+        )
+        if has_molora:
+            LOGGER.info("[MoLoRA] Detected MoLoRA layers in model.")
+            molora_balance = getattr(self.args, 'molora_balance_loss', 0.01)
+            molora_z = getattr(self.args, 'molora_router_z_loss', 0.001)
+            molora_diversity = getattr(self.args, 'molora_diversity_loss', 0.0)
+            molora_injected = 0
+            for m in self.model.modules():
+                if hasattr(m, 'loss_fn') and hasattr(m.loss_fn, 'balance_loss_coef'):
+                    m.loss_fn.balance_loss_coef = molora_balance
+                    molora_injected += 1
+                if hasattr(m, 'loss_fn') and hasattr(m.loss_fn, 'z_loss_coef'):
+                    m.loss_fn.z_loss_coef = molora_z
+                if hasattr(m, 'loss_fn') and hasattr(m.loss_fn, 'diversity_loss_coef'):
+                    m.loss_fn.diversity_loss_coef = molora_diversity
+            LOGGER.info(
+                f"[MoLoRA] Config injected into {molora_injected} MoLoRA layers: "
+                f"balance_loss={molora_balance}, z_loss={molora_z}, diversity_loss={molora_diversity}"
+            )
 
         # Few-shot mode: load teacher model for knowledge distillation
         if getattr(self.args, 'lora_few_shot_mode', False):

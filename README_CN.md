@@ -94,6 +94,9 @@
   - [LoRA 微调](#2%EF%B8%8F⃣-lora-支持---参数高效微调)
   - [Sparse SAHI](#3%EF%B8%8F⃣-sparse-sahi-稀疏推理模式)
   - [聚类加权 NMS](#4%EF%B8%8F⃣-聚类加权-nms-cw-nms)
+  - [混合注意力 (MoA)](#5%EF%B8%8F⃣-%E6%B7%B7%E5%90%88%E6%B3%A8%E6%84%8F%E5%8A%9B-%28moa%29-%E6%94%AF%E6%8C%81)
+  - [混合 Transformer (MoT)](#6%EF%B8%8F⃣-%E6%B7%B7%E5%90%88-transformer-%28mot%29-%E6%94%AF%E6%8C%81)
+  - [Agent Skill 系统](#7%EF%B8%8F⃣-agent-skill-%E7%B3%BB%E7%BB%9F)
 - [主要结果](#-主要结果)
   - [检测](#检测)
   - [分割](#分割)
@@ -114,6 +117,13 @@
 - [引用](#-引用)
 
 ## 🚀 更新 (Latest First)
+
+- **2026/06/29**: 🤖✅ **Agent Skill 系统验证完成** — `yolo-master-agent` Skill 全量端到端验证与修复。50/50 测试用例通过（8 个验证套件：quick / fast-smoke / cli-smoke / dry-run / contract / deep-smoke / extended / all）。修复 `default.yaml` 缺失 `end2end` 字段导致的 `AttributeError` 崩溃。验证训练 → 验证 → 推理完整闭环（MPS 设备自动选择，workers=0 自动补全）。Skill 运行器：`yolo.train`、`yolo.val`、`yolo.predict`、`yolo.benchmark`、`yolo.export`、`yolo.lora.diagnose`、`yolo.eval.peft_compare`、`yolo.multimodal.infer`、`yolo.system.doctor`。
+- **2026/06/29**: 🦏🏆 **入选 2026 腾讯犀牛鸟开源项目** — YOLO-Master 正式入选 [腾讯犀牛鸟开源人才培养计划](https://opensource.tencent.com/summer-of-code/)（Summer of Code 2026）。该计划旨在培养优秀的开源人才，推动开源社区的繁荣发展。YOLO-Master 将获得腾讯开源基金会的持续支持，包括导师指导、资源分配和社区推广，以进一步推进动态智能与 MoE 架构在实时目标检测中的融合与落地。
+- **2026/06/28**: 🔀 **MoA + MoT 正式集成** — Mixture-of-Attention (MoA) 与 Mixture-of-Transformers (MoT) 模块合并至主干，添加回归测试。MoA：轻量级路由器将 token 分配到不同感受野的 attention head（Local / Regional / Global）。MoT：内容感知路由器将 token 分配到不同 Transformer 专家架构（LocalConvTransformer / WindowTransformer / DeformableTransformer），支持软 Top-K 混合与负载均衡辅助损失。新增模型配置：`ultralytics/cfg/models/master/v0_1/`。
+- **2026/06/25**: 🧠 **MoA 模块引入** — Mixture-of-Attention (MoA) 注意力模块。1×1 conv 路由器将 token 分配到不同感受野的 head（Local depthwise-3×3 / Regional pooled-stride=2 / Global linear-attention）。CNN-native 输入输出，零序列维度 reshape，兼容 Flash-Attention。支持 `C2fMoA` 包装器和 `NeckMoAFusion` 跨尺度 FPN/PAN 融合。
+- **2026/06/25**: 🔄 **MoT 模块引入** — Mixture-of-Transformers (MoT) 路由模块。三个完整 Transformer 专家架构，软 Top-K 混合，静态图保持 ONNX/TorchScript trace 稳定性，可选 z-loss 风格负载均衡辅助损失。
+- **2026/05/12**: 🤖 **Agent Skill 系统引入** — `yolo-master-agent` Skill Bundle，包含 `SKILL.md`、autotrain 验证套件（50+ 用例）、多模态评估、异步评估、MPS 自动选择、dry-run/contract/smoke 分层验证、VLM/LLM 协同推理（OpenAI / DashScope 兼容）。
 - **2026/02/21**: 🎉🎉 **我们的论文已被 CVPR 2026 接收！** 感谢所有贡献者和社区成员的支持！
 - **2026/02/13**: 🧨🚀 为模型训练添加 LoRA 支持，并发布 [v2026.02 版本](https://github.com/Tencent/YOLO-Master/releases/tag/YOLO-Master-v26.02)。[新年快乐！]
 - **2026/01/16**: [feature] 新增 MoE 模型剪枝与分析工具。
@@ -325,7 +335,86 @@ results = model.predict(
 
 ---
 
+5️⃣ **混合注意力 (MoA) 支持**
+
+YOLO-Master 引入 **混合注意力 (MoA)**，一种 CNN-native 的多尺度注意力融合机制。轻量级 1×1 conv 路由器为每个空间 token 分配软概率到三个不同感受野的 attention head 组：**Local**（depthwise-3×3）、**Regional**（pooled-stride=2）和 **Global**（linear-attention）。零序列维度 reshape，完全兼容 Flash-Attention。
+
+**核心特性：**
+- 🧠 **多尺度注意力融合**：Local 细节 + Regional 上下文 + Global 语义在一个块中完成
+- ⚡ **CNN-native**：`[B,C,H,W] → [B,C,H,W]`，无序列维度 reshape，兼容所有 YOLO 主干
+- 🔗 **灵活集成**：`C2fMoA` 包装器直接替换 C2f/C3k2；`NeckMoAFusion` 实现跨尺度 FPN/PAN 融合
+
+**使用方法：**
+```python
+from ultralytics import YOLO
+
+# 加载 MoA 配置
+model = YOLO("ultralytics/cfg/models/master/v0_1/det/yolo-master-n.yaml")
+
+# 使用 MoA 训练
+results = model.train(
+    data="coco8.yaml",
+    epochs=100,
+    imgsz=640,
+    batch=16,
+)
+```
+
+6️⃣ **混合 Transformer (MoT) 支持**
+
+YOLO-Master 引入 **混合 Transformer (MoT)**，一种内容感知路由模块，将 token 分配到专门的 Transformer 专家。
+
+**三种专家架构：**
+- 🏠 **LocalConvTransformer**：深度可分离卷积，用于纹理和边缘检测
+- 🪟 **WindowTransformer**：Swin-style 窗口分区，用于中等尺度目标
+- 🌀 **DeformableTransformer**：稀疏可变形采样，用于不规则和遮挡目标
+
+**核心特性：**
+- 🧭 **软 Top-K 路由**：静态图计算所有专家，通过 Top-K 掩码权重混合输出 — ONNX/TorchScript trace 稳定
+- ⚖️ **可选负载均衡**：z-loss 风格辅助损失，稳定专家利用率
+- 📦 **开箱即用**：兼容现有 YOLO-Master 训练和导出流程
+
+**使用方法：**
+```python
+from ultralytics import YOLO
+
+# 加载 MoT 配置
+model = YOLO("ultralytics/cfg/models/master/v0_1/det/yolo-master-n.yaml")
+
+# 使用 MoT 训练
+results = model.train(
+    data="coco8.yaml",
+    epochs=100,
+    imgsz=640,
+    batch=16,
+)
+```
+
+7️⃣ **Agent Skill 系统**
+
+YOLO-Master 引入 **yolo-master-agent** Skill Bundle，使 AI Agent 能够通过结构化 Skill 接口编排训练、验证、推理和评估。
+
+**核心特性：**
+- 🤖 **9 个 Skill 运行器**：`yolo.train`、`yolo.val`、`yolo.predict`、`yolo.benchmark`、`yolo.export`、`yolo.lora.diagnose`、`yolo.eval.peft_compare`、`yolo.multimodal.infer`、`yolo.system.doctor`
+- ✅ **50+ 测试用例**：8 个验证套件（quick / fast-smoke / cli-smoke / dry-run / contract / deep-smoke / extended / all）
+- 🧠 **多模态推理**：YOLO 检测 + VLM/LLM 协同推理，支持 OpenAI / DashScope 兼容端点
+- 🔧 **自动设备选择**：MPS/CPU/CUDA 自动选择，workers=0 自动补全，安全默认值
+- 📊 **结构化输出**：JSON manifest 包含训练指标、资源使用、错误分类和下一步操作建议
+
+**使用方法：**
+```python
+# 通过 Python API
+from ultralytics import YOLO
+model = YOLO("yolo11n.pt")
+results = model.train(data="coco8.yaml", epochs=1, imgsz=640)
+
+# 通过 Skill CLI
+python agent/scripts/run_yolo_master_skill.py \
+    --json '{"skill":"yolo.train","inputs":{"model":"yolo11n.pt","data":"coco8.yaml"},"params":{"epochs":1,"imgsz":640}}'
+```
+
 ## 📊 主要结果
+
 ### 检测
 <div align="center">
   <img width="450" alt="Radar chart comparing YOLO models on various datasets" src="https://github.com/user-attachments/assets/743fa632-659b-43b1-accf-f865c8b66754"/>
