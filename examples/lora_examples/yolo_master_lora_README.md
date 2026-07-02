@@ -1,13 +1,16 @@
 # YOLO-Master Domain-Specific LoRA Tuning
 
-#TODO: 要给出一些运行环境的配置信息，可以使用表格展示
-# Ultralytics 8.3.240 🚀 Python-3.12.13 torch-2.10.0+cu128 CUDA:0 (NVIDIA GeForce RTX 5060 Ti, 15848MiB)
+This document tracks the domain-specific LoRA tuning experiments for YOLO-Master models. It is intended to make the `Brain Tumor` and `VisDrone` runs reproducible, document the LoRA target policy for MoE-based YOLO-Master variants, and provide a single place for result tables, logs, and follow-up analysis.
 
+## Runtime Environment
 
-This document tracks the domain-specific LoRA tuning experiments for YOLO-Master
-models. It is intended to make the Brain Tumor and VisDrone runs reproducible,
-document the LoRA target policy for MoE-based YOLO-Master variants, and provide a
-single place for result tables, logs, and follow-up analysis.
+| Item | Value |
+| --- | --- |
+| Ultralytics | `8.3.240` |
+| Python | `3.12.13` |
+| PyTorch | `2.10.0+cu128` |
+| GPU | NVIDIA GeForce RTX 5060 Ti |
+| CUDA device memory | 15,848 MiB |
 
 ## Scope
 
@@ -18,9 +21,7 @@ single place for result tables, logs, and follow-up analysis.
   - `examples/lora_examples/yolo_master_visdrone_lora.yaml`
 - Completed experiment set:
   - Brain Tumor LoRA rank sweep: `r=4`, `r=8`, `r=16`
-- Planned experiment set:
-  - VisDrone LoRA rank sweep
-  - Optional routing-layer ablation
+  - VisDrone LoRA rank sweep: `r=4`, `r=8`, `r=16`
 
 ## Repository Layout
 
@@ -34,6 +35,9 @@ logs/
   brain_tumor_r4.log
   brain_tumor_r8.log
   brain_tumor_r16.log
+  visdrone_r4.log
+  visdrone_r8.log
+  visdrone_r16.log
 
 runs/lora_examples/
   brain_tumor_r4/
@@ -46,28 +50,32 @@ runs/lora_examples/
       lora_adapter_best/
   brain_tumor_r8/
   brain_tumor_r16/
+  visdrone_r4/
+  visdrone_r8/
+  visdrone_r16/
 ```
 
 ## Experimental Setup
 
-| Item | Value |
-| --- | --- |
-| Task | Detection |
-| Model | `ultralytics/cfg/models/master/v0_10/det/yolo-master-n.yaml` |
-| Dataset | `ultralytics/cfg/datasets/brain-tumor.yaml` |
-| Image size | `640` |
-| Epochs | `40` |
-| Batch size | `16` |
-| Optimizer | `auto` resolved to AdamW in the recorded runs |
-| AMP | Enabled |
-| Seed | `0` |
-| Project dir | `runs/lora_examples` |
+| Dataset | Data config | Epochs | Batch | Image size | Fraction | Optimizer | AMP | Project dir |
+| --- | --- | ---: | ---: | ---: | ---: | --- | --- | --- |
+| Brain Tumor | `ultralytics/cfg/datasets/brain-tumor.yaml` | 40 | 16 | 640 | 1.0 | `auto` | Enabled | `runs/lora_examples` |
+| VisDrone | `ultralytics/cfg/datasets/VisDrone.yaml` | 30 | 8 | 768 | 0.2 | `auto` | Enabled | `runs/lora_examples` |
 
 ## LoRA Target Policy
 
-The YOLO-Master v0.10 model uses `VisualEnhancedAdaptiveGateMoE` blocks instead
-of the older `ES_MOE` blocks. Therefore, the LoRA targets are selected from the
-actual v0.10 module names.
+The YOLO-Master v0.10 model uses `VisualEnhancedAdaptiveGateMoE` blocks instead of the older `ES_MOE` blocks. Therefore, the LoRA targets are selected from the actual v0.10 module names.
+
+## LoRA Hyperparameters
+
+| Setting | Brain Tumor | VisDrone | Notes |
+| --- | --- | --- | --- |
+| `lora_r` | `4`, `8`, `16` | `4`, `8`, `16` | Rank sweep for domain adaptation capacity. |
+| `lora_alpha` | `8`, `16`, `32` | `8`, `16`, `32` | Set to `2 * lora_r` in the recorded sweeps. |
+| `lora_use_rslora` | `True` | `True` | Uses rank-stabilized LoRA scaling for higher-rank stability. |
+| `lora_target_modules` | See target list below | See target list below | Shared v0.10 YOLO-Master visual/expert target policy. |
+| `lora_include_attention` | `False` | `False` | Excludes A2C2f attention paths such as `attn.qkv`, `attn.proj`, and `attn.pe` for stability. |
+| `lora_gradient_checkpointing` | `True` | `True` | Reduces memory pressure during LoRA training. |
 
 Main tuning targets:
 
@@ -87,41 +95,37 @@ Routing and gate layers are excluded from the main LoRA target set:
 lora_exclude_modules: ["router", "routing", "gate", "gating"]
 ```
 
-Rationale: the main experiment adapts visual, expert, and projection layers while
-keeping expert-assignment dynamics controlled. Routing-layer LoRA should be
-reported separately as an ablation if tested.
+> **Rationale:** short VisDrone or Brain Tumor LoRA runs should adapt visual/expert convolutions without changing expert-assignment dynamics; routing-LoRA should be tested only as a separate ablation.
 
 ## Brain Tumor Runs
 
 ### Commands
 
+The Brain Tumor rank sweep is executed by:
+
 ```bash
-yolo train cfg=examples/lora_examples/yolo_master_brain_tumor_lora.yaml \
-  model=ultralytics/cfg/models/master/v0_10/det/yolo-master-n.yaml \
-  data=ultralytics/cfg/datasets/brain-tumor.yaml \
-  lora_r=4 lora_alpha=8 name=brain_tumor_r4
-
-yolo train cfg=examples/lora_examples/yolo_master_brain_tumor_lora.yaml \
-  model=ultralytics/cfg/models/master/v0_10/det/yolo-master-n.yaml \
-  data=ultralytics/cfg/datasets/brain-tumor.yaml \
-  lora_r=8 lora_alpha=16 name=brain_tumor_r8
-
-yolo train cfg=examples/lora_examples/yolo_master_brain_tumor_lora.yaml \
-  model=ultralytics/cfg/models/master/v0_10/det/yolo-master-n.yaml \
-  data=ultralytics/cfg/datasets/brain-tumor.yaml \
-  lora_r=16 lora_alpha=32 name=brain_tumor_r16
+bash examples/lora_examples/run_lora_brain_tumor_sweep.sh
 ```
+
+The script runs the following experiments sequentially on `GPU_ID=0`, writes logs to `logs/`, and stores outputs under `runs/lora_examples/`.
+
+| Run | `lora_r` | `lora_alpha` | Config | Log |
+| --- | ---: | ---: | --- | --- |
+| `brain_tumor_r4` | 4 | 8 | `examples/lora_examples/yolo_master_brain_tumor_lora.yaml` | `logs/brain_tumor_r4.log` |
+| `brain_tumor_r8` | 8 | 16 | `examples/lora_examples/yolo_master_brain_tumor_lora.yaml` | `logs/brain_tumor_r8.log` |
+| `brain_tumor_r16` | 16 | 32 | `examples/lora_examples/yolo_master_brain_tumor_lora.yaml` | `logs/brain_tumor_r16.log` |
 
 ### Result Summary
 
-| Run | Rank | Trainable params | Adapter params | Best epoch | mAP50 | mAP50-95 | Train time | Peak GPU mem |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `brain_tumor_r4` | 4 | 468,290 | 123,116 | 30 | 0.43492 | 0.28312 | 39.84 min | 3.95G |
-| `brain_tumor_r8` | 8 | 596,782 | 251,608 | 35 | 0.46004 | 0.31215 | 39.91 min | 3.99G |
-| `brain_tumor_r16` | 16 | 848,390 | 503,216 | 37 | 0.48212 | 0.34044 | 40.27 min | 4.03G |
+| Run | Rank | LoRA modules | Trainable params | Adapter params | Best epoch | mAP50 | mAP50-95 | Train time | Peak GPU mem |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `brain_tumor_r4` | 4 | 92 | 468,290 | 123,116 | 30 | 0.43492 | 0.28312 | 39.72 min | 3.95G |
+| `brain_tumor_r8` | 8 | 94 | 596,782 | 251,608 | 35 | 0.46004 | 0.31215 | 39.84 min | 3.99G |
+| `brain_tumor_r16` | 16 | 94 | 848,390 | 503,216 | 37 | 0.48212 | 0.34044 | 40.15 min | 4.03G |
 
 Notes:
 
+- `LoRA modules` is taken from the `Final Targets Passed to PEFT` log line.
 - `Trainable params` and `Adapter params` are taken from the `[LoRA] Stats` log line.
 - `Train time` is taken from the `epochs completed in` log line.
 - `Peak GPU mem` is the maximum `GPU_mem` value observed in the epoch progress lines.
@@ -129,7 +133,7 @@ Notes:
 ## Observations
 
 - Higher LoRA rank improved the Brain Tumor validation metrics in the completed sweep.
-- `r16` achieved the best recorded mAP50-95 among the three runs.
+- `r16` achieved the best recorded Brain Tumor mAP50-95 among the three runs.
 - MoE routing-collapse warnings appeared during training and were handled by the existing recovery/noise adjustment logic.
 - The recorded runs used `optimizer=auto`; the trainer resolved the effective optimizer and learning rate in the run logs.
 
@@ -137,133 +141,77 @@ Notes:
 
 ## VisDrone Runs
 
-VisDrone experiments should use the same result-reporting format once completed.
+### Commands
 
-Recommended smoke run:
+The VisDrone runs use the same v0.10 LoRA target policy as the Brain Tumor runs, with larger image size and a higher `max_det` for dense aerial scenes.
 
-```bash
-yolo train cfg=examples/lora_examples/yolo_master_visdrone_lora.yaml \
-  model=ultralytics/cfg/models/master/v0_10/det/yolo-master-n.yaml \
-  data=ultralytics/cfg/datasets/VisDrone.yaml \
-  epochs=3 batch=4 imgsz=640 \
-  lora_r=8 lora_alpha=16 \
-  name=visdrone_v0_10_lora_smoke
-```
-
-Planned result table:
-
-| Run | Rank | Trainable params | Adapter params | Best epoch | mAP50 | mAP50-95 | Train time | Peak GPU mem |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `visdrone_lora_r4` | 4 | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
-| `visdrone_lora_r8` | 8 | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
-| `visdrone_lora_r16` | 16 | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
-
-## Reproducing Result Tables
-
-Use `results.csv` to identify the best epoch by `metrics/mAP50-95(B)`. Use the
-matching log file to extract trainable parameters, adapter parameters, total
-training time, and peak `GPU_mem`.
+The VisDrone rank sweep is executed by:
 
 ```bash
-python - <<'PY'
-import csv
-import re
-from pathlib import Path
-
-ansi = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
-stats_re = re.compile(r"Trainable: ([\d,]+).*Adapter Params: ([\d,]+)")
-time_re = re.compile(r"epochs completed in ([0-9.]+) hours")
-mem_re = re.compile(r"\b\d+\s*/\s*\d+\s+([0-9.]+)G\b")
-
-def format_hours(hours):
-    minutes = float(hours) * 60
-    if minutes < 60:
-        return f"{minutes:.2f} min"
-    h = int(minutes // 60)
-    m = minutes - h * 60
-    unit = "hour" if h == 1 else "hours"
-    return f"{h} {unit} {m:.2f} min" if m else f"{h} {unit}"
-
-for run_dir in sorted(Path("runs/lora_examples").glob("brain_tumor_r*")):
-    results = run_dir / "results.csv"
-    if not results.exists():
-        continue
-    rows = list(csv.DictReader(results.open()))
-    best = max(rows, key=lambda r: float(r["metrics/mAP50-95(B)"]))
-
-    log_path = Path("logs") / f"{run_dir.name}.log"
-    trainable = adapter = train_time = peak_mem = "NA"
-    if log_path.exists():
-        text = ansi.sub("", log_path.read_text(errors="ignore")).replace("\r", "\n")
-        if m := stats_re.search(text):
-            trainable, adapter = m.groups()
-        if m := time_re.search(text):
-            train_time = format_hours(m.group(1))
-        mem_values = [float(x) for x in mem_re.findall(text)]
-        if mem_values:
-            peak_mem = f"{max(mem_values):.2f}G"
-
-    print(
-        run_dir.name,
-        "epoch=", best["epoch"],
-        "P=", best["metrics/precision(B)"],
-        "R=", best["metrics/recall(B)"],
-        "mAP50=", best["metrics/mAP50(B)"],
-        "mAP50-95=", best["metrics/mAP50-95(B)"],
-        "trainable=", trainable,
-        "adapter=", adapter,
-        "train_time=", train_time,
-        "peak_mem=", peak_mem,
-    )
-PY
+bash examples/lora_examples/run_lora_visdrone_sweep.sh
 ```
 
-## Reporting Checklist
+The script runs the following experiments sequentially on `GPU_ID=0`, writes logs to `logs/`, and stores outputs under `runs/lora_examples/`.
 
-- Record the exact command used for each run.
-- Keep `args.yaml`, `results.csv`, `results.png`, `best.pt`, and adapter files.
-- Record selected LoRA module count from the log line:
-  `Final Targets Passed to PEFT`.
-- Record trainable parameter count from the log line:
-  `[LoRA] Stats: Trainable`.
-- Record total training time from the log line:
-  `epochs completed in`.
-- Record numerical warnings such as routing collapse, NaN recovery, or fitness
-  collapse.
-- Do not compare wall-clock time for runs launched concurrently on the same GPU.
+| Run | `lora_r` | `lora_alpha` | Config | Log |
+| --- | ---: | ---: | --- | --- |
+| `visdrone_r4` | 4 | 8 | `examples/lora_examples/yolo_master_visdrone_lora.yaml` | `logs/visdrone_r4.log` |
+| `visdrone_r8` | 8 | 16 | `examples/lora_examples/yolo_master_visdrone_lora.yaml` | `logs/visdrone_r8.log` |
+| `visdrone_r16` | 16 | 32 | `examples/lora_examples/yolo_master_visdrone_lora.yaml` | `logs/visdrone_r16.log` |
 
-## Troubleshooting Notes
+### Result Summary
 
-### Fitness Collapse or NaN Weights
+| Run | Rank | LoRA modules | Trainable params | Adapter params | Best epoch | mAP50 | mAP50-95 | Train time | Peak GPU mem |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `visdrone_r4` | 4 | 92 | 469,850 | 123,116 | 27 | 0.04148 | 0.01670 | 52.68 min | 14.70G |
+| `visdrone_r8` | 8 | 94 | 598,342 | 251,608 | 25 | 0.05547 | 0.02340 | 48.54 min | 14.60G |
+| `visdrone_r16` | 16 | 94 | 849,950 | 503,216 | 27 | 0.07292 | 0.03197 | 48.96 min | 14.70G |
 
-If a run fails with corrupted `last.pt` or NaN/Inf weights, start a new run name
-instead of resuming from the corrupted checkpoint. Conservative settings:
+## Cross-Domain Summary
 
-```bash
-yolo train cfg=examples/lora_examples/yolo_master_brain_tumor_lora.yaml \
-  lora_r=16 lora_alpha=16 \
-  lr0=0.0003 lora_lr_mult=0.5 lora_alpha_warmup=5 \
-  amp=False \
-  name=brain_tumor_r16_stable_debug
-```
+| Dataset | Best run | Best mAP50 | Best mAP50-95 | Peak GPU mem |
+| --- | --- | ---: | ---: | ---: |
+| Brain Tumor | `brain_tumor_r16` | 0.48212 | 0.34044 | 4.03G |
+| VisDrone | `visdrone_r16` | 0.07292 | 0.03197 | 14.70G |
 
-### Target Modules Do Not Match Expectations
+Notes:
 
-`lora_target_modules` entries are matching rules. The trainer expands them into
-full module names after structural filtering. Validate the final set through the
-log line:
+- `r16` is the best rank in both completed sweeps by mAP50-95.
+- VisDrone used `fraction=0.2`, so these values should be treated as partial-data LoRA tuning results rather than full VisDrone benchmark results.
+- VisDrone peak GPU memory is much higher than Brain Tumor because it uses `imgsz=768`, `batch=8`, dense scenes, and multi-scale training.
+
+## Full CSV Comparison
+
+The full six-run comparison table is stored at:
 
 ```text
-[LoRA] Final Targets Passed to PEFT (List Length: ...)
+examples/lora_examples/yolo_master_lora_results.csv
 ```
 
-For YOLO-Master v0.10, `expert_projections.0.0` through
-`expert_projections.15.0` are valid in layer 11. There is no
-`expert_projections.16.0` for the current `yolo-master-n.yaml`.
+This CSV records one row per run and uses the best validation epoch selected by `metrics/mAP50-95(B)`. It includes:
 
-## Next Steps
+- LoRA settings: `lora_r`, `lora_alpha`, `lora_use_rslora`, `lora_include_attention`, `lora_gradient_checkpointing`, and LoRA module count.
+- Parameter counts: trainable parameters, adapter parameters, and percentages.
+- Training cost: best-epoch time, total training time in minutes, and peak GPU memory.
+- Training losses: box, cls, dfl, and MoE loss.
+- Validation metrics: precision, recall, mAP50, mAP50-95.
+- Validation losses: box, cls, dfl, and MoE loss.
+- Learning rates for all optimizer parameter groups.
+- Last-epoch mAP values for comparison with best-epoch selection.
 
-- Add a short analysis paragraph comparing `r4`, `r8`, and `r16`.
-- Add GPU memory summaries from logs or system-level profiling.
-- Add VisDrone smoke and formal experiment results.
-- Add an optional routing-LoRA ablation table if routing targets are tested.
+## Target Module Selection Guidance
+
+- For YOLO-Master v0.10, use the actual `VisualEnhancedAdaptiveGateMoE` module names. The older `ES_MOE`-specific `pointwise` target is not useful for this config because it does not match v0.10 MoE expert modules.
+- Keep the main experiment focused on visual and expert adaptation: `conv`, `fused_conv`, `bottleneck.0`, `shared_feature.0`, `static_net.3`, `proj`, and `expert_projections.0.0` through `expert_projections.15.0`.
+- Keep `lora_include_attention=False` for the default sweep. A2C2f attention paths such as `attn.qkv`, `attn.proj`, and `attn.pe` are more sensitive and should be tested only as a separate stability ablation.
+- Exclude routing and gate layers from the main comparison. Routing-LoRA changes expert assignment dynamics and should be reported as its own ablation rather than mixed into the rank sweep.
+- Use `lora_only_3x3=False` when targeting v0.10 MoE modules. Many useful MoE projections and expert paths are 1x1 convolutions.
+- Check the log line `Final Targets Passed to PEFT` for each run. A YAML target list is a set of matching rules; the trainer expands it into final module names after structural filtering.
+
+## Common Pitfalls
+
+- Medical datasets often contain grayscale images. Confirm the loader converts them consistently to the model's expected 3-channel input, and verify that preprocessing does not silently duplicate or normalize channels differently between train and val.
+- Brain Tumor data is small and sparse, so aggressive learning rates, high-rank LoRA, attention targets, or routing targets can cause overfitting or numerical instability. If NaN or fitness collapse appears, reduce `lr0` or `lora_lr_mult`, increase warmup, and rerun with a fresh output name.
+- VisDrone has strong scale variation and dense small objects. Larger `imgsz`, higher `max_det`, and multi-scale training affect memory and wall-clock time, so compare runs only when these settings are fixed.
+- VisDrone results in this document use `fraction=0.2`. They are useful for LoRA behavior comparison but should not be presented as full-dataset benchmark numbers.
+- The provided scripts run experiments sequentially to keep resource measurements comparable.
