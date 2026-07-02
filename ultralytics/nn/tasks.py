@@ -293,12 +293,13 @@ class BaseModel(torch.nn.Module):
 
     @staticmethod
     def _has_moe_aux_registry_module(m):
-        """Return True for MoE modules that may publish aux losses to MOE_LOSS_REGISTRY."""
-        return any(
-            getattr(child, "num_experts", 0) > 0
-            and child.__class__.__module__.startswith("ultralytics.nn.modules.moe")
-            for child in m.modules()
-        )
+        """Return True for MoE or MoLoRA modules that may publish aux losses to MOE_LOSS_REGISTRY."""
+        for child in m.modules():
+            if getattr(child, "num_experts", 0) > 0:
+                mod = child.__class__.__module__
+                if mod and (mod.startswith("ultralytics.nn.modules.moe") or mod.startswith("ultralytics.nn.peft.molora")):
+                    return True
+        return False
 
     def _predict_augment(self, x):
         """Perform augmentations on input image x and return augmented inference."""
@@ -414,13 +415,24 @@ class BaseModel(torch.nn.Module):
         """
         model = weights["model"] if isinstance(weights, dict) else weights  # torchvision models are not dicts
         csd = model.float().state_dict()  # checkpoint state_dict as FP32
+
+        # MoLoRA compatibility: map 'base_layer.' keys back to original keys
+        if any("base_layer." in k for k in csd):
+            mapped_csd = {}
+            for k, v in csd.items():
+                if "base_layer." in k:
+                    mapped_csd[k.replace(".base_layer.", ".")] = v
+                else:
+                    mapped_csd[k] = v
+            csd = mapped_csd
+
         updated_csd = intersect_dicts(csd, self.state_dict())  # intersect
         self.load_state_dict(updated_csd, strict=False)  # load
         len_updated_csd = len(updated_csd)
         first_conv = "model.0.conv.weight"  # hard-coded to yolo models for now
         # mostly used to boost multi-channel training
         state_dict = self.state_dict()
-        if first_conv not in updated_csd and first_conv in state_dict:
+        if first_conv not in updated_csd and first_conv in state_dict and first_conv in csd:
             c1, c2, h, w = state_dict[first_conv].shape
             cc1, cc2, ch, cw = csd[first_conv].shape
             if ch == h and cw == w:
