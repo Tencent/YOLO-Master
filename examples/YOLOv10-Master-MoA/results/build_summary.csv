@@ -1,0 +1,3 @@
+key,label,cfg,params,params_m,moablocks,c2fmoa
+v10,YOLO-Master v0.10 baseline,ultralytics/cfg/models/master/v0_10/det/yolo-master-n.yaml,3449963,3.449963,0,0
+v10_moa,YOLO-Master v0.10 MoA,ultralytics/cfg/models/master/v0_10/det/yolo-master-moa-n.yaml,3576587,3.576587,6,3
