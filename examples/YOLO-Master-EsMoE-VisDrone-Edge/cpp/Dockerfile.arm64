@@ -1,0 +1,17 @@
+# Native Linux ARM64 (aarch64) build — for NVIDIA Jetson / ARM servers.
+# Build on an ARM64 host (or with docker buildx + QEMU):
+#   docker buildx build --platform linux/arm64 -t yolo-edge-arm64 -f cpp/Dockerfile.arm64 cpp
+FROM arm64v8/ubuntu:22.04
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential cmake curl ca-certificates libopencv-dev pkg-config || \
+    (apt-get install -y --no-install-recommends build-essential cmake curl ca-certificates libopencv-dev pkg-config) && \
+    rm -rf /var/lib/apt/lists/*
+ARG ORT_VERSION=1.23.2
+RUN curl -fL -o /tmp/ort.tgz \
+      https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-aarch64-${ORT_VERSION}.tgz && \
+    mkdir -p /opt/ort && tar -xzf /tmp/ort.tgz -C /opt/ort --strip-components=1 && rm /tmp/ort.tgz
+WORKDIR /src
+COPY . /src
+RUN cmake -S . -B build -DONNXRUNTIME_ROOT_DIR=/opt/ort && cmake --build build -j"$(nproc)"
+ENTRYPOINT ["/src/build/yolo_edge"]
