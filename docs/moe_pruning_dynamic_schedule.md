@@ -69,7 +69,7 @@ base=1.0, target=0.25, alpha=1.0, beta=0.8, min_coeff=0.5, max_coeff=2.0
 
 ## Results
 
-Settings: VisDrone, `imgsz=640`, base checkpoint `runs/reproduce/visdrone/visdrone_100e_denseeval_esmoe/weights/best.pt`. FLOPs below are MoE-layer GFLOPs collected through module `get_gflops()` hooks, not total model GFLOPs. Machine-readable result tables are provided in `scripts/issue52_pruning_results.csv` and `scripts/issue52_dynamic_schedule_results.csv`.
+Settings: VisDrone, `imgsz=640`, base checkpoint from the merged issue #49 workflow, preferably `runs/reproduce/visdrone/VisDrone_EsMoE-N/weights/best.pt` after training with `--no-sparse-eval`. FLOPs below are MoE-layer GFLOPs collected through module `get_gflops()` hooks, not total model GFLOPs. Machine-readable result tables are provided in `scripts/issue52_pruning_results.csv` and `scripts/issue52_dynamic_schedule_results.csv`.
 
 | Threshold | Stage | mAP50 | mAP50-95 | MoE GFLOPs | Latency mean ms | Params M | Gini mean |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |

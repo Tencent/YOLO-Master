@@ -53,7 +53,14 @@ class EvalResult:
 
 
 def default_model_path() -> Path:
-    return ROOT / "runs/reproduce/visdrone/visdrone_100e_denseeval_esmoe/weights/best.pt"
+    candidates = [
+        # Path produced by the merged issue #49 reproduction scripts when running
+        # VisDrone EsMoE-N with --no-sparse-eval.
+        ROOT / "runs/reproduce/visdrone/VisDrone_EsMoE-N/weights/best.pt",
+        # Backward-compatible local path from the original issue #52 experiments.
+        ROOT / "runs/reproduce/visdrone/visdrone_100e_denseeval_esmoe/weights/best.pt",
+    ]
+    return next((path for path in candidates if path.exists()), candidates[0])
 
 
 def default_data_yaml() -> Path:
