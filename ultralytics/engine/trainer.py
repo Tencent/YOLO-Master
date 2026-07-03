@@ -385,7 +385,9 @@ class BaseTrainer:
         self._detect_moa_mot_modules()
 
         # MoE Routing Collapse Detector (initialize if model has MoE layers)
-        has_moe = any(hasattr(m, 'num_experts') for m in self.model.modules())
+        from ultralytics.nn.modules.moe.utils import is_core_moe_block, model_has_core_moe, iter_core_moe_expert_params
+
+        has_moe = model_has_core_moe(self.model)
         # Persist the detection result so the train loop can gate MoE-only
         # logic (warmup schedule, gain schedule, collapse detector) and avoid
         # printing MoE messages on plain (non-MoE) models.
@@ -426,6 +428,8 @@ class BaseTrainer:
 
             injected = 0
             for m in self.model.modules():
+                if not is_core_moe_block(m):
+                    continue
                 if hasattr(m, 'balance_loss_coeff'):
                     m.balance_loss_coeff = balance_loss_coeff
                     injected += 1
@@ -453,6 +457,39 @@ class BaseTrainer:
                 f"balance_loss={balance_loss_coeff}, z_loss={router_z_loss_coeff}, "
                 f"noise_std={noise_std}, temperature={temperature}"
             )
+
+        # MoT router aux-loss coefficients (separate from core MoE injection)
+        try:
+            from ultralytics.nn.modules.mot import MoTBlock
+            from ultralytics.nn.modules.moa import MoABlock, C2fMoA
+
+            mot_balance = getattr(self.args, "mot_balance_loss", 0.01)
+            mot_z = getattr(self.args, "mot_router_z_loss", 0.01)
+            mot_sparse = bool(getattr(self.args, "mot_sparse_train", False))
+            moa_win = int(getattr(self.args, "moa_local_window_size", 7))
+            mot_injected = 0
+            moa_injected = 0
+            for m in self.model.modules():
+                if isinstance(m, MoTBlock):
+                    m.balance_loss_coeff = mot_balance
+                    m.router_z_loss_coeff = mot_z
+                    m.sparse_train = mot_sparse
+                    mot_injected += 1
+                elif isinstance(m, MoABlock):
+                    m.local_head.window_size = max(1, moa_win)
+                    moa_injected += 1
+            if mot_injected and RANK in {-1, 0}:
+                LOGGER.info(
+                    f"[MoT] Config injected into {mot_injected} MoTBlock layers: "
+                    f"balance_loss={mot_balance}, z_loss={mot_z}, sparse_train={mot_sparse}"
+                )
+            if moa_injected and RANK in {-1, 0}:
+                LOGGER.info(
+                    f"[MoA] Config injected into {moa_injected} MoABlock layers: "
+                    f"local_window_size={moa_win}"
+                )
+        except Exception:
+            pass
 
         # MoLoRA injection (even if no MoE layers present)
         has_molora = any(
@@ -701,9 +738,10 @@ class BaseTrainer:
             # unconditionally print '[MoE] Unfreezing expert weights ...' at
             # epoch == warmup, even though there were no expert weights at all.
             if getattr(self, "_has_moe", False):
+                from ultralytics.nn.modules.moe.utils import iter_core_moe_expert_params
+
                 moe_warmup_epochs = getattr(self.args, 'moe_expert_warmup_epochs', 3)
-                expert_params = [p for n, p in self.model.named_parameters()
-                                 if "experts" in n and "routing" not in n and "router" not in n and "shared" not in n]
+                expert_params = list(iter_core_moe_expert_params(self.model))
                 if expert_params:
                     if epoch < moe_warmup_epochs:
                         for p in expert_params:
