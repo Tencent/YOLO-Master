@@ -11,8 +11,15 @@ from .analysis import ExpertUsageTracker
 class MoEPruner:
     """Pruner for Mixture-of-Experts models based on usage statistics"""
     
-    def __init__(self, model_path: str, threshold: float = 0.15, dataset: str = 'coco8.yaml',
-                 device: Optional[str] = None):
+    def __init__(
+        self,
+        model_path: str,
+        threshold: float = 0.15,
+        dataset: str = 'coco8.yaml',
+        device: Optional[str] = None,
+        importance_mode: str = "usage",
+        keep_top_m: Optional[int] = None,
+    ):
         """
         Initialize MoE pruner
         
@@ -23,11 +30,27 @@ class MoEPruner:
             device: Device for validation. ``None`` (default) auto-detects CUDA,
                 falling back to CPU — previously hard-coded to 'cpu', which was
                 needlessly slow on GPU boxes.
+            importance_mode: Expert importance score. ``usage`` preserves the
+                original hit-count behavior. ``usage_weight`` scores experts by
+                usage multiplied by average routing weight, which is useful when
+                top_k selects all experts. ``avg_weight`` uses average routing
+                weight only.
+            keep_top_m: Optional fixed-budget pruning. When set, keep the top-M
+                experts per MoE layer by ``importance_mode`` instead of applying
+                the threshold.
         """
+        valid_modes = {"usage", "usage_weight", "avg_weight"}
+        if importance_mode not in valid_modes:
+            raise ValueError(f"importance_mode must be one of {sorted(valid_modes)}, got {importance_mode!r}")
+        if keep_top_m is not None and keep_top_m < 1:
+            raise ValueError("keep_top_m must be >= 1 when provided")
+
         self.model_path = model_path
         self.threshold = threshold
         self.dataset = dataset
         self.device = device if device is not None else self._auto_device()
+        self.importance_mode = importance_mode
+        self.keep_top_m = keep_top_m
         self.model = None
         self.usage_stats: Dict[str, Dict[int, Any]] = {}
         self.pruning_plan: Dict[str, List[int]] = {}
@@ -70,6 +93,16 @@ class MoEPruner:
             except Exception as e:
                 raise RuntimeError(f"Diagnosis failed: {e}")
     
+    def _expert_score(self, expert_stats: Any, total_hits: float) -> float:
+        """Calculate expert importance while preserving usage as the default."""
+        usage_pct = expert_stats.hits / total_hits if total_hits > 0 else 0.0
+        avg_weight = float(getattr(expert_stats, "avg_weight", 0.0))
+        if self.importance_mode == "usage_weight":
+            return usage_pct * avg_weight
+        if self.importance_mode == "avg_weight":
+            return avg_weight
+        return usage_pct
+
     def _create_pruning_plan(self) -> None:
         """Create pruning plan based on usage statistics"""
         print("\n[Phase 2] Planning Surgery...")
@@ -81,17 +114,42 @@ class MoEPruner:
             if total_hits == 0:
                 continue
             
+            expert_scores = {
+                expert_id: self._expert_score(expert_stats, total_hits)
+                for expert_id, expert_stats in stats.items()
+            }
             experts_to_keep = []
             print(f"\n   Layer: {layer_name}")
-            
-            # Determine which experts to keep based on threshold
+
+            if self.keep_top_m is not None:
+                keep_count = min(self.keep_top_m, len(expert_scores))
+                experts_to_keep = [
+                    expert_id
+                    for expert_id, _score in sorted(expert_scores.items(), key=lambda item: (-item[1], item[0]))[:keep_count]
+                ]
+
+            # Determine which experts to keep based on threshold or fixed budget.
             for expert_id, expert_stats in sorted(stats.items()):
                 usage_pct = expert_stats.hits / total_hits
-                if usage_pct >= self.threshold:
-                    experts_to_keep.append(expert_id)
-                    print(f"     ✅ Keep E{expert_id} (Usage: {usage_pct:.1%})")
+                avg_weight = float(getattr(expert_stats, "avg_weight", 0.0))
+                score = expert_scores[expert_id]
+                if self.keep_top_m is not None:
+                    keep = expert_id in experts_to_keep
                 else:
-                    print(f"     🗑️  Drop E{expert_id} (Usage: {usage_pct:.1%})")
+                    keep = score >= self.threshold
+
+                if keep:
+                    if expert_id not in experts_to_keep:
+                        experts_to_keep.append(expert_id)
+                    print(
+                        f"     ✅ Keep E{expert_id} "
+                        f"(Usage: {usage_pct:.1%}, AvgW: {avg_weight:.4f}, Score: {score:.4f})"
+                    )
+                else:
+                    print(
+                        f"     🗑️  Drop E{expert_id} "
+                        f"(Usage: {usage_pct:.1%}, AvgW: {avg_weight:.4f}, Score: {score:.4f})"
+                    )
             
             # Safety check: ensure at least one expert remains
             if len(experts_to_keep) == 0:
@@ -186,6 +244,23 @@ class MoEPruner:
             old_top_k = moe_module.top_k
             moe_module.top_k = moe_module.num_experts
             print(f"     📉 Reduced top_k from {old_top_k} to {moe_module.top_k}")
+
+        # Keep expert-count-dependent state consistent after structural pruning.
+        # ES_MOE stores this non-persistent buffer and otherwise tries to copy a
+        # length-2 usage vector into the old length-3 tensor at validation time.
+        if hasattr(moe_module, "expert_usage_counts"):
+            old_usage = moe_module.expert_usage_counts
+            moe_module.expert_usage_counts = torch.zeros(
+                moe_module.num_experts,
+                device=old_usage.device,
+                dtype=old_usage.dtype,
+            )
+
+        if hasattr(moe_module, "moe_loss_fn") and moe_module.moe_loss_fn is not None:
+            if hasattr(moe_module.moe_loss_fn, "num_experts"):
+                moe_module.moe_loss_fn.num_experts = moe_module.num_experts
+            if hasattr(moe_module.moe_loss_fn, "top_k") and hasattr(moe_module, "top_k"):
+                moe_module.moe_loss_fn.top_k = min(moe_module.moe_loss_fn.top_k, moe_module.top_k)
     
     def _prune_router_weights(
         self, 
@@ -384,7 +459,9 @@ class MoEPruner:
         print(f"\n📋 Configuration:")
         print(f"   • Input Model: {self.model_path}")
         print(f"   • Output Model: {output_path}")
-        print(f"   • Usage Threshold: {self.threshold*100:.1f}%")
+        print(f"   • Threshold: {self.threshold:.4f}")
+        print(f"   • Importance Mode: {self.importance_mode}")
+        print(f"   • Keep Top-M: {self.keep_top_m if self.keep_top_m is not None else 'disabled'}")
         print(f"   • Dataset: {self.dataset}")
         
         try:
@@ -424,7 +501,9 @@ def prune_moe_model(
     model_path: str, 
     output_path: str, 
     threshold: float = 0.15, 
-    dataset: str = 'coco8.yaml'
+    dataset: str = 'coco8.yaml',
+    importance_mode: str = "usage",
+    keep_top_m: Optional[int] = None,
 ) -> bool:
     """
     Prune MoE model by removing underutilized experts
@@ -438,7 +517,7 @@ def prune_moe_model(
     Returns:
         True if pruning successful
     """
-    pruner = MoEPruner(model_path, threshold, dataset)
+    pruner = MoEPruner(model_path, threshold, dataset, importance_mode=importance_mode, keep_top_m=keep_top_m)
     return pruner.prune(output_path)
 
 
@@ -468,6 +547,18 @@ def main():
         default="coco8.yaml",
         help="Dataset configuration for validation"
     )
+    parser.add_argument(
+        "--importance-mode",
+        choices=("usage", "usage_weight", "avg_weight"),
+        default="usage",
+        help="Expert importance score used for pruning"
+    )
+    parser.add_argument(
+        "--keep-top-m",
+        type=int,
+        default=None,
+        help="Keep exactly the top-M experts per MoE layer by importance score"
+    )
     
     args = parser.parse_args()
     
@@ -479,7 +570,9 @@ def main():
         args.model_path, 
         args.output, 
         args.threshold,
-        args.dataset
+        args.dataset,
+        args.importance_mode,
+        args.keep_top_m,
     )
     
     exit(0 if success else 1)

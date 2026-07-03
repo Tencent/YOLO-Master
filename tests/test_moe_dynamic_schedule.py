@@ -1,8 +1,11 @@
 """Issue #52 regression tests for MoE dynamic scheduling and pruning metrics."""
 
+from types import SimpleNamespace
+
 import pytest
 
 from ultralytics.nn.modules.moe.modules import ES_MOE, OptimizedMOE
+from ultralytics.nn.modules.moe.pruning import MoEPruner
 from ultralytics.nn.modules.moe.schedule import GiniBalanceScheduler, apply_balance_loss_coeff, usage_gini
 from ultralytics.utils import DEFAULT_CFG_DICT
 
@@ -41,3 +44,19 @@ def test_es_moe_get_gflops_reports_nonzero_total():
     assert gflops["total_gflops"] > 0
     assert apply_balance_loss_coeff(module, 1.5) >= 1
     assert module.balance_loss_coeff == pytest.approx(1.5)
+
+
+def test_moe_pruner_usage_weight_score_preserves_usage_default():
+    """The optional weighted score distinguishes equally selected experts."""
+    stats = [
+        SimpleNamespace(hits=10.0, avg_weight=0.2),
+        SimpleNamespace(hits=10.0, avg_weight=0.4),
+    ]
+
+    usage_pruner = MoEPruner("dummy.pt")
+    weighted_pruner = MoEPruner("dummy.pt", importance_mode="usage_weight", keep_top_m=1)
+
+    assert usage_pruner._expert_score(stats[0], 20.0) == pytest.approx(0.5)
+    assert usage_pruner._expert_score(stats[1], 20.0) == pytest.approx(0.5)
+    assert weighted_pruner._expert_score(stats[0], 20.0) == pytest.approx(0.1)
+    assert weighted_pruner._expert_score(stats[1], 20.0) == pytest.approx(0.2)

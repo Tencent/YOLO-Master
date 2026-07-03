@@ -491,6 +491,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--plots", action="store_true")
     parser.add_argument("--wandb", choices=("disabled", "offline", "online"), default="disabled")
     parser.add_argument("--sparse-eval", action="store_true", help="Use sparse ES-MoE eval. Default is dense eval for accuracy reporting.")
+    parser.add_argument(
+        "--importance-mode",
+        choices=("usage", "usage_weight", "avg_weight"),
+        default="usage",
+        help="Expert importance score for MoEPruner. Default preserves upstream usage-threshold pruning.",
+    )
+    parser.add_argument(
+        "--keep-top-m",
+        type=int,
+        default=None,
+        help="Keep exactly the top-M experts per MoE layer by importance score.",
+    )
     return parser.parse_args()
 
 
@@ -546,7 +558,14 @@ def main() -> int:
 
         try:
             if not (args.skip_existing and pruned_path.exists()):
-                pruner = MoEPruner(str(args.model_path), threshold=threshold, dataset=str(data_yaml), device=args.device)
+                pruner = MoEPruner(
+                    str(args.model_path),
+                    threshold=threshold,
+                    dataset=str(data_yaml),
+                    device=args.device,
+                    importance_mode=args.importance_mode,
+                    keep_top_m=args.keep_top_m,
+                )
                 ok = pruner.prune(str(pruned_path))
                 if not ok:
                     raise RuntimeError("MoEPruner returned failure")
