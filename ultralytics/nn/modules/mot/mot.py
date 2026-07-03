@@ -42,6 +42,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from ultralytics.nn.modules.conv import Conv
+from ultralytics.nn.modules.moe.loss import differentiable_balance_loss
 from ultralytics.nn.modules.moe.utils import get_safe_groups as _safe_groups
 from ultralytics.utils import LOGGER
 
@@ -558,9 +559,45 @@ class _MoTRouter(nn.Module):
             return weights, indices, logits
         return weights, indices
 
+    @staticmethod
+    def expert_usage_from_indices(indices: torch.Tensor, num_experts: int) -> torch.Tensor:
+        """Discrete expert usage share from Top-K index tensor (any rank ≥ 2)."""
+        flat = indices.reshape(-1).to(torch.long)
+        counts = torch.bincount(flat, minlength=num_experts).float()
+        return counts / max(flat.numel(), 1)
+
     def router_z_loss(self, x: torch.Tensor) -> torch.Tensor:
         """Z-loss for load balance: encourages router logits to be small."""
         return self.z_loss_from_logits(self._compute_logits(x))
+
+
+def _mot_router_aux_loss(
+    weights: torch.Tensor,
+    logits: torch.Tensor,
+    indices: torch.Tensor,
+    num_experts: int,
+    balance_coeff: float,
+    z_coeff: float,
+) -> torch.Tensor:
+    """GShard balance + router z-loss for MoT (matches MoE/MoLoRA formulation)."""
+    if balance_coeff <= 0 and z_coeff <= 0:
+        return weights.new_zeros(())
+
+    probs = weights
+    if probs.dim() == 4:
+        probs = probs.reshape(probs.shape[0], num_experts, -1).mean(-1)
+    probs = probs.reshape(-1, num_experts)
+
+    usage = _MoTRouter.expert_usage_from_indices(indices, num_experts)
+    balance = differentiable_balance_loss(probs, usage, num_experts)
+    z_loss = _MoTRouter.z_loss_from_logits(logits)
+
+    total = weights.new_zeros(())
+    if balance_coeff > 0:
+        total = total + balance_coeff * balance
+    if z_coeff > 0:
+        total = total + z_coeff * z_loss
+    return total
 
 
 # ---------------------------------------------------------------------------
@@ -609,15 +646,21 @@ class MoTBlock(nn.Module):
         temperature: float = 1.0,
         use_spatial_router: bool = True,
         balance_loss_coeff: float = 0.01,
+        router_z_loss_coeff: float | None = None,
         dropout: float = 0.0,
         exploration_eps: float = 0.02,
         window_shift: bool = False,
         grid_align_corners: bool = True,
+        sparse_train: bool = False,
     ):
         super().__init__()
         assert 1 <= top_k <= self.NUM_EXPERTS
         self.top_k = top_k
         self.balance_loss_coeff = balance_loss_coeff
+        self.sparse_train = sparse_train
+        # Legacy YAML/checkpoints used balance_loss_coeff for z-loss only; when
+        # router_z_loss_coeff is omitted, keep that behaviour for the z term.
+        self.router_z_loss_coeff = balance_loss_coeff if router_z_loss_coeff is None else router_z_loss_coeff
 
         # Each expert uses the *full* dim with its own num_heads.
         # Find largest num_heads ≤ requested that divides dim.
@@ -660,41 +703,63 @@ class MoTBlock(nn.Module):
     def _init_weights(self):
         nn.init.trunc_normal_(self.out_proj.weight, std=0.02)
 
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Returns:
-            out           : [B, C, H, W]
-            aux_loss      : scalar (router z-loss, 0 if balance_loss_coeff==0)
-        """
-        # ── Routing weights ──────────────────────────────────────────────
-        weights, indices, router_logits = self.router(x, return_logits=True)   # [B, E, H, W]
+    def _blend_experts(
+        self,
+        x: torch.Tensor,
+        weights: torch.Tensor,
+        indices: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """Blend expert outputs; sparse when eval or ``sparse_train`` (not during ONNX export).
 
-        # ── Expert computation ───────────────────────────────────────────
-        if not self.training:
-            # Inference: sparse batch dispatch — only active experts per sample.
-            out = x.new_zeros(x.shape)
-            B = x.shape[0]
+        Sparse dispatch keys off discrete Top-K ``indices`` so training-time
+        ``exploration_eps`` blending does not force every expert to run.
+        """
+        out = x.new_zeros(x.shape)
+        use_sparse = (not self.training or self.sparse_train) and not torch.onnx.is_in_onnx_export()
+        B = x.shape[0]
+        if use_sparse:
             for e_idx, expert in enumerate(self.experts):
-                active = weights[:, e_idx].reshape(B, -1).sum(dim=1) > 0
+                if indices is not None:
+                    active = (indices == e_idx).reshape(B, -1).any(dim=1)
+                else:
+                    active = weights[:, e_idx].reshape(B, -1).sum(dim=1) > 0
                 batch_idx = torch.nonzero(active, as_tuple=True)[0]
                 if batch_idx.numel() == 0:
                     continue
                 w = weights[batch_idx, e_idx:e_idx + 1]
                 out[batch_idx] = out[batch_idx] + expert(x[batch_idx]) * w
         else:
-            # Training: dense compute keeps all experts in the graph for exploration.
-            out = x.new_zeros(x.shape)
             for e_idx, expert in enumerate(self.experts):
-                w = weights[:, e_idx:e_idx + 1]   # [B, 1, H, W]
+                w = weights[:, e_idx:e_idx + 1]
                 out = out + expert(x) * w
+        return out
+
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Returns:
+            out           : [B, C, H, W]
+            aux_loss      : scalar (GShard balance + router z-loss, 0 if both coeffs==0)
+        """
+        # ── Routing weights ──────────────────────────────────────────────
+        weights, indices, router_logits = self.router(x, return_logits=True)   # [B, E, H, W]
+
+        # ── Expert computation ───────────────────────────────────────────
+        out = self._blend_experts(x, weights, indices)
         out = self.out_norm(self.out_proj(out))
 
         # Residual (block-level shortcut)
         out = out + x
 
         # ── Auxiliary loss ───────────────────────────────────────────────
-        if self.balance_loss_coeff > 0 and self.training:
-            aux = self.router.z_loss_from_logits(router_logits) * self.balance_loss_coeff
+        if self.training and (self.balance_loss_coeff > 0 or self.router_z_loss_coeff > 0):
+            aux = _mot_router_aux_loss(
+                weights,
+                router_logits,
+                indices,
+                self.NUM_EXPERTS,
+                self.balance_loss_coeff,
+                self.router_z_loss_coeff,
+            )
         else:
             aux = x.new_zeros(())
 
@@ -746,6 +811,7 @@ class C2fMoT(nn.Module):
         temperature: float = 1.0,
         balance_loss_coeff: float = 0.01,
         e: float = 0.5,
+        sparse_train: bool = False,
     ):
         super().__init__()
         self.c = int(c2 * e)
@@ -779,6 +845,7 @@ class C2fMoT(nn.Module):
                 temperature=temperature,
                 balance_loss_coeff=balance_loss_coeff,
                 window_shift=bool(i % 2),
+                sparse_train=sparse_train,
             )
             for i in range(n)
         )
