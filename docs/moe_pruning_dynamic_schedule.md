@@ -2,6 +2,12 @@
 
 This guide documents the Tencent Rhino-Bird issue #52 workflow for MoE expert pruning and dynamic MoE hyperparameter scheduling. The experiments use VisDrone and a trained YOLO-Master-EsMoE-N checkpoint.
 
+## Review Positioning
+
+This PR provides the reusable issue #52 tooling and reports the current experimental outcome honestly. The pruning sweep, metric collection, plotting, LoRA recovery path, and dynamic schedule ablation are implemented and reproducible. However, the VisDrone checkpoint reproduced from the merged issue #49 workflow has nearly uniform expert utilization, so usage-threshold pruning does not remove experts for thresholds `0.05` to `0.30`.
+
+This should be read as a negative pruning finding for the current checkpoint and threshold criterion, not as evidence that MoE pruning is generally ineffective. Effective structural pruning likely needs either a checkpoint with more skewed routing or a stronger expert-importance metric than hit-count usage alone.
+
 ## Files
 
 | file | purpose |
@@ -99,6 +105,13 @@ Dynamic schedule comparison:
 - The dynamic Gini schedule reaches 95% of the fixed baseline final mAP50-95 faster: 58 epochs vs 65 epochs, a convergence ratio of 0.892.
 - For server inference, use unpruned/direct EsMoE or a conservative direct threshold only as a safety check. For edge pruning, a checkpoint with less uniform expert utilization or a stronger importance metric is needed before claiming a clear Pareto gain.
 
+## Recommended Follow-ups
+
+- Add an expert-importance score that combines routing hit count, average routing weight, activation magnitude, and optional loss-sensitivity probes.
+- Test a less balance-regularized checkpoint, because the current balanced routing leaves all experts above the pruning thresholds.
+- Add a forced-prune diagnostic mode for research-only ablations, while keeping the default MoEPruner path conservative and backward compatible.
+- Re-run the Pareto sweep after one of the above changes, then update the server/edge recommendation from measured accuracy-latency trade-offs instead of threshold labels alone.
+
 ## Plot Artifacts
 
 The pruning script writes the following plots when `--plots` is enabled:
@@ -129,4 +142,5 @@ Direct pruning validations are summarized in `summary.csv`; W&B links above corr
 - The pruning script reports MoE-layer GFLOPs gathered through `get_gflops()` hooks. It does not report total detector GFLOPs.
 - LoRA10 results include adapter parameters, so Params and latency can increase compared with direct pruned inference.
 - Since expert utilization is nearly uniform, the current threshold sweep is a negative result for pruning effectiveness rather than a strong pruning win.
+- The current sweet spot is selected from a flat Pareto surface because no experts are removed; it should not be interpreted as a real deployment recommendation until structural pruning changes Params, FLOPs, or latency.
 - This checkout imports `ultralytics.utils.lora.sensitivity`, but the file is absent in `origin/main`; a no-op compatibility shim is included so YOLO and LoRA paths import correctly.
