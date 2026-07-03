@@ -329,9 +329,9 @@ try:
     conv = nn.Conv2d(16, 32, 3, padding=1)
     layer = MoLoRALayer(conv, r=4, alpha=8, num_experts=4, top_k=2, top_k_warmup=10, warmup_steps=10)
     check("warmup step 0: top_k=1", layer._current_top_k() == 1)
-    layer._step_count = 5
+    layer._step_count.fill_(5)
     check("warmup step 5: top_k=1 (渐进)", layer._current_top_k() == 1)
-    layer._step_count = 10
+    layer._step_count.fill_(10)
     check("warmup step 10: top_k=2", layer._current_top_k() == 2)
 
     # expert dropout
