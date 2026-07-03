@@ -4,6 +4,7 @@ Contains:
   - MoLoRAExpert: a single LoRA expert (Conv2d or Linear low-rank pair)
   - MoLoRALayer: a wrapper that replaces a base layer with top-k sparse experts
 """
+import math
 from typing import Dict, List, Optional, Tuple, Any
 
 import torch
@@ -244,29 +245,26 @@ class MoLoRALayer(nn.Module):
 
     def _apply_capacity_limit(
         self,
-        router_probs: torch.Tensor,
-        expert_indices: torch.Tensor,
+        top_k_weights: torch.Tensor,
+        top_k_indices: torch.Tensor,
     ) -> torch.Tensor:
-        """Apply per-sample soft capacity penalty.
+        """Apply a global soft capacity penalty on Top-K expert selections.
 
-        Note: This is a simplified per-sample soft penalty, not a global
-        hard capacity limit like standard MoE. When an expert is selected
-        by too many samples in a batch, its weights are scaled down.
+        When an expert is selected by more than ``capacity_factor * B * K / E`` slots
+        in the batch, its Top-K weights are scaled down and renormalized.
         """
-        if self.capacity_factor <= 0 or self.capacity_factor >= 1e6:
-            return router_probs
-        B = router_probs.shape[0]
-        capacity = max(1, int(self.capacity_factor * B / self.num_experts))
-        # Count selections per expert, zero out excess
-        weights = router_probs.gather(1, expert_indices)  # [B, K]
+        if self.capacity_factor <= 0 or self.capacity_factor >= 1.0:
+            return top_k_weights
+        B, K = top_k_weights.shape
+        max_slots = max(1, int(math.ceil(self.capacity_factor * B * K / self.num_experts)))
+        weights = top_k_weights.clone()
         for e in range(self.num_experts):
-            mask = expert_indices == e
-            count = mask.sum(dim=1)  # [B]
-            # Simple per-expert capacity: if too many tokens select this expert, clip
-            # For simplicity, we apply a soft penalty by scaling down weights
-            scale = (capacity / (count + 1).clamp_min(1)).clamp_max(1.0)
-            weights = weights * scale.unsqueeze(1)
-        return weights
+            slots = top_k_indices == e
+            usage = int(slots.sum().item())
+            if usage > max_slots:
+                scale = max_slots / usage
+                weights = torch.where(slots, weights * scale, weights)
+        return weights / weights.sum(dim=-1, keepdim=True).clamp_min(1e-6)
 
     # ------------------------------------------------------------------
     # Domain pre-allocation
@@ -356,9 +354,9 @@ class MoLoRALayer(nn.Module):
         top_k_weights, top_k_indices = torch.topk(router_probs, effective_k, dim=-1)  # [B, K]
         top_k_weights = top_k_weights / top_k_weights.sum(dim=-1, keepdim=True).clamp_min(1e-6)
 
-        # Apply capacity limit
-        if self.capacity_factor > 0 and self.capacity_factor < 1e6:
-            top_k_weights = self._apply_capacity_limit(router_probs, top_k_indices)
+        # Apply capacity limit (1.0 = no limit per config convention)
+        if 0 < self.capacity_factor < 1.0:
+            top_k_weights = self._apply_capacity_limit(top_k_weights, top_k_indices)
 
         # Compute sparse expert outputs
         adapted = self._compute_sparse_experts(x, top_k_weights, top_k_indices, base_out)
