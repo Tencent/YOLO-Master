@@ -15,6 +15,8 @@ This should be read as a negative pruning finding for the current checkpoint and
 | `scripts/moe_pruning_sweep.py` | Runs MoEPruner threshold sweeps, direct validation, LoRA 10-epoch recovery, metrics, and plots. |
 | `scripts/run_moe_dynamic_schedule_ablation.py` | Runs baseline, dynamic schedule, and low-balance ablation training; summarizes convergence speed. |
 | `scripts/issue52_pruning_results.csv` | Compact pruning-sweep result table for review. |
+| `scripts/issue52_per_layer_experts.csv` | Compact per-layer retained-expert table for the direct pruning sweep. |
+| `scripts/issue52_expert_usage_gini.csv` | Compact per-layer expert-usage Gini table for the direct pruning sweep. |
 | `scripts/issue52_dynamic_schedule_results.csv` | Compact dynamic-schedule result table for review. |
 | `ultralytics/nn/modules/moe/schedule.py` | Implements expert-usage Gini, EMA scheduling, and balance-loss coefficient application. |
 | `tests/test_moe_dynamic_schedule.py` | Focused regression tests for Gini, dynamic scheduling defaults, and ES-MoE FLOPs. |
@@ -75,7 +77,7 @@ base=1.0, target=0.25, alpha=1.0, beta=0.8, min_coeff=0.5, max_coeff=2.0
 
 ## Results
 
-Settings: VisDrone, `imgsz=640`, base checkpoint from the merged issue #49 workflow, preferably `runs/reproduce/visdrone/VisDrone_EsMoE-N/weights/best.pt` after training with `--no-sparse-eval`. The direct pruning rows were rechecked with that merged workflow checkpoint path. FLOPs below are MoE-layer GFLOPs collected through module `get_gflops()` hooks, not total model GFLOPs. Machine-readable result tables are provided in `scripts/issue52_pruning_results.csv` and `scripts/issue52_dynamic_schedule_results.csv`.
+Settings: VisDrone, `imgsz=640`, base checkpoint from the merged issue #49 workflow, preferably `runs/reproduce/visdrone/VisDrone_EsMoE-N/weights/best.pt` after training with `--no-sparse-eval`. The direct pruning rows were rechecked with that merged workflow checkpoint path. FLOPs below are MoE-layer GFLOPs collected through module `get_gflops()` hooks, not total model GFLOPs. Machine-readable result tables are provided in `scripts/issue52_pruning_results.csv`, `scripts/issue52_per_layer_experts.csv`, `scripts/issue52_expert_usage_gini.csv`, and `scripts/issue52_dynamic_schedule_results.csv`.
 
 | Threshold | Stage | mAP50 | mAP50-95 | MoE GFLOPs | Latency mean ms | Params M | Gini mean |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -101,6 +103,7 @@ Dynamic schedule comparison:
 ## Findings
 
 - The five pruning thresholds produced identical direct accuracy, Params, and MoE GFLOPs. Expert usage is highly uniform in this checkpoint, so thresholds from 0.05 to 0.30 did not remove experts after the issue #49 merged-checkpoint recheck.
+- The compact per-layer tables confirm that all four ES-MoE layers keep `3/3` experts and that direct expert-usage Gini stays at or near zero for every tested threshold.
 - Direct inference is stronger than LoRA10 recovery in this run. The LoRA adapter adds parameters and latency, while 10 epochs did not recover or improve accuracy.
 - The dynamic Gini schedule reaches 95% of the fixed baseline final mAP50-95 faster: 58 epochs vs 65 epochs, a convergence ratio of 0.892.
 - For server inference, use unpruned/direct EsMoE or a conservative direct threshold only as a safety check. For edge pruning, a checkpoint with less uniform expert utilization or a stronger importance metric is needed before claiming a clear Pareto gain.
