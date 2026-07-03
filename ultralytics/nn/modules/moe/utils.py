@@ -2,11 +2,46 @@
 """Utility functions for Mixture-of-Experts models"""
 import torch
 import torch.nn as nn
-from typing import Tuple, Union, List
+from typing import Iterator, Tuple, Union, List
+
+# Namespace for full MoE *block* classes (excludes routers/experts/loss helpers).
+_CORE_MOE_MODULE = "ultralytics.nn.modules.moe.modules"
+
+
+def is_core_moe_block(module: nn.Module) -> bool:
+    """Return True for top-level MoE blocks in ``moe.modules`` (not routers/sub-experts)."""
+    mod = getattr(module.__class__, "__module__", "") or ""
+    return mod == _CORE_MOE_MODULE or mod.endswith(".moe.modules")
+
+
+def model_has_core_moe(model: nn.Module) -> bool:
+    """Return True when the model contains at least one core MoE block."""
+    return any(is_core_moe_block(m) for m in model.modules())
+
+
+def iter_core_moe_expert_params(model: nn.Module) -> Iterator[torch.nn.Parameter]:
+    """Yield expert-weight parameters that belong to core MoE blocks only.
+
+    Excludes MoT ``experts.*``, MoLoRA ``experts.*``, routers, and shared paths so
+    expert-warmup does not freeze unrelated mixture modules.
+    """
+    for prefix, m in model.named_modules():
+        if not is_core_moe_block(m):
+            continue
+        for name, param in m.named_parameters():
+            full = f"{prefix}.{name}" if prefix else name
+            if "routing" in full or "router" in full:
+                continue
+            if "shared" in full:
+                continue
+            if "expert" in full:
+                yield param
 
 
 def get_safe_groups(channels: int, desired_groups: int = 8) -> int:
     """Ensure num_groups divides channels"""
+    if channels <= 0:
+        return 1
     groups = min(desired_groups, channels)
     while channels % groups != 0:
         groups -= 1
