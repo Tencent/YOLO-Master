@@ -69,19 +69,19 @@ base=1.0, target=0.25, alpha=1.0, beta=0.8, min_coeff=0.5, max_coeff=2.0
 
 ## Results
 
-Settings: VisDrone, `imgsz=640`, base checkpoint from the merged issue #49 workflow, preferably `runs/reproduce/visdrone/VisDrone_EsMoE-N/weights/best.pt` after training with `--no-sparse-eval`. FLOPs below are MoE-layer GFLOPs collected through module `get_gflops()` hooks, not total model GFLOPs. Machine-readable result tables are provided in `scripts/issue52_pruning_results.csv` and `scripts/issue52_dynamic_schedule_results.csv`.
+Settings: VisDrone, `imgsz=640`, base checkpoint from the merged issue #49 workflow, preferably `runs/reproduce/visdrone/VisDrone_EsMoE-N/weights/best.pt` after training with `--no-sparse-eval`. The direct pruning rows were rechecked with that merged workflow checkpoint path. FLOPs below are MoE-layer GFLOPs collected through module `get_gflops()` hooks, not total model GFLOPs. Machine-readable result tables are provided in `scripts/issue52_pruning_results.csv` and `scripts/issue52_dynamic_schedule_results.csv`.
 
 | Threshold | Stage | mAP50 | mAP50-95 | MoE GFLOPs | Latency mean ms | Params M | Gini mean |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 0.05 | direct | 0.30747 | 0.17719 | 2.04288 | 16.81 | 2.653 | 0.00000 |
+| 0.05 | direct | 0.30747 | 0.17719 | 2.04288 | 16.53 | 2.653 | 0.00000 |
 | 0.05 | LoRA10 | 0.28568 | 0.16146 | 2.30830 | 31.67 | 2.883 | 0.24496 |
-| 0.10 | direct | 0.30747 | 0.17719 | 2.04288 | 17.56 | 2.653 | 0.00000 |
+| 0.10 | direct | 0.30747 | 0.17719 | 2.04288 | 16.37 | 2.653 | 0.00000 |
 | 0.10 | LoRA10 | 0.28568 | 0.16146 | 2.30830 | 33.26 | 2.883 | 0.24496 |
-| 0.15 | direct | 0.30747 | 0.17719 | 2.04288 | 16.75 | 2.653 | 0.00000 |
+| 0.15 | direct | 0.30747 | 0.17719 | 2.04288 | 17.26 | 2.653 | 0.00000 |
 | 0.15 | LoRA10 | 0.28568 | 0.16146 | 2.30830 | 32.28 | 2.883 | 0.24496 |
-| 0.20 | direct | 0.30747 | 0.17719 | 2.04288 | 17.73 | 2.653 | 0.00000 |
+| 0.20 | direct | 0.30747 | 0.17719 | 2.04288 | 16.77 | 2.653 | 0.00000 |
 | 0.20 | LoRA10 | 0.28568 | 0.16146 | 2.30830 | 31.89 | 2.883 | 0.24496 |
-| 0.30 | direct | 0.30747 | 0.17719 | 2.04288 | 16.90 | 2.653 | 0.00000 |
+| 0.30 | direct | 0.30747 | 0.17719 | 2.04288 | 16.02 | 2.653 | 0.00000 |
 | 0.30 | LoRA10 | 0.28568 | 0.16146 | 2.30830 | 31.03 | 2.883 | 0.24496 |
 
 Dynamic schedule comparison:
@@ -94,10 +94,10 @@ Dynamic schedule comparison:
 
 ## Findings
 
-- The five pruning thresholds produced almost identical direct results. Expert usage is highly uniform in this checkpoint, so thresholds from 0.05 to 0.30 did not produce meaningful expert removal.
+- The five pruning thresholds produced identical direct accuracy, Params, and MoE GFLOPs. Expert usage is highly uniform in this checkpoint, so thresholds from 0.05 to 0.30 did not remove experts after the issue #49 merged-checkpoint recheck.
 - Direct inference is stronger than LoRA10 recovery in this run. The LoRA adapter adds parameters and latency, while 10 epochs did not recover or improve accuracy.
 - The dynamic Gini schedule reaches 95% of the fixed baseline final mAP50-95 faster: 58 epochs vs 65 epochs, a convergence ratio of 0.892.
-- For server inference, use a conservative direct threshold such as `0.05` or `0.15`. For edge pruning, test higher thresholds or a checkpoint with less uniform expert utilization before claiming a clear Pareto gain.
+- For server inference, use unpruned/direct EsMoE or a conservative direct threshold only as a safety check. For edge pruning, a checkpoint with less uniform expert utilization or a stronger importance metric is needed before claiming a clear Pareto gain.
 
 ## Plot Artifacts
 

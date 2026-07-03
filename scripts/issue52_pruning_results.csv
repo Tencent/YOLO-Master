@@ -1,11 +1,11 @@
 threshold,stage,mAP50,mAP50-95,moe_gflops,latency_mean_ms,params_m,gini_mean,recommendation_note
-0.05,direct,0.30747,0.17719,2.04288,16.81,2.653,0.00000,server_conservative
+0.05,direct,0.30747,0.17719,2.04288,16.53,2.653,0.00000,server_conservative
 0.05,LoRA10,0.28568,0.16146,2.30830,31.67,2.883,0.24496,not_recommended_in_this_run
-0.10,direct,0.30747,0.17719,2.04288,17.56,2.653,0.00000,server_conservative
+0.10,direct,0.30747,0.17719,2.04288,16.37,2.653,0.00000,server_conservative
 0.10,LoRA10,0.28568,0.16146,2.30830,33.26,2.883,0.24496,not_recommended_in_this_run
-0.15,direct,0.30747,0.17719,2.04288,16.75,2.653,0.00000,server_conservative
+0.15,direct,0.30747,0.17719,2.04288,17.26,2.653,0.00000,server_conservative
 0.15,LoRA10,0.28568,0.16146,2.30830,32.28,2.883,0.24496,not_recommended_in_this_run
-0.20,direct,0.30747,0.17719,2.04288,17.73,2.653,0.00000,edge_requires_more_skewed_usage
+0.20,direct,0.30747,0.17719,2.04288,16.77,2.653,0.00000,edge_requires_more_skewed_usage
 0.20,LoRA10,0.28568,0.16146,2.30830,31.89,2.883,0.24496,not_recommended_in_this_run
-0.30,direct,0.30747,0.17719,2.04288,16.90,2.653,0.00000,edge_requires_more_skewed_usage
+0.30,direct,0.30747,0.17719,2.04288,16.02,2.653,0.00000,edge_requires_more_skewed_usage
 0.30,LoRA10,0.28568,0.16146,2.30830,31.03,2.883,0.24496,not_recommended_in_this_run
