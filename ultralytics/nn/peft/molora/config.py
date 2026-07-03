@@ -114,6 +114,7 @@ class MoLoRAConfig(LoRAConfig):
             "freeze_experts": "molora_freeze_experts",
             "share_moe_registry": "molora_share_moe_registry",
             "expert_init": "molora_expert_init",
+            "use_rslora": "molora_use_rslora",
         }
 
         molora_kwargs = {}
