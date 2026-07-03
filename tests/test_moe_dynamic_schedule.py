@@ -8,6 +8,7 @@ from ultralytics.nn.modules.moe.modules import ES_MOE, OptimizedMOE
 from ultralytics.nn.modules.moe.pruning import MoEPruner
 from ultralytics.nn.modules.moe.schedule import GiniBalanceScheduler, apply_balance_loss_coeff, usage_gini
 from ultralytics.utils import DEFAULT_CFG_DICT
+from scripts.moe_pruning_sweep import compare_expert_signatures
 
 
 def test_usage_gini_uniform_and_collapsed():
@@ -60,3 +61,17 @@ def test_moe_pruner_usage_weight_score_preserves_usage_default():
     assert usage_pruner._expert_score(stats[1], 20.0) == pytest.approx(0.5)
     assert weighted_pruner._expert_score(stats[0], 20.0) == pytest.approx(0.1)
     assert weighted_pruner._expert_score(stats[1], 20.0) == pytest.approx(0.2)
+
+
+def test_compare_expert_signatures_detects_lora_structure_mismatch():
+    """LoRA recovery should report when a pruned structure is rebuilt."""
+    pruned = [("model.3", 2, 2), ("model.6", 2, 2)]
+    preserved = [("model.3", 2, 2), ("model.6", 2, 2)]
+    rebuilt = [("model.3", 3, 3), ("model.6", 3, 3)]
+
+    assert compare_expert_signatures(pruned, preserved) == ("preserved", "")
+
+    status, note = compare_expert_signatures(pruned, rebuilt)
+    assert status == "structure_mismatch"
+    assert "reference=2:2/2:2" in note
+    assert "candidate=3:3/3:3" in note

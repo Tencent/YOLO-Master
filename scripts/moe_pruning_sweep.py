@@ -102,6 +102,12 @@ def write_csv(path: Path, rows: list[dict[str, Any]], fieldnames: list[str]) -> 
 def append_csv(path: Path, row: dict[str, Any], fieldnames: list[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     exists = path.exists() and path.stat().st_size > 0
+    if exists:
+        with path.open("r", encoding="utf-8", newline="") as handle:
+            reader = csv.DictReader(handle)
+            if reader.fieldnames != fieldnames:
+                old_rows = list(reader)
+                write_csv(path, old_rows, fieldnames)
     with path.open("a", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         if not exists:
@@ -271,6 +277,33 @@ def per_layer_expert_rows(threshold: float, stage: str, model_path: Path) -> lis
                 }
             )
     return rows
+
+
+def expert_signature_from_rows(rows: list[dict[str, Any]]) -> list[tuple[str, int, int]]:
+    """Return a compact MoE structure signature from per-layer expert rows."""
+    return [
+        (str(row["layer_name"]), int(row["num_experts"]), int(row["top_k"]))
+        for row in sorted(rows, key=lambda item: str(item["layer_name"]))
+    ]
+
+
+def compare_expert_signatures(
+    reference: list[tuple[str, int, int]],
+    candidate: list[tuple[str, int, int]],
+) -> tuple[str, str]:
+    """Compare MoE layer structure and return a CSV-friendly status/note."""
+    if reference == candidate:
+        return "preserved", ""
+
+    ref_counts = "/".join(f"{experts}:{top_k}" for _, experts, top_k in reference)
+    cand_counts = "/".join(f"{experts}:{top_k}" for _, experts, top_k in candidate)
+    return "structure_mismatch", f"reference={ref_counts};candidate={cand_counts}"
+
+
+def compare_moe_structure(reference_path: Path, candidate_path: Path) -> tuple[str, str]:
+    reference = expert_signature_from_rows(per_layer_expert_rows(0.0, "reference", reference_path))
+    candidate = expert_signature_from_rows(per_layer_expert_rows(0.0, "candidate", candidate_path))
+    return compare_expert_signatures(reference, candidate)
 
 
 def evaluate_model(model_path: Path, data_yaml: Path, args: argparse.Namespace) -> EvalResult:
@@ -530,7 +563,7 @@ def main() -> int:
     summary_path = args.project / "summary.csv"
     summary_fields = [
         "threshold", "stage", "status", "checkpoint", "mAP50-95", "mAP50", "gflops", "latency_mean_ms",
-        "latency_p50_ms", "latency_p90_ms", "params_m", "gini_mean", "error",
+        "latency_p50_ms", "latency_p90_ms", "params_m", "gini_mean", "structure_status", "structure_note", "error",
     ]
 
     if args.plot_only:
@@ -585,6 +618,8 @@ def main() -> int:
                 "latency_p90_ms": direct.latency_p90_ms,
                 "params_m": direct.params_m,
                 "gini_mean": direct.gini_mean,
+                "structure_status": "preserved",
+                "structure_note": "",
                 "error": "",
             }
             append_csv(summary_path, row, summary_fields)
@@ -597,6 +632,7 @@ def main() -> int:
 
             lora_best = run_lora_recovery(pruned_path, data_yaml, threshold, args)
             lora_eval = evaluate_model(lora_best, data_yaml, args)
+            structure_status, structure_note = compare_moe_structure(pruned_path, lora_best)
             row = {
                 "threshold": threshold,
                 "stage": "lora10",
@@ -610,6 +646,8 @@ def main() -> int:
                 "latency_p90_ms": lora_eval.latency_p90_ms,
                 "params_m": lora_eval.params_m,
                 "gini_mean": lora_eval.gini_mean,
+                "structure_status": structure_status,
+                "structure_note": structure_note,
                 "error": "",
             }
             append_csv(summary_path, row, summary_fields)
@@ -631,6 +669,8 @@ def main() -> int:
                 "latency_p90_ms": "",
                 "params_m": "",
                 "gini_mean": "",
+                "structure_status": "",
+                "structure_note": "",
                 "error": f"{type(exc).__name__}: {exc}",
             }
             append_csv(summary_path, row, summary_fields)
