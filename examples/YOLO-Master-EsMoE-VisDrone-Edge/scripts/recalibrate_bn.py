@@ -76,11 +76,13 @@ def main() -> None:
     def letterbox(bgr, sz=640):
         h, w = bgr.shape[:2]
         r = min(sz / h, sz / w)
-        nw, nh = int(w * r), int(h * r)
+        nw, nh = int(round(w * r)), int(round(h * r))
         rs = cv2.resize(bgr, (nw, nh))
+        # center-pad to match python/preprocess.letterbox (same geometry used at inference)
         pad = np.full((sz, sz, 3), 114, np.uint8)
-        pad[:nh, :nw] = rs
-        return torch.from_numpy(pad[:, :, ::1].copy() if False else pad[:, :, ::-1].copy()).permute(2, 0, 1).float() / 255.0
+        top, left = (sz - nh) // 2, (sz - nw) // 2
+        pad[top:top + nh, left:left + nw] = rs
+        return torch.from_numpy(pad[:, :, ::-1].copy()).permute(2, 0, 1).float() / 255.0
 
     with torch.no_grad():
         for i in range(0, len(imgs), args.batch):

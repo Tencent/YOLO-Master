@@ -31,7 +31,7 @@ class LetterboxResult:
     orig_w: int
 
 
-def letterbox(image_bgr: np.ndarray, imgsz: int = 640, stride: int = 32) -> LetterboxResult:
+def letterbox(image_bgr: np.ndarray, imgsz: int = 640) -> LetterboxResult:
     """Aspect-ratio-preserving resize + pad to (imgsz, imgsz).
 
     Returns the padded RGB image plus the geometric params needed to map detected
@@ -41,16 +41,19 @@ def letterbox(image_bgr: np.ndarray, imgsz: int = 640, stride: int = 32) -> Lett
     ratio = min(imgsz / h, imgsz / w)
     new_w, new_h = int(round(w * ratio)), int(round(h * ratio))
     resized = cv2.resize(image_bgr, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
-    # pad to a stride multiple, then to imgsz
+    # center-pad the resized image up to (imgsz, imgsz); store the INTEGER pad actually
+    # applied so scale_boxes subtracts exactly what was added (no 0.5px drift).
     pad_w = (imgsz - new_w) / 2.0
     pad_h = (imgsz - new_h) / 2.0
-    top, bottom = int(round(pad_h)), imgsz - new_h - int(round(pad_h))
-    left, right = int(round(pad_w)), imgsz - new_w - int(round(pad_w))
+    left = int(round(pad_w))
+    top = int(round(pad_h))
+    right = imgsz - new_w - left
+    bottom = imgsz - new_h - top
     padded = cv2.copyMakeBorder(resized, top, bottom, left, right, cv2.BORDER_CONSTANT, value=(LETTERBOX_FILL,) * 3)
     # BGR -> RGB, HWC -> CHW, 0..255 -> 0..1 (matches ultralytics export normalization)
     rgb = cv2.cvtColor(padded, cv2.COLOR_BGR2RGB)
     chw = rgb.transpose(2, 0, 1).astype(np.float32) / 255.0
-    return LetterboxResult(chw, ratio, pad_w, pad_h, h, w)
+    return LetterboxResult(chw, ratio, float(left), float(top), h, w)
 
 
 def to_nchw(chw: np.ndarray) -> np.ndarray:

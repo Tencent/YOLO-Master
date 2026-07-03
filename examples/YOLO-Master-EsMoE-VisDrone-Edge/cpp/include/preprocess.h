@@ -29,8 +29,10 @@ inline cv::Mat letterbox(const cv::Mat& bgr, int imgsz, LetterboxInfo& info) {
 
   const int pad_w = imgsz - new_w;
   const int pad_h = imgsz - new_h;
-  const int top = pad_h / 2;
-  const int left = pad_w / 2;
+  // match python/preprocess.py: round (not integer division) so odd padding keeps the
+  // content byte-for-byte aligned with the Python reference across backends.
+  const int left = static_cast<int>(std::round(pad_w / 2.0f));
+  const int top = static_cast<int>(std::round(pad_h / 2.0f));
   cv::Mat padded(imgsz, imgsz, bgr.type(), cv::Scalar(kLetterboxFill, kLetterboxFill, kLetterboxFill));
   resized.copyTo(padded(cv::Rect(left, top, new_w, new_h)));
 

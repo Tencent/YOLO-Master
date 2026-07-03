@@ -1,8 +1,9 @@
 """Patch ES_MOE._dense_forward: traceable export-path pruning so the exported graph
 matches _sparse_forward (eager eval) numerically. Idempotent (replaces whole method).
 
-  * ONNX/MNN (routing use_top_k=True): topk+threshold pruning.
-  * NCNN     (routing use_top_k=False): threshold-only pruning (topk-free, NCNN-native).
+  * ONNX/MNN (routing use_top_k=True): topk+threshold pruning, matches eager eval.
+  * NCNN     (routing use_top_k=False): pnnx can't lower topk/comparison ops, so NO
+    pruning is applied (all experts, dense-full). NCNN trades accuracy for portability.
 """
 import sys
 from pathlib import Path
@@ -16,8 +17,8 @@ NEW_BODY = (
     "        Without this the export keeps ALL experts (incl. weak ones below the\n"
     "        pruning threshold), corrupting output and dropping mAP to ~0.\n"
     "        - ONNX/MNN (routing use_top_k=True): topk+threshold pruning.\n"
-    "        - NCNN     (routing use_top_k=False): threshold-only pruning (no topk,\n"
-    "          NCNN-native). Training path unchanged (all experts, full grad).\n"
+    "        - NCNN     (routing use_top_k=False): no pruning (pnnx can't lower topk/\n"
+    "          comparison ops) — all experts, dense-full. Training path unchanged.\n"
     '        """\n'
     "        import torch.nn.functional as F\n"
     "        if torch.onnx.is_in_onnx_export() or torch.jit.is_tracing():\n"

@@ -4,8 +4,6 @@
 // Modes:
 //   yolo_edge <model.onnx> <image>                  -> saves annotated result
 //   yolo_edge <model.onnx> <image> --bench 200      -> latency benchmark
-//   yolo_edge <model.onnx> --dir <img_dir> --labels <lbl_dir> [--limit N]
-//                                                    -> writes detections.json (C++ sanity mAP input)
 #include <opencv2/core.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
@@ -115,11 +113,6 @@ int main(int argc, char** argv) {
   }
 
   // ---- directory mode: emit detections.json ----
-  if (target.rfind("--dir", 0) == 0 || std::ifstream(target).bad()) {
-    std::string dir = (argc > 3) ? argv[3] : "";
-    // (kept simple; primary path is single-image + benchmark)
-  }
-
   // ---- single image ----
   cv::Mat bgr = cv::imread(target);
   if (bgr.empty()) { std::cerr << "bad image: " << target << "\n"; return 1; }

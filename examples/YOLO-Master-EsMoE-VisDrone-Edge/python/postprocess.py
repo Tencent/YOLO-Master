@@ -82,8 +82,9 @@ def decode_and_nms(raw: np.ndarray, cfg: NmsConfig) -> Tuple[np.ndarray, np.ndar
     thr = np.where(areas < cfg.small_area, cfg.small_conf, cfg.conf)
     mask = top_score >= thr
     if not mask.any():
-        empty = np.empty((0, 4), dtype=np.float32)
-        return empty, empty, empty.astype(int)
+        return (np.empty((0, 4), dtype=np.float32),
+                np.empty((0,), dtype=np.float32),
+                np.empty((0,), dtype=int))
 
     boxes_xyxy = boxes_xyxy[mask]
     top_score = top_score[mask]
@@ -104,10 +105,14 @@ def decode_and_nms(raw: np.ndarray, cfg: NmsConfig) -> Tuple[np.ndarray, np.ndar
         final_cls.append(cls_idx[cmask][keep])
 
     if not final_boxes:
-        empty = np.empty((0, 4), dtype=np.float32)
-        return empty, empty, empty.astype(int)
-    return (
-        np.concatenate(final_boxes).astype(np.float32),
-        np.concatenate(final_scores).astype(np.float32),
-        np.concatenate(final_cls).astype(int),
-    )
+        return (np.empty((0, 4), dtype=np.float32),
+                np.empty((0,), dtype=np.float32),
+                np.empty((0,), dtype=int))
+    boxes = np.concatenate(final_boxes).astype(np.float32)
+    scores = np.concatenate(final_scores).astype(np.float32)
+    clsarr = np.concatenate(final_cls).astype(int)
+    # global max_det cap (per-class NMS above can yield up to max_det*num_classes)
+    if len(boxes) > cfg.max_det:
+        order = np.argsort(-scores)[: cfg.max_det]
+        boxes, scores, clsarr = boxes[order], scores[order], clsarr[order]
+    return boxes, scores, clsarr

@@ -75,9 +75,8 @@ class ONNXDetector:
     def __init__(self, path: str, device: str, num_classes: int):
         import onnxruntime as ort
 
-        providers = (
-            ["CUDAExecutionProvider", "CPUExecutionProvider"] if "cuda" in device or "0" in device else ["CPUExecutionProvider"]
-        )
+        want_cuda = bool(device) and ("cuda" in device.lower() or device.isdigit())
+        providers = ["CUDAExecutionProvider", "CPUExecutionProvider"] if want_cuda else ["CPUExecutionProvider"]
         self.sess = ort.InferenceSession(path, providers=providers)
         self.in_name = self.sess.get_inputs()[0].name
         self.num_classes = num_classes

@@ -1,8 +1,9 @@
 # VisDrone2019-DET dataset — vertical-domain config for YOLO-Master edge task.
 # 10 classes, lots of small objects (UAV perspective). Used to fine-tune EsMoE-N.
-# path is absolute so downloads/labels land inside the project workdir regardless of cwd.
+# Relative path (matches upstream VisDrone.yaml convention) so the example is portable;
+# downloads/labels land under <cwd>/datasets/VisDrone regardless of the machine.
 
-path: /data/matengyu/csy/yolo-master-edge/datasets/VisDrone # dataset root dir
+path: ../datasets/VisDrone # dataset root dir (relative to the YOLO-Master repo root)
 train: images/train # 6471 images
 val: images/val     # 548 images
 test: images/test   # 1610 images

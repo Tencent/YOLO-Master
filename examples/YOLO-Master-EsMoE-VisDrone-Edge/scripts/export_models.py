@@ -219,26 +219,12 @@ def main() -> None:
     print(f"[export] model={args.model} imgsz={args.imgsz} opset={args.opset}")
     model = YOLO(str(args.model))
 
-    # Dense routing for ALL formats: full-softmax (use_top_k=False) + dense expert
-    # combine (use_sparse_inference=False). This makes the exported graph identical
-    # across ONNX/MNN/NCNN AND matchable by a dense PyTorch baseline (the export
-    # always traces _dense_forward; using full-softmax removes the topk/one_hot ops
-    # that pnnx can't lower to NCNN). The dense-vs-sparse delta is reported separately.
-    try:
-        from ultralytics.nn.modules.moe.routers import DynamicRoutingLayer
-        import ultralytics.nn.modules.moe.modules as moe_mod
-        esmoe_cls = getattr(moe_mod, "ES_MOE")
-        nr = ne = 0
-        for m in model.model.modules():
-            if isinstance(m, DynamicRoutingLayer):
-                m.use_top_k = False
-                nr += 1
-            if isinstance(m, esmoe_cls):
-                m.use_sparse_inference = False
-                ne += 1
-        print(f"[export] dense mode: {nr} routers, {ne} ES_MOE")
-    except Exception as e:
-        print(f"[export] dense-mode setup skipped: {e}")
+    # NOTE: keep the model's native (use_top_k=True) routing for ONNX/MNN here, so that
+    # the patched ES_MOE._dense_forward (see scripts/patch_dense_forward.py) applies its
+    # topk+threshold export-time pruning and the exported graph matches eager sparse eval
+    # (this is what reproduces the README's 6% mAP / <0.5% consistency).
+    # NCNN is exported separately by export_ncnn_dense.py, which DOES set use_top_k=False
+    # (full-softmax) because pnnx cannot lower topk/comparison ops to NCNN.
 
     results = []
     try:
