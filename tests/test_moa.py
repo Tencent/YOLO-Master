@@ -1,11 +1,10 @@
 from pathlib import Path
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 
 from ultralytics.nn.modules.moa import C2fMoA, MoABlock, NeckMoAFusion, anneal_moa_temperature, collect_moa_aux_loss
-from ultralytics.nn.modules.moa.moa import _GlobalAttnHead, _LocalAttnHead
+from ultralytics.nn.modules.moa.moa import _GlobalAttnHead, _LocalAttnHead, _flash_attn
 from ultralytics.nn.tasks import DetectionModel
 from ultralytics.utils.loss import _collect_moa_aux_loss
 
@@ -44,45 +43,89 @@ def test_neck_moa_fusion_forward_backward():
     assert _has_grad(module)
 
 
-def test_neck_moa_fusion_handles_non_2x_spatial_mismatch():
+def test_neck_moa_fusion_handles_non_strict_scale_ratio():
     torch.manual_seed(0)
-    module = NeckMoAFusion(32, 48, 32, num_heads=4).train()
-    hi = torch.randn(2, 32, 15, 15)
-    lo = torch.randn(2, 48, 7, 7)
-    out = module(hi, lo)
-    assert out.shape == hi.shape
+    module = NeckMoAFusion(64, 128, 64, num_heads=4).train()
+    out = module(torch.randn(1, 64, 15, 15), torch.randn(1, 128, 7, 7))
+    assert out.shape == (1, 64, 15, 15)
     assert torch.isfinite(out).all()
-    out.mean().backward()
+    assert module.last_aux_loss.requires_grad and torch.isfinite(module.last_aux_loss)
+    (out.mean() + module.last_aux_loss).backward()
     assert _has_grad(module)
 
 
-def test_moa_router_tiny_temperature_remains_finite_and_non_uniform():
+def test_moa_router_stays_finite_at_tiny_annealed_temperature():
     torch.manual_seed(0)
-    block = MoABlock(48, num_heads=6).train()
-    block.router.temperature = 1e-6
+    module = MoABlock(48, num_heads=6, temperature=1.0).train()
+    anneal_moa_temperature(module, factor=1e-8, min_temp=1e-8)
+    assert module.router.temperature < 1e-4
+
     with torch.no_grad():
-        block.router.router[-1].bias.copy_(torch.tensor([-0.25, 0.0, 0.25]))
+        module.router.router[-1].bias.copy_(torch.tensor([0.0, 1e-4, -1e-4]))
 
-    x = torch.randn(2, 48, 5, 5)
-    probs, logits = block.router(x, return_logits=True)
-    uniform = torch.full_like(probs, 1.0 / probs.shape[1])
-
-    assert torch.isfinite(logits).all()
+    x = torch.randn(1, 48, 4, 4)
+    probs, logits = module.router(x, return_logits=True)
     assert torch.isfinite(probs).all()
+    assert torch.isfinite(logits).all()
     assert torch.allclose(probs.sum(dim=1), torch.ones_like(probs[:, 0]), atol=1e-6)
-    assert not torch.allclose(probs, uniform, atol=1e-3)
+    assert not torch.allclose(probs, torch.full_like(probs, 1.0 / probs.shape[1]))
 
-    out = block(x)
+    out = module(x)
+    assert out.shape == x.shape
     assert torch.isfinite(out).all()
+    assert torch.isfinite(module.last_aux_loss)
 
 
-def test_attention_heads_degrade_when_heads_do_not_divide_dim():
+def test_moa_attention_heads_handle_non_divisible_dim_and_heads():
     torch.manual_seed(0)
-    x = torch.randn(1, 30, 6, 6)
-    for head in (_LocalAttnHead(30, num_heads=8), _GlobalAttnHead(30, num_heads=8)):
-        out = head(x)
+    cases = [
+        (_LocalAttnHead(17, num_heads=5), torch.randn(2, 17, 5, 5)),
+        (_GlobalAttnHead(17, num_heads=5), torch.randn(1, 17, 17, 17)),
+    ]
+    for module, x in cases:
+        module.train()
+        out = module(x)
         assert out.shape == x.shape
         assert torch.isfinite(out).all()
+        assert module.norm.num_channels % module.norm.num_groups == 0
+        out.mean().backward()
+        assert _has_grad(module)
+
+
+def test_c2fmoa_aux_loss_not_double_counted_for_nested_blocks():
+    torch.manual_seed(0)
+    module = C2fMoA(32, 32, n=3, num_heads=6).train()
+    out = module(torch.randn(2, 32, 6, 6))
+    assert out.shape == (2, 32, 6, 6)
+
+    inner_sum = torch.stack([m.last_aux_loss for m in module.m]).sum()
+    collected = collect_moa_aux_loss(module)
+    loss_collector = _collect_moa_aux_loss(module, torch.device("cpu"))
+    naive_sum = torch.stack(
+        [m.last_aux_loss for m in module.modules() if isinstance(getattr(m, "last_aux_loss", None), torch.Tensor)]
+    ).sum()
+
+    assert inner_sum.requires_grad and torch.isfinite(inner_sum)
+    assert torch.allclose(module.last_aux_loss, inner_sum)
+    assert torch.allclose(collected, inner_sum)
+    assert torch.allclose(loss_collector, inner_sum)
+    assert naive_sum > collected * 1.5
+
+
+def test_flash_attn_supports_sdpa_without_scale_keyword(monkeypatch):
+    original_sdpa = F.scaled_dot_product_attention
+
+    def torch20_sdpa(q, k, v):
+        return original_sdpa(q, k, v)
+
+    monkeypatch.setattr("ultralytics.nn.modules.moa.moa.F.scaled_dot_product_attention", torch20_sdpa)
+    q = torch.randn(1, 2, 4, 4)
+    k = torch.randn(1, 2, 4, 4)
+    v = torch.randn(1, 2, 4, 4)
+    scale = 0.25
+    out = _flash_attn(q, k, v, scale=scale)
+    expected = ((q @ k.transpose(-2, -1)) * scale).softmax(dim=-1) @ v
+    assert torch.allclose(out, expected)
 
 
 def test_moa_aux_loss_collected_for_c2f_and_neck():
