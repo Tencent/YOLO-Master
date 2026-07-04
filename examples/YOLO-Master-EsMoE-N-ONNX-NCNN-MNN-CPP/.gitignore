@@ -1,0 +1,8 @@
+# build artifacts + local outputs (models/bundles ship via the Releases page)
+cpp/build*/
+dist/
+models/
+runs_edge/
+preds_*/
+__pycache__/
+*.pyc
