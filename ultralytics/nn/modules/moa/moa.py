@@ -47,7 +47,13 @@ def _flash_attn(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
                 scale: float) -> torch.Tensor:
     """Scaled dot-product attention; uses F.sdpa when available (torch ≥ 2.0)."""
     if hasattr(F, "scaled_dot_product_attention"):
-        return F.scaled_dot_product_attention(q, k, v, scale=scale)
+        try:
+            return F.scaled_dot_product_attention(q, k, v, scale=scale)
+        except TypeError as e:
+            if "scale" not in str(e):
+                raise
+            default_scale = q.shape[-1] ** -0.5
+            return F.scaled_dot_product_attention(q * (scale / default_scale), k, v)
     # fallback
     attn = (q @ k.transpose(-2, -1)) * scale
     attn = attn.softmax(dim=-1)
@@ -624,9 +630,8 @@ class NeckMoAFusion(nn.Module):
         nh, hd = self.num_heads, self.head_dim
         inner = nh * hd
 
-        # Align lo-res to hi-res resolution, including odd or non-2x feature maps.
-        lo_up = F.interpolate(lo, size=hi.shape[2:], mode="bilinear", align_corners=False) \
-            if lo.shape[2:] != hi.shape[2:] else lo
+        # Align lo-res to hi-res resolution
+        lo_up = F.interpolate(lo, size=(H, W), mode="bilinear", align_corners=False) if lo.shape[2:] != hi.shape[2:] else lo
 
         # ── Cross-attention: hi queries lo context ──────────────────────
         q = self.q_proj(hi).flatten(2).view(B, nh, hd, H * W).transpose(2, 3)
