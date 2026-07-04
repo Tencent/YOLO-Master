@@ -244,3 +244,27 @@ moe_weight_threshold: 0.01 # (float) Weight threshold for conditional computatio
 moe_expert_warmup_epochs: 3 # (int) Epochs to freeze experts while router learns (was 5, too long)
 moe_router_lr_scale: 0.5 # (float) Router LR as fraction of base LR (was 0.1, too small to correct collapse)
 moe_collapse_threshold: 0.8 # (float) If max expert usage > threshold, trigger collapse recovery
+
+# MoT / MoA router settings
+mot_balance_loss: 0.01 # (float) GShard balance loss coefficient for MoT blocks
+mot_router_z_loss: 0.01 # (float) Router z-loss coefficient for MoT blocks
+mot_sparse_train: False # (bool) Sparse expert dispatch during MoT training (faster; default dense for exploration)
+moa_local_window_size: 7 # (int) Window size for MoA local attention head
+moa_mot_temperature_factor: 0.97 # (float) Per-epoch router temperature multiplier for MoA/MoT
+moa_mot_min_temperature: 0.3 # (float) Minimum router temperature after annealing
+
+# MoLoRA (Mixture-of-LoRA) settings -----------------------------------------------------------------------------------------
+molora_num_experts: 0 # (int) Number of experts in MoLoRA layers (0 to disable)
+molora_top_k: 2 # (int) Number of experts to activate per forward
+molora_router_type: linear # (str) Router type: linear, spatial, hybrid
+molora_r: 8 # (int) LoRA rank for each expert
+molora_alpha: 16 # (int) LoRA alpha scaling
+molora_balance_loss: 0.01 # (float) Load balancing loss coefficient for MoLoRA
+molora_router_z_loss: 0.001 # (float) Router z-loss coefficient for MoLoRA
+molora_diversity_loss: 0.0 # (float) Diversity loss coefficient for MoLoRA
+molora_expert_init: default # (str) Expert init: default, orthogonal, gaussian
+molora_use_rslora: true # (bool) Use rsLoRA scaling
+molora_share_moe_registry: true # (bool) Share MOE_LOSS_REGISTRY with MoLoRA
+molora_capacity_factor: 1.0 # (float) Capacity factor for MoLoRA expert selection (1.0 = no limit)
+molora_expert_dropout: 0.0 # (float) Probability of disabling an expert during training
+molora_warmup_steps: 0 # (int) Steps to gradually increase top_k from 1 to target

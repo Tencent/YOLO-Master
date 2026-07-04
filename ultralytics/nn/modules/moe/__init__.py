@@ -58,13 +58,17 @@ from .routers import (
 from .utils import (
     FlopsUtils,
     get_safe_groups,
-    BatchedExpertComputation
+    BatchedExpertComputation,
+    is_core_moe_block,
+    model_has_core_moe,
+    iter_core_moe_expert_params,
 )
 
 from .analysis import ExpertUsageTracker, diagnose_model, RoutingCollapseDetector
 from .diagnostics import MoELayerDiagnostic, collect_moe_diagnostics, diagnostics_to_dict, format_moe_diagnostics
 from .history import MoEDiagnosticsRecorder, export_moe_history_plots
 from .pruning import prune_moe_model
+from .scheduler import MoEDynamicScheduler, MoEDynamicSchedulerConfig, MoEDynamicScheduleState, compute_gini
 
 __all__ = [
     "UltraOptimizedMoE",
@@ -110,6 +114,9 @@ __all__ = [
     "FlopsUtils",
     "get_safe_groups",
     "BatchedExpertComputation",
+    "is_core_moe_block",
+    "model_has_core_moe",
+    "iter_core_moe_expert_params",
     "ExpertUsageTracker",
     "RoutingCollapseDetector",
     "diagnose_model",
@@ -119,5 +126,9 @@ __all__ = [
     "format_moe_diagnostics",
     "MoEDiagnosticsRecorder",
     "export_moe_history_plots",
-    "prune_moe_model"
+    "prune_moe_model",
+    "MoEDynamicScheduler",
+    "MoEDynamicSchedulerConfig",
+    "MoEDynamicScheduleState",
+    "compute_gini",
 ]

@@ -1,0 +1,4 @@
+name,command,status,passed,failed,notes
+moa_boundary_tests,"/opt/miniconda3/envs/yolo_master/bin/python -m pytest tests/test_moa.py -q",passed,18,0,"Boundary and coverage-closure tests for MoA modules"
+moa_coverage_suite,"/opt/miniconda3/envs/yolo_master/bin/python -m pytest tests/test_moa.py tests/test_mixture_aux_loss.py --cov=ultralytics/nn/modules/moa --cov-report=term-missing --cov-report=html:runs/moa_ablation/coverage_html -q",passed,20,0,"MoA directory coverage reached 100%; HTML report in runs/moa_ablation/coverage_html"
+v10_build_check,"/opt/miniconda3/envs/yolo_master/bin/python scripts/compare_moa_ablation.py --check-build --models v10 v10_moa --device cpu --project runs/moa_ablation",passed,,,"Both v0.10 baseline and v0.10 MoA configs parse and instantiate"

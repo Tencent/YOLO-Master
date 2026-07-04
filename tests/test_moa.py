@@ -143,10 +143,58 @@ def test_moa_aux_loss_collected_for_c2f_and_neck():
     assert neck_aux.requires_grad and torch.isfinite(neck_aux)
 
 
+def test_c2fmoa_aux_loss_does_not_double_count_nested_blocks():
+    torch.manual_seed(0)
+    module = C2fMoA(32, 32, n=3, num_heads=6).train()
+    module(torch.randn(2, 32, 6, 6))
+
+    block_total = sum((m.last_aux_loss for m in module.m), module.last_aux_loss.new_zeros(()))
+    collected = collect_moa_aux_loss(module)
+    collected_via_loss = _collect_moa_aux_loss(module, torch.device("cpu"))
+    legacy_recursive_total = module.last_aux_loss + block_total
+
+    assert module.last_aux_loss.requires_grad
+    assert torch.allclose(module.last_aux_loss, block_total)
+    assert torch.allclose(collected, module.last_aux_loss)
+    assert torch.allclose(collected_via_loss, module.last_aux_loss)
+    assert legacy_recursive_total > collected * 1.5
+
+
 def test_c2fmoa_small_channels_keep_valid_head_count():
     module = C2fMoA(8, 8, n=1, num_heads=6, e=0.5).train()
     out = module(torch.randn(1, 8, 4, 4))
     assert out.shape == (1, 8, 4, 4)
+
+
+def test_c2fmoa_rounds_head_count_to_expert_groups():
+    module = C2fMoA(256, 256, n=1, num_heads=4, e=0.5).train()
+    out = module(torch.randn(1, 256, 2, 2))
+
+    assert out.shape == (1, 256, 2, 2)
+    assert module.m[0].local_head.num_heads == 2
+
+
+def test_neck_moa_fusion_eval_projects_self_path_and_zero_aux_loss():
+    module = NeckMoAFusion(16, 32, 24, num_heads=4).eval()
+    out = module(torch.randn(1, 16, 5, 5), torch.randn(1, 32, 3, 3))
+
+    assert out.shape == (1, 24, 5, 5)
+    assert torch.isfinite(out).all()
+    assert module.last_aux_loss.device == out.device
+    assert module.last_aux_loss.item() == 0
+
+
+def test_collect_moa_aux_loss_handles_empty_module_and_standalone_block():
+    empty_aux = collect_moa_aux_loss(nn.Identity())
+    assert empty_aux.device.type == "cpu"
+    assert empty_aux.item() == 0
+
+    module = MoABlock(48, num_heads=6).train()
+    module(torch.randn(1, 48, 4, 4))
+    aux = collect_moa_aux_loss(module)
+
+    assert torch.isfinite(aux)
+    assert torch.allclose(aux, module.last_aux_loss)
 
 
 def test_moa_temperature_anneal():

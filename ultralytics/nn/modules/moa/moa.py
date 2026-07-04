@@ -60,21 +60,62 @@ def _flash_attn(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
     return attn @ v
 
 
+def _window_flash_attn(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    scale: float,
+    window_size: int,
+    height: int,
+    width: int,
+) -> torch.Tensor:
+    """Window-partitioned SDPA on [B, nh, N, hd] tokens (O(N·win²) complexity)."""
+    B, nh, n_tokens, hd = q.shape
+    assert n_tokens == height * width
+    win = max(1, min(int(window_size), height, width))
+
+    def to_spatial(t: torch.Tensor) -> torch.Tensor:
+        return t.transpose(2, 3).reshape(B, nh, height, width, hd)
+
+    qs, ks, vs = to_spatial(q), to_spatial(k), to_spatial(v)
+    pad_h = (win - height % win) % win
+    pad_w = (win - width % win) % win
+    if pad_h or pad_w:
+        pad = (0, 0, 0, pad_w, 0, pad_h)
+        qs, ks, vs = F.pad(qs, pad), F.pad(ks, pad), F.pad(vs, pad)
+    hp, wp = qs.shape[2], qs.shape[3]
+
+    def partition(t: torch.Tensor) -> torch.Tensor:
+        t = t.view(B, nh, hp // win, win, wp // win, win, hd)
+        return t.permute(0, 1, 2, 4, 3, 5, 6).reshape(-1, win * win, hd)
+
+    def reverse(windows: torch.Tensor) -> torch.Tensor:
+        n_h, n_w = hp // win, wp // win
+        t = windows.view(B, nh, n_h, n_w, win, win, hd)
+        t = t.permute(0, 1, 2, 4, 3, 5, 6).reshape(B, nh, hp, wp, hd)
+        return t[:, :, :height, :width, :].reshape(B, nh, height * width, hd)
+
+    out_w = _flash_attn(partition(qs), partition(ks), partition(vs), scale)
+    return reverse(out_w)
+
+
 # ---------------------------------------------------------------------------
 # Sub-modules: three attention head variants
 # ---------------------------------------------------------------------------
 
 class _LocalAttnHead(nn.Module):
-    """Local attention head: DW-3×3 biased QKV projection.
+    """Local attention head: DW-biased QKV + window-partitioned self-attention.
 
-    Each token attends only within a local neighbourhood defined by the
-    positional encoding, keeping computation well-localised.
+    Each token attends only within a fixed ``window_size × window_size`` neighbourhood
+    (Swin-style), giving true O(N·win²) local context instead of global O(N²) SDPA.
     """
 
-    def __init__(self, dim: int, num_heads: int, head_dim: Optional[int] = None):
+    def __init__(self, dim: int, num_heads: int, head_dim: Optional[int] = None,
+                 window_size: int = 7):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = head_dim or max(dim // num_heads, 16)
+        self.window_size = max(1, int(window_size))
         inner = self.head_dim * num_heads
         # QKV with DW-3×3 for local bias
         self.qkv_dw = nn.Conv2d(dim, dim, 3, padding=1, groups=dim, bias=False)
@@ -101,7 +142,9 @@ class _LocalAttnHead(nn.Module):
         def to_heads(t):
             return t.flatten(2).view(B, nh, hd, N).transpose(2, 3)   # [B,nh,N,hd]
 
-        out = _flash_attn(to_heads(q), to_heads(k), to_heads(v), self.scale)
+        out = _window_flash_attn(
+            to_heads(q), to_heads(k), to_heads(v), self.scale, self.window_size, H, W
+        )
         # [B, nh, N, hd] → [B, inner, H, W]
         out = out.transpose(2, 3).reshape(B, inner, H, W)
         return self.norm(self.proj(out))
@@ -342,6 +385,7 @@ class MoABlock(nn.Module):
         shortcut: bool = True,
         aux_loss_coeff: float = 0.01,
         block_index: int = 0,
+        local_window_size: int = 7,
     ):
         super().__init__()
         assert num_heads % self.NUM_GROUPS == 0, (
@@ -354,7 +398,7 @@ class MoABlock(nn.Module):
 
         # Three attention head-groups (global head uses a per-block RF seed).
         global_rf_seed = block_index * 7919 + 2 * 65537
-        self.local_head   = _LocalAttnHead(dim, heads_per_group, head_dim)
+        self.local_head   = _LocalAttnHead(dim, heads_per_group, head_dim, window_size=local_window_size)
         self.region_head  = _RegionalAttnHead(dim, heads_per_group, head_dim)
         self.global_head  = _GlobalAttnHead(dim, heads_per_group, head_dim, rf_seed=global_rf_seed)
 
@@ -463,6 +507,7 @@ class C2fMoA(nn.Module):
         shortcut: bool = True,
         e: float = 0.5,
         aux_loss_coeff: float = 0.01,
+        local_window_size: int = 7,
     ):
         super().__init__()
         self.c = int(c2 * e)
@@ -484,7 +529,8 @@ class C2fMoA(nn.Module):
                      temperature=temperature,
                      shortcut=shortcut,
                      aux_loss_coeff=aux_loss_coeff,
-                     block_index=i)
+                     block_index=i,
+                     local_window_size=local_window_size)
             for i in range(n)
         )
         self.last_aux_loss: torch.Tensor = torch.zeros((), requires_grad=False)
@@ -552,8 +598,6 @@ class NeckMoAFusion(nn.Module):
         self.q_proj = nn.Conv2d(c_hi, inner, 1, bias=False)
         # Project lo-res → K, V (after upsample to match hi-res)
         self.kv_proj = nn.Conv2d(c_lo, inner * 2, 1, bias=False)
-        self.upsample = nn.Upsample(scale_factor=2, mode="bilinear",
-                                    align_corners=False)
 
         # Router: decides how much cross-scale vs self-scale context to blend
         self.router = _MoARouter(c_hi, num_groups=2, temperature=1.0)

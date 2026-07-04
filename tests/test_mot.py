@@ -159,3 +159,39 @@ def test_mot_inference_sparsity_skips_inactive_experts():
         out, aux = block(x)
     assert out.shape == x.shape
     assert torch.isfinite(out).all()
+
+
+def test_mot_window_size_larger_than_feature_map():
+    """MoT window expert should pad and crop back when window_size exceeds H/W."""
+    torch.manual_seed(0)
+    block = MoTBlock(32, num_heads=4, top_k=2, window_size=16, n_points=2).eval()
+    x = torch.randn(1, 32, 5, 7)
+    with torch.no_grad():
+        out, aux = block(x)
+    assert out.shape == x.shape
+    assert aux.item() == 0
+    assert torch.isfinite(out).all()
+
+
+def test_mot_shifted_window_odd_feature_map_size():
+    """Shifted windows must keep odd-sized feature maps aligned and finite."""
+    torch.manual_seed(0)
+    block = MoTBlock(32, num_heads=4, top_k=2, window_size=5, n_points=2, window_shift=True).eval()
+    x = torch.randn(2, 32, 9, 11)
+    with torch.no_grad():
+        out, _ = block(x)
+    assert out.shape == x.shape
+    assert torch.isfinite(out).all()
+
+
+def test_mot_eval_disables_exploration_eps_dense_floor():
+    """Eval routing should be exactly sparse even when exploration_eps is configured."""
+    torch.manual_seed(0)
+    block = MoTBlock(24, num_heads=3, top_k=1, window_size=4, n_points=2, exploration_eps=0.2).eval()
+    x = torch.randn(1, 24, 6, 6)
+    with torch.no_grad():
+        weights, indices = block.router(x)
+    assert weights.shape == (1, 3, 6, 6)
+    assert indices.shape == (1, 1, 6, 6)
+    assert torch.allclose(weights.sum(dim=1), torch.ones_like(weights[:, 0]))
+    assert (weights > 0).sum(dim=1).max().item() == 1
