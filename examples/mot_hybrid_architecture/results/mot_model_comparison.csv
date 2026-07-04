@@ -1,0 +1,5 @@
+key,model,mAP50-95,mAP50,latency_p50_ms,latency_p95_ms,latency_p99_ms,flops_g,params_m,final_train_total_loss,nan_detected,loss_diverged
+v10,EsMoE-N,0.12324,0.22356,34.355,35.184,37.371,8.671234,3.449963,3.70817,False,False
+v10_mot,MoT-N,0.12081,0.22248,61.971,63.168,64.935,12.269954,4.055333,3.7512,False,False
+v10_moa,MoA-N,0.11933,0.21697,58.788,59.924,63.708,10.072155,3.576587,3.74733,False,False
+v10_moa_mot,MoA+MoT-N,0.11789,0.21942,63.807,64.557,65.267,15.568124,4.056886,3.8528,False,False
