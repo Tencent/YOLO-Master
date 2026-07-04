@@ -1,0 +1,13 @@
+metric,v10_baseline,v10_moa,delta_moa_minus_baseline,notes
+params,3449963,3576587,126624,MoA adds 6 MoABlock and 3 C2fMoA modules
+train_time_min,133.17,155.43,22.26,Derived from final time column in results.csv
+metrics/precision(B),0.31388,0.32180,0.00792,MoA is slightly higher
+metrics/recall(B),0.24208,0.23843,-0.00365,MoA is slightly lower
+metrics/mAP50(B),0.22113,0.22018,-0.00095,Nearly tied
+metrics/mAP50-95(B),0.12119,0.12104,-0.00015,Nearly tied
+train/box_loss,1.54358,1.55375,0.01017,Lower is better
+train/cls_loss,1.19714,1.20763,0.01049,Lower is better
+train/dfl_loss,0.97160,0.97522,0.00362,Lower is better
+val/box_loss,1.54373,1.54962,0.00589,Lower is better
+val/cls_loss,1.19511,1.19342,-0.00169,MoA is slightly lower
+val/dfl_loss,0.95679,0.95856,0.00177,Lower is better
