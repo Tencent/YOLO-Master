@@ -39,16 +39,25 @@ from ultralytics.nn.autobackend import AutoBackend
 from ultralytics.utils import LOCAL_RANK, LOGGER, RANK, TQDM, callbacks, colorstr, emojis
 from ultralytics.utils.checks import check_imgsz
 from ultralytics.utils.ops import Profile
-from ultralytics.utils.torch_utils import attempt_compile, select_device, smart_inference_mode, unwrap_model, torch_distributed_zero_first
+from ultralytics.utils.torch_utils import (
+    attempt_compile,
+    select_device,
+    smart_inference_mode,
+    torch_distributed_zero_first,
+    unwrap_model,
+)
 
 
 def convert_ndjson_to_yolo_if_needed(data):
-    """Convert an NDJSON dataset path to YOLO YAML format when validation receives NDJSON data."""
-    if data is None or str(data).split("?", 1)[0].rsplit(".", 1)[-1].lower() != "ndjson":
+    """Convert NDJSON datasets for standalone validation; return YAML and other inputs unchanged."""
+    if str(data).rsplit(".", 1)[-1] != "ndjson":
         return data
 
-    yaml_path = asyncio.run(convert_ndjson_to_yolo(data))
-    return str(yaml_path)
+    import asyncio
+
+    from ultralytics.data.converter import convert_ndjson_to_yolo
+
+    return str(asyncio.run(convert_ndjson_to_yolo(data)))
 
 
 class BaseValidator:

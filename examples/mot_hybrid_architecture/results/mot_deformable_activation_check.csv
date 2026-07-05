@@ -1,0 +1,15 @@
+alpha,baseline,baseline_image_samples,baseline_mean,bootstrap_ci95_high,bootstrap_ci95_low,deformable_significantly_higher,irregular_image_samples,irregular_mean,irregular_scenes,mean_diff,metric,permutation_p_value_one_sided,relative_lift
+0.05,dense,128,0.666667,0.0,0.0,False,128,0.666667,irregular_occluded,0.0,top1_share,1.0,0.0
+0.05,dense_small,73,0.666667,-0.0,-0.0,False,128,0.666667,irregular_occluded,-0.0,top1_share,1.0,-0.0
+0.05,large_objects,128,0.666667,0.0,0.0,False,128,0.666667,irregular_occluded,0.0,top1_share,1.0,0.0
+0.05,small_objects,128,0.666667,0.0,0.0,False,128,0.666667,irregular_occluded,0.0,top1_share,1.0,0.0
+0.05,sparse,128,0.666667,0.0,0.0,False,128,0.666667,irregular_occluded,0.0,top1_share,1.0,0.0
+0.05,sparse_large,100,0.666667,-0.0,-0.0,False,128,0.666667,irregular_occluded,-0.0,top1_share,1.0,-0.0
+0.05,non_irregular_pooled,685,0.666667,-0.0,-0.0,False,128,0.666667,irregular_occluded,-0.0,top1_share,1.0,-0.0
+0.05,dense,128,0.339506,0.0,-2e-06,False,128,0.339505,irregular_occluded,-1e-06,mean_weight,0.887423,-2e-06
+0.05,dense_small,73,0.339506,0.0,-3e-06,False,128,0.339505,irregular_occluded,-1e-06,mean_weight,0.95181,-4e-06
+0.05,large_objects,128,0.339498,8e-06,5e-06,True,128,0.339505,irregular_occluded,7e-06,mean_weight,0.0002,2e-05
+0.05,small_objects,128,0.339502,4e-06,1e-06,True,128,0.339505,irregular_occluded,3e-06,mean_weight,0.001,8e-06
+0.05,sparse,128,0.339495,1.1e-05,8e-06,True,128,0.339505,irregular_occluded,1e-05,mean_weight,0.0002,2.9e-05
+0.05,sparse_large,100,0.339497,9e-06,6e-06,True,128,0.339505,irregular_occluded,8e-06,mean_weight,0.0002,2.2e-05
+0.05,non_irregular_pooled,685,0.339501,6e-06,3e-06,True,128,0.339505,irregular_occluded,4e-06,mean_weight,0.0002,1.3e-05
