@@ -237,10 +237,10 @@ class SharedInvertedExpertGroup(nn.Module):
 
         output = x.new_zeros(B, self.out_channels, H, W)
 
-        if torch.onnx.is_in_onnx_export():
-            # ONNX tracing cannot capture data-dependent ``torch.unique`` /
-            # dynamic-length loops. Dense path: compute every expert's
-            # projection for the full batch, gather Top-K, weighted-sum.
+        if torch.onnx.is_in_onnx_export() or torch.jit.is_tracing():
+            # Export tracing cannot capture data-dependent ``torch.unique`` /
+            # dynamic-length loops used by the sparse path. Dense path:
+            # compute every expert projection, gather Top-K, weighted-sum.
             all_projs = torch.stack(
                 [proj(features) for proj in self.expert_projections], dim=1
             )  # [B, E, out_C, H, W]
