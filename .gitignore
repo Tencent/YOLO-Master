@@ -247,6 +247,8 @@ YOLO-Master-EsMoE-N.pt
 !docs/**/*.png
 !assets/**/*.png
 !.github/assets/*.png
+!scripts/issue53/figures/
+!scripts/issue53/figures/*.png
 *_trend.png
 *_analysis.png
 *_comparison.png

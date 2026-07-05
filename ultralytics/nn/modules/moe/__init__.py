@@ -58,7 +58,10 @@ from .routers import (
 from .utils import (
     FlopsUtils,
     get_safe_groups,
-    BatchedExpertComputation
+    BatchedExpertComputation,
+    is_core_moe_block,
+    model_has_core_moe,
+    iter_core_moe_expert_params,
 )
 
 from .analysis import ExpertUsageTracker, diagnose_model, RoutingCollapseDetector
@@ -111,6 +114,9 @@ __all__ = [
     "FlopsUtils",
     "get_safe_groups",
     "BatchedExpertComputation",
+    "is_core_moe_block",
+    "model_has_core_moe",
+    "iter_core_moe_expert_params",
     "ExpertUsageTracker",
     "RoutingCollapseDetector",
     "diagnose_model",

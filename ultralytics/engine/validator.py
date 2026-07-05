@@ -25,6 +25,7 @@ Usage - formats:
 
 import json
 import time
+import asyncio
 from pathlib import Path
 
 import numpy as np
@@ -32,12 +33,32 @@ import torch
 import torch.distributed as dist
 
 from ultralytics.cfg import get_cfg, get_save_dir
-from ultralytics.data.utils import check_cls_dataset, check_det_dataset, convert_ndjson_to_yolo_if_needed
+from ultralytics.data.converter import convert_ndjson_to_yolo
+from ultralytics.data.utils import check_cls_dataset, check_det_dataset
 from ultralytics.nn.autobackend import AutoBackend
 from ultralytics.utils import LOCAL_RANK, LOGGER, RANK, TQDM, callbacks, colorstr, emojis
 from ultralytics.utils.checks import check_imgsz
 from ultralytics.utils.ops import Profile
-from ultralytics.utils.torch_utils import attempt_compile, select_device, smart_inference_mode, torch_distributed_zero_first, unwrap_model
+from ultralytics.utils.torch_utils import (
+    attempt_compile,
+    select_device,
+    smart_inference_mode,
+    torch_distributed_zero_first,
+    unwrap_model,
+)
+
+
+def convert_ndjson_to_yolo_if_needed(data):
+    """Convert NDJSON datasets for standalone validation; return YAML and other inputs unchanged."""
+    if str(data).rsplit(".", 1)[-1] != "ndjson":
+        return data
+
+    import asyncio
+
+    from ultralytics.data.converter import convert_ndjson_to_yolo
+
+    return str(asyncio.run(convert_ndjson_to_yolo(data)))
+
 
 class BaseValidator:
     """A base class for creating validators.
@@ -161,11 +182,7 @@ class BaseValidator:
                 if model.end2end:
                     model.set_head_attr(max_det=self.args.max_det, agnostic_nms=self.args.agnostic_nms)
             with torch_distributed_zero_first(LOCAL_RANK):
-                try:
-                    from ultralytics.data.utils import convert_ndjson_to_yolo_if_needed
-                    self.args.data = convert_ndjson_to_yolo_if_needed(self.args.data)
-                except ImportError:
-                    pass  # 兼容旧版本，无需转换
+                self.args.data = convert_ndjson_to_yolo_if_needed(self.args.data)
             model = AutoBackend(
                 model=model or self.args.model,
                 device=select_device(self.args.device) if RANK == -1 else torch.device("cuda", RANK),

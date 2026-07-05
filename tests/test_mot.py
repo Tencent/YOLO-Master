@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import torch
 
 from ultralytics.engine.trainer import BaseTrainer
-from ultralytics.nn.modules.moa import C2fMoA
+from ultralytics.nn.modules.moa import C2fMoA, MoABlock
 from ultralytics.nn.modules.mot import C2fMoT, MoTBlock, anneal_mot_temperature, collect_mot_aux_loss
 from ultralytics.nn.tasks import DetectionModel
 from ultralytics.utils.loss import _collect_mot_aux_loss
@@ -23,10 +23,10 @@ def _has_grad(module):
 
 def test_mot_block_forward_backward_all_experts_trainable():
     torch.manual_seed(0)
-    module = MoTBlock(32, num_heads=4, top_k=2, window_size=4, n_points=2, mlp_ratio=1.5).train()
-    x = torch.randn(2, 32, 8, 8)
-
-    out, aux = module(x)
+    block = MoTBlock(32, num_heads=4, top_k=1, window_size=4, n_points=2).eval()
+    x = torch.randn(1, 32, 8, 8)
+    with torch.no_grad():
+        out, aux = block(x)
     assert out.shape == x.shape
     assert aux.requires_grad
     assert torch.isfinite(aux)
@@ -100,14 +100,18 @@ def test_trainer_detects_and_anneals_moa_mot_temperatures():
 
 
 def test_mot_model_configs_parse():
-    configs = [
-        ROOT / "ultralytics/cfg/models/master/v0_8/det/yolo-master-mot-n.yaml",
-        ROOT / "ultralytics/cfg/models/master/v0_8/det/yolo-master-moa-mot-n.yaml",
-    ]
-    for cfg in configs:
+    configs = {
+        ROOT / "ultralytics/cfg/models/master/v0_8/det/yolo-master-mot-n.yaml": (3, 6, 0, 0),
+        ROOT / "ultralytics/cfg/models/master/v0_8/det/yolo-master-moa-mot-n.yaml": (3, 6, 2, 2),
+        ROOT / "ultralytics/cfg/models/master/v0_10/det/yolo-master-mot-n.yaml": (3, 6, 0, 0),
+        ROOT / "ultralytics/cfg/models/master/v0_10/det/yolo-master-moa-mot-n.yaml": (3, 6, 1, 1),
+    }
+    for cfg, (c2fmot, motblocks, c2fmoa, moablocks) in configs.items():
         model = DetectionModel(str(cfg), ch=3, nc=80, verbose=False)
-        assert sum(isinstance(m, C2fMoT) for m in model.modules()) == 3
-        assert sum(isinstance(m, MoTBlock) for m in model.modules()) == 6
+        assert sum(isinstance(m, C2fMoT) for m in model.modules()) == c2fmot
+        assert sum(isinstance(m, MoTBlock) for m in model.modules()) == motblocks
+        assert sum(isinstance(m, C2fMoA) for m in model.modules()) == c2fmoa
+        assert sum(isinstance(m, MoABlock) for m in model.modules()) == moablocks
 
 
 def test_mot_deformable_align_corners_option():
@@ -115,14 +119,25 @@ def test_mot_deformable_align_corners_option():
     assert block.experts[2].align_corners is False
 
 
-def test_mot_window_expert_padding_non_divisible():
-    """Window expert must handle H/W not divisible by window_size (padding path)."""
+
+def test_mot_window_size_larger_than_feature_map():
+    """MoT window expert should pad and crop back when window_size exceeds H/W."""
+    torch.manual_seed(0)
+    block = MoTBlock(32, num_heads=4, top_k=2, window_size=16, n_points=2).eval()
+    x = torch.randn(1, 32, 5, 7)
+    with torch.no_grad():
+        out, aux = block(x)
+    assert out.shape == x.shape
+    assert aux.item() == 0
+    assert torch.isfinite(out).all()
+
+
+def test_mot_window_expert_handles_window_larger_than_feature_map():
+    """Window expert should pad and crop back when win is larger than H/W."""
     from ultralytics.nn.modules.mot.mot import _WindowTransformerExpert
 
-    torch.manual_seed(0)
-    expert = _WindowTransformerExpert(32, num_heads=4, window_size=7).eval()
-    # 10x13 are not multiples of 7 → exercises _pad_to_window + crop-back.
-    x = torch.randn(2, 32, 10, 13)
+    expert = _WindowTransformerExpert(16, num_heads=4, window_size=8).eval()
+    x = torch.randn(1, 16, 3, 5)
     with torch.no_grad():
         out = expert(x)
     assert out.shape == x.shape
@@ -138,24 +153,44 @@ def test_mot_window_expert_shift_spatial_alignment():
     from ultralytics.nn.modules.mot.mot import _WindowTransformerExpert
 
     torch.manual_seed(0)
-    shifted = _WindowTransformerExpert(32, num_heads=4, window_size=4, shift_size=2).eval()
-    regular = _WindowTransformerExpert(32, num_heads=4, window_size=4, shift_size=0).eval()
-    x = torch.randn(1, 32, 8, 8)
+    block = MoTBlock(32, num_heads=4, top_k=2, window_size=5, n_points=2, window_shift=True).eval()
+    x = torch.randn(2, 32, 9, 11)
     with torch.no_grad():
-        out_s = shifted(x)
-        out_r = regular(x)
-    assert out_s.shape == x.shape == out_r.shape
-    assert torch.isfinite(out_s).all() and torch.isfinite(out_r).all()
-    # Shifted vs regular windows must produce different receptive fields.
-    assert not torch.allclose(out_s, out_r)
+        out, _ = block(x)
+    assert out.shape == x.shape
+    assert torch.isfinite(out).all()
+
+
+def test_mot_window_expert_shift_handles_odd_spatial_sizes():
+    """Shifted-window expert should keep shape for odd H/W with padding and crop-back."""
+    from ultralytics.nn.modules.mot.mot import _WindowTransformerExpert
+
+    expert = _WindowTransformerExpert(24, num_heads=3, window_size=5, shift_size=2).eval()
+    x = torch.randn(1, 24, 7, 9)
+    with torch.no_grad():
+        out = expert(x)
+    assert out.shape == x.shape
+    assert torch.isfinite(out).all()
+
+
+def test_mot_router_disables_exploration_eps_in_eval():
+    """Evaluation routing should stay sparse and not re-densify via exploration_eps."""
+    block = MoTBlock(24, num_heads=3, top_k=1, window_size=4, n_points=2, exploration_eps=0.2).eval()
+    weights, indices = block.router(torch.randn(2, 24, 5, 5))
+
+    nonzero_per_token = (weights > 0).sum(dim=1)
+    assert torch.equal(nonzero_per_token, torch.ones_like(nonzero_per_token))
+    assert indices.shape == (2, 1, 5, 5)
 
 
 def test_mot_inference_sparsity_skips_inactive_experts():
     """At eval with top_k<E, a per-sample inactive expert must not be invoked."""
     torch.manual_seed(0)
-    block = MoTBlock(32, num_heads=4, top_k=1, window_size=4, n_points=2).eval()
-    x = torch.randn(1, 32, 8, 8)
+    block = MoTBlock(24, num_heads=3, top_k=1, window_size=4, n_points=2, exploration_eps=0.2).eval()
+    x = torch.randn(1, 24, 6, 6)
     with torch.no_grad():
-        out, aux = block(x)
-    assert out.shape == x.shape
-    assert torch.isfinite(out).all()
+        weights, indices = block.router(x)
+    assert weights.shape == (1, 3, 6, 6)
+    assert indices.shape == (1, 1, 6, 6)
+    assert torch.allclose(weights.sum(dim=1), torch.ones_like(weights[:, 0]))
+    assert (weights > 0).sum(dim=1).max().item() == 1

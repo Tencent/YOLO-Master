@@ -204,18 +204,21 @@ class SharedInvertedExpertGroup(nn.Module):
         hidden_dim = max(1, int(in_channels * expand_ratio))
         padding = kernel_size // 2
 
+        def _gn(channels: int) -> nn.GroupNorm:
+            return nn.GroupNorm(get_safe_groups(channels, 8), channels)
+
         self.shared_feature = nn.Sequential(
             nn.Conv2d(in_channels, hidden_dim, 1, bias=False),
-            nn.BatchNorm2d(hidden_dim),
+            _gn(hidden_dim),
             nn.SiLU(inplace=True),
             nn.Conv2d(hidden_dim, hidden_dim, kernel_size, padding=padding, groups=hidden_dim, bias=False),
-            nn.BatchNorm2d(hidden_dim),
+            _gn(hidden_dim),
             nn.SiLU(inplace=True),
         )
         self.expert_projections = nn.ModuleList(
             nn.Sequential(
                 nn.Conv2d(hidden_dim, out_channels, 1, bias=False),
-                nn.BatchNorm2d(out_channels),
+                _gn(out_channels),
             )
             for _ in range(num_experts)
         )
@@ -234,10 +237,10 @@ class SharedInvertedExpertGroup(nn.Module):
 
         output = x.new_zeros(B, self.out_channels, H, W)
 
-        if torch.onnx.is_in_onnx_export():
-            # ONNX tracing cannot capture data-dependent ``torch.unique`` /
-            # dynamic-length loops. Dense path: compute every expert's
-            # projection for the full batch, gather Top-K, weighted-sum.
+        if torch.onnx.is_in_onnx_export() or torch.jit.is_tracing():
+            # Export tracing cannot capture data-dependent ``torch.unique`` /
+            # dynamic-length loops used by the sparse path. Dense path:
+            # compute every expert projection, gather Top-K, weighted-sum.
             all_projs = torch.stack(
                 [proj(features) for proj in self.expert_projections], dim=1
             )  # [B, E, out_C, H, W]

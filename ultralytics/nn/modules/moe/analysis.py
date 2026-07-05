@@ -5,7 +5,6 @@ import argparse
 import numpy as np
 from collections import defaultdict
 import matplotlib.pyplot as plt
-import seaborn as sns
 import os
 from typing import Dict, Set, List, Tuple
 from dataclasses import dataclass
@@ -344,6 +343,8 @@ class ExpertUsageTracker:
 
         # 1. Heatmap
         try:
+            import seaborn as sns
+
             plt.figure(figsize=(12, max(4, len(layers) * 0.8 + 2)))
             sns.heatmap(
                 matrix,

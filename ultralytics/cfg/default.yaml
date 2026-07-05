@@ -251,6 +251,14 @@ moe_dynamic_gini_beta: 0.8 # (float) EMA momentum for expert-usage Gini
 moe_dynamic_balance_min: 0.5 # (float) Min dynamic balance-loss coefficient
 moe_dynamic_balance_max: 2.0 # (float) Max dynamic balance-loss coefficient
 
+# MoT / MoA router settings
+mot_balance_loss: 0.01 # (float) GShard balance loss coefficient for MoT blocks
+mot_router_z_loss: 0.01 # (float) Router z-loss coefficient for MoT blocks
+mot_sparse_train: False # (bool) Sparse expert dispatch during MoT training (faster; default dense for exploration)
+moa_local_window_size: 7 # (int) Window size for MoA local attention head
+moa_mot_temperature_factor: 0.97 # (float) Per-epoch router temperature multiplier for MoA/MoT
+moa_mot_min_temperature: 0.3 # (float) Minimum router temperature after annealing
+
 # MoLoRA (Mixture-of-LoRA) settings -----------------------------------------------------------------------------------------
 molora_num_experts: 0 # (int) Number of experts in MoLoRA layers (0 to disable)
 molora_top_k: 2 # (int) Number of experts to activate per forward

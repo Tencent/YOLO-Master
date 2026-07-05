@@ -48,20 +48,6 @@ def img2label_paths(img_paths: list[str]) -> list[str]:
     return [sb.join(x.rsplit(sa, 1)).rsplit(".", 1)[0] + ".txt" for x in img_paths]
 
 
-def convert_ndjson_to_yolo_if_needed(data: str | Path) -> str:
-    """Convert an NDJSON dataset path/URL to YOLO YAML when needed, otherwise return the original value."""
-    data_str = str(data)
-    suffix_source = clean_url(data_str).split("?", 1)[0].lower()
-    if not suffix_source.endswith(".ndjson"):
-        return data_str
-
-    import asyncio
-
-    from ultralytics.data.converter import convert_ndjson_to_yolo
-
-    return str(asyncio.run(convert_ndjson_to_yolo(data_str)))
-
-
 def check_file_speeds(
     files: list[str], threshold_ms: float = 10, threshold_mb: float = 50, max_files: int = 5, prefix: str = ""
 ):
