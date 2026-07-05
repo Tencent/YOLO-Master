@@ -598,9 +598,14 @@ class ES_MOE(nn.Module):
             )
 
         # Dense forward only during training (gradients to all experts) or when
-        # exporting to ONNX (sparse control-flow breaks tracing). For normal
+        # exporting/tracing (sparse control-flow breaks exporters). For normal
         # eval/inference use the Top-K sparse path to reclaim the MoE speedup.
-        use_dense = self.training or torch.onnx.is_in_onnx_export() or not getattr(self, "use_sparse_inference", True)
+        use_dense = (
+            self.training
+            or torch.onnx.is_in_onnx_export()
+            or torch.jit.is_tracing()
+            or not getattr(self, "use_sparse_inference", True)
+        )
         if use_dense:
             final_output = self._dense_forward(x, routing_weights)
         else:
