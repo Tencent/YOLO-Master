@@ -274,6 +274,28 @@ model.save_lora_only("yolo11s_lora_r16")
 
 ---
 
+#### 🚀 Downstream Scenario Low-Rank Adaptation (LoRA) Matrix Test Report
+
+To verify the performance and resource consumption of the `YOLO-Master LoRA` framework across different downstream tasks, we conducted a cross-Rank matrix benchmark on the **RTX 5070 Ti** hardware platform using two typical scenarios (lightweight vs. extreme complexity).
+
+| Evaluation Scenario (Dataset) | LoRA Rank | Trainable Params Ratio * | Total Training Time (Minutes) | Peak VRAM | mAP50 | mAP50-95 |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Brain Tumor** *(Sparse, Small Dataset)* | 4 | ~0.45% | 6.80 min | **1.01 GB** | **0.5232** | **0.3863** |
+| **Brain Tumor** *(Sparse, Small Dataset)* | 8 | ~0.89% | 6.58 min | 1.03 GB | 0.5133 | 0.3692 |
+| **Brain Tumor** *(Sparse, Small Dataset)* | 16 | ~1.76% | 6.89 min | 1.08 GB | 0.4989 | 0.3744 |
+| 📊 **VisDrone** *(Dense, Extreme Scenario)* | 4 | ~0.45% | 14.45 min | 7.92 GB | 0.1312 | 0.0679 |
+| 📊 **VisDrone** *(Dense, Extreme Scenario)* | 8 | ~0.89% | 14.06 min | 7.95 GB | 0.1476 | 0.0781 |
+| 📊 **VisDrone** *(Dense, Extreme Scenario)* | 16 | ~1.76% | 15.45 min | **8.01 GB** | **0.1646** | **0.0872** |
+
+> \* *Note: The trainable parameter ratio is a theoretical estimate relative to the backbone's total parameters. Since Ultralytics automatically resets the gradient graph and triggers weight fusion after the training lifecycle ends, the runtime dynamic statistics remain silent.*
+
+** Selection Suggestions & Pitfalls to Avoid:**
+
+1. **Lightweight/Simple Scenarios (e.g., Brain Tumor)**: **Rank = 4** is recommended. For datasets with single-feature profiles, lower Ranks provide better regularization and effectively mitigate overfitting. 
+   *  *Pitfall:* Medical images (MRI/CT) are physically single-channel (grayscale), whereas YOLO defaults to 3-channel (RGB) inputs. Please ensure channel alignment in your data pipeline or use customized `ch=1` convolution configurations.
+2. **Dense/Complex Scenarios (e.g., VisDrone)**: **Rank >= 16** is recommended. Complex backgrounds and high-density tiny objects require larger parameter capacities for representation. Increasing the Rank significantly improves mAP50 by **+25.4%** (with <0.1 GB VRAM overhead).
+   *  *Pitfall:* Aerial imagery suffers from extreme scale variations. It is strictly advised to enable the built-in **Sparse SAHI (Sparse Inference)** or set `rect: true` during training. Furthermore, include both the Backbone's dimensionality reduction layers and MoE Experts' MLPs in `lora_target_modules` to provide sufficient degrees of freedom for spatial local features.
+
 ### 3️⃣ Sparse SAHI Mode
 
 **Sparse Slicing Aided Hyper-Inference** — a revolutionary optimization for ultra-large image (4K/8K) detection, achieving **3-5x speedup** by intelligently skipping blank regions.
