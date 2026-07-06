@@ -250,6 +250,16 @@ output/
 
 # Plan documents
 plan.md
+
+# Scripts temporary/output files (not for repo)
+scripts/*_report.txt
+scripts/*_output.txt
+scripts/*_validation.txt
+scripts/*_calibration.json
+scripts/issue53/figures/
+scripts/issue53/*.md
+scripts/issue53/*.csv
+scripts/peft_validation/*.md
 *.pt
 *.pth
 YOLO-Master-EsMoE-N.pt
