@@ -75,6 +75,18 @@ class TaskAlignedAssigner(nn.Module):
                 torch.zeros_like(pd_scores[..., 0]),
             )
 
+        # The PyTorch MPS backend has a known correctness bug in boolean-mask
+        # indexing (used by ``get_box_metrics``): it intermittently materializes
+        # the wrong number of rows and crashes with a size-mismatch RuntimeError
+        # (e.g. "size of tensor a (52567) must match tensor b (45305)"), sometimes
+        # followed by an internal "index ... out of bounds" MPS kernel fault.
+        # The assigner is grad-free and cheap, so run it on CPU when inputs are on
+        # MPS and move the results back. This is a no-op for CUDA/CPU devices.
+        if device.type == "mps":
+            cpu_tensors = [t.cpu() for t in (pd_scores, pd_bboxes, anc_points, gt_labels, gt_bboxes, mask_gt)]
+            result = self._forward(*cpu_tensors)
+            return tuple(t.to(device) for t in result)
+
         try:
             return self._forward(pd_scores, pd_bboxes, anc_points, gt_labels, gt_bboxes, mask_gt)
         except torch.cuda.OutOfMemoryError:

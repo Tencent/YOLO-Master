@@ -116,6 +116,16 @@ def update_args_with_lora_runtime_metadata(args, model) -> None:
         args.lora_safety_overrides = metadata["safety_overrides"]
     if metadata.get("target_audit"):
         args.lora_target_audit = metadata["target_audit"]
+    if metadata.get("planner_decision"):
+        args.planner_decision = metadata["planner_decision"]["status"]
+        args.planner_predicted_delta = metadata["planner_decision"]["predicted_delta"]
+        args.planner_recommended_variant = metadata["planner_decision"]["recommended_variant"]
+        args.planner_recommended_rank = metadata["planner_decision"]["recommended_rank"]
+        args.planner_refusal_reason = metadata["planner_decision"]["refusal_reason"]
+        if metadata["planner_decision"]["status"] == "ADAPT":
+            args.lora_planner_adapted = True
+        elif metadata["planner_decision"]["status"] == "REFUSE":
+            args.lora_planner_refused = True
 
 
 class BaseTrainer:
@@ -365,6 +375,7 @@ class BaseTrainer:
 
         self.model = apply_lora(self.model, self.args)
         update_args_with_lora_runtime_metadata(self.args, self.model)
+
         if RANK in {-1, 0}:
             save_trainer_args_yaml(self.save_dir, self.args)
 
