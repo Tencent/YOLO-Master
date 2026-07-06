@@ -23,13 +23,13 @@ project: # (str, optional) project name for results root
 name: # (str, optional) experiment name; results in 'project/name'
 exist_ok: False # (bool) overwrite existing 'project/name' if True
 pretrained: True # (bool | str) use pretrained weights (bool) or load weights from path (str)
-optimizer: auto # (str) optimizer: SGD, Adam, Adamax, AdamW, NAdam, RAdam, RMSProp, or auto
+optimizer: AdamW # (str) optimizer: SGD, Adam, Adamax, AdamW, NAdam, RAdam, RMSProp, or auto. PAPER DEFAULT: AdamW is explicitly used in all reported experiments; "auto" silently selects SGD for >10k iterations.
 verbose: True # (bool) print verbose logs during training/val
 seed: 0 # (int) random seed for reproducibility
 deterministic: True # (bool) enable deterministic ops; reproducible but may be slower
 single_cls: False # (bool) treat all classes as a single class
 rect: False # (bool) rectangular batches for train; rectangular batching for val when mode='val'
-cos_lr: False # (bool) cosine learning rate scheduler
+cos_lr: True # (bool) cosine learning rate scheduler. PAPER DEFAULT: cosine schedule is used in all experiments.
 close_mosaic: 10 # (int) disable mosaic augmentation for final N epochs (0 to keep enabled)
 resume: False # (bool) resume training from last checkpoint in the run dir
 amp: True # (bool) Automatic Mixed Precision (AMP) training; True runs AMP capability check
@@ -142,12 +142,13 @@ cfg: # (str, optional) path to a config.yaml that overrides defaults
 tracker: botsort.yaml # (str) tracker config file: botsort.yaml or bytetrack.yaml
 
 # LoRA settings ---------------------------------------------------------------------------------------------------------
-lora_r: 0 # (int) LoRA rank (0 to disable)
+lora_r: 16 # (int) LoRA rank (0 to disable). PAPER DEFAULT: r=16 enables LoRA by default for all MoLoRA / LoRA experiments. Set to 0 for backward-compatible (no-LoRA) baseline.
 lora_alpha: 32 # (int) LoRA alpha (recommended: 2 * r)
 lora_dropout: 0.05 # (float) LoRA dropout
 lora_bias: "none" # (str) LoRA bias type: "none", "all", "lora_only"
 lora_backend: "auto" # (str) LoRA backend: "auto", "peft", "fallback"
 lora_variant: "lora" # (str) Adapter variant: "lora", "loha", "dora"
+lora_planner_enabled: False # (bool) Enable architecture-conditioned PEFT Planner for automatic variant/rank selection (opt-in, backward compatible)
 lora_include_head: False # (bool) Include YOLO detection head layers in LoRA targeting
 lora_freeze_bn: False # (bool) Freeze BatchNorm layers during LoRA training
 lora_target_modules: # (list[str], optional) LoRA target modules
@@ -185,7 +186,7 @@ lora_beta1: 0.85 # (float) AdaLoRA EMA beta1 for sensitivity tracking
 lora_beta2: 0.85 # (float) AdaLoRA EMA beta2 for uncertainty tracking
 lora_orth_reg_weight: 0.5 # (float) AdaLoRA orthogonal regularization weight
 lora_total_step: 0 # (int) AdaLoRA total training steps; 0 lets trainer auto-resolve from iterations
-lora_alpha_warmup: 0 # (int) Epochs to linearly warmup LoRA alpha (0 to disable)
+lora_alpha_warmup: 3 # (int) Epochs to linearly warmup LoRA alpha (0 to disable). PAPER DEFAULT: 3 epochs.
 
 # OFT / BOFT / HRA specific (only used when lora_type=oft, boft, or hra)
 lora_oft_block_size: 0 # (int) OFT block size (>0 overrides rank r)
@@ -198,9 +199,9 @@ lora_boft_n_butterfly_factor: 2 # (int) BOFT butterfly factor (paper default)
 lora_hra_apply_gs: False # (bool) HRA: apply Gram-Schmidt orthogonalization
 
 # LoRA Training Strategies (advanced)
-lora_layer_decay: 0.0 # (float) Layer-wise LR decay rate (0=disabled, 0.85~0.95 typical)
-lora_alpha_warmup: 0 # (int) Alpha cosine warmup epochs (0=disabled)
-lora_ortho_weight: 0.0 # (float) Orthogonal regularization weight (0=disabled, 1e-5~1e-3 typical)
+lora_layer_decay: 0.85 # (float) Layer-wise LR decay rate (0=disabled, 0.85~0.95 typical). PAPER DEFAULT: 0.85 — layer-decay is a core paper contribution and strongest single addition in ablations.
+lora_alpha_warmup: 3 # (int) Alpha cosine warmup epochs (0=disabled). PAPER DEFAULT: 3 epochs of alpha warmup.
+lora_ortho_weight: 0.5 # (float) Orthogonal regularization weight (0=disabled, 1e-5~1e-3 typical). PAPER DEFAULT: 0.5 — calibrated to paper; may need stability testing on new datasets. Previous default was 0.0 (disabled).
 lora_ortho_frequency: 10 # (int) Compute orthogonal loss every N batches (1=every batch, 10=every 10 batches)
 lora_dropout_end: 0.15 # (float) Final dropout for dynamic schedule (must be >= lora_dropout)
 lora_dropout_start_ratio: 0.3 # (float) When to start increasing dropout (fraction of total epochs)
