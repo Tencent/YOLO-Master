@@ -134,6 +134,9 @@ class LoRAConfig:
     few_shot_layerwise_rank: bool = False  # Enable per-layer adaptive rank
     few_shot_hook_cache: bool = True  # Cache hierarchical distillation hooks across batches
 
+    # Planner integration
+    planner_enabled: bool = False  # Enable architecture-conditioned PEFT Planner
+
     def __post_init__(self):
         """Performs parameter validation and type standardization."""
         # Standardize list inputs
@@ -272,6 +275,8 @@ class LoRAConfig:
             "few_shot_response_distill_weight": "lora_few_shot_response_distill_weight",
             "few_shot_layerwise_rank": "lora_few_shot_layerwise_rank",
             "few_shot_hook_cache": "lora_few_shot_hook_cache",
+            # Planner integration
+            "planner_enabled": "lora_planner_enabled",
         }
 
         dataclass_fields = set(cls.__dataclass_fields__)
@@ -363,6 +368,7 @@ class LoRAConfigBuilder:
         kernels: Optional[List[int]] = None,
         skip_stem: bool = False,
         min_channels: int = 0,
+        planner_enabled: bool = False,
         **kwargs,
     ) -> List[str]:
         """Intelligently detect target layers for LoRA injection.
@@ -396,12 +402,46 @@ class LoRAConfigBuilder:
         if apply_idx_filter:
             LOGGER.debug(f"[LoRA] Layer filter active: {start_idx} - {end_idx}")
 
+        # Planner delegation: architecture-conditioned target detection.
+        # When enabled, the PEFTPlanner provides a hint set that pre-filters the
+        # scan so architecture-specific rules (e.g., RT-DETR refusal, YOLO12 safe
+        # attention) are centralized in the planner rather than duplicated here.
+        planner_hint_set: Optional[Set[str]] = None
+        if planner_enabled:
+            try:
+                from .planner import PEFTPlanner
+                planner = PEFTPlanner()
+                # Reconstruct a minimal LoRAConfig from kwargs for the planner
+                config_fields = set(LoRAConfig.__dataclass_fields__)
+                planner_kwargs = {k: v for k, v in kwargs.items() if k in config_fields}
+                planner_config = LoRAConfig(**planner_kwargs) if planner_kwargs else LoRAConfig()
+                decision = planner.plan(model, planner_config)
+                if hasattr(decision, "target_modules_hint") and decision.target_modules_hint:
+                    planner_hint_set = set(decision.target_modules_hint)
+                    LOGGER.info(
+                        f"[Planner] Architecture-conditioned hint: {len(planner_hint_set)} targets "
+                        f"(status={getattr(decision, 'status', 'UNKNOWN')})"
+                    )
+            except ImportError:
+                LOGGER.warning(
+                    "[Planner] PEFTPlanner module not found; falling back to standard auto-detection."
+                )
+            except Exception as exc:
+                LOGGER.warning(
+                    f"[Planner] PEFTPlanner failed ({type(exc).__name__}: {exc}); "
+                    "falling back to standard auto-detection."
+                )
+
         # Iterate through all sub-modules
         for name, module in model.named_modules():
             if not name: continue 
             
             # 0. Explicit Exclusion
             if name in exclude_set:
+                continue
+
+            # 0.5 Planner hint filter
+            if planner_hint_set is not None and name not in planner_hint_set:
                 continue
 
             # 1. Index Filtering (Valid only if module name starts with a digit)

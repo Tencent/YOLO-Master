@@ -627,6 +627,50 @@ def apply_lora(
         LOGGER.info("[LoRA] Disabled (r=0).")
         return model
 
+    # ------------------------------------------------------------------
+    # PEFT Planner — architecture-conditioned placement decision (opt-in)
+    # ------------------------------------------------------------------
+    planner_decision = None
+    if getattr(config, "planner_enabled", False) or getattr(config, "lora_planner_enabled", False):
+        from .planner import PEFTPlanner, RefusalError, is_planner_enabled
+
+        if is_planner_enabled(config):
+            planner = PEFTPlanner()
+            try:
+                decision = planner.plan(model.model if hasattr(model, "model") else model, config)
+            except RefusalError as exc:
+                LOGGER.warning(f"[Planner] RefusalError: {exc}")
+                return model  # graceful fallback to Full-SFT
+
+            planner_decision = decision
+
+            if decision.status == "REFUSE":
+                LOGGER.warning(
+                    f"[Planner] REFUSE — {decision.refusal_reason} "
+                    f"(predicted ΔmAP={decision.predicted_delta:.3f}). "
+                    f"Falling back to full-model fine-tuning."
+                )
+                return model
+
+            if decision.status == "ADAPT":
+                LOGGER.info("[Planner] ADAPT — applying recommended overrides.")
+                if decision.recommended_variant:
+                    config.peft_type = decision.recommended_variant
+                    LOGGER.info(f"[Planner]   variant → {decision.recommended_variant}")
+                if decision.recommended_rank is not None:
+                    config.r = decision.recommended_rank
+                    LOGGER.info(f"[Planner]   rank → {decision.recommended_rank}")
+                for k, v in decision.safety_overrides.items():
+                    if hasattr(config, k):
+                        old = getattr(config, k)
+                        setattr(config, k, v)
+                        LOGGER.info(f"[Planner]   {k}: {old} → {v}")
+                    else:
+                        LOGGER.debug(f"[Planner]   skipping unknown override key '{k}'")
+
+            # ACCEPT — continue normally
+            LOGGER.info(f"[Planner] ACCEPT (predicted ΔmAP={decision.predicted_delta:.3f}).")
+
     variant = _effective_peft_variant(config)
     if variant == "loha" and str(config.backend).lower() == "fallback":
         raise ValueError("Fallback variants other than LoRA remain experimental.")
@@ -920,6 +964,7 @@ def apply_lora(
             target_audit=target_audit,
             safety_profile="rtdetr_lora" if rtdetr_safety_changes else None,
             safety_overrides=rtdetr_safety_changes or None,
+            planner_decision=planner_decision.to_dict() if planner_decision else None,
         )
 
         _validate_lora_runtime_model(model, expected_targets=final_targets, context="PEFT apply_lora")
@@ -1157,6 +1202,14 @@ def get_lora_param_groups(
 
 
 from .io import load_lora_adapters, merge_lora_weights, save_lora_adapters
+from .planner import (
+    ArchitectureFingerprint,
+    PEFTPlanner,
+    PEFTVariantProfile,
+    PlacementDecision,
+    RefusalError,
+    is_planner_enabled,
+)
 from .training import LoraTrainingStrategy, get_lora_training_stats, suggest_lora_config_for_dataset
 
 __all__ = [
@@ -1189,4 +1242,10 @@ __all__ = [
     "_validate_lora_runtime_model",
     "_merge_manual_lora_conv",
     "_unfreeze_detection_head",
+    "ArchitectureFingerprint",
+    "PEFTPlanner",
+    "PEFTVariantProfile",
+    "PlacementDecision",
+    "RefusalError",
+    "is_planner_enabled",
 ]
