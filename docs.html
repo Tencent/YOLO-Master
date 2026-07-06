@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Documentation — YOLO-Master</title>
+  <meta name="description" content="Comprehensive guides, API references, and tutorials for YOLO-Master.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="stylesheet" href="./assets/css/style.css">
+</head>
+<body>
+
+<!-- ==================== App Bar ==================== -->
+<header class="app-bar" role="banner">
+  <div class="app-bar-inner">
+    <a href="./index.html" class="app-bar-brand">
+      <span class="app-bar-brand-icon"><i class="fas fa-bolt"></i></span>
+      YOLO-Master
+    </a>
+    <nav class="app-bar-links" aria-label="Main navigation">
+      <a href="./index.html"><i class="fas fa-home"></i> Home</a>
+      <a href="./wiki.html"><i class="fas fa-book"></i> Wiki</a>
+      <a href="./docs.html" class="active"><i class="fas fa-file-lines"></i> Docs</a>
+      <a href="./model-zoo.html"><i class="fas fa-cubes"></i> Model Zoo</a>
+      <a href="./demo.html"><i class="fas fa-play"></i> Demo</a>
+    </nav>
+    <div class="app-bar-search">
+      <i class="fas fa-search"></i> Search
+    </div>
+    <div class="app-bar-meta">
+      <a href="https://github.com/Tencent/YOLO-Master" target="_blank" rel="noopener noreferrer">
+        <i class="fab fa-github"></i> 4.6k
+      </a>
+      <span><i class="fas fa-tag"></i> v0.26</span>
+    </div>
+    <button class="app-bar-toggle" aria-label="Toggle menu"><i class="fas fa-bars"></i></button>
+  </div>
+</header>
+
+<!-- ==================== Three-Column Layout ==================== -->
+<div class="doc-layout">
+
+  <!-- Left Sidebar -->
+  <aside class="doc-sidebar">
+    <ul class="doc-sidebar-nav">
+      <li class="nav-section">Documentation</li>
+      <li><a href="#overview" class="active">Overview</a></li>
+      <li><a href="#quick-start">Quick Start</a></li>
+      <li><a href="#api-reference">API Reference</a></li>
+      <li><a href="#tasks">Tasks</a></li>
+      <li><a href="#models">Models</a></li>
+      <li><a href="#modes">Modes</a></li>
+      <li><a href="#guides">Guides</a></li>
+      <li><a href="#integrations">Integrations</a></li>
+      <li><a href="#contributing">Contributing</a></li>
+    </ul>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="doc-content">
+
+    <h1>Documentation</h1>
+
+    <p>
+      Welcome to the YOLO-Master documentation. Here you will find comprehensive guides,
+      API references, and step-by-step tutorials to help you get the most out of the
+      YOLO-Master framework — from quick installation to advanced deployment scenarios.
+    </p>
+
+    <!-- Documentation Categories -->
+    <h2 id="doc-categories">Documentation Categories</h2>
+    <div class="features-grid">
+
+      <!-- Quick Start -->
+      <article class="feature-card">
+        <div class="feature-icon green"><i class="fas fa-rocket"></i></div>
+        <h3>Quick Start</h3>
+        <p>Get up and running in minutes</p>
+        <ul>
+          <li><a href="#">Installation</a></li>
+          <li><a href="#">Quick Start Guide</a></li>
+          <li><a href="#">Docker Setup</a></li>
+          <li><a href="#">Colab Notebook</a></li>
+        </ul>
+      </article>
+
+      <!-- Tasks -->
+      <article class="feature-card">
+        <div class="feature-icon blue"><i class="fas fa-tasks"></i></div>
+        <h3>Tasks</h3>
+        <p>Supported computer vision tasks</p>
+        <ul>
+          <li><a href="#">Object Detection</a></li>
+          <li><a href="#">Instance Segmentation</a></li>
+          <li><a href="#">Pose Estimation</a></li>
+          <li><a href="#">OBB Detection</a></li>
+          <li><a href="#">Classification</a></li>
+        </ul>
+      </article>
+
+      <!-- Models -->
+      <article class="feature-card">
+        <div class="feature-icon purple"><i class="fas fa-cube"></i></div>
+        <h3>Models</h3>
+        <p>Model architectures and configurations</p>
+        <ul>
+          <li><a href="#">YOLO-Master Series</a></li>
+          <li><a href="#">YOLOv8/v9/v10/v11/v12</a></li>
+          <li><a href="#">RT-DETR</a></li>
+          <li><a href="#">SAM</a></li>
+          <li><a href="#">YOLO-World</a></li>
+        </ul>
+      </article>
+
+      <!-- Modes -->
+      <article class="feature-card">
+        <div class="feature-icon orange"><i class="fas fa-sliders-h"></i></div>
+        <h3>Modes</h3>
+        <p>Training, validation, inference and export</p>
+        <ul>
+          <li><a href="#">Train</a></li>
+          <li><a href="#">Val</a></li>
+          <li><a href="#">Predict</a></li>
+          <li><a href="#">Export</a></li>
+          <li><a href="#">Benchmark</a></li>
+          <li><a href="#">Track</a></li>
+        </ul>
+      </article>
+
+      <!-- Guides -->
+      <article class="feature-card">
+        <div class="feature-icon cyan"><i class="fas fa-book"></i></div>
+        <h3>Guides</h3>
+        <p>Step-by-step tutorials and best practices</p>
+        <ul>
+          <li><a href="#">Hyperparameter Tuning</a></li>
+          <li><a href="#">K-Fold CV</a></li>
+          <li><a href="#">Model Deployment</a></li>
+          <li><a href="#">Streamlit Inference</a></li>
+          <li><a href="#">SAHI Tiled Inference</a></li>
+        </ul>
+      </article>
+
+      <!-- Integrations -->
+      <article class="feature-card">
+        <div class="feature-icon pink"><i class="fas fa-plug"></i></div>
+        <h3>Integrations</h3>
+        <p>Export and deployment integrations</p>
+        <ul>
+          <li><a href="#">TensorRT</a></li>
+          <li><a href="#">ONNX</a></li>
+          <li><a href="#">OpenVINO</a></li>
+          <li><a href="#">CoreML</a></li>
+          <li><a href="#">TFLite</a></li>
+          <li><a href="#">Neural Magic</a></li>
+          <li><a href="#">Weights &amp; Biases</a></li>
+        </ul>
+      </article>
+
+    </div>
+
+    <!-- API Reference -->
+    <h2 id="api-reference">API Reference</h2>
+    <p>Detailed documentation for all modules and utilities in the YOLO-Master codebase.</p>
+
+    <div class="code-block">
+      <div class="code-header">
+        <span class="code-lang">Tree</span>
+        <button class="code-copy" aria-label="Copy code"><i class="far fa-copy"></i> Copy</button>
+      </div>
+      <pre><code>ultralytics/
+├── nn/              # Neural network modules (MoE, Conv, Transformer)
+├── engine/          # Trainer, Validator, Exporter, Predictor
+├── data/            # Dataset loaders, augmentations, converters
+├── models/          # Model definitions (YOLO, RT-DETR, SAM)
+├── utils/           # Utilities (metrics, plotting, callbacks)
+├── solutions/       # Ready-to-use solutions (analytics, counting)
+└── cfg/             # YAML configuration files</code></pre>
+    </div>
+
+    <!-- Contributing -->
+    <h2 id="contributing">Contributing</h2>
+    <p>We welcome contributions from the community. Whether you want to report a bug, request a feature, or submit a pull request, your help is greatly appreciated.</p>
+
+    <p class="text-center">
+      <a href="https://github.com/Tencent/YOLO-Master/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener noreferrer" class="btn btn-primary">
+        <i class="fab fa-github"></i> View Contributing Guide
+      </a>
+    </p>
+
+    <p class="text-muted text-center">Report bugs, request features, or submit pull requests on GitHub.</p>
+
+  </main>
+
+  <!-- Right TOC -->
+  <aside class="doc-toc">
+    <div class="doc-toc-title">On this page</div>
+    <ul>
+      <li><a href="#doc-categories" class="level-2">Documentation Categories</a></li>
+      <li><a href="#api-reference" class="level-2">API Reference</a></li>
+      <li><a href="#contributing" class="level-2">Contributing</a></li>
+    </ul>
+  </aside>
+
+</div>
+
+<!-- ==================== Footer ==================== -->
+<footer class="footer" role="contentinfo">
+  <div class="footer-inner">
+    <div class="footer-grid">
+      <div>
+        <div class="footer-brand"><i class="fas fa-bolt"></i> YOLO-Master</div>
+        <p class="footer-desc">MoE-Accelerated Real-time Detection Framework</p>
+      </div>
+      <div>
+        <div class="footer-heading">Project</div>
+        <ul class="footer-links">
+          <li><a href="./index.html">Home</a></li>
+          <li><a href="./wiki.html">Wiki</a></li>
+          <li><a href="./docs.html">Docs</a></li>
+          <li><a href="./model-zoo.html">Model Zoo</a></li>
+          <li><a href="./demo.html">Demo</a></li>
+        </ul>
+      </div>
+      <div>
+        <div class="footer-heading">Resources</div>
+        <ul class="footer-links">
+          <li><a href="https://github.com/Tencent/YOLO-Master" target="_blank" rel="noopener noreferrer">GitHub</a></li>
+          <li><a href="https://arxiv.org/abs/2512.23273" target="_blank" rel="noopener noreferrer">Paper</a></li>
+          <li><a href="https://huggingface.co/spaces/gatilin/YOLO-Master-WebUI-Demo" target="_blank" rel="noopener noreferrer">HuggingFace</a></li>
+        </ul>
+      </div>
+      <div>
+        <div class="footer-heading">Legal</div>
+        <ul class="footer-links">
+          <li><a href="https://github.com/Tencent/YOLO-Master/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">License</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <span>&copy; 2025 Tencent Youtu Lab. Released under AGPL-3.0.</span>
+      <span>Made with <i class="fas fa-heart" style="color: #ef4444;"></i></span>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

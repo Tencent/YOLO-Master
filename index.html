@@ -1,763 +1,361 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <!-- 
-    Note: For best performance and reliability, consider downloading the images 
-    from the GitHub URLs below and serving them locally from an 'assets/images' directory.
-    -->
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>YOLO-MASTER: Enhanced Real-time Detection</title>
-    <meta name="description" content="YOLO-Master: MOE-Accelerated with Specialized Transformers for Enhanced Real-time Detection.">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <style>
-        :root {
-            --primary-color: #0366d6;
-            --text-color: #24292e;
-            --bg-color: #ffffff;
-            --secondary-bg: #f6f8fa;
-            --border-color: #e1e4e8;
-            --accent-color: #2ea44f;
-            --link-color: #0366d6;
-            --nav-bg: rgba(255, 255, 255, 0.9);
-            --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
-            --shadow-md: 0 4px 12px rgba(0,0,0,0.1);
-            --radius: 8px;
-        }
-
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
-            line-height: 1.6;
-            color: var(--text-color);
-            margin: 0;
-            padding: 0;
-            background-color: var(--bg-color);
-        }
-
-        /* Navigation */
-        nav {
-            position: sticky;
-            top: 0;
-            z-index: 1000;
-            background: var(--nav-bg);
-            backdrop-filter: blur(10px);
-            border-bottom: 1px solid var(--border-color);
-            padding: 1rem 0;
-        }
-
-        .nav-container {
-            max-width: 900px;
-            margin: 0 auto;
-            padding: 0 1.5rem;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        .logo {
-            font-weight: 800;
-            font-size: 1.5rem;
-            color: var(--text-color);
-            text-decoration: none;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-
-        .nav-links {
-            display: flex;
-            gap: 2rem;
-        }
-
-        .nav-links a {
-            color: var(--text-color);
-            text-decoration: none;
-            font-weight: 600;
-            font-size: 0.95rem;
-            transition: color 0.2s;
-        }
-
-        .nav-links a:hover {
-            color: var(--primary-color);
-        }
-
-        .social-links {
-            display: flex;
-            gap: 1rem;
-        }
-
-        .social-links a {
-            color: #586069;
-            font-size: 1.2rem;
-            transition: color 0.2s;
-        }
-
-        .social-links a:hover {
-            color: var(--text-color);
-        }
-
-        /* Hero Section */
-        header {
-            text-align: center;
-            padding: 6rem 0 4rem;
-            background: radial-gradient(circle at top center, #f0f7ff 0%, #ffffff 70%);
-        }
-
-        .container {
-            max-width: 900px;
-            margin: 0 auto;
-            padding: 0 1.5rem;
-        }
-
-        h1 {
-            font-size: 3.5rem;
-            margin-bottom: 1rem;
-            color: var(--text-color);
-            line-height: 1.2;
-            letter-spacing: -1px;
-        }
-
-        .subtitle {
-            font-size: 1.5rem;
-            color: #586069;
-            margin-bottom: 2rem;
-            max-width: 800px;
-            margin-left: auto;
-            margin-right: auto;
-            font-weight: 300;
-        }
-
-        .badges {
-            display: flex;
-            justify-content: center;
-            gap: 0.8rem;
-            flex-wrap: wrap;
-            margin-bottom: 2.5rem;
-        }
-
-        .badges img {
-            height: 24px;
-        }
-
-        .action-buttons {
-            display: flex;
-            justify-content: center;
-            gap: 1rem;
-            margin-top: 2rem;
-        }
-
-        .btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-            padding: 0.8rem 1.8rem;
-            background-color: var(--text-color);
-            color: white;
-            text-decoration: none;
-            border-radius: 50px;
-            font-weight: 600;
-            font-size: 1.1rem;
-            transition: all 0.2s;
-            box-shadow: var(--shadow-sm);
-        }
-
-        .btn:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-md);
-            background-color: #000;
-        }
-
-        .btn-outline {
-            background-color: white;
-            color: var(--text-color);
-            border: 1px solid var(--border-color);
-        }
-
-        .btn-outline:hover {
-            background-color: var(--secondary-bg);
-            border-color: var(--text-color);
-        }
-
-        /* Content Sections */
-        section {
-            padding: 4rem 0;
-            border-bottom: 1px solid var(--border-color);
-        }
-
-        section:last-child {
-            border-bottom: none;
-        }
-
-        .hero-image {
-            width: 100%;
-            height: auto;
-            max-width: 100%;
-            display: block;
-            border-radius: 8px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-            margin: 2rem 0;
-        }
-
-        h2 {
-            font-size: 2.2rem;
-            margin-bottom: 2rem;
-            text-align: center;
-            font-weight: 700;
-        }
-
-        /* Abstract Box */
-        .abstract-box {
-            background-color: var(--secondary-bg);
-            padding: 2.5rem;
-            border-radius: var(--radius);
-            margin: 3rem 0;
-            position: relative;
-        }
-
-        .abstract-box::before {
-            content: "ABSTRACT";
-            position: absolute;
-            top: -12px;
-            left: 2rem;
-            background: var(--primary-color);
-            color: white;
-            padding: 0.2rem 1rem;
-            font-size: 0.8rem;
-            font-weight: 700;
-            border-radius: 4px;
-            letter-spacing: 1px;
-        }
-
-        /* Authors Grid */
-        .authors-grid {
-            display: flex;
-            justify-content: center;
-            flex-wrap: wrap;
-            gap: 2rem;
-            margin: 2rem 0;
-            text-align: center;
-        }
-
-        .author-item {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-        }
-
-        .author-name {
-            font-weight: 600;
-            color: var(--primary-color);
-            text-decoration: none;
-            font-size: 1.1rem;
-        }
-
-        .author-affil {
-            font-size: 0.85rem;
-            color: #666;
-            margin-top: 0.2rem;
-        }
-
-        /* Feature Cards */
-        .features-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-            gap: 1.5rem;
-            margin-top: 2rem;
-        }
-
-        .feature-card {
-            padding: 2rem;
-            background: white;
-            border: 1px solid var(--border-color);
-            border-radius: var(--radius);
-            transition: all 0.3s cubic-bezier(0.3, 0, 0.5, 1);
-            position: relative;
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
-            align-items: flex-start;
-        }
-
-        .feature-card:hover {
-            transform: translateY(-4px);
-            box-shadow: var(--shadow-md);
-            border-color: var(--primary-color);
-        }
-
-        .feature-icon {
-            width: 48px;
-            height: 48px;
-            background: #e1f0ff;
-            border-radius: 10px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.4rem;
-            color: var(--primary-color);
-            margin-bottom: 1.2rem;
-        }
-
-        .feature-card h3 {
-            margin-bottom: 0.6rem;
-            font-size: 1.15rem;
-            font-weight: 600;
-            margin-top: 0;
-        }
-        
-        .feature-card p {
-            margin: 0;
-            color: #636c76;
-            font-size: 0.95rem;
-        }
-
-        /* Results Tables */
-        .table-container {
-            overflow-x: auto;
-            border-radius: var(--radius);
-            box-shadow: var(--shadow-sm);
-            margin-bottom: 3rem;
-        }
-
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            background: white;
-            font-size: 0.95rem;
-        }
-
-        th {
-            background-color: #f8f9fa;
-            font-weight: 600;
-            text-transform: uppercase;
-            font-size: 0.8rem;
-            letter-spacing: 0.5px;
-            padding: 1rem;
-            border-bottom: 2px solid var(--border-color);
-        }
-
-        td {
-            padding: 1rem;
-            border-bottom: 1px solid var(--border-color);
-            text-align: center;
-        }
-
-        tr:last-child td {
-            border-bottom: none;
-        }
-
-        .highlight-row {
-            background-color: #f0f7ff;
-            font-weight: 600;
-        }
-
-        /* Code Block */
-        .code-block {
-            background-color: #1b1f23;
-            color: #e1e4e8;
-            padding: 1.5rem;
-            border-radius: var(--radius);
-            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
-            font-size: 0.9rem;
-            line-height: 1.6;
-            margin: 1.5rem 0;
-            position: relative;
-            overflow-x: auto;
-        }
-
-        .code-block::before {
-            content: "BASH";
-            position: absolute;
-            top: 0;
-            right: 0;
-            background: rgba(255,255,255,0.1);
-            padding: 0.2rem 0.8rem;
-            font-size: 0.7rem;
-            border-bottom-left-radius: 6px;
-            color: #8b949e;
-        }
-
-        .python-block::before {
-            content: "PYTHON";
-        }
-
-        /* Gallery */
-        .gallery-grid {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 1.5rem;
-            margin-top: 2rem;
-            auto-rows: 250px;
-        }
-
-        .gallery-item {
-            border-radius: var(--radius);
-            overflow: hidden;
-            box-shadow: var(--shadow-sm);
-            transition: transform 0.3s;
-        }
-
-        .gallery-item:hover {
-            transform: scale(1.02);
-            box-shadow: var(--shadow-md);
-        }
-
-        .gallery-item img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-            display: block;
-        }
-
-        /* Footer */
-        footer {
-            background-color: #f6f8fa;
-            padding: 4rem 0;
-            text-align: center;
-            border-top: 1px solid var(--border-color);
-        }
-
-        .footer-links {
-            display: flex;
-            justify-content: center;
-            gap: 2rem;
-            margin-bottom: 2rem;
-        }
-
-        .footer-links a {
-            color: var(--text-color);
-            text-decoration: none;
-            font-weight: 500;
-        }
-
-        @media (max-width: 768px) {
-            h1 { font-size: 2.5rem; }
-            .nav-links { display: none; }
-            .gallery-grid { grid-template-columns: 1fr; }
-        }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Introduction — YOLO-Master</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="stylesheet" href="./assets/css/style.css">
 </head>
 <body>
 
-<nav>
-    <div class="nav-container">
-        <a href="#" class="logo">
-            <i class="fas fa-cube"></i> YOLO-MASTER
+  <!-- ==================== App Bar ==================== -->
+  <header class="app-bar" role="banner">
+    <div class="app-bar-inner">
+      <a href="./index.html" class="app-bar-brand">
+        <span class="app-bar-brand-icon"><i class="fas fa-bolt"></i></span>
+        YOLO-Master
+      </a>
+      <nav class="app-bar-links" aria-label="Main navigation">
+        <a href="./index.html" class="active"><i class="fas fa-home"></i> Home</a>
+        <a href="./wiki.html"><i class="fas fa-book"></i> Wiki</a>
+        <a href="./docs.html"><i class="fas fa-file-lines"></i> Docs</a>
+        <a href="./model-zoo.html"><i class="fas fa-cubes"></i> Model Zoo</a>
+        <a href="./demo.html"><i class="fas fa-play"></i> Demo</a>
+      </nav>
+      <div class="app-bar-search">
+        <i class="fas fa-search"></i> Search
+      </div>
+      <div class="app-bar-meta">
+        <a href="https://github.com/Tencent/YOLO-Master" target="_blank" rel="noopener noreferrer">
+          <i class="fab fa-github"></i> 4.6k
         </a>
-        <div class="nav-links">
-            <a href="#introduction">Overview</a>
-            <a href="#results">Results</a>
-            <a href="#features">Tasks</a>
-            <a href="#quick-start">Get Started</a>
-            <a href="https://arxiv.org/abs/2512.23273" target="_blank" rel="noopener noreferrer">Paper</a>
-        </div>
-        <div class="social-links">
-            <a href="https://github.com/isLinXu/YOLO-Master" target="_blank" rel="noopener noreferrer"><i class="fab fa-github"></i></a>
-            <a href="https://twitter.com" target="_blank" rel="noopener noreferrer"><i class="fab fa-twitter"></i></a>
-        </div>
+        <span><i class="fas fa-tag"></i> v0.26</span>
+      </div>
+      <button class="app-bar-toggle" aria-label="Toggle menu"><i class="fas fa-bars"></i></button>
     </div>
-</nav>
+  </header>
 
-<header>
-    <div class="container">
-        <h1>MOE-Accelerated<br>Real-time Detection</h1>
-        <div class="subtitle">
-            YOLO-Master integrates <b>Mixture-of-Experts (MoE)</b> with specialized transformers, achieving the optimal balance between high precision and ultra-low latency.
+  <!-- ==================== Three-Column Layout ==================== -->
+  <div class="doc-layout">
+
+    <!-- Left Sidebar -->
+    <aside class="doc-sidebar">
+      <ul class="doc-sidebar-nav">
+        <li class="nav-section">Intro</li>
+        <li><a href="#introduction" class="active">Introduction</a></li>
+        <li><a href="#faq">FAQ</a></li>
+        <li class="nav-section">Navigate</li>
+        <li><a href="#quick-start">Quickstart</a></li>
+        <li><a href="./wiki.html">Wiki</a></li>
+        <li><a href="./docs.html">Docs</a></li>
+        <li><a href="./model-zoo.html">Model Zoo</a></li>
+        <li><a href="./demo.html">Demo</a></li>
+      </ul>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="doc-content">
+
+      <!-- Hero Intro -->
+      <div class="hero-intro">
+        <h1>YOLO-Master</h1>
+        <p class="text-muted">A powerful MoE-accelerated framework for real-time object detection</p>
+
+        <!-- Mascot Logo -->
+        <img src="./assets/images/youtu-mascot-120.png" alt="YOLO-Master Mascot" class="hero-logo" width="120" height="120" loading="eager">
+
+        <!-- Org Logo -->
+        <div class="org-logo">
+          <img src="./assets/images/youtu-mascot-80.png" alt="Tencent Youtu Lab" class="org-logo-img" width="28" height="28" loading="lazy">
+          <span>Tencent Youtu Lab</span>
         </div>
 
-        <div class="badges">
-            <a href="https://arxiv.org/abs/2512.23273"><img src="https://img.shields.io/badge/arXiv-2512.23273-b31b1b.svg?style=flat-square" alt="arXiv"></a>
-            <a href="https://github.com/isLinXu/YOLO-Master"><img src="https://img.shields.io/github/stars/isLinXu/YOLO-Master?style=social" alt="GitHub stars"></a>
-            <a href="https://github.com/isLinXu/YOLO-Master/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-AGPL%203.0-blue.svg?style=flat-square" alt="License"></a>
-            <a href="https://huggingface.co/spaces/xx"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-blue?style=flat-square" alt="Hugging Face"></a>
+        <!-- Badges -->
+        <div class="hero-badges">
+          <a href="https://arxiv.org/abs/2512.23273" target="_blank" rel="noopener noreferrer">
+            <img src="https://img.shields.io/badge/arXiv-2512.23273-b31b1b.svg?style=flat-square" alt="arXiv" loading="lazy">
+          </a>
+          <a href="https://github.com/Tencent/YOLO-Master" target="_blank" rel="noopener noreferrer">
+            <img src="https://img.shields.io/github/stars/isLinXu/YOLO-Master?style=social" alt="GitHub Stars" loading="lazy">
+          </a>
+          <a href="https://huggingface.co/spaces/gatilin/YOLO-Master-WebUI-Demo" target="_blank" rel="noopener noreferrer">
+            <img src="https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Demo-blue?style=flat-square" alt="HuggingFace" loading="lazy">
+          </a>
+          <img src="https://img.shields.io/badge/CVPR-2026-blue?style=flat-square&color=1e40af" alt="CVPR 2026" loading="lazy">
+          <a href="https://github.com/Tencent/YOLO-Master/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">
+            <img src="https://img.shields.io/badge/License-AGPL%203.0-blue.svg?style=flat-square" alt="License" loading="lazy">
+          </a>
         </div>
+      </div>
 
-        <div class="action-buttons">
-            <a href="#quick-start" class="btn"><i class="fas fa-rocket"></i> Get Started</a>
-            <a href="https://github.com/isLinXu/YOLO-Master" class="btn btn-outline"><i class="fab fa-github"></i> View Code</a>
-        </div>
+      <!-- Introduction -->
+      <section id="introduction">
+        <h2>Introduction</h2>
+        <p>
+          Existing Real-Time Object Detection (RTOD) methods commonly adopt YOLO-like architectures
+          for their favorable trade-off between accuracy and speed. However, these models rely on
+          <strong>static dense computation</strong> that applies uniform processing to all inputs regardless
+          of scene complexity.
+        </p>
+        <p>
+          <strong>YOLO-Master</strong> introduces instance-conditional adaptive computation via
+          <strong>Efficient Sparse Mixture-of-Experts (ES-MoE)</strong> blocks. It dynamically allocates
+          computational resources according to scene complexity, outperforming state-of-the-art models
+          on large-scale benchmarks including COCO, VOC, VisDrone, KITTI, and SKU-110K.
+        </p>
+        <p>
+          Our framework is the first deep integration of Mixture-of-Experts (MoE) into YOLO architecture,
+          enabling dynamic intelligence for vision tasks. By routing each instance to a specialized subset
+          of experts, YOLO-Master achieves superior accuracy-efficiency trade-offs across diverse scenarios
+          ranging from autonomous driving to retail analytics.
+        </p>
+      </section>
 
-        <div class="authors-grid">
-            <div class="author-item">
-                <a href="https://github.com/isLinXu" class="author-name">Xu Lin</a>
-                <span class="author-affil">Tencent Youtu Lab</span>
-            </div>
-            <div class="author-item">
-                <a href="https://pjl1995.github.io/" class="author-name">Jinlong Peng</a>
-                <span class="author-affil">Tencent Youtu Lab</span>
-            </div>
-            <div class="author-item">
-                <span class="author-name">Zhenye Gan</span>
-                <span class="author-affil">Tencent Youtu Lab</span>
-            </div>
-            <div class="author-item">
-                <span class="author-name">Jiawen Zhu</span>
-                <span class="author-affil">SMU</span>
-            </div>
-            <div class="author-item">
-                <span class="author-name">Jun Liu</span>
-                <span class="author-affil">Tencent Youtu Lab</span>
-            </div>
-        </div>
-    </div>
-</header>
+      <!-- Core Architecture -->
+      <section id="core-architecture">
+        <h2>Core Architecture</h2>
+        <p>
+          The YOLO-Master architecture consists of three main components: a lightweight backbone with
+          ES-MoE blocks, a feature pyramid neck, and a detection head with dynamic routing.
+        </p>
 
-<div class="container">
-    <section id="introduction">
-        <div style="width: 100%; overflow-x: auto;">
-            <img src="https://github.com/user-attachments/assets/6caa1065-af77-4f77-8faf-7551c013dacd" alt="YOLO-Master Architecture" class="hero-image">
-        </div>
-        
-        <h2>Dynamic Intelligence for Vision</h2>
+        <img
+          src="https://github.com/user-attachments/assets/6caa1065-af77-4f77-8faf-7551c013dacd"
+          alt="YOLO-Master Architecture Diagram showing ES-MoE blocks with dynamic routing across backbone, neck, and head components"
+          loading="lazy"
+        >
+
         <div class="abstract-box">
-            <p style="font-size: 1.1rem; color: #444;">
-                Existing Real-Time Object Detection (RTOD) methods commonly adopt YOLO-like architectures for their favorable trade-off between accuracy and speed. However, these models rely on static dense computation that applies uniform processing to all inputs. 
-                <br><br>
-                <b>YOLO-Master</b> introduces instance-conditional adaptive computation via <b>Efficient Sparse Mixture-of-Experts (ES-MoE)</b> blocks. It dynamically allocates computational resources according to scene complexity, outperforming state-of-the-art models on large-scale benchmarks.
-            </p>
+          <p>
+            ES-MoE blocks enable compute-on-demand via dynamic routing. Each block contains multiple
+            expert networks and a lightweight router that determines which experts to activate for
+            each input instance. This sparse activation pattern reduces computational overhead while
+            maintaining expressive power.
+          </p>
         </div>
-    </section>
 
-    <section id="results">
-        <h2>Performance Benchmarks</h2>
-        <p style="text-align: center; color: #666; margin-bottom: 3rem;">Comparison with SOTA Nano-scale detectors on standard datasets.</p>
-        
-        <div style="display: flex; gap: 2rem; flex-wrap: wrap; margin-bottom: 3rem;">
-            <div style="flex: 1; min-width: 300px; display: flex; align-items: center; justify-content: center;">
-                <img src="https://github.com/user-attachments/assets/743fa632-659b-43b1-accf-f865c8b66754" alt="Radar Chart" style="width: 100%; max-width: 400px;">
-            </div>
-            <div style="flex: 1.5; min-width: 300px;">
-                <h3>Object Detection (Benchmark)</h3>
-                <div class="table-container">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Dataset</th>
-                                <th>COCO</th>
-                                <th>VOC</th>
-                                <th>VisDrone</th>
-                                <th>KITTI</th>
-                                <th>SKU-110K</th>
-                                <th>Latency</th>
-                            </tr>
-                            <tr>
-                                <th>Method</th>
-                                <th>mAP</th>
-                                <th>mAP</th>
-                                <th>mAP</th>
-                                <th>mAP</th>
-                                <th>mAP</th>
-                                <th>(ms)</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr>
-                                <td>YOLOv10</td>
-                                <td>38.5</td>
-                                <td>60.6</td>
-                                <td>18.7</td>
-                                <td>66.0</td>
-                                <td>57.4</td>
-                                <td>1.84</td>
-                            </tr>
-                            <tr>
-                                <td>YOLOv11-N</td>
-                                <td>39.4</td>
-                                <td>61.0</td>
-                                <td>18.5</td>
-                                <td>67.8</td>
-                                <td>57.4</td>
-                                <td>1.50</td>
-                            </tr>
-                            <tr>
-                                <td>YOLOv12-N</td>
-                                <td>40.6</td>
-                                <td>60.7</td>
-                                <td>18.3</td>
-                                <td>67.6</td>
-                                <td>57.4</td>
-                                <td>1.64</td>
-                            </tr>
-                            <tr>
-                                <td>YOLOv13-N</td>
-                                <td>41.6</td>
-                                <td>60.7</td>
-                                <td>17.5</td>
-                                <td>67.7</td>
-                                <td>57.5</td>
-                                <td>1.97</td>
-                            </tr>
-                            <tr class="highlight-row">
-                                <td><b>YOLO-Master-N</b></td>
-                                <td><b>42.4</b></td>
-                                <td><b>62.1</b></td>
-                                <td><b>19.6</b></td>
-                                <td><b>69.2</b></td>
-                                <td><b>58.2</b></td>
-                                <td><b>1.62</b></td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
+        <p>
+          The router network analyzes intermediate feature representations and produces a sparse
+          gating distribution over experts. Only the top-k experts are activated per instance,
+          enabling significant speedups on less complex scenes while preserving accuracy on
+          challenging inputs.
+        </p>
+      </section>
 
-                <h3>Instance Segmentation</h3>
-                <div class="table-container">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Model</th>
-                                <th>Size</th>
-                                <th>mAPbox (%)</th>
-                                <th>mAPmask (%)</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr>
-                                <td>YOLOv11-seg-N</td>
-                                <td>640</td>
-                                <td>38.9</td>
-                                <td>32.0</td>
-                            </tr>
-                            <tr>
-                                <td>YOLOv12-seg-N</td>
-                                <td>640</td>
-                                <td>39.9</td>
-                                <td>32.8</td>
-                            </tr>
-                            <tr class="highlight-row">
-                                <td><b>YOLO-Master-seg-N</b></td>
-                                <td><b>640</b></td>
-                                <td><b>42.9</b></td>
-                                <td><b>35.6</b> <span style="color:var(--accent-color)">+2.8</span></td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
+      <!-- Key Features -->
+      <section id="key-features">
+        <h2>Key Features</h2>
+        <p class="text-muted">Six core innovations powering the next generation of real-time detection</p>
 
-                <h3>Image Classification (ImageNet)</h3>
-                <div class="table-container">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Model</th>
-                                <th>Top-1 Acc (%)</th>
-                                <th>Top-5 Acc (%)</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr>
-                                <td>YOLOv11-cls-N</td>
-                                <td>70.0</td>
-                                <td>89.4</td>
-                            </tr>
-                            <tr>
-                                <td>YOLOv12-cls-N</td>
-                                <td>71.7</td>
-                                <td>90.5</td>
-                            </tr>
-                            <tr class="highlight-row">
-                                <td><b>YOLO-Master-cls-N</b></td>
-                                <td><b>76.6</b> <span style="color:var(--accent-color)">+4.9</span></td>
-                                <td><b>93.4</b></td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <section id="features" style="background-color: #fcfcfc;">
-        <h2>Unified Task Support</h2>
         <div class="features-grid">
-            <div class="feature-card">
-                <div class="feature-icon"><i class="fas fa-search"></i></div>
-                <h3>Object Detection</h3>
-                <p>Real-time detection with ES-MoE acceleration. Optimized for diverse scenes from crowded streets to aerial views.</p>
-            </div>
-            <div class="feature-card">
-                <div class="feature-icon"><i class="fas fa-vector-square"></i></div>
-                <h3>Instance Segmentation</h3>
-                <p>Pixel-level object masking. Inherits strong segmentation capabilities from the Ultralytics framework.</p>
-            </div>
-            <div class="feature-card">
-                <div class="feature-icon"><i class="fas fa-tags"></i></div>
-                <h3>Classification</h3>
-                <p>High-accuracy image classification. Achieves 76.6% Top-1 Accuracy on ImageNet-1K.</p>
-            </div>
-        </div>
-    </section>
+          <article class="feature-card">
+            <div class="feature-icon purple"><i class="fas fa-brain"></i></div>
+            <h3>Mixture-of-Experts (MoE)</h3>
+            <p>ES-MoE blocks with dynamic routing for adaptive computation, allocating experts on a per-instance basis.</p>
+          </article>
 
-    <section id="gallery">
-        <h2>Visual Gallery</h2>
-        <div class="gallery-grid">
-            <div class="gallery-item">
-                <img src="https://github.com/user-attachments/assets/db350acd-1d91-4be6-96b2-6bdf8aac57e8" alt="Detection Example 1">
-            </div>
-            <div class="gallery-item">
-                <img src="https://github.com/user-attachments/assets/b6c80dbd-120e-428b-8d26-ea2b38a40b47" alt="Detection Example 2">
-            </div>
-            <div class="gallery-item">
-                <img src="https://github.com/user-attachments/assets/edb05e3c-cd83-41db-89f8-8ef09fc22798" alt="Segmentation Example 1">
-            </div>
-            <div class="gallery-item">
-                <img src="https://github.com/user-attachments/assets/ea138674-d7c7-48fb-b272-3ec211d161bf" alt="Segmentation Example 2">
-            </div>
-        </div>
-    </section>
+          <article class="feature-card">
+            <div class="feature-icon green"><i class="fas fa-sliders-h"></i></div>
+            <h3>LoRA Fine-Tuning</h3>
+            <p>Parameter-efficient fine-tuning with ~10% trainable parameters, enabling rapid domain adaptation.</p>
+          </article>
 
-    <section id="quick-start">
-        <h2>🚀 Quick Start</h2>
-        <p style="text-align: center; color: #666; margin-bottom: 2rem;">Ready to deploy? Get up and running in less than 5 minutes.</p>
-        
-        <div style="max-width: 800px; margin: 0 auto;">
-            <h3>1. Installation</h3>
-            <div class="code-block">
-# Create environment
-conda create -n yolo_master python=3.11 -y
+          <article class="feature-card">
+            <div class="feature-icon orange"><i class="fas fa-bolt"></i></div>
+            <h3>Sparse SAHI</h3>
+            <p>3–5× speedup on 4K/8K images via content-adaptive slicing, skipping redundant regions.</p>
+          </article>
+
+          <article class="feature-card">
+            <div class="feature-icon blue"><i class="fas fa-project-diagram"></i></div>
+            <h3>Cluster-Weighted NMS</h3>
+            <p>Gaussian-weighted fusion for dense scenes, improving mAP in crowded environments.</p>
+          </article>
+
+          <article class="feature-card">
+            <div class="feature-icon pink"><i class="fas fa-globe"></i></div>
+            <h3>Mixture-of-Attention (MoA)</h3>
+            <p>CNN-native multi-scale attention fusion, bridging local inductive bias and global context.</p>
+          </article>
+
+          <article class="feature-card">
+            <div class="feature-icon cyan"><i class="fas fa-robot"></i></div>
+            <h3>Agent Skill System</h3>
+            <p>9 skill runners for AI agent orchestration, enabling autonomous vision pipelines.</p>
+          </article>
+        </div>
+      </section>
+
+      <!-- Quick Start -->
+      <section id="quick-start">
+        <h2>Quick Start</h2>
+        <p class="text-muted">Get up and running in under 5 minutes</p>
+
+        <h3>Installation</h3>
+        <div class="code-block">
+          <div class="code-header">
+            <span class="code-lang">Bash</span>
+            <button class="code-copy" aria-label="Copy code"><i class="far fa-copy"></i> Copy</button>
+          </div>
+          <pre><code>conda create -n yolo_master python=3.11 -y
 conda activate yolo_master
-
-# Clone and install
-git clone https://github.com/isLinXu/YOLO-Master
+git clone https://github.com/Tencent/YOLO-Master.git
 cd YOLO-Master
 pip install -r requirements.txt
-pip install -e .</div>
-
-            <h3>2. Python Inference</h3>
-            <div class="code-block python-block">
-from ultralytics import YOLO
-
-# Load model
-model = YOLO("yolo_master_n.pt")
-
-# Run inference
-results = model("path/to/image.jpg")
-results[0].show()</div>
+pip install -e .</code></pre>
         </div>
-    </section>
 
-    <section id="citation">
+        <h3>Python Inference</h3>
+        <div class="code-block">
+          <div class="code-header">
+            <span class="code-lang">Python</span>
+            <button class="code-copy" aria-label="Copy code"><i class="far fa-copy"></i> Copy</button>
+          </div>
+          <pre><code>from ultralytics import YOLO
+
+model = YOLO("yolo_master_n.pt")
+results = model("path/to/image.jpg")
+results[0].show()</code></pre>
+        </div>
+      </section>
+
+      <!-- Citation -->
+      <section id="citation">
         <h2>Citation</h2>
-        <div class="code-block" style="background: #f6f8fa; color: #24292e; border: 1px solid #e1e4e8;">
-@article{lin2025yolomaster,
+        <p class="text-muted">If you find YOLO-Master useful in your research, please consider citing our paper</p>
+
+        <div class="code-block">
+          <div class="code-header">
+            <span class="code-lang">BibTeX</span>
+            <button class="code-copy" aria-label="Copy BibTeX"><i class="far fa-copy"></i> Copy</button>
+          </div>
+          <pre><code>@inproceedings{lin2026yolomaster,
   title={{YOLO-Master}: MOE-Accelerated with Specialized Transformers for Enhanced Real-time Detection},
   author={Lin, Xu and Peng, Jinlong and Gan, Zhenye and Zhu, Jiawen and Liu, Jun},
-  journal={arXiv preprint arXiv:2512.23273},
-  year={2025}
-}</div>
-    </section>
-</div>
+  booktitle={CVPR},
+  year={2026}
+}</code></pre>
+        </div>
+      </section>
 
-<footer>
-    <div class="footer-links">
-        <a href="#introduction">Overview</a>
-        <a href="https://github.com/isLinXu/YOLO-Master">GitHub</a>
-        <a href="https://arxiv.org/abs/2512.23273">Paper</a>
-        <a href="https://github.com/isLinXu/YOLO-Master/blob/main/LICENSE">License</a>
+      <!-- FAQ -->
+      <section id="faq">
+        <h2>FAQ</h2>
+
+        <h3>What is ES-MoE?</h3>
+        <p>
+          ES-MoE (Efficient Sparse Mixture-of-Experts) is our novel building block that replaces
+          standard convolutional layers in YOLO. It routes each instance to a subset of expert
+          networks based on learned gating, enabling adaptive computation.
+        </p>
+
+        <h3>Which datasets are supported?</h3>
+        <p>
+          YOLO-Master supports COCO, VOC, VisDrone, KITTI, SKU-110K, and any custom dataset
+          compatible with the YOLO format. Pre-trained weights are available for all model sizes
+          (N/S/M/L/X).
+        </p>
+
+        <h3>Can I use MoE with my existing YOLO models?</h3>
+        <p>
+          Yes! YOLO-Master is designed as a drop-in replacement. You can use our ES-MoE blocks
+          in your existing YOLO pipelines with minimal code changes. See the <a href="./docs.html">Docs</a>
+          for integration guides.
+        </p>
+      </section>
+
+    </main>
+
+    <!-- Right TOC -->
+    <aside class="doc-toc">
+      <div class="doc-toc-title">On this page</div>
+      <ul>
+        <li><a href="#introduction">Introduction</a></li>
+        <li><a href="#core-architecture">Core Architecture</a></li>
+        <li><a href="#key-features">Key Features</a></li>
+        <li><a href="#quick-start">Quick Start</a></li>
+        <li><a href="#citation">Citation</a></li>
+        <li><a href="#faq">FAQ</a></li>
+      </ul>
+    </aside>
+
+  </div>
+
+  <!-- ==================== Footer ==================== -->
+  <footer class="footer" role="contentinfo">
+    <div class="footer-inner">
+      <div class="footer-grid">
+        <div>
+          <div class="footer-brand"><i class="fas fa-bolt"></i> YOLO-Master</div>
+          <p class="footer-desc">MoE-Accelerated Real-time Detection Framework</p>
+        </div>
+        <div>
+          <div class="footer-heading">Project</div>
+          <ul class="footer-links">
+            <li><a href="./index.html">Home</a></li>
+            <li><a href="./wiki.html">Wiki</a></li>
+            <li><a href="./docs.html">Docs</a></li>
+            <li><a href="./model-zoo.html">Model Zoo</a></li>
+            <li><a href="./demo.html">Demo</a></li>
+          </ul>
+        </div>
+        <div>
+          <div class="footer-heading">Resources</div>
+          <ul class="footer-links">
+            <li><a href="https://github.com/Tencent/YOLO-Master" target="_blank" rel="noopener noreferrer">GitHub</a></li>
+            <li><a href="https://arxiv.org/abs/2512.23273" target="_blank" rel="noopener noreferrer">Paper</a></li>
+            <li><a href="https://huggingface.co/spaces/gatilin/YOLO-Master-WebUI-Demo" target="_blank" rel="noopener noreferrer">HuggingFace</a></li>
+          </ul>
+        </div>
+        <div>
+          <div class="footer-heading">Legal</div>
+          <ul class="footer-links">
+            <li><a href="https://github.com/Tencent/YOLO-Master/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">License</a></li>
+          </ul>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        <span>© 2025 Tencent Youtu Lab. Released under AGPL-3.0.</span>
+        <span>Made with <i class="fas fa-heart" style="color: #ef4444;"></i></span>
+      </div>
     </div>
-    <p style="color: #999; font-size: 0.85rem;">
-        Copyright © 2025 Tencent Youtu Lab. Released under the AGPL-3.0 License.
-    </p>
-</footer>
+  </footer>
+
+  <!-- ==================== Scripts ==================== -->
+  <script>
+    // Copy code function
+    function copyCode(button) {
+      const codeBlock = button.closest('.code-block').querySelector('code');
+      const text = codeBlock.innerText;
+      navigator.clipboard.writeText(text).then(() => {
+        const original = button.innerHTML;
+        button.innerHTML = '<i class="fas fa-check"></i> Copied!';
+        setTimeout(() => {
+          button.innerHTML = original;
+        }, 2000);
+      });
+    }
+
+    // Attach copy handlers
+    document.querySelectorAll('.code-copy').forEach(btn => {
+      btn.addEventListener('click', () => copyCode(btn));
+    });
+
+    // Mobile nav toggle
+    const toggle = document.querySelector('.app-bar-toggle');
+    const navLinks = document.querySelector('.app-bar-links');
+    if (toggle && navLinks) {
+      toggle.addEventListener('click', () => {
+        const expanded = toggle.getAttribute('aria-expanded') === 'true';
+        toggle.setAttribute('aria-expanded', !expanded);
+        navLinks.style.display = expanded ? 'none' : 'flex';
+      });
+    }
+  </script>
 
 </body>
 </html>

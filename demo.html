@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Demo — YOLO-Master</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="stylesheet" href="./assets/css/style.css">
+</head>
+<body>
+
+<!-- ── Top App Bar ── -->
+<header class="app-bar" role="banner">
+  <div class="app-bar-inner">
+    <a href="./index.html" class="app-bar-brand">
+      <span class="app-bar-brand-icon"><i class="fas fa-bolt"></i></span>
+      YOLO-Master
+    </a>
+    <nav class="app-bar-links" aria-label="Main navigation">
+      <a href="./index.html"><i class="fas fa-home"></i> Home</a>
+      <a href="./wiki.html"><i class="fas fa-book"></i> Wiki</a>
+      <a href="./docs.html"><i class="fas fa-file-lines"></i> Docs</a>
+      <a href="./model-zoo.html"><i class="fas fa-cubes"></i> Model Zoo</a>
+      <a href="./demo.html" class="active"><i class="fas fa-play"></i> Demo</a>
+    </nav>
+    <div class="app-bar-search">
+      <i class="fas fa-search"></i> Search
+    </div>
+    <div class="app-bar-meta">
+      <a href="https://github.com/Tencent/YOLO-Master" target="_blank" rel="noopener noreferrer">
+        <i class="fab fa-github"></i> 4.6k
+      </a>
+      <span><i class="fas fa-tag"></i> v0.26</span>
+    </div>
+    <button class="app-bar-toggle" aria-label="Toggle menu"><i class="fas fa-bars"></i></button>
+  </div>
+</header>
+
+<!-- ── Main Content ── -->
+<div class="container">
+  <main class="doc-content">
+
+    <!-- Hero -->
+    <section class="hero-intro">
+      <h1>Live Demo</h1>
+      <p class="text-muted">Try YOLO-Master in your browser</p>
+    </section>
+
+    <!-- HuggingFace Embed -->
+    <section class="section">
+      <div class="demo-container">
+        <div class="demo-header">
+          <span><i class="fas fa-desktop"></i> YOLO-Master WebUI — Hugging Face Spaces</span>
+        </div>
+        <iframe
+          src="https://huggingface.co/spaces/gatilin/YOLO-Master-WebUI-Demo"
+          class="demo-frame"
+          allow="camera; microphone; clipboard-write"
+          sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+          loading="lazy"
+          title="YOLO-Master WebUI Demo"
+        ></iframe>
+      </div>
+
+      <div class="admonition tip mt-2">
+        <div class="admonition-title"><i class="fas fa-lightbulb"></i> Tip</div>
+        <p>The first load may take 10-20 seconds as the Space initializes. For best experience, use a desktop browser.</p>
+      </div>
+    </section>
+
+    <!-- Features List -->
+    <section class="section section-alt">
+      <div class="section-header">
+        <h2>What You Can Do</h2>
+      </div>
+      <div class="features-grid">
+        <div class="feature-card">
+          <div class="feature-icon blue"><i class="fas fa-cloud-upload-alt"></i></div>
+          <h3>Upload Images</h3>
+          <p>Drag & drop or click to upload your own images for detection</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon green"><i class="fas fa-sliders-h"></i></div>
+          <h3>Adjust Confidence</h3>
+          <p>Interactive threshold slider to filter detections by confidence</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon purple"><i class="fas fa-filter"></i></div>
+          <h3>Class Filtering</h3>
+          <p>Toggle specific object classes on/off in real-time</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon orange"><i class="fas fa-download"></i></div>
+          <h3>Download Results</h3>
+          <p>Export annotated images with bounding boxes and labels</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Local Deployment -->
+    <section class="section">
+      <div class="section-header">
+        <h2>Run Locally</h2>
+        <p>For faster inference and full control, run the Gradio demo on your own machine</p>
+      </div>
+      <div class="code-block">
+        <div class="code-header">
+          <span class="code-lang">Bash</span>
+          <button class="code-copy" onclick="copyCode(this)" aria-label="Copy code">
+            <i class="fas fa-copy"></i> Copy
+          </button>
+        </div>
+        <pre><code># Clone the repository
+git clone https://github.com/Tencent/YOLO-Master
+cd YOLO-Master
+
+# Install dependencies
+pip install -r requirements.txt
+pip install gradio
+
+# Launch the demo
+python app.py
+# Open http://127.0.0.1:7860 in your browser</code></pre>
+      </div>
+    </section>
+
+    <!-- Google Colab -->
+    <section class="section section-alt">
+      <div class="section-header">
+        <h2>Run on Google Colab</h2>
+        <p>No local setup required</p>
+      </div>
+      <div class="flex justify-center">
+        <a href="https://colab.research.google.com/drive/1gTKkCsE4sXIOWpu1cdNBjdFHEahBoZD0?usp=sharing" target="_blank" rel="noopener noreferrer">
+          <img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab" loading="lazy">
+        </a>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- ── Footer ── -->
+<footer class="footer" role="contentinfo">
+  <div class="footer-inner">
+    <div class="footer-grid">
+      <div>
+        <div class="footer-brand"><i class="fas fa-bolt"></i> YOLO-Master</div>
+        <p class="footer-desc">MoE-Accelerated Real-time Detection Framework</p>
+      </div>
+      <div>
+        <div class="footer-heading">Project</div>
+        <ul class="footer-links">
+          <li><a href="./index.html">Home</a></li>
+          <li><a href="./wiki.html">Wiki</a></li>
+          <li><a href="./docs.html">Docs</a></li>
+          <li><a href="./model-zoo.html">Model Zoo</a></li>
+          <li><a href="./demo.html">Demo</a></li>
+        </ul>
+      </div>
+      <div>
+        <div class="footer-heading">Resources</div>
+        <ul class="footer-links">
+          <li><a href="https://github.com/Tencent/YOLO-Master" target="_blank" rel="noopener noreferrer">GitHub</a></li>
+          <li><a href="https://arxiv.org/abs/2512.23273" target="_blank" rel="noopener noreferrer">Paper</a></li>
+          <li><a href="https://huggingface.co/spaces/gatilin/YOLO-Master-WebUI-Demo" target="_blank" rel="noopener noreferrer">HuggingFace</a></li>
+        </ul>
+      </div>
+      <div>
+        <div class="footer-heading">Legal</div>
+        <ul class="footer-links">
+          <li><a href="https://github.com/Tencent/YOLO-Master/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">License</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <span>© 2025 Tencent Youtu Lab. Released under AGPL-3.0.</span>
+      <span>Made with <i class="fas fa-heart" style="color: #ef4444;"></i></span>
+    </div>
+  </div>
+</footer>
+
+<script>
+  function copyCode(btn) {
+    const code = btn.closest('.code-block').querySelector('code').innerText;
+    navigator.clipboard.writeText(code).then(() => {
+      const original = btn.innerHTML;
+      btn.innerHTML = '<i class="fas fa-check"></i> Copied';
+      setTimeout(() => btn.innerHTML = original, 2000);
+    });
+  }
+</script>
+
+</body>
+</html>
