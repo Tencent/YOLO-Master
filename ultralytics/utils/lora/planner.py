@@ -38,7 +38,18 @@ class RefusalError(Exception):
 
 @dataclass
 class ArchitectureFingerprint:
-    """Compact 5-dimensional architecture fingerprint.
+    """Compact 10-dimensional architecture fingerprint.
+
+    The original 5 dimensions (phi_attn, phi_text, phi_dw, phi_group,
+    phi_linear) capture module-type ratios but cannot distinguish models
+    of the same family at different scales (e.g. YOLOv8n vs YOLOv8x).
+
+    The 5 extended dimensions add scale and structural information:
+        phi_depth:  Normalised model depth (top-level block count / 30).
+        phi_width:  Log-scale average channel width.
+        phi_head:   Detection-head complexity (head params / total params).
+        phi_residual: Residual connection density (residual modules / total).
+        phi_norm:   Normalisation layer distribution (LN ratio among all norm layers).
 
     Attributes:
         phi_attn: Attention module ratio (attention modules / total conv+linear).
@@ -46,12 +57,23 @@ class ArchitectureFingerprint:
         phi_dw: Depthwise convolution ratio (depthwise conv / total conv).
         phi_group: Grouped convolution ratio (grouped conv / total conv).
         phi_linear: Linear layer ratio (linear modules / total conv+linear).
+        phi_depth: Normalised model depth (top-level blocks / 30, clamped to [0, 1]).
+        phi_width: Log2-scale average channel width (log2(avg_channels) / 10).
+        phi_head: Detection-head parameter ratio (head params / total params).
+        phi_residual: Residual connection density (modules with add_hook / total).
+        phi_norm: LayerNorm ratio among all norm layers (LN / (BN+LN+GN)).
     """
     phi_attn: float = 0.0
     phi_text: float = 0.0
     phi_dw: float = 0.0
     phi_group: float = 0.0
     phi_linear: float = 0.0
+    # Extended dimensions (v2) — enable scale-aware regression predictions.
+    phi_depth: float = 0.0
+    phi_width: float = 0.0
+    phi_head: float = 0.0
+    phi_residual: float = 0.0
+    phi_norm: float = 0.0
 
     @staticmethod
     def _unwrap_model(model: nn.Module) -> nn.Module:
@@ -72,7 +94,7 @@ class ArchitectureFingerprint:
 
         Always performs a real module scan via :meth:`_compute_from_modules`;
         the paper-calibrated family profiles are *not* used to override the
-        fingerprint values.  This guarantees that the 5-dimensional vector is a
+        fingerprint values.  This guarantees that the 10-dimensional vector is a
         true reflection of the model's weight topology, which is required for
         the regression model (Eq. 1) to generalise to novel architectures.
 
@@ -84,7 +106,7 @@ class ArchitectureFingerprint:
             model: The PyTorch model to analyze.
 
         Returns:
-            ArchitectureFingerprint: The computed 5-dimensional fingerprint.
+            ArchitectureFingerprint: The computed 10-dimensional fingerprint.
         """
         model = cls._unwrap_model(model)
         cached = _fingerprint_cache.get(model)
@@ -195,7 +217,12 @@ class ArchitectureFingerprint:
             children.
           - Depthwise and grouped conv are counted on the actual Conv2d layers
             as before.
+          - Extended dimensions (v2): phi_depth, phi_width, phi_head,
+            phi_residual, phi_norm provide scale-aware features that allow
+            the regression model to distinguish e.g. YOLOv8n from YOLOv8x.
         """
+        import math
+
         total_conv = 0
         total_linear = 0
         attn_count = 0
@@ -204,9 +231,37 @@ class ArchitectureFingerprint:
         group_count = 0
         linear_count = 0
 
+        # Extended dimension accumulators
+        total_params = 0
+        head_params = 0
+        conv_channel_sums = []  # for phi_width
+        ln_count = 0
+        bn_count = 0
+        gn_count = 0
+        residual_count = 0
+        total_modules_all = 0  # all nn.Module descendants
+
+        # Detect head-related module class names
+        _HEAD_CLASS_NAMES = frozenset({
+            "Detect", "RTDETRDecoder", "Segment", "Pose", "OBB",
+            "WorldDetect", "YOLOEDetect", "v10Detect",
+        })
+
+        # Residual detection: modules that have forward with add/residual
+        # Heuristic: count modules whose class name contains common residual patterns
+        _RESIDUAL_KEYWORDS = frozenset({
+            "C2f", "C3k2", "C3", "C2PSA", "A2C2f", "Bottleneck",
+            "ResidualBlock", "SPPF", "SPP", "C2fCIB",
+            "RepC3", "C3k",
+        })
+
         for name, module in model.named_modules():
+            total_modules_all += 1
+            cls_name = module.__class__.__name__
+
             if isinstance(module, nn.Conv2d):
                 total_conv += 1
+                conv_channel_sums.append(module.in_channels + module.out_channels)
                 if (
                     module.in_channels == module.out_channels
                     == module.groups
@@ -218,19 +273,43 @@ class ArchitectureFingerprint:
                 total_linear += 1
                 linear_count += 1
 
-            # Iconic attention modules only (not every child submodule)
-            cls_name = module.__class__.__name__
+            # Iconic attention modules only (not every child submodule).
+            # Covers both YOLO12 (AAttn) and RT-DETR (MultiheadAttention,
+            # MSDeformAttn, AIFI, RTDETRDecoder, DeformableTransformerDecoderLayer).
             if cls_name in (
                 "AAttn", "MultiheadAttention", "MSDEFORMAttention",
-                "RTDETRDecoder", "DeformableAttention",
+                "MSDeformAttn", "RTDETRDecoder", "DeformableAttention",
+                "AIFI", "DeformableTransformerDecoderLayer",
             ):
                 attn_count += 1
 
-            # Text-fusion detection (string-based, low false-positive rate)
+            # Text-fusion detection — refined: use module type check first,
+            # fall back to keyword matching only for well-known patterns.
             lname = name.lower()
-            if any(k in lname for k in ("text_encoder", "clip", "text_fusion", "world_embed", "fusion")):
+            if cls_name in ("TextFusion", "WorldEmbed", "TextProj", "TextEncoder"):
                 text_count += 1
+            elif any(k in lname for k in ("text_encoder", "clip", "text_fusion", "world_embed", "text_proj")):
+                text_count += 1
+            # NOTE: bare "fusion" keyword removed to avoid false positives
+            # (e.g. fusion_layer, feature_fusion in non-text architectures).
 
+            # Normalisation layers
+            if isinstance(module, nn.LayerNorm):
+                ln_count += 1
+            elif isinstance(module, nn.BatchNorm2d):
+                bn_count += 1
+            elif isinstance(module, nn.GroupNorm):
+                gn_count += 1
+
+            # Detection head params
+            if cls_name in _HEAD_CLASS_NAMES:
+                head_params += sum(p.numel() for p in module.parameters(recurse=True))
+
+            # Residual connection density
+            if any(kw in cls_name for kw in _RESIDUAL_KEYWORDS):
+                residual_count += 1
+
+        total_params = sum(p.numel() for p in model.parameters())
         total_modules = total_conv + total_linear
         if total_modules == 0:
             LOGGER.warning(
@@ -241,12 +320,44 @@ class ArchitectureFingerprint:
         if total_conv == 0:
             total_conv = 1
 
+        # --- Extended dimension computations ---
+        # phi_depth: normalise top-level block count to [0, 1].
+        # YOLO models typically have 10-25 top-level blocks; normalise by 30.
+        try:
+            top_level_count = len(model) if hasattr(model, '__len__') else 0
+        except TypeError:
+            top_level_count = 0
+        phi_depth = min(top_level_count / 30.0, 1.0) if top_level_count > 0 else 0.0
+
+        # phi_width: log2-scale average channel width, normalised by 10.
+        # YOLOv8n avg ~64ch (log2=6), YOLOv8x avg ~320ch (log2~8.3), RT-DETR ~256 (log2=8).
+        if conv_channel_sums:
+            avg_ch = sum(conv_channel_sums) / len(conv_channel_sums)
+            phi_width = min(math.log2(max(avg_ch, 1.0)) / 10.0, 1.0)
+        else:
+            phi_width = 0.0
+
+        # phi_head: head parameter ratio.
+        phi_head = head_params / total_params if total_params > 0 else 0.0
+
+        # phi_residual: residual module density.
+        phi_residual = residual_count / total_modules_all if total_modules_all > 0 else 0.0
+
+        # phi_norm: LayerNorm ratio among all norm layers (LN preferred for attention archs).
+        total_norm = ln_count + bn_count + gn_count
+        phi_norm = ln_count / total_norm if total_norm > 0 else 0.0
+
         return cls(
             phi_attn=attn_count / total_modules,
             phi_text=text_count / total_modules,
             phi_dw=dw_count / total_conv,
             phi_group=group_count / total_conv,
             phi_linear=linear_count / total_modules,
+            phi_depth=phi_depth,
+            phi_width=phi_width,
+            phi_head=phi_head,
+            phi_residual=phi_residual,
+            phi_norm=phi_norm,
         )
 
 
@@ -437,6 +548,10 @@ class DecisionAudit:
             "target_modules_count": self.target_modules_count,
         }
 
+    # Maximum number of audit files to keep in the directory.
+    # Older files are automatically cleaned up when this limit is exceeded.
+    MAX_AUDIT_FILES: int = 100
+
     def save(self, audit_dir: Optional[Path] = None) -> Path:
         """Save the audit record to a JSON file.
 
@@ -461,6 +576,26 @@ class DecisionAudit:
             json.dump(self.to_dict(), f, indent=2, ensure_ascii=False)
 
         LOGGER.info("[Planner] Audit saved to %s", path)
+
+        # ── Audit file rotation: keep at most MAX_AUDIT_FILES ──
+        try:
+            existing = sorted(
+                audit_dir.glob("planner_audit_*.json"),
+                key=lambda p: p.name,
+            )
+            excess = len(existing) - self.MAX_AUDIT_FILES
+            if excess > 0:
+                for old_file in existing[:excess]:
+                    try:
+                        old_file.unlink()
+                    except OSError:
+                        pass
+                LOGGER.debug(
+                    "[Planner] Audit rotation: removed %d old file(s)", excess
+                )
+        except OSError:
+            pass  # Non-fatal: rotation failure should not crash planning
+
         return path
 
     @classmethod
@@ -506,6 +641,12 @@ class LOVODataPoint:
                 "phi_dw": self.fingerprint.phi_dw,
                 "phi_group": self.fingerprint.phi_group,
                 "phi_linear": self.fingerprint.phi_linear,
+                # Extended dimensions (v2)
+                "phi_depth": self.fingerprint.phi_depth,
+                "phi_width": self.fingerprint.phi_width,
+                "phi_head": self.fingerprint.phi_head,
+                "phi_residual": self.fingerprint.phi_residual,
+                "phi_norm": self.fingerprint.phi_norm,
             },
             "variant": self.variant,
             "delta_mAP": self.delta_mAP,
@@ -526,6 +667,12 @@ class LOVODataPoint:
                 phi_dw=fp.get("phi_dw", 0.0),
                 phi_group=fp.get("phi_group", 0.0),
                 phi_linear=fp.get("phi_linear", 0.0),
+                # Extended dimensions — default to 0.0 for backward compat
+                phi_depth=fp.get("phi_depth", 0.0),
+                phi_width=fp.get("phi_width", 0.0),
+                phi_head=fp.get("phi_head", 0.0),
+                phi_residual=fp.get("phi_residual", 0.0),
+                phi_norm=fp.get("phi_norm", 0.0),
             ),
             variant=data["variant"],
             delta_mAP=data["delta_mAP"],
@@ -721,6 +868,12 @@ class LOVOValidator:
                 round(p.fingerprint.phi_dw, 6),
                 round(p.fingerprint.phi_group, 6),
                 round(p.fingerprint.phi_linear, 6),
+                # Extended dimensions
+                round(p.fingerprint.phi_depth, 6),
+                round(p.fingerprint.phi_width, 6),
+                round(p.fingerprint.phi_head, 6),
+                round(p.fingerprint.phi_residual, 6),
+                round(p.fingerprint.phi_norm, 6),
                 p.variant.lower(),
             )
             if key not in seen:
@@ -739,7 +892,8 @@ class LOVOValidator:
 
             planner = PEFTPlanner()
             planner.fit(train_history)
-            predicted = planner.predict(left_out.fingerprint, left_out.variant)
+            # Use default rank=8 for LOVO prediction (rank is not part of LOVO data)
+            predicted = planner.predict(left_out.fingerprint, left_out.variant, 8)
             predictions.append((left_out.delta_mAP, predicted, left_out.variant))
 
         # Compute metrics
@@ -901,10 +1055,25 @@ class PEFTPlanner:
     """
 
     # Calibrated against Table 1 (tab:core_wandb) canonical data points.
-    # beta0 = 0.0656, beta1 = 0.0026, beta2 = 0.0, beta3 = 0.0054, beta4 = 1.0
-    # Fitted via least squares on 12 non-catastrophic points (including ablations).
-    DEFAULT_COEFFS: Tuple[float, float, float, float, float] = (
-        0.0656, 0.0026, 0.0, 0.0054, 1.0
+    # Original 5-coeff: beta0=0.0656, beta1=0.0026, beta2=0.0, beta3=0.0054, beta4=1.0
+    # Extended 11-coeff (v2): adds phi_depth, phi_width, phi_head, phi_residual,
+    #   phi_norm, and log(r) as regression features.
+    # The log(r) coefficient (beta10) captures the rank's marginal effect on ΔmAP.
+    # Paper Table 1: YOLO12s r=8→+0.0626, r=16→+0.0645, r=32→+0.0701 → slope≈0.0036/log2(r)
+    # New extended dims default to 0.0 coefficient (no impact until LOVO-fitted with
+    # multi-scale data), preserving backward compatibility with the original model.
+    DEFAULT_COEFFS: Tuple[float, ...] = (
+        0.0656,   # beta0  – intercept
+        0.0026,   # beta1  – phi_attn
+        0.0,      # beta2  – phi_text
+        0.0054,   # beta3  – phi_dw
+        1.0,      # beta4  – xi (variant)
+        0.0,      # beta5  – phi_depth (activated by LOVO fit)
+        0.0,      # beta6  – phi_width
+        0.0,      # beta7  – phi_head
+        0.0,      # beta8  – phi_residual
+        0.0,      # beta9  – phi_norm
+        0.0,      # beta10 – log(r) rank effect
     )
     # Refuse threshold calibrated as a safety net for regression-predicted
     # catastrophic degradation.  The paper's catastrophic cases (RT-DETR
@@ -920,6 +1089,7 @@ class PEFTPlanner:
         audit_dir: Optional[Path] = None,
         lovo_collector: Optional["LOVODataCollector"] = None,
         lovo_validator: Optional["LOVOValidator"] = None,
+        lovo_persist_path: Optional[Path] = None,
     ):
         """Initialize the PEFT Planner.
 
@@ -933,24 +1103,32 @@ class PEFTPlanner:
                 coefficients before the first ``plan()`` call.
             lovo_validator: Optional LOVO validator for computing cross-validation
                 metrics after auto-fitting.
+            lovo_persist_path: Optional path for auto-persisting LOVO data when
+                :meth:`record_training_result` is called. Enables the online
+                learning closed loop — each training result is appended to the
+                collector and persisted to disk so the regression improves over
+                successive runs.
         """
         self.calibration_data = calibration_data
         self.audit_dir = audit_dir
         self.lovo_collector = lovo_collector
         self.lovo_validator = lovo_validator
+        self.lovo_persist_path = lovo_persist_path
         self._coeffs = list(self.DEFAULT_COEFFS)
         self._history: List[
             Tuple[ArchitectureFingerprint, str, float]
         ] = []
         self._lovo_result: Optional[LOVOValidationResult] = None
+        self._needs_refit = False  # Flag: re-fit on next plan() after new data
 
     def _maybe_fit_from_lovo(self) -> None:
         """Auto-fit coefficients from LOVO collector if available and not yet fitted."""
         if self.lovo_collector is None or len(self.lovo_collector) < 5:
             return
-        if self._history:
-            return  # Already fitted from explicit history
+        if self._history and not self._needs_refit:
+            return  # Already fitted and no new data since last fit
         self.fit(self.lovo_collector.to_history())
+        self._needs_refit = False
         if self.lovo_validator is not None:
             try:
                 self._lovo_result = self.lovo_validator.validate(self.lovo_collector)
@@ -963,9 +1141,65 @@ class PEFTPlanner:
             except Exception as exc:
                 LOGGER.debug("[Planner] LOVO validation failed: %s", exc)
 
+    def record_training_result(
+        self,
+        model: nn.Module,
+        variant: str,
+        rank: int,
+        delta_mAP: float,
+        model_name: str = "",
+        dataset: str = "",
+        epochs: int = 0,
+        notes: str = "",
+    ) -> None:
+        """Record a training result into the LOVO collector (online learning).
+
+        After each training run, call this with the measured ΔmAP to feed
+        the regression model. On the next ``plan()`` call, the planner
+        automatically re-fits coefficients, incorporating the new data point.
+
+        If ``lovo_persist_path`` was set in the constructor, the collector
+        is also saved to disk so the data persists across runs.
+
+        Args:
+            model: The model that was trained (used to compute fingerprint).
+            variant: PEFT variant used (e.g. 'lora', 'dora').
+            rank: LoRA rank used.
+            delta_mAP: Measured ΔmAP (new_mAP - base_mAP).
+            model_name: Optional model name for metadata.
+            dataset: Optional dataset name.
+            epochs: Training epochs.
+            notes: Free-form notes.
+        """
+        if self.lovo_collector is None:
+            self.lovo_collector = LOVODataCollector()
+        inner_model = getattr(model, "model", model)
+        fingerprint = ArchitectureFingerprint.compute(inner_model)
+        self.lovo_collector.add(LOVODataPoint(
+            fingerprint=fingerprint,
+            variant=variant,
+            delta_mAP=delta_mAP,
+            model_name=model_name,
+            dataset=dataset,
+            epochs=epochs,
+            notes=notes or f"rank={rank}",
+        ))
+        self._needs_refit = True
+        LOGGER.info(
+            "[Planner] Recorded training result: variant=%s, rank=%d, "
+            "ΔmAP=%.4f (collector now has %d points)",
+            variant, rank, delta_mAP, len(self.lovo_collector),
+        )
+        if self.lovo_persist_path is not None:
+            try:
+                self.lovo_collector.save(self.lovo_persist_path)
+            except Exception as exc:
+                LOGGER.debug("[Planner] LOVO persist failed: %s", exc)
+
     def fit(
         self,
         history: List[Tuple[ArchitectureFingerprint, str, float]],
+        ranks: Optional[List[int]] = None,
     ) -> None:
         """Fit regression coefficients from calibration history.
 
@@ -973,9 +1207,20 @@ class PEFTPlanner:
         Falls back to default coefficients if the system is under-determined
         or singular.
 
+        The regression model uses 11 features:
+            [1, phi_attn, phi_text, phi_dw, xi,
+             phi_depth, phi_width, phi_head, phi_residual, phi_norm, log(r)]
+
+        When ``ranks`` is not provided (backward-compatible path), log(r)
+        defaults to log(8) ≈ 3.0, which is a neutral mid-range value.
+
         Args:
             history: List of (fingerprint, variant, delta_mAP) tuples.
+            ranks: Optional list of LoRA ranks corresponding to each history
+                entry. If None, a default rank of 8 is assumed for all entries.
         """
+        import math
+
         self._history = history
         if len(history) < 5:
             LOGGER.warning(
@@ -995,9 +1240,16 @@ class PEFTPlanner:
 
         X = []
         y = []
-        for fingerprint, variant, delta_map in history:
+        for i, (fingerprint, variant, delta_map) in enumerate(history):
             profile = PEFTVariantProfile.from_variant(variant)
             xi = profile.xi
+            # Determine rank for this data point
+            if ranks is not None and i < len(ranks):
+                r = max(ranks[i], 1)
+            else:
+                r = 8  # default rank assumption
+            log_r = math.log2(r)
+
             X.append(
                 [
                     1.0,
@@ -1005,6 +1257,12 @@ class PEFTPlanner:
                     fingerprint.phi_text,
                     fingerprint.phi_dw,
                     xi,
+                    fingerprint.phi_depth,
+                    fingerprint.phi_width,
+                    fingerprint.phi_head,
+                    fingerprint.phi_residual,
+                    fingerprint.phi_norm,
+                    log_r,
                 ]
             )
             y.append(delta_map)
@@ -1017,7 +1275,7 @@ class PEFTPlanner:
         beta, residuals, rank, s = np.linalg.lstsq(X_arr, y_arr, rcond=None)
         self._coeffs = beta.tolist()
         LOGGER.info(
-            "[Planner] Fitted regression coefficients: %s", self._coeffs
+            "[Planner] Fitted regression coefficients (11-dim): %s", self._coeffs
         )
         LOGGER.info(
             "[Planner] Fit rank: %d / %d (features).", rank, X_arr.shape[1]
@@ -1027,25 +1285,48 @@ class PEFTPlanner:
         self,
         fingerprint: ArchitectureFingerprint,
         variant: str,
+        rank: int = 8,
     ) -> float:
         """Predict ΔmAP for a given architecture and variant.
+
+        Uses the 11-feature regression model:
+            ΔmAP = β₀ + β₁φ_attn + β₂φ_text + β₃φ_dw + β₄ξ_p
+                   + β₅φ_depth + β₆φ_width + β₇φ_head + β₈φ_residual
+                   + β₉φ_norm + β₁₀log(r)
 
         Args:
             fingerprint: The architecture fingerprint.
             variant: The PEFT variant name.
+            rank: LoRA rank (default 8). Used in the log(r) feature.
 
         Returns:
             float: Predicted ΔmAP.
         """
+        import math
+
         profile = PEFTVariantProfile.from_variant(variant)
         xi = profile.xi
-        b0, b1, b2, b3, b4 = self._coeffs
+        coeffs = self._coeffs
+        log_r = math.log2(max(rank, 1))
+
+        # Graceful fallback: if coefficients are still 5-dim (old data),
+        # pad with zeros for the new features.
+        if len(coeffs) < 11:
+            coeffs = list(coeffs) + [0.0] * (11 - len(coeffs))
+
+        b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10 = coeffs
         delta = (
             b0
             + b1 * fingerprint.phi_attn
             + b2 * fingerprint.phi_text
             + b3 * fingerprint.phi_dw
             + b4 * xi
+            + b5 * fingerprint.phi_depth
+            + b6 * fingerprint.phi_width
+            + b7 * fingerprint.phi_head
+            + b8 * fingerprint.phi_residual
+            + b9 * fingerprint.phi_norm
+            + b10 * log_r
         )
         return float(delta)
 
@@ -1089,12 +1370,19 @@ class PEFTPlanner:
 
         LOGGER.info(
             "[Planner] Architecture fingerprint: φ_attn=%.3f, "
-            "φ_text=%.3f, φ_dw=%.3f, φ_group=%.3f, φ_linear=%.3f",
+            "φ_text=%.3f, φ_dw=%.3f, φ_group=%.3f, φ_linear=%.3f, "
+            "φ_depth=%.3f, φ_width=%.3f, φ_head=%.3f, "
+            "φ_residual=%.3f, φ_norm=%.3f",
             fingerprint.phi_attn,
             fingerprint.phi_text,
             fingerprint.phi_dw,
             fingerprint.phi_group,
             fingerprint.phi_linear,
+            fingerprint.phi_depth,
+            fingerprint.phi_width,
+            fingerprint.phi_head,
+            fingerprint.phi_residual,
+            fingerprint.phi_norm,
         )
 
         # Auto-fit from LOVO collector if available (regression-dominant
@@ -1114,7 +1402,7 @@ class PEFTPlanner:
                 continue
             if fingerprint.phi_text > 0.05 and not profile.supports_text_fusion:
                 continue
-            variant_scores[v] = self.predict(fingerprint, v)
+            variant_scores[v] = self.predict(fingerprint, v, rank)
 
         if not variant_scores:
             decision = PlacementDecision(
@@ -1127,7 +1415,14 @@ class PEFTPlanner:
             self._save_audit(fingerprint, variant, rank, decision, targets_hint)
             return decision
 
-        best_variant = max(variant_scores, key=variant_scores.get)
+        # Select best variant with deterministic tie-breaking: when two variants
+        # have identical predicted ΔmAP, prefer 'lora' (most stable), then
+        # alphabetical order. This prevents non-deterministic ADAPT decisions
+        # across runs due to floating-point noise in regression predictions.
+        best_variant = max(
+            variant_scores,
+            key=lambda v: (variant_scores[v], v == "lora", -ord(v[0])),
+        )
         best_delta = variant_scores[best_variant]
 
         requested_profile = PEFTVariantProfile.from_variant(variant)
@@ -1135,7 +1430,19 @@ class PEFTPlanner:
             (fingerprint.phi_attn <= 0.05 or requested_profile.supports_attention)
             and (fingerprint.phi_text <= 0.05 or requested_profile.supports_text_fusion)
         )
-        requested_delta = variant_scores.get(variant, self.predict(fingerprint, variant))
+        if variant in variant_scores:
+            requested_delta = variant_scores[variant]
+        elif requested_compatible:
+            # Variant was not evaluated in the loop but is compatible — predict now.
+            requested_delta = self.predict(fingerprint, variant, rank)
+        else:
+            # Variant is incompatible — use best_delta as reference, mark as incompatible.
+            LOGGER.info(
+                "[Planner] Requested variant '%s' is incompatible with this "
+                "architecture (φ_attn=%.3f, φ_text=%.3f); will ADAPT to %s.",
+                variant, fingerprint.phi_attn, fingerprint.phi_text, best_variant,
+            )
+            requested_delta = best_delta
 
         LOGGER.info(
             "[Planner] Regression: requested %s Δ=%.4f, best %s Δ=%.4f",
@@ -1146,8 +1453,13 @@ class PEFTPlanner:
         recommended_variant: Optional[str] = None
         recommended_rank: Optional[int] = None
 
-        # === Phase 2: Hard safety guardrails (only when regression hasn't
-        # seen the catastrophic data, i.e. using DEFAULT_COEFFS) ===
+        # === Phase 2: Hard safety guardrails ===
+        # Guardrail B is UNCONDITIONAL: it applies regardless of whether
+        # using_defaults is True or False. This prevents a LOVO-fitted
+        # regression from incorrectly ACCEPTing a known-catastrophic
+        # configuration (RT-DETR + LoRA-family has 7/7 catastrophe rate
+        # per paper Fig. 4). The regression may not have seen enough
+        # catastrophic data to generalise this pattern.
         using_defaults = (self._coeffs == list(self.DEFAULT_COEFFS))
 
         # Guardrail A: DoRA on attention-rich architectures → downgrade to LoRA.
@@ -1162,13 +1474,28 @@ class PEFTPlanner:
                 "→ downgrade to LoRA", fingerprint.phi_attn
             )
 
-        # Guardrail B: RT-DETR-like (φ_attn > 0.7) + LoRA-family with default coeffs.
+        # Guardrail B: RT-DETR-like architecture + LoRA-family.
+        # UNCONDITIONAL — fires even when using_defaults=False.
         # Paper Fig. 4: RT-DETR-l has 7/7 catastrophe rate for LoRA-family.
-        if (
+        # Trigger conditions:
+        #   (a) phi_attn > 0.7 (paper-calibrated threshold), OR
+        #   (b) architecture family is "rtdetr" (detected via RTDETRDecoder /
+        #       MultiheadAttention / MSDeformAttn class presence).
+        # Condition (b) is necessary because actual module-scan phi_attn for
+        # RT-DETR-l is ~0.10 (backbone has many conv layers that dilute the ratio),
+        # while the paper-calibrated profile assumes phi_attn≈0.85.
+        arch_family = ArchitectureFingerprint._detect_architecture_family(inner_model)
+        is_rtdetr_like = (
             fingerprint.phi_attn > 0.7
-            and variant.lower() in ("lora", "dora", "loha", "lokr")
-            and using_defaults
-        ):
+            or arch_family == "rtdetr"
+        )
+        if is_rtdetr_like and variant.lower() in ("lora", "dora", "loha", "lokr"):
+            LOGGER.warning(
+                "[Planner] Guardrail B (unconditional): RT-DETR-like "
+                "architecture (φ_attn=%.2f, family=%s) + %s → REFUSE "
+                "(using_defaults=%s, regression Δ=%.4f ignored)",
+                fingerprint.phi_attn, arch_family, variant, using_defaults, requested_delta,
+            )
             decision = PlacementDecision(
                 status="REFUSE",
                 refusal_reason=(
@@ -1213,7 +1540,7 @@ class PEFTPlanner:
         # If a safety guardrail already triggered a variant change.
         if recommended_variant is not None:
             new_delta = variant_scores.get(
-                recommended_variant, self.predict(fingerprint, recommended_variant)
+                recommended_variant, self.predict(fingerprint, recommended_variant, rank)
             )
             decision = PlacementDecision(
                 status="ADAPT",
@@ -1267,6 +1594,51 @@ class PEFTPlanner:
                     "[Planner] Enabling safe attention for attention-rich architecture"
                 )
 
+        # CNN architecture rank cap: protect against memory blowup on large models.
+        # For attention-poor architectures (φ_attn < 0.05), apply a parameter-count-
+        # based rank ceiling. YOLOv8x (~68M params) with r=128 and ~200 target conv
+        # layers generates ~13M adapter params + ~39M optimizer state (Adam 2x),
+        # which can cause OOM on consumer GPUs.
+        if fingerprint.phi_attn < 0.05:
+            model_params = sum(p.numel() for p in inner_model.parameters())
+            # Tiered rank ceiling based on model size:
+            #   < 10M params  (n-series):  no cap (r up to 128)
+            #   10-50M params (s/m-series): cap at 64
+            #   > 50M params  (l/x-series): cap at 32
+            if model_params > 50_000_000:
+                _cnn_rank_cap = 32
+            elif model_params > 10_000_000:
+                _cnn_rank_cap = 64
+            else:
+                _cnn_rank_cap = None
+
+            if _cnn_rank_cap is not None and rank > _cnn_rank_cap:
+                recommended_rank = _cnn_rank_cap
+                safety_overrides["r"] = _cnn_rank_cap
+                LOGGER.info(
+                    "[Planner] CNN rank cap: model has %.1fM params → "
+                    "capping rank from %d to %d to prevent memory blowup",
+                    model_params / 1e6, rank, _cnn_rank_cap,
+                )
+
+            # Grouped convolution rank alignment: when the model contains grouped
+            # convolutions, LoRA rank should be aligned to the greatest common
+            # divisor of group counts to avoid parameter dimension mismatches.
+            # This is a low-priority safety measure; the safety_overrides["r"]
+            # value is adjusted downward to the nearest multiple of all groups
+            # if it isn't already compatible.
+            _gcd = self._compute_group_gcd(inner_model)
+            if _gcd > 1 and recommended_rank is not None and recommended_rank % _gcd != 0:
+                aligned_rank = (recommended_rank // _gcd) * _gcd
+                if aligned_rank > 0:
+                    LOGGER.info(
+                        "[Planner] Grouped conv rank alignment: "
+                        "rank %d → %d (gcd=%d)",
+                        recommended_rank, aligned_rank, _gcd,
+                    )
+                    recommended_rank = aligned_rank
+                    safety_overrides["r"] = aligned_rank
+
         # YOLO11s-like (no attention): disable attention targets.
         if fingerprint.phi_attn < 0.05:
             if getattr(config, "include_attention", False):
@@ -1308,7 +1680,65 @@ class PEFTPlanner:
                 target_modules_hint=targets_hint,
             )
 
+        # DDP consistency: ensure all ranks reach the same decision.
+        # Under DistributedDataParallel, each rank computes the decision
+        # independently. Floating-point differences in module scanning or
+        # regression prediction can cause divergent decisions across ranks,
+        # leading to inconsistent adapter configurations. We broadcast the
+        # decision status and key overrides from rank 0 to all ranks.
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            decision = self._sync_decision_ddp(decision)
+
         self._save_audit(fingerprint, variant, rank, decision, targets_hint)
+        return decision
+
+    @staticmethod
+    def _sync_decision_ddp(decision: "PlacementDecision") -> "PlacementDecision":
+        """Broadcast the decision from rank 0 to all DDP ranks.
+
+        Ensures every rank applies the same ACCEPT/ADAPT/REFUSE decision
+        and the same safety_overrides. Without this, rank-0 might ACCEPT
+        while rank-1 ADAPTs, causing gradient mismatch crashes in DDP.
+
+        Args:
+            decision: The locally-computed decision.
+
+        Returns:
+            The rank-0 decision on all ranks (if DDP is initialized).
+        """
+        import torch.distributed as dist
+        if not (dist.is_available() and dist.is_initialized()):
+            return decision
+
+        # Pack decision into a simple dict for broadcasting via dist.broadcast_object_list
+        rank = dist.get_rank()
+        payload = {
+            "status": decision.status,
+            "recommended_variant": decision.recommended_variant,
+            "recommended_rank": decision.recommended_rank,
+            "predicted_delta": decision.predicted_delta,
+            "refusal_reason": decision.refusal_reason,
+            "safety_overrides": decision.safety_overrides,
+            "target_modules_hint_count": len(decision.target_modules_hint or []),
+        }
+        container = [payload]
+        dist.broadcast_object_list(container, src=0)
+        synced = container[0]
+
+        if rank != 0:
+            LOGGER.info(
+                "[Planner] DDP sync: rank %d received decision '%s' from rank 0",
+                rank, synced["status"],
+            )
+            return PlacementDecision(
+                status=synced["status"],
+                recommended_variant=synced["recommended_variant"],
+                recommended_rank=synced["recommended_rank"],
+                predicted_delta=synced["predicted_delta"],
+                refusal_reason=synced["refusal_reason"],
+                safety_overrides=synced["safety_overrides"],
+                target_modules_hint=decision.target_modules_hint,  # keep local targets
+            )
         return decision
 
     def _save_audit(
@@ -1330,6 +1760,12 @@ class PEFTPlanner:
                     "phi_dw": fingerprint.phi_dw,
                     "phi_group": fingerprint.phi_group,
                     "phi_linear": fingerprint.phi_linear,
+                    # Extended dimensions (v2)
+                    "phi_depth": fingerprint.phi_depth,
+                    "phi_width": fingerprint.phi_width,
+                    "phi_head": fingerprint.phi_head,
+                    "phi_residual": fingerprint.phi_residual,
+                    "phi_norm": fingerprint.phi_norm,
                 },
                 variant=variant,
                 requested_rank=requested_rank,
@@ -1403,6 +1839,12 @@ class PEFTPlanner:
             getattr(model, "model", model)
         )
         fingerprint = ArchitectureFingerprint.compute(inner_model)
+        # Detect architecture family for family-level guardrail logic.
+        # This is necessary because RT-DETR-l's actual phi_attn is ~0.10
+        # (many conv layers dilute the ratio), while the paper-calibrated
+        # profile assumes phi_attn≈0.85.
+        arch_family = ArchitectureFingerprint._detect_architecture_family(inner_model)
+        is_rtdetr = (fingerprint.phi_attn >= 0.7 or arch_family == "rtdetr")
         targets: List[str] = []
         include_text = fingerprint.phi_text > 0.05
 
@@ -1416,8 +1858,20 @@ class PEFTPlanner:
                 continue
 
             lname = name.lower()
+
+            # YOLOv5 Focus layer: the Focus module uses a pixel-shuffle-like
+            # operation followed by a Conv2d. The Focus conv has a 4× larger
+            # input channel count (4× spatial concatenation), making LoRA
+            # adapters on it both memory-heavy and unstable. Exclude by default.
+            if "focus" in lname:
+                continue
+            # Text-fusion detection: use precise patterns (v2 improvement).
+            # Bare "fusion" keyword removed to avoid false positives on
+            # modules like feature_fusion or fusion_layer.
             is_text_fusion = any(
-                k in lname for k in ("text", "clip", "lang", "fusion")
+                k in lname for k in (
+                    "text_fusion", "text_proj", "clip", "lang", "world_embed",
+                )
             )
 
             # Text-fusion modules are always included when detected.
@@ -1425,14 +1879,14 @@ class PEFTPlanner:
                 targets.append(name)
                 continue
 
-            # YOLO11s-like (no attention): conv only, no attention.
-            if fingerprint.phi_attn < 0.05:
+            # YOLO11s-like (no attention, not RT-DETR): conv only, no attention.
+            if fingerprint.phi_attn < 0.05 and not is_rtdetr:
                 if is_conv and "attn" not in lname:
                     targets.append(name)
                 continue
 
             # YOLO12s-like (moderate attention): conv + safe attention.
-            if 0.05 <= fingerprint.phi_attn < 0.7:
+            if 0.05 <= fingerprint.phi_attn < 0.7 and not is_rtdetr:
                 # Exclude area-attention risky conv layers (qkv, proj, pe).
                 if is_conv and any(
                     p in lname for p in (".attn.qkv", ".attn.proj", ".attn.pe")
@@ -1452,8 +1906,8 @@ class PEFTPlanner:
                 targets.append(name)
                 continue
 
-            # RT-DETR-like (high attention): refuse targets.
-            if fingerprint.phi_attn >= 0.7:
+            # RT-DETR-like (high attention or rtdetr family): refuse targets.
+            if is_rtdetr:
                 continue
 
         # Apply additional config-level filters if provided.
@@ -1490,6 +1944,27 @@ class PEFTPlanner:
             targets = filtered
 
         return sorted(targets)
+
+    @staticmethod
+    def _compute_group_gcd(model: nn.Module) -> int:
+        """Compute the GCD of all grouped convolution ``groups`` values.
+
+        Used for rank alignment: LoRA rank should be a multiple of the
+        group GCD to avoid dimension mismatches in grouped conv layers.
+
+        Args:
+            model: The model to scan.
+
+        Returns:
+            GCD of all ``Conv2d.groups`` values > 1. Returns 1 if no
+            grouped convolutions are found.
+        """
+        import math as _math
+        result = 0
+        for module in model.modules():
+            if isinstance(module, nn.Conv2d) and module.groups > 1:
+                result = _math.gcd(result, module.groups)
+        return result if result > 0 else 1
 
 
 def is_planner_enabled(config: Any) -> bool:

@@ -120,6 +120,8 @@ def _make_yolo_world_like():
     """YOLO-World-like: text-fusion modules (φ_text > 0.05).
 
     2 conv + 2 linear = 4 total modules; 2 text-fusion → 2/4 = 0.5.
+    NOTE: v2 fingerprint uses refined text-fusion detection — bare "fusion"
+    keyword no longer matches. Use "text_fusion" or "text_proj" patterns.
     """
 
     class _Model(nn.Module):
@@ -127,7 +129,7 @@ def _make_yolo_world_like():
             super().__init__()
             self.stem = nn.Conv2d(3, 16, 3, padding=1)
             self.text_fusion_proj = nn.Linear(16, 32)
-            self.fusion_conv = nn.Conv2d(16, 32, 1)
+            self.text_proj_conv = nn.Conv2d(16, 32, 1)
             self.head = nn.Linear(32, 80)
 
     return _Model()
@@ -249,14 +251,26 @@ class TestPEFTPlannerFit:
     ]
 
     def test_fit_reproduces_default_coeffs(self):
-        """Fitting on the paper data should recover the calibrated defaults."""
+        """Fitting on the paper data should recover the calibrated defaults.
+
+        Note: v2 regression model uses 11 features (5 original + 5 extended
+        fingerprint dims + log(r)). With only 5-dim fingerprints in the test
+        data, the extended features are all zero and the lstsq solution assigns
+        them ~0 coefficients. The log(r) feature (beta10) absorbs part of the
+        intercept since all data points use rank=8 (log2(8)=3).
+        The effective intercept = beta0 + beta10 * log2(8) should match the
+        original default beta0 ≈ 0.067.
+        """
+        import math
         planner = PEFTPlanner()
         planner.fit(self._PAPER_HISTORY)
-        assert len(planner._coeffs) == 5
-        # Default coeffs are calibrated to (0.067, 0.004, 0.0, 0.0, 1.0)
-        assert planner._coeffs[0] == pytest.approx(0.067, abs=0.01)
+        assert len(planner._coeffs) == 11  # v2: 11-dimensional
+        # Original beta1 (phi_attn) should still match
         assert planner._coeffs[1] == pytest.approx(0.004, abs=0.01)
         assert planner._coeffs[4] == pytest.approx(1.0, abs=0.05)
+        # Effective intercept = beta0 + beta10 * log2(default_rank=8)
+        effective_intercept = planner._coeffs[0] + planner._coeffs[10] * math.log2(8)
+        assert effective_intercept == pytest.approx(0.067, abs=0.01)
 
     def test_fit_predicts_yolo11s_lora(self):
         planner = PEFTPlanner()
@@ -504,9 +518,9 @@ class TestPEFTPlannerDetectTargets:
         model = _make_yolo_world_like()
         planner = PEFTPlanner()
         targets = planner.detect_targets(model)
-        # text_fusion_proj and fusion_conv should be included
+        # text_fusion_proj and text_proj_conv should be included
         assert any("text" in t for t in targets)
-        assert any("fusion" in t for t in targets)
+        assert any("fusion" in t or "text_proj" in t for t in targets)
 
     def test_config_filter_exclude_modules(self):
         model = _make_yolo11s_like()

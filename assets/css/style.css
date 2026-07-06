@@ -163,6 +163,8 @@ p:last-child { margin-bottom: 0; }
 .app-bar-meta a { color: rgba(255,255,255,0.8); text-decoration: none !important; }
 .app-bar-meta a:hover { color: #fff; }
 
+.meta-badge { height: 18px; vertical-align: middle; margin-left: 0.3rem; }
+
 .app-bar-toggle {
   display: none; background: none; border: none;
   color: var(--color-text-inverse); font-size: 1.25rem; cursor: pointer;

@@ -316,10 +316,14 @@ class TestPlannerAuditIntegration:
         assert "RT-DETR" in data["refusal_reason"]
 
     def test_audit_file_created_on_adapt(self, tmp_path):
+        # Use a model with phi_attn between 0.3 and 0.7 to trigger
+        # DoRA→LoRA downgrade (Guardrail A) but NOT Guardrail B.
+        # 1 AAttn + 2 conv = total_modules=2 (conv+linear), attn=1 → phi_attn=0.5
         class _YOLO12(nn.Module):
             def __init__(self):
                 super().__init__()
-                self.conv = nn.Conv2d(3, 16, 3)
+                self.conv1 = nn.Conv2d(3, 16, 3)
+                self.conv2 = nn.Conv2d(16, 32, 3)
                 self.attn = nn.Module()
                 self.attn.__class__.__name__ = "AAttn"
 
@@ -328,7 +332,9 @@ class TestPlannerAuditIntegration:
         planner = PEFTPlanner(audit_dir=tmp_path)
         config = LoRAConfig(peft_type="dora", r=16)
         decision = planner.plan(_YOLO12(), config)
-        assert decision.status == "ADAPT"
+        assert decision.status == "ADAPT", (
+            f"Expected ADAPT (DoRA→LoRA downgrade), got {decision.status}"
+        )
 
         files = list(tmp_path.glob("*.json"))
         assert len(files) == 1

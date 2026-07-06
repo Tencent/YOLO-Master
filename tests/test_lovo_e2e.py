@@ -234,7 +234,7 @@ class TestLOVOE2ECLI:
 
         with open(coeffs, encoding="utf-8") as f:
             data = json.load(f)
-        assert len(data["coefficients"]) == 5
+        assert len(data["coefficients"]) == 11  # v2: 11-dim regression
 
     def test_cli_help(self):
         """All sub-commands should respond to --help."""
@@ -387,7 +387,7 @@ class TestLOVORegressionDrivenDecision:
         collector = LOVODataCollector(_paper_points_10())
         planner = PEFTPlanner()
         planner.fit(collector.to_history())
-        assert len(planner._coeffs) == 5
+        assert len(planner._coeffs) == 11  # v2: 11-dim regression
         assert planner._coeffs[0] > 0.0   # intercept positive (base gain)
         assert planner._coeffs[4] > 0.0   # xi coefficient positive (HRA > LoRA)
 
@@ -407,7 +407,7 @@ class TestLOVORegressionDrivenDecision:
         # 3. Fit planner
         planner = PEFTPlanner()
         planner.fit(loaded.to_history())
-        assert len(planner._coeffs) == 5
+        assert len(planner._coeffs) == 11  # v2: 11-dim regression
 
         # 4. Predict on held-out-like architecture
         pred = planner.predict(ArchitectureFingerprint(0.0, 0.0, 0.0, 0.0, 0.25), "hra")
