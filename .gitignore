@@ -243,6 +243,7 @@ audit_report_*.md
 代码审计报告_*.md
 yolo_peft_evaluation_*.md
 PEFT_*.md
+!wiki/PEFT/PEFT_*.md
 PLANNER_*.md
 
 # Output directories
@@ -250,6 +251,7 @@ output/
 
 # Plan documents
 plan.md
+!wiki/plan.md
 
 # Scripts temporary/output files (not for repo)
 scripts/*_report.txt
