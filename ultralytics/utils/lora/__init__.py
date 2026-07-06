@@ -30,12 +30,34 @@ from .api import (
     supports_peft_request,
 )
 from .io import _find_original_model_class, load_lora_adapters, merge_lora_weights, save_lora_adapters
+from .planner import (
+    ArchitectureFingerprint,
+    LOVODataCollector,
+    LOVODataPoint,
+    LOVOValidationResult,
+    LOVOValidator,
+    PEFTPlanner,
+    PEFTVariantProfile,
+    PlacementDecision,
+    RefusalError,
+    is_planner_enabled,
+)
 from .training import LoraTrainingStrategy, get_lora_training_stats, suggest_lora_config_for_dataset
 
 __all__ = [
+    "ArchitectureFingerprint",
+    "LOVODataCollector",
+    "LOVODataPoint",
+    "LOVOValidationResult",
+    "LOVOValidator",
     "PEFT_AVAILABLE",
     "PeftModel",
     "PeftProxy",
+    "PEFTPlanner",
+    "PEFTVariantProfile",
+    "PlacementDecision",
+    "RefusalError",
+    "is_planner_enabled",
     "LoRAConfig",
     "LoRAConfigBuilder",
     "LoRADetectionModel",

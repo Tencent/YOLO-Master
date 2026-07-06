@@ -231,7 +231,25 @@ __marimo__/
 /.workbuddy/
 /docs/superpowers/
 
-# Experiment artifacts (not for repo)
+# Session temp files
+.session_tmps/
+
+# Audit reports and evaluation artifacts (not for repo)
+*_AUDIT_REPORT.md
+*_VALIDATION_REPORT.md
+EXPERIMENT_REPORT.md
+abstract_review_full.md
+audit_report_*.md
+代码审计报告_*.md
+yolo_peft_evaluation_*.md
+PEFT_*.md
+PLANNER_*.md
+
+# Output directories
+output/
+
+# Plan documents
+plan.md
 *.pt
 *.pth
 YOLO-Master-EsMoE-N.pt
