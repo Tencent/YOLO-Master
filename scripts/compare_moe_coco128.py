@@ -235,6 +235,7 @@ def train_one(args: argparse.Namespace, spec: VersionSpec, data_yaml: Path, proj
         epochs=target_epochs,
         imgsz=args.imgsz,
         batch=args.batch,
+        fraction=args.fraction,
         device=args.device,
         workers=args.workers,
         seed=args.seed,
@@ -265,6 +266,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--imgsz", type=int, default=640)
     parser.add_argument("--batch", type=int, default=8)
+    parser.add_argument("--fraction", type=float, default=1.0, help="Fraction of the training set to use (1.0 = all).")
     parser.add_argument("--device", default="", help="Ultralytics device string: '', cpu, mps, 0, 0,1 ...")
     parser.add_argument("--workers", type=int, default=0)
     parser.add_argument("--seed", type=int, default=42)
