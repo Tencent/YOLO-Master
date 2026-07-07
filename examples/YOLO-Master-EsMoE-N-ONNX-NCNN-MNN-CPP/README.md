@@ -9,7 +9,7 @@ This project provides a universal C++ inference runtime for [YOLO-Master](https:
 - **One Universal Binary:** A single executable integrates both **ONNX Runtime** and **NCNN** backends; the backend, class names, and input size are auto-detected from the model — no recompilation or any dataset YAML needed at runtime.
 - **Verified Accuracy:** Reproduces the PyTorch original to **< 0.5%** mAP50-95 across ONNX / NCNN / MNN, and **< 1.0%** under INT8 quantization, on 548 VisDrone validation images.
 - **Deployment-Friendly:** Cross-platform [CMake](https://cmake.org/) build producing **self-contained and relocatable bundles** for Linux x86_64 and Windows 10/11 — installable by unzip, no dependencies on the target.
-- **GPU Acceleration:** Supports FP32 CPU inference and [NVIDIA CUDA](https://developer.nvidia.com/cuda-toolkit) GPU acceleration through the ONNX Runtime CUDA Execution Provider. (Currently the v0.1 binaries only support GPU on Linux with CUDA12.)
+- **GPU Acceleration:** Supports FP32 CPU inference and [NVIDIA CUDA](https://developer.nvidia.com/cuda-toolkit) GPU acceleration through the ONNX Runtime CUDA Execution Provider on Linux, and on [NVIDIA Jetson](https://developer.nvidia.com/embedded-computing) Orin via a native TensorRT backend (JetPack 7).
 
 ## ☕ Note
 
@@ -68,8 +68,8 @@ Ensure you have the following dependencies installed （not required if you only
 1.  **Clone the Repository:**
 
     ```bash
-    git clone https://github.com/Tencent/YOLO-Master.git
-    cd YOLO-Master/examples/YOLO-Master-EsMoE-N-ONNX-NCNN-MNN-CPP/cpp
+    git clone https://github.com/skywalker-lt/yolo-master-edge.git
+    cd yolo-master-edge/cpp
     ```
 
 2.  **Create Build Directory:**
@@ -138,6 +138,18 @@ The backend is inferred from the model (`.onnx` → ONNX Runtime, an NCNN direct
 
 See `cpp/run_tests.sh` for the 16-test robustness battery.
 
+## 🤖 Jetson Orin (Native TensorRT)
+
+A prebuilt aarch64 runner for **Jetson Orin** (Nano / NX / AGX) on **JetPack 7** is attached to the [Releases](https://github.com/skywalker-lt/yolo-master-edge/releases) page. It bundles OpenCV and uses JetPack's TensorRT + CUDA; the per-device FP16 engine is built once with the included script.
+
+```bash
+tar xzf yolomaster_edge-jetson-orin-jp7.tar.gz && cd yolomaster_edge-jetson-orin-jp7
+./build_engine.sh    # builds the FP16 engine for this device (once, ~10-15 min)
+./yolomaster_edge --model models/esmoe_n_fp16.engine --source <img|dir> --classes visdrone --out out
+```
+
+On an Orin Nano 4 GB the FP16 engine runs at **35.7 FPS** (27.8 ms) with **mAP50-95 0.2029 (−0.34% vs FP32)**. FP16 is the recommended target on this model — its area-attention does not quantize, so INT8 is both slower and less accurate here. To build from source, the [`jetson/`](jetson/) scripts drive the engine build and packaging; see [`jetson/README.md`](jetson/README.md) and [`jetson/DEPLOYMENT_LOG.md`](jetson/DEPLOYMENT_LOG.md).
+
 ## 📊 Results
 
 Validated on full 548 VisDrone validation images against the PyTorch original (`mAP50-95 = 0.2036`), using identical settings (conf 0.001, NMS IoU 0.7, multi-label).
@@ -149,8 +161,9 @@ Validated on full 548 VisDrone validation images against the PyTorch original (`
 | MNN (CPU)                 | 0.2034   | −0.02%       | 74 ms   | 13.5  |
 | INT8 mixed (CPU) ¹        | 0.1952   | −0.84%       | 137 ms  | 7.2   |
 | ONNX CUDA (H200 GPU)      | 0.2033   | −0.03%       | 7.8 ms  | ~128  |
+| TensorRT FP16 (Jetson Orin Nano 4GB) | 0.2029 | −0.34% | 27.8 ms | 35.7  |
 
-CPU latencies are x86 @ 4 threads on one host; mAP is identical across FP32 formats because they are of the same graph.
+CPU latencies are x86 @ 4 threads on one host; mAP is identical across FP32 formats because they are of the same graph. The Jetson row is a native TensorRT FP16 engine, measured on-device (see below).
 
 > ¹ **INT8 is *slower* than FP32 on CPU** (137 ms vs 49 ms on the same host). This is expectedc and here's why: the QDQ/QOperator kernels do not engage INT8 SIMD paths that beat the well-tuned FP32 convolutions, and the FP32↔INT8 boundaries around the mixed-precision blocks add overhead. INT8's *throughput* payoff requires INT8 tensor cores (TensorRT on NVIDIA Orin) — the INT8 result here is an **accuracy** proof (−0.84%, within budget), with the performance validation reserved for the on-device TensorRT path.
 
@@ -158,4 +171,4 @@ See [`TECHNICAL_REPORT.md`](TECHNICAL_REPORT.md) for the full methodology, INT8 
 
 ## 🤝 Contributing
 
-Contributions are welcome! If you find any issues or have suggestions for improvements, please feel free to open an issue or submit a pull request on the [YOLO-Master repository](https://github.com/Tencent/YOLO-Master).
+Contributions are welcome! If you find any issues or have suggestions for improvements, please feel free to open an issue or submit a pull request on the [project repository](https://github.com/skywalker-lt/yolo-master-edge).

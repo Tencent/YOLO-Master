@@ -22,7 +22,32 @@ OrtBackend::OrtBackend(const std::string& model_path, int threads, const std::st
     opts_.SetIntraOpNumThreads(threads);
     opts_.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
 
-    if (device == "cuda") {
+    if (device == "trt" || device == "tensorrt") {
+        // ONNXRuntime TensorRT EP: builds+caches a TRT engine internally (near-native TRT),
+        // honors QDQ nodes for INT8 + FP16 elsewhere, and auto-falls-back to CUDA/CPU for
+        // unsupported subgraphs. Portable: ship the .onnx; the engine cache builds on first run.
+        try {
+            OrtTensorRTProviderOptionsV2* trt = nullptr;
+            Ort::ThrowOnError(Ort::GetApi().CreateTensorRTProviderOptions(&trt));
+            const char* keys[] = {"trt_fp16_enable", "trt_int8_enable",
+                                  "trt_engine_cache_enable", "trt_engine_cache_path"};
+            const char* vals[] = {"1", "1", "1", "trt_engine_cache"};
+            Ort::ThrowOnError(Ort::GetApi().UpdateTensorRTProviderOptions(trt, keys, vals, 4));
+            opts_.AppendExecutionProvider_TensorRT_V2(*trt);
+            Ort::GetApi().ReleaseTensorRTProviderOptions(trt);
+            active_ep = "TensorRT-EP";
+        } catch (const std::exception& e) {
+            std::cerr << "[ort] TensorRT EP unavailable (" << e.what() << "); trying CUDA\n";
+        }
+        // CUDA fallback for TRT-unsupported nodes (and if the TRT EP failed to load)
+        try {
+            OrtCUDAProviderOptions cuda{}; cuda.device_id = 0;
+            opts_.AppendExecutionProvider_CUDA(cuda);
+            if (active_ep != "TensorRT-EP") active_ep = "CUDA";
+        } catch (const std::exception& e) {
+            if (active_ep != "TensorRT-EP") { std::cerr << "[ort] CUDA EP unavailable; using CPU\n"; active_ep = "CPU"; }
+        }
+    } else if (device == "cuda") {
         try {                                    // graceful fallback if CUDA EP can't load
             OrtCUDAProviderOptions cuda{};
             cuda.device_id = 0;
