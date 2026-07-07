@@ -74,7 +74,15 @@ from .analysis import ExpertUsageTracker, diagnose_model, RoutingCollapseDetecto
 from .diagnostics import MoELayerDiagnostic, collect_moe_diagnostics, diagnostics_to_dict, format_moe_diagnostics
 from .history import MoEDiagnosticsRecorder, export_moe_history_plots
 from .pruning import prune_moe_model
-from .scheduler import MoEDynamicScheduler, MoEDynamicSchedulerConfig, MoEDynamicScheduleState, compute_gini
+from .scheduler import (
+    MoEDynamicScheduler,
+    MoEDynamicSchedulerConfig,
+    MoEDynamicScheduleState,
+    MapSaturationScheduler,
+    MapSaturationSchedulerConfig,
+    MapSaturationScheduleState,
+    compute_gini,
+)
 
 __all__ = [
     "UltraOptimizedMoE",
@@ -142,5 +150,8 @@ __all__ = [
     "MoEDynamicScheduler",
     "MoEDynamicSchedulerConfig",
     "MoEDynamicScheduleState",
+    "MapSaturationScheduler",
+    "MapSaturationSchedulerConfig",
+    "MapSaturationScheduleState",
     "compute_gini",
 ]
