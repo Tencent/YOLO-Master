@@ -2,7 +2,7 @@
 
 <img alt="C++" src="https://img.shields.io/badge/C++-17-blue.svg?style=flat&logo=c%2B%2B"> <img alt="Onnx-runtime" src="https://img.shields.io/badge/OnnxRuntime-717272.svg?logo=Onnx&logoColor=white"> <img alt="NCNN" src="https://img.shields.io/badge/NCNN-Tencent-blue.svg"> <img alt="MNN" src="https://img.shields.io/badge/MNN-Alibaba-orange.svg"> <img alt="Platform" src="https://img.shields.io/badge/platform-Linux%20%7C%20Windows-lightgrey.svg">
 
-This project provides a universal C++ inference runtime for [YOLO-Master](https://github.com/Tencent/YOLO-Master) **EsMoE-N** object-detection models, leveraging both the [ONNX Runtime](https://onnxruntime.ai/) and [NCNN](https://github.com/Tencent/ncnn) backends together with the [OpenCV](https://opencv.org/) library. A single binary runs either backend on CPU and [NVIDIA CUDA](https://developer.nvidia.com/cuda-toolkit), auto-detecting the the model format, class names, and input size — designed for edge deployment of vertical-domain detectors (VisDrone aerial imagery, SKU-110K, etc.).
+This project provides a universal C++ inference runtime for [YOLO-Master](https://github.com/Tencent/YOLO-Master) **EsMoE-N** object-detection models, leveraging both the [ONNX Runtime](https://onnxruntime.ai/) and [NCNN](https://github.com/Tencent/ncnn) backends together with the [OpenCV](https://opencv.org/) library. A single binary runs either backend on CPU and [NVIDIA CUDA](https://developer.nvidia.com/cuda-toolkit), auto-detecting the model format, class names, and input size — designed for edge deployment of vertical-domain detectors (VisDrone aerial imagery, SKU-110K, etc.).
 
 ## ✨ Benefits
 
@@ -58,10 +58,7 @@ Ensure you have the following dependencies installed （not required if you only
 | [CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit) (Optional)| 12.x          | Required for GPU acceleration via ONNX Runtime's CUDA Execution Provider (match your ONNX Runtime GPU build).   |
 | [MNN](https://github.com/alibaba/MNN) (Optional)                    | >=3.0         | Only for the third export format / benchmarking.                                                               |
 
-**Important Notes:**
-
-1.  **C++17:** The requirement stems from using the `<filesystem>` library for path handling.
-2.  **CUDA/ONNX Runtime pairing:** The CUDA Execution Provider is ABI-coupled to a specific CUDA major version. Use the ONNX Runtime GPU build that matches your installed CUDA Toolkit (e.g. the CUDA-12 build with CUDA 12.x). Mismatched versions lead to runtime loader errors.
+> **Note:** The CUDA Execution Provider is ABI-coupled to a CUDA major version — use the ONNX Runtime GPU build that matches your CUDA Toolkit (e.g. the CUDA-12 build with CUDA 12.x), or you'll hit loader errors.
 
 ## 🛠️ Build Instructions
 
@@ -79,7 +76,7 @@ Ensure you have the following dependencies installed （not required if you only
     ```
 
 3.  **Configure with CMake:**
-    Run CMake to generate the build files. You **must** point it at your ONNX Runtime and NCNN installations via `ONNXRUNTIME_ROOT` and `NCNN_ROOT`. Adjust the paths to where you extracted the SDKs.
+    Point CMake at your extracted ONNX Runtime and NCNN SDKs via `ONNXRUNTIME_ROOT` and `NCNN_ROOT`.
 
     ```bash
     # Example for Linux (adjust paths as needed)
@@ -165,7 +162,7 @@ Validated on full 548 VisDrone validation images against the PyTorch original (`
 
 CPU latencies are x86 @ 4 threads on one host; mAP is identical across FP32 formats because they are of the same graph. The Jetson row is a native TensorRT FP16 engine, measured on-device (see below).
 
-> ¹ **INT8 is *slower* than FP32 on CPU** (137 ms vs 49 ms on the same host). This is expectedc and here's why: the QDQ/QOperator kernels do not engage INT8 SIMD paths that beat the well-tuned FP32 convolutions, and the FP32↔INT8 boundaries around the mixed-precision blocks add overhead. INT8's *throughput* payoff requires INT8 tensor cores (TensorRT on NVIDIA Orin) — the INT8 result here is an **accuracy** proof (−0.84%, within budget), with the performance validation reserved for the on-device TensorRT path.
+> ¹ INT8 is *slower* than FP32 on CPU — its throughput payoff needs INT8 tensor cores, not x86 CPUs. The CPU INT8 result is an **accuracy** proof (−0.84%, within budget); on the actual accelerator, note that even on the Orin's tensor cores FP16 wins here (the attention doesn't quantize — see the TensorRT row and [`TECHNICAL_REPORT.md`](TECHNICAL_REPORT.md) §8).
 
 See [`TECHNICAL_REPORT.md`](TECHNICAL_REPORT.md) for the full methodology, INT8 quantization deep-dive, and numerical parity analysis.
 
