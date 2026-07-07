@@ -46,6 +46,8 @@ def main():
     ap.add_argument("--method", default="MinMax", choices=["MinMax", "Entropy", "Percentile"])
     ap.add_argument("--format", default="QDQ", choices=["QDQ", "QOperator"],
                     help="QOperator fuses to QLinear* (fast on ORT CPU); QDQ is TensorRT-preferred")
+    ap.add_argument("--symmetric", action="store_true",
+                    help="symmetric quant (zero_point=0) — REQUIRED for TensorRT/GPU INT8")
     ap.add_argument("--exclude", nargs="*", default=[], help="node-name substrings to keep in fp32")
     args = ap.parse_args()
 
@@ -85,6 +87,11 @@ def main():
         activation_type=QuantType.QInt8,
         calibrate_method=getattr(CalibrationMethod, args.method),
         nodes_to_exclude=nodes_to_exclude,
+        # TensorRT requires symmetric quantization (zero_point=0); ORT defaults to
+        # asymmetric activations -> "Non-zero zero point is not supported" at parse.
+        extra_options={"ActivationSymmetric": args.symmetric,
+                       "WeightSymmetric": args.symmetric,
+                       "QuantizeBias": False} if args.symmetric else {},  # QuantizeBias off: TRT rejects int32-bias DQ
     )
 
     # restore ultralytics metadata (names/imgsz) so YOLO(int8).val() works
