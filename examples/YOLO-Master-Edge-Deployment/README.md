@@ -9,7 +9,8 @@ It provides a lightweight, reproducible scaffold for exporting YOLO-Master model
 - `edge_utils.py` - shared preprocessing, postprocessing, consistency, and benchmark utilities.
 - `export_edge_models.py` - export helper for ONNX, NCNN, and MNN.
 - `validate_edge_outputs.py` - compare PyTorch/exported backend outputs saved as `.npy` tensors.
-- `cpp/edge_benchmark_stub.cpp` - minimal C++ benchmark entry that can be extended with ONNX Runtime, NCNN, or MNN runtime calls.
+- `cpp/edge_benchmark.cpp` - C++ benchmark runner with backend selection, OpenCV letterbox preprocessing, CSV latency output, and summary stats.
+- `cpp/backends/` - backend interface plus ONNX, NCNN, and MNN implementation slots.
 - `CMakeLists.txt` - portable CMake target for the C++ benchmark entry.
 
 ## Vertical Profiles
@@ -39,15 +40,74 @@ python validate_edge_outputs.py --reference pytorch.npy --candidate ncnn.npy --t
 
 The tool reports max absolute error, mean absolute error, RMSE, and whether the configured tolerance is met.
 
-## CMake Smoke Build
+## CMake Benchmark Build
+
+The C++ runner requires OpenCV for image loading and letterbox preprocessing. Backend SDK calls are currently isolated behind `cpp/backends/` so ONNX Runtime, NCNN, and MNN can be wired independently.
 
 ```bash
 cmake -S . -B build
 cmake --build build
-./build/yolo_master_edge_benchmark --backend onnx --model best.onnx --images val.txt
+./build/yolo_master_edge_benchmark \
+  --backend onnx \
+  --model best.onnx \
+  --images /path/to/VisDrone/images/val \
+  --profile visdrone \
+  --imgsz 960 \
+  --limit 500 \
+  --output benchmark_onnx.csv
 ```
 
-The C++ file is intentionally dependency-light. It establishes the CLI contract and build target, so backend-specific runtime calls can be added without changing benchmark automation.
+`--images` accepts either a directory of images or a text file with one image path per line. Use `--limit 500` for the issue validation subset.
+
+To enable real ONNX Runtime inference, provide an ONNX Runtime package root:
+
+```bash
+cmake -S . -B build-ort \
+  -DWITH_ONNXRUNTIME=ON \
+  -DONNXRUNTIME_ROOT=/path/to/onnxruntime
+cmake --build build-ort
+```
+
+Without `WITH_ONNXRUNTIME=ON`, the ONNX backend remains a buildable stub so the benchmark CLI, preprocessing, and CSV/report plumbing can be developed without backend SDKs installed.
+
+For a local ONNX Runtime C/C++ package, point `ONNXRUNTIME_ROOT` at the directory containing `include/` and `lib/`:
+
+```bash
+cmake -S examples/YOLO-Master-Edge-Deployment \
+  -B examples/YOLO-Master-Edge-Deployment/build-ort \
+  -DWITH_ONNXRUNTIME=ON \
+  -DONNXRUNTIME_ROOT=/path/to/onnxruntime
+cmake --build examples/YOLO-Master-Edge-Deployment/build-ort
+```
+
+For example, Homebrew users can use `-DONNXRUNTIME_ROOT="$(brew --prefix onnxruntime)"`.
+
+Smoke test the ONNX backend with bundled sample images:
+
+```bash
+examples/YOLO-Master-Edge-Deployment/build-ort/yolo_master_edge_benchmark \
+  --backend onnx \
+  --model YOLO-Master-EsMoE-N.onnx \
+  --images ultralytics/assets \
+  --profile visdrone \
+  --imgsz 960 \
+  --limit 2 \
+  --output benchmark_onnx_assets.csv
+```
+
+Example local CPU result with `imgsz=960`:
+
+```text
+backend=onnx model=YOLO-Master-EsMoE-N.onnx profile=visdrone imgsz=960 conf=0.2 iou=0.55 output=benchmark_onnx_assets.csv
+count,mean_ms,p50_ms,p95_ms,p99_ms,fps
+2,402.451,400.866,400.866,400.866,2.48478
+```
+
+The CSV contains one row per image:
+
+```text
+image,preprocess_ms,inference_ms,postprocess_ms,total_ms,detections
+```
 
 ## Recommended Issue #51 Workflow
 
