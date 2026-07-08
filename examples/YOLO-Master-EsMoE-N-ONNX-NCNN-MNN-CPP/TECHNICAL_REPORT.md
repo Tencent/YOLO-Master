@@ -140,6 +140,7 @@ Per-frame inference, VisDrone val:
 | Linux CPU (4-thread) | NCNN | ~80 | ~12.5 |
 | Linux CPU (4-thread) | ONNX INT8 (mixed) | 137 | 7.2 |
 | Linux H200 | **ONNX CUDA (C++)** | 7.8 | **~128** |
+| Jetson Orin Nano 4GB | **TensorRT FP16** | 27.8 | **35.7** |
 
 The ordering is consistent and explicable: **ORT is ~2× faster than MNN and NCNN on x86** because it is heavily x86/AVX-tuned, while MNN and NCNN are mobile/ARM-first runtimes — which is exactly why both are carried forward for the Orin, where that ranking is expected to invert. CUDA delivers a ~5× step over CPU. **INT8 is the slowest CPU row (2.8× slower than FP32 ONNX), for the reasons in §3.6** — a reminder that INT8 is a *hardware*-dependent optimization, not a free win. On x86 CPU no format beats ORT, so the "best export format" is platform-dependent, not absolute — the reason we ship three.
 
@@ -147,11 +148,22 @@ The ordering is consistent and explicable: **ORT is ~2× faster than MNN and NCN
 
 A single cross-platform **CMake** builds and runs on two platforms today: **Linux x86_64** (with the ONNXRuntime CUDA EP; C++ CUDA mAP50-95 = 0.2033, −0.03% vs PyTorch, at 7.8 ms/frame / ~128 FPS) and **Windows 11 x64** (VS 2026 / MSVC 19.5x). The Windows port surfaced three concrete portability issues, each fixed in the build system rather than worked around: `Ort::Session` takes `const wchar_t*` on Windows (a platform `ORTCHAR_T` shim); the prebuilt OpenCV config doesn't recognize the VS 2026 toolset and reports an empty runtime (point `OpenCV_DIR` at the concrete `vc16/lib` config); and the exe needs the MSVC runtime on clean targets (bundled via `InstallRequiredSystemLibraries`). Both platforms ship as **self-contained, relocatable bundles** — Linux 35 MB (`$ORIGIN`, 10 libs, verified isolated), Windows with its runtime bundled — installable by unzip.
 
-## 8. Future work
+## 8. Embedded GPU deployment: Jetson Orin
 
-- **NVIDIA Jetson Orin (aarch64) + TensorRT.** The same CMake builds natively on aarch64 unchanged; the next step is a TensorRT FP16/INT8 engine built on-device, where the mixed-precision assignment from §3 maps onto tensor-core/DLA execution and INT8 finally buys throughput rather than costing it. The NCNN/MNN latency ranking is expected to invert in ARM's favor here.
+The runtime was taken to a **Jetson Orin Nano 4 GB** (JetPack 7: Ubuntu 24.04, CUDA 13.2, TensorRT 10.16.2, sm87). The same CMake produces a native aarch64 binary with a third backend — a `trt_backend` that deserializes a prebuilt engine and runs it via `enqueueV3`, joining the ONNXRuntime and NCNN backends behind the same interface. The engine is built on-device with `trtexec` from the exported ONNX.
+
+**Result.** The FP16 engine runs at **27.8 ms/frame GPU compute (35.7 FPS)**, and on-device accuracy over the full 548 VisDrone val images is **mAP50 0.3488 / mAP50-95 0.2029 — −0.46% / −0.34% vs the PyTorch FP32 baseline** (0.3504 / 0.2036), matching the x86 ONNX result to within 0.2 mAP points. On-device mAP is scored with a dependency-free reimplementation of the same metric harness (`scripts/eval_map_standalone.py`).
+
+**FP16, not INT8.** §3.6 reserved the INT8 *throughput* proof for this path, on the expectation that tensor-core INT8 would invert the CPU result. For this model it does not. The mixed-precision assignment from §3 keeps the attention, head, and router in higher precision, so INT8 leaves the compute-heavy area-attention on FP32/FP16 kernels; combined with TensorRT's INT8 being lossier than the ONNXRuntime path, the calibrated INT8 engine measures **0.3202 mAP50 at 21.7 FPS — slower *and* less accurate than FP16**. Where a network's dominant cost is attention that does not quantize, **FP16 is the correct embedded target**; INT8's tensor-core advantage applies to convolution-dominated models, not this one. This refines the expectation stated in §3.6.
+
+**Build notes.** Two toolchain specifics are worth recording. On sm87 with TensorRT 10.16.2 a pure-FP16 build fails at low builder-optimization levels (the timing model references an sm80 shader that has no sm87 base); `--builderOptimizationLevel=3` selects tactics by on-device profiling instead and builds cleanly. And an ONNXRuntime-quantized QDQ model must use symmetric activations and non-quantized bias to be accepted by TensorRT's parser (`quantize_int8.py --symmetric`). The 4 GB module also needs swap for the engine *build* (inference itself uses ~20 MB). Full reproduction is in [`jetson/DEPLOYMENT_LOG.md`](jetson/DEPLOYMENT_LOG.md).
+
+**Distribution.** A prebuilt aarch64 bundle (`jetson/30_package.sh`) ships the binary with OpenCV bundled and TensorRT/CUDA taken from JetPack; it runs on any Orin (Nano/NX/AGX) on JetPack 7, with the per-device engine built once by an included script.
+
+## 9. Future work
+
 - **Production drone platform — DJI Manifold 3.** VisDrone is aerial/drone imagery, so the natural production target is an onboard drone computer. [DJI Manifold 3](https://enterprise.dji.com/manifold-3) is an **NVIDIA Orin NX-based** enterprise edge computer purpose-built for drones — the exact aarch64 + TensorRT path above deploys onto it directly. Validating this pipeline on the Manifold 3 exercises **real-time on-drone inference in operational conditions** (aerial surveillance, infrastructure inspection, search-and-rescue), closing the loop from VisDrone training to production drone edge deployment.
 
 ---
 
-*Reproducibility:* the C++ runtime and all scripts (`quantize_int8.py`, `eval_map.py`, `mnn_val.py`, `mnn_parity.py`, `package_linux.sh`) are in the repository above; the exported models and prebuilt bundles are attached to the [Releases](https://github.com/skywalker-lt/yolo-master-edge/releases) page.
+*Reproducibility:* the C++ runtime, all scripts (`quantize_int8.py`, `eval_map.py`, `eval_map_standalone.py`, `mnn_val.py`, `mnn_parity.py`, `package_linux.sh`), and the Jetson kit (`jetson/`, incl. `DEPLOYMENT_LOG.md`) are in the repository above; the exported models and prebuilt bundles (Linux, Windows, Jetson Orin) are attached to the [Releases](https://github.com/skywalker-lt/yolo-master-edge/releases) page.
