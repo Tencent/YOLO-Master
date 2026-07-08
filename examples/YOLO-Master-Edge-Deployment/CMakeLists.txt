@@ -10,6 +10,14 @@ option(WITH_ONNXRUNTIME "Build ONNX Runtime backend" OFF)
 set(ONNXRUNTIME_ROOT "" CACHE PATH "Path to ONNX Runtime package root")
 set(ONNXRUNTIME_INCLUDE_DIR "" CACHE PATH "Path to ONNX Runtime include directory")
 set(ONNXRUNTIME_LIB "" CACHE FILEPATH "Path to ONNX Runtime library")
+option(WITH_NCNN "Build NCNN backend" OFF)
+set(NCNN_ROOT "" CACHE PATH "Path to NCNN package root")
+set(NCNN_INCLUDE_DIR "" CACHE PATH "Path to NCNN include directory")
+set(NCNN_LIB "" CACHE FILEPATH "Path to NCNN library")
+option(WITH_MNN "Build MNN backend" OFF)
+set(MNN_ROOT "" CACHE PATH "Path to MNN package root")
+set(MNN_INCLUDE_DIR "" CACHE PATH "Path to MNN include directory")
+set(MNN_LIB "" CACHE FILEPATH "Path to MNN library")
 
 add_executable(
     yolo_master_edge_benchmark
@@ -85,4 +93,39 @@ if(WITH_ONNXRUNTIME)
         ${ONNXRUNTIME_ROOT}/include/onnxruntime/core/session
     )
     target_link_libraries(yolo_master_edge_benchmark PRIVATE ${ONNXRUNTIME_LIB_RESOLVED})
+endif()
+
+if(WITH_MNN)
+    target_compile_definitions(yolo_master_edge_benchmark PRIVATE WITH_MNN=1)
+    if(MNN_INCLUDE_DIR)
+        set(MNN_INCLUDE_DIR_RESOLVED ${MNN_INCLUDE_DIR})
+    else()
+        find_path(
+            MNN_INCLUDE_DIR_RESOLVED
+            Interpreter.hpp
+            HINTS
+                ${MNN_ROOT}/include
+                /opt/homebrew/include
+                /usr/local/include
+            REQUIRED
+        )
+    endif()
+    if(MNN_LIB)
+        set(MNN_LIB_RESOLVED ${MNN_LIB})
+    else()
+        find_library(
+            MNN_LIB_RESOLVED
+            NAMES MNN libMNN
+            HINTS
+                ${MNN_ROOT}/lib
+                ${MNN_ROOT}/lib64
+                /opt/homebrew/lib
+                /usr/local/lib
+            REQUIRED
+        )
+    endif()
+    message(STATUS "MNN include: ${MNN_INCLUDE_DIR_RESOLVED}")
+    message(STATUS "MNN library: ${MNN_LIB_RESOLVED}")
+    target_include_directories(yolo_master_edge_benchmark PRIVATE ${MNN_INCLUDE_DIR_RESOLVED})
+    target_link_libraries(yolo_master_edge_benchmark PRIVATE ${MNN_LIB_RESOLVED})
 endif()
