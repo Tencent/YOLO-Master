@@ -8,6 +8,9 @@
 #ifdef USE_NCNN
 #include "ncnn_backend.hpp"
 #endif
+#ifdef USE_TRT
+#include "trt_backend.hpp"
+#endif
 #include "CLI11.hpp"
 #include "stb_image.h"
 #include "stb_image_write.h"
@@ -52,7 +55,7 @@ int main(int argc, char** argv) {
     app.add_option("-m,--model", model, "model: .onnx file, or ncnn dir / .param")->required();
     app.add_option("-s,--source", source, "image / directory / video / dataset.yaml")->required();
     app.add_option("-b,--backend", backend, "auto|onnx|ncnn")->default_str("auto");
-    app.add_option("-d,--device", device, "cpu|cuda (onnx backend; falls back to cpu)")->default_str("cpu");
+    app.add_option("-d,--device", device, "cpu|cuda|trt (onnx backend; trt=ONNXRuntime TensorRT EP, engine cached)")->default_str("cpu");
     app.add_option("--classes", classes_opt, "auto|visdrone|sku (auto = from model metadata)")->default_str("auto");
     app.add_option("--imgsz", imgsz, "inference size (0 = from model / 640)");
     app.add_option("--conf", conf, "confidence threshold")->capture_default_str();
@@ -72,6 +75,7 @@ int main(int argc, char** argv) {
         std::error_code ec;
         if (fs::is_directory(model, ec) || ends_with(model, ".param")) backend = "ncnn";
         else if (ends_with(model, ".onnx")) backend = "onnx";
+        else if (ends_with(model, ".engine") || ends_with(model, ".trt")) backend = "trt";
         else { std::cerr << "cannot infer backend from '" << model << "'; pass --backend\n"; return 2; }
     }
 
@@ -95,6 +99,12 @@ int main(int argc, char** argv) {
             be = std::make_unique<NcnnBackend>(param, bin, threads);
 #else
             std::cerr << "built without ncnn backend\n"; return 2;
+#endif
+        } else if (backend == "trt") {
+#ifdef USE_TRT
+            be = std::make_unique<TrtBackend>(model);
+#else
+            std::cerr << "built without TensorRT backend (rebuild with -DUSE_TRT=ON)\n"; return 2;
 #endif
         } else { std::cerr << "unknown backend: " << backend << "\n"; return 2; }
     } catch (const std::exception& e) {
