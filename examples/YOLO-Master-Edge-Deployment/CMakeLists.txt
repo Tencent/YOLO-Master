@@ -95,6 +95,57 @@ if(WITH_ONNXRUNTIME)
     target_link_libraries(yolo_master_edge_benchmark PRIVATE ${ONNXRUNTIME_LIB_RESOLVED})
 endif()
 
+if(WITH_NCNN)
+    if(NOT NCNN_ROOT AND (NOT NCNN_INCLUDE_DIR OR NOT NCNN_LIB))
+        message(FATAL_ERROR "WITH_NCNN=ON requires either -DNCNN_ROOT=/path/to/ncnn or both -DNCNN_INCLUDE_DIR=... and -DNCNN_LIB=...")
+    endif()
+    target_compile_definitions(yolo_master_edge_benchmark PRIVATE WITH_NCNN=1)
+    if(NCNN_INCLUDE_DIR)
+        set(NCNN_INCLUDE_DIR_RESOLVED ${NCNN_INCLUDE_DIR})
+    else()
+        find_path(
+            NCNN_INCLUDE_DIR_RESOLVED
+            net.h
+            HINTS
+                ${NCNN_ROOT}/include
+                ${NCNN_ROOT}/include/ncnn
+                /opt/homebrew/include
+                /opt/homebrew/include/ncnn
+                /usr/local/include
+                /usr/local/include/ncnn
+            REQUIRED
+        )
+    endif()
+    if(NCNN_LIB)
+        set(NCNN_LIB_RESOLVED ${NCNN_LIB})
+    else()
+        find_library(
+            NCNN_LIB_RESOLVED
+            NAMES ncnn libncnn
+            HINTS
+                ${NCNN_ROOT}/lib
+                ${NCNN_ROOT}/lib64
+                /opt/homebrew/lib
+                /usr/local/lib
+            REQUIRED
+        )
+    endif()
+    message(STATUS "NCNN include: ${NCNN_INCLUDE_DIR_RESOLVED}")
+    message(STATUS "NCNN library: ${NCNN_LIB_RESOLVED}")
+    target_include_directories(
+        yolo_master_edge_benchmark
+        PRIVATE
+        ${NCNN_INCLUDE_DIR_RESOLVED}
+        ${NCNN_ROOT}/include
+        ${NCNN_ROOT}/include/ncnn
+    )
+    target_link_libraries(yolo_master_edge_benchmark PRIVATE ${NCNN_LIB_RESOLVED})
+    find_package(OpenMP)
+    if(OpenMP_CXX_FOUND)
+        target_link_libraries(yolo_master_edge_benchmark PRIVATE OpenMP::OpenMP_CXX)
+    endif()
+endif()
+
 if(WITH_MNN)
     target_compile_definitions(yolo_master_edge_benchmark PRIVATE WITH_MNN=1)
     if(MNN_INCLUDE_DIR)
