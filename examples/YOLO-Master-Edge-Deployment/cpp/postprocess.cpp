@@ -105,4 +105,3 @@ std::vector<Detection> postprocess_yolo_output(
 
     return nms(std::move(detections), iou_threshold);
 }
-

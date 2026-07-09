@@ -22,4 +22,3 @@ private:
     MNN::Tensor* input_tensor_ = nullptr;
 #endif
 };
-

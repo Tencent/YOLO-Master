@@ -15,4 +15,3 @@ public:
     virtual Tensor infer(const Tensor& input) = 0;
     virtual std::string name() const = 0;
 };
-

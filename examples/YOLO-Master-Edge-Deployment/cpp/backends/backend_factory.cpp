@@ -18,4 +18,3 @@ std::unique_ptr<Backend> create_backend(const std::string& backend) {
     }
     throw std::invalid_argument("unsupported backend: " + backend);
 }
-

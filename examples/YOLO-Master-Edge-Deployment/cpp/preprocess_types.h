@@ -10,4 +10,3 @@ struct PreprocessResult {
     int pad_w = 0;
     int pad_h = 0;
 };
-
