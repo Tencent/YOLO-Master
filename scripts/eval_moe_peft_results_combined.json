@@ -1,0 +1,132 @@
+[
+  {
+    "config_name": "molora_baseline",
+    "config": {
+      "r": 8,
+      "alpha": 16,
+      "num_experts": 4,
+      "top_k": 2,
+      "router_type": "linear",
+      "balance_loss_coef": 0.01,
+      "z_loss_coef": 0.001,
+      "use_rslora": true,
+      "router_calibration": false,
+      "per_expert_rank": false
+    },
+    "seeds": [
+      {
+        "seed": 0,
+        "ok": true,
+        "error": null,
+        "elapsed_sec": 168.5,
+        "params_total": 3965124,
+        "params_trainable": 1270760,
+        "trainable_pct": 32.0484,
+        "final_metrics": {
+          "metrics/precision(B)": 0.0,
+          "metrics/recall(B)": 0.0,
+          "metrics/mAP50(B)": 0.0,
+          "metrics/mAP50-95(B)": 0.0,
+          "fitness": 0.0
+        },
+        "wrapped_layers": 93,
+        "config_name": "molora_baseline"
+      }
+    ],
+    "aggregate": {
+      "mean": 0.0,
+      "std": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "n": 1
+    }
+  },
+  {
+    "config_name": "molora_calib_r4",
+    "config": {
+      "r": 8,
+      "alpha": 16,
+      "num_experts": 4,
+      "top_k": 2,
+      "router_type": "linear",
+      "balance_loss_coef": 0.01,
+      "z_loss_coef": 0.001,
+      "use_rslora": true,
+      "router_calibration": true,
+      "router_calib_rank": 4,
+      "per_expert_rank": false
+    },
+    "seeds": [
+      {
+        "seed": 0,
+        "ok": true,
+        "error": null,
+        "elapsed_sec": 131.9,
+        "params_total": 4001376,
+        "params_trainable": 1307012,
+        "trainable_pct": 32.6641,
+        "final_metrics": {
+          "metrics/precision(B)": 0.0,
+          "metrics/recall(B)": 0.0,
+          "metrics/mAP50(B)": 0.0,
+          "metrics/mAP50-95(B)": 0.0,
+          "fitness": 0.0
+        },
+        "wrapped_layers": 93,
+        "config_name": "molora_calib_r4"
+      }
+    ],
+    "aggregate": {
+      "mean": 0.0,
+      "std": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "n": 1
+    }
+  },
+  {
+    "config_name": "molora_freq_rank",
+    "config": {
+      "r": 8,
+      "alpha": 16,
+      "num_experts": 4,
+      "top_k": 2,
+      "router_type": "linear",
+      "balance_loss_coef": 0.01,
+      "z_loss_coef": 0.001,
+      "use_rslora": true,
+      "router_calibration": false,
+      "per_expert_rank": true,
+      "rank_allocator_mode": "frequency",
+      "rank_budget_total": 32,
+      "rank_min": 2
+    },
+    "seeds": [
+      {
+        "seed": 0,
+        "ok": true,
+        "error": null,
+        "elapsed_sec": 137.4,
+        "params_total": 3965124,
+        "params_trainable": 1270760,
+        "trainable_pct": 32.0484,
+        "final_metrics": {
+          "metrics/precision(B)": 0.0,
+          "metrics/recall(B)": 0.0,
+          "metrics/mAP50(B)": 0.0,
+          "metrics/mAP50-95(B)": 0.0,
+          "fitness": 0.0
+        },
+        "wrapped_layers": 93,
+        "config_name": "molora_freq_rank"
+      }
+    ],
+    "aggregate": {
+      "mean": 0.0,
+      "std": 0.0,
+      "min": 0.0,
+      "max": 0.0,
+      "n": 1
+    }
+  }
+]

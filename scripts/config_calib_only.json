@@ -1,0 +1,3 @@
+[
+  {"name": "molora_calib_r4", "r": 8, "alpha": 16, "num_experts": 4, "top_k": 2, "router_type": "linear", "balance_loss_coef": 0.01, "z_loss_coef": 0.001, "use_rslora": true, "router_calibration": true, "router_calib_rank": 4, "per_expert_rank": false}
+]
