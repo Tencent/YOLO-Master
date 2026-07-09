@@ -173,23 +173,26 @@ def _merge_conv_delta(
     lora_a: nn.Conv2d,
     lora_b: nn.Conv2d,
     scale: float,
+    groups: int = 1,
 ) -> None:
     """Merge a single LoRA expert delta into a Conv2d base weight.
 
-    Conv2d weight shape: [out_c, in_c, kH, kW]
-    lora_A: [r, in_c, 1, 1]  (1x1 conv)
-    lora_B: [out_c, r, kH, kW]  (KxK conv)
+    Conv2d weight shape: [out_c, in_c//groups, kH, kW] (grouped)
+    lora_A: [r, in_c, 1, 1]  (1x1 conv, groups=1)
+    lora_B: [out_c, r, kH, kW]  (KxK conv, groups=1)
 
     Equivalent delta = lora_B @ lora_A via matmul + expand.
+    For grouped base conv, fold [out_c, in_c, kH, kW] -> [out_c, in_c//g, kH, kW].
     """
     with torch.no_grad():
-        # lora_A weight: [r, in_c, 1, 1] -> [r, in_c]
         a = lora_a.weight.squeeze(-1).squeeze(-1)  # [r, in_c]
-        # lora_B weight: [out_c, r, kH, kW]
         b = lora_b.weight  # [out_c, r, kH, kW]
-        # delta = b @ a  -> [out_c, in_c, kH, kW]
-        # einsum: b[o,r,kH,kW] * a[r,i] -> [o,i,kH,kW]
-        delta = torch.einsum("orkw,ri->oikw", b, a) * scale
+        delta = torch.einsum("orkw,ri->oikw", b, a) * scale  # [out_c, in_c, kH, kW]
+        if groups > 1:
+            in_c = delta.shape[1]
+            delta = delta.view(
+                delta.shape[0], groups, in_c // groups, *delta.shape[2:]
+            ).sum(dim=1)
         base_weight.data.add_(delta)
 
 
@@ -211,12 +214,18 @@ def _unmerge_conv_delta(
     lora_a: nn.Conv2d,
     lora_b: nn.Conv2d,
     scale: float,
+    groups: int = 1,
 ) -> None:
     """Unmerge a single LoRA expert delta from a Conv2d base weight."""
     with torch.no_grad():
         a = lora_a.weight.squeeze(-1).squeeze(-1)
         b = lora_b.weight
         delta = torch.einsum("orkw,ri->oikw", b, a) * scale
+        if groups > 1:
+            in_c = delta.shape[1]
+            delta = delta.view(
+                delta.shape[0], groups, in_c // groups, *delta.shape[2:]
+            ).sum(dim=1)
         base_weight.data.sub_(delta)
 
 
