@@ -84,6 +84,50 @@ from .scheduler import (
     compute_gini,
 )
 
+
+# ── API Stability Tiers ──────────────────────────────────────────────
+# STABLE: production-ready, well-tested, backward-compatible API.
+STABLE_MOE_CLASSES = frozenset({
+    "UltraOptimizedMoE",
+    "ES_MOE",
+    "AdaptiveGateMoE",
+    "OptimalHybridGateMoE",
+    "UltimateOptimizedMoE",
+})
+
+# EXPERIMENTAL: functional but not yet benchmarked at scale; API may change.
+EXPERIMENTAL_MOE_CLASSES = frozenset({
+    "AdaptiveCapacityMoE",
+    "OptimizedMOE",
+    "OptimizedMOEImproved",
+    "MOE",
+    "EfficientSpatialRouterMoE",
+    "ModularRouterExpertMoE",
+    "HyperSplitMoE",
+    "HyperFusedMoE",
+    "HyperUltimateMoE",
+    "FusedAdaptiveGateMoE",
+    "HybridAdaptiveGateMoE",
+    "HybridAdaptiveGateMoEv2",
+    "MultiHeadRouterMoE",
+    "DiversifiedExpertMoE",
+    "GatedFusionMoE",
+    "LowRankHybridAdaptiveGateMoE",
+    "RefinedLowRankHybridAdaptiveGateMoE",
+    "DetailAwareLowRankHybridAdaptiveGateMoE",
+    "ContextRefinedLowRankHybridAdaptiveGateMoE",
+    "VisualEnhancedAdaptiveGateMoE",
+})
+
+def is_stable_moe(class_name: str) -> bool:
+    """Check if a MoE class is in the stable (production-ready) tier."""
+    return class_name in STABLE_MOE_CLASSES
+
+def is_experimental_moe(class_name: str) -> bool:
+    """Check if a MoE class is experimental (API may change)."""
+    return class_name in EXPERIMENTAL_MOE_CLASSES
+
+
 __all__ = [
     "UltraOptimizedMoE",
     "AdaptiveCapacityMoE",
@@ -154,4 +198,8 @@ __all__ = [
     "MapSaturationSchedulerConfig",
     "MapSaturationScheduleState",
     "compute_gini",
+    "STABLE_MOE_CLASSES",
+    "EXPERIMENTAL_MOE_CLASSES",
+    "is_stable_moe",
+    "is_experimental_moe",
 ]

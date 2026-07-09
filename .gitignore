@@ -289,3 +289,18 @@ lora_*.py
 moe_*.py
 *.pid
 *_progress.txt
+
+# Training run outputs (generated artifacts)
+scripts/runs_*/
+
+# Binary/data files (not source code)
+*.ndjson
+*.index
+*.npy
+images.zip
+*.mp4
+*.torchscript
+
+# COCO quick subset data files
+scripts/coco2017_quick_train.txt
+scripts/coco2017_quick_val.txt
