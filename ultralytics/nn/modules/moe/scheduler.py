@@ -193,13 +193,13 @@ class MapSaturationScheduler:
         }
 
     def load_state_dict(self, state: dict[str, Any]) -> None:
-        match state.get("config"):
-            case dict() as cfg:
-                self.config = MapSaturationSchedulerConfig(**cfg)
+        cfg = state.get("config")
+        if isinstance(cfg, dict):
+            self.config = MapSaturationSchedulerConfig(**cfg)
         self.map_history = list(state.get("map_history", []))
         self.saturation_scale = float(s) if (s := state.get("saturation_scale")) is not None else 1.0
-        match state.get("last_state"):
-            case dict() as last:
-                self.last_state = MapSaturationScheduleState(**last)
-            case _:
-                self.last_state = None
+        last = state.get("last_state")
+        if isinstance(last, dict):
+            self.last_state = MapSaturationScheduleState(**last)
+        else:
+            self.last_state = None

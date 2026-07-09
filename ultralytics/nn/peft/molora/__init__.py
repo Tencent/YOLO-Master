@@ -15,6 +15,13 @@ from .utils import (
     count_parameters,
     allocate_domain_experts,
 )
+from .moe_aware import (
+    MoLoRAMoEAwareConfig,
+    PerExpertRankAllocator,
+    RouterCalibration,
+    MoLoRAMoEAwareLayer,
+    build_moe_aware_layer,
+)
 
 __all__ = [
     "MoLoRAConfig",
@@ -33,4 +40,10 @@ __all__ = [
     "mark_only_molora_as_trainable",
     "count_parameters",
     "allocate_domain_experts",
+    # MoE-aware extensions
+    "MoLoRAMoEAwareConfig",
+    "PerExpertRankAllocator",
+    "RouterCalibration",
+    "MoLoRAMoEAwareLayer",
+    "build_moe_aware_layer",
 ]
