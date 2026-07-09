@@ -65,13 +65,16 @@ class MoLoRAExpert(nn.Module):
             groups = base_layer.groups
 
             # Conv2d LoRA convention: A is 1x1, B is KxK with same stride/pad as base
+            # groups=1 for both A and B: the low-rank delta can have cross-channel
+            # interactions even when the base conv is grouped (e.g. DWConv).
+            self.base_groups = groups
             self.lora_A = nn.Conv2d(
                 in_c, r, kernel_size=1, bias=False,
             )
             self.lora_B = nn.Conv2d(
                 r, out_c, kernel_size=k,
                 stride=stride, padding=padding,
-                dilation=dilation, groups=groups, bias=False,
+                dilation=dilation, groups=1, bias=False,
             )
         elif isinstance(base_layer, nn.Linear):
             self.is_conv = False
@@ -94,11 +97,24 @@ class MoLoRAExpert(nn.Module):
         return self.lora_B(self.lora_A(x)) * self.scaling
 
     def delta_weight(self) -> torch.Tensor:
-        """Return the equivalent full-rank delta weight (for inspection / merge)."""
+        """Return the equivalent delta weight (for inspection / merge).
+
+        For grouped base conv, the full-rank delta [out_c, in_c, kH, kW] is
+        folded into the grouped shape [out_c, in_c//g, kH, kW] by summing
+        over the group dimension.
+        """
         if self.is_conv:
             a = self.lora_A.weight.squeeze(-1).squeeze(-1)  # [r, in_c]
             b = self.lora_B.weight  # [out_c, r, kH, kW]
-            return torch.einsum("orkw,ri->oikw", b, a) * self.scaling
+            full_delta = torch.einsum("orkw,ri->oikw", b, a) * self.scaling  # [out_c, in_c, kH, kW]
+            g = getattr(self, "base_groups", 1)
+            if g > 1:
+                in_c = full_delta.shape[1]
+                # Reshape: [out_c, in_c, kH, kW] -> [out_c, g, in_c//g, kH, kW] -> sum over g
+                full_delta = full_delta.view(
+                    full_delta.shape[0], g, in_c // g, *full_delta.shape[2:]
+                ).sum(dim=1)
+            return full_delta
         else:
             return (self.lora_B.weight @ self.lora_A.weight) * self.scaling
 
@@ -150,6 +166,8 @@ class MoLoRALayer(nn.Module):
         self.warmup_steps = warmup_steps
         self.domain_experts = domain_experts
         self.register_buffer("_step_count", torch.tensor(0, dtype=torch.long), persistent=True)
+        # CPU-side step counter to avoid GPU sync (.item()) on every forward
+        self._step_count_cpu: int = 0
         # Active mask for domain pre-allocation
         self._domain_active_mask: Optional[torch.Tensor] = None
         # Expert frozen mask
@@ -217,7 +235,7 @@ class MoLoRALayer(nn.Module):
             return self.top_k
         if self.warmup_steps <= 0:
             return self.top_k
-        steps = min(self._step_count.item(), self.warmup_steps)
+        steps = min(self._step_count_cpu, self.warmup_steps)
         return max(1, int(1 + (self.top_k - 1) * steps / self.warmup_steps))
 
     # ------------------------------------------------------------------
@@ -234,8 +252,8 @@ class MoLoRALayer(nn.Module):
         mask = torch.bernoulli(
             torch.full((self.num_experts,), 1.0 - self.expert_dropout, device=router_probs.device)
         ).to(router_probs.dtype)
-        if mask.sum().item() == 0:
-            mask = torch.ones_like(mask)
+        any_active = mask.sum() > 0
+        mask = torch.where(any_active, mask, torch.ones_like(mask))
         probs = router_probs * mask.unsqueeze(0)
         return probs / probs.sum(dim=-1, keepdim=True).clamp_min(1e-6)
 
@@ -260,10 +278,11 @@ class MoLoRALayer(nn.Module):
         weights = top_k_weights.clone()
         for e in range(self.num_experts):
             slots = top_k_indices == e
-            usage = int(slots.sum().item())
-            if usage > max_slots:
-                scale = max_slots / usage
-                weights = torch.where(slots, weights * scale, weights)
+            usage = slots.sum()
+            cond = usage > max_slots
+            ratio = torch.tensor(float(max_slots), dtype=weights.dtype, device=weights.device) / usage.clamp_min(1)
+            scale = torch.where(cond, ratio, torch.ones((), dtype=weights.dtype, device=weights.device))
+            weights = torch.where(slots, weights * scale, weights)
         return weights / weights.sum(dim=-1, keepdim=True).clamp_min(1e-6)
 
     # ------------------------------------------------------------------
@@ -328,9 +347,10 @@ class MoLoRALayer(nn.Module):
         if self.merged:
             return base_out
 
-        # Increment step counter during training
+        # Increment step counter during training (CPU-side, no GPU sync)
         if self.training:
             self._step_count.add_(1)
+            self._step_count_cpu += 1
 
         # Router
         router_logits = self.router(x)  # [B, E]
@@ -449,7 +469,7 @@ class MoLoRALayer(nn.Module):
         with torch.no_grad():
             if self.experts[0].is_conv:
                 for e in self.experts:
-                    _merge_conv_delta(self.base_layer.weight, e.lora_A, e.lora_B, e.scaling / self.num_experts)
+                    _merge_conv_delta(self.base_layer.weight, e.lora_A, e.lora_B, e.scaling / self.num_experts, groups=getattr(e, 'base_groups', 1))
             else:
                 for e in self.experts:
                     _merge_linear_delta(self.base_layer.weight, e.lora_A, e.lora_B, e.scaling / self.num_experts)
@@ -464,7 +484,7 @@ class MoLoRALayer(nn.Module):
         with torch.no_grad():
             if self.experts[0].is_conv:
                 for e in self.experts:
-                    _unmerge_conv_delta(self.base_layer.weight, e.lora_A, e.lora_B, e.scaling / self.num_experts)
+                    _unmerge_conv_delta(self.base_layer.weight, e.lora_A, e.lora_B, e.scaling / self.num_experts, groups=getattr(e, 'base_groups', 1))
             else:
                 for e in self.experts:
                     _unmerge_linear_delta(self.base_layer.weight, e.lora_A, e.lora_B, e.scaling / self.num_experts)
