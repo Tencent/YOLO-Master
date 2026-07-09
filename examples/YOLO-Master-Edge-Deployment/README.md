@@ -42,35 +42,16 @@ The tool reports max absolute error, mean absolute error, RMSE, and whether the 
 
 ## CMake Benchmark Build
 
-The C++ runner requires OpenCV for image loading and letterbox preprocessing. Backend SDK calls are currently isolated behind `cpp/backends/` so ONNX Runtime, NCNN, and MNN can be wired independently.
+The C++ runner requires OpenCV for image loading and letterbox preprocessing. Build with the backend SDKs you want to benchmark:
 
 ```bash
 cmake -S . -B build
 cmake --build build
-./build/yolo_master_edge_benchmark \
-  --backend onnx \
-  --model best.onnx \
-  --images /path/to/VisDrone/images/val \
-  --profile visdrone \
-  --imgsz 960 \
-  --limit 500 \
-  --output benchmark_onnx.csv
 ```
 
-`--images` accepts either a directory of images or a text file with one image path per line. Use `--limit 500` for the issue validation subset.
+Without a backend flag, ONNX/NCNN/MNN compile in stub mode so the benchmark CLI and CSV plumbing remain buildable without SDKs installed.
 
-To enable real ONNX Runtime inference, provide an ONNX Runtime package root:
-
-```bash
-cmake -S . -B build-ort \
-  -DWITH_ONNXRUNTIME=ON \
-  -DONNXRUNTIME_ROOT=/path/to/onnxruntime
-cmake --build build-ort
-```
-
-Without `WITH_ONNXRUNTIME=ON`, the ONNX backend remains a buildable stub so the benchmark CLI, preprocessing, and CSV/report plumbing can be developed without backend SDKs installed.
-
-For a local ONNX Runtime C/C++ package, point `ONNXRUNTIME_ROOT` at the directory containing `include/` and `lib/`:
+### ONNX Runtime
 
 ```bash
 cmake -S examples/YOLO-Master-Edge-Deployment \
@@ -80,34 +61,87 @@ cmake -S examples/YOLO-Master-Edge-Deployment \
 cmake --build examples/YOLO-Master-Edge-Deployment/build-ort
 ```
 
-For example, Homebrew users can use `-DONNXRUNTIME_ROOT="$(brew --prefix onnxruntime)"`.
+If needed, pass explicit paths instead of `ONNXRUNTIME_ROOT`:
 
-Smoke test the ONNX backend with bundled sample images:
+```bash
+-DONNXRUNTIME_INCLUDE_DIR=/path/to/onnxruntime/include
+-DONNXRUNTIME_LIB=/path/to/onnxruntime/lib/libonnxruntime.so
+```
+
+Run:
 
 ```bash
 examples/YOLO-Master-Edge-Deployment/build-ort/yolo_master_edge_benchmark \
   --backend onnx \
-  --model YOLO-Master-EsMoE-N.onnx \
-  --images ultralytics/assets \
+  --model /path/to/model.onnx \
+  --images /path/to/VisDrone/images/val \
   --profile visdrone \
   --imgsz 960 \
-  --limit 2 \
-  --output benchmark_onnx_assets.csv
+  --limit 500 \
+  --output benchmark_onnx.csv
 ```
 
-Example local CPU result with `imgsz=960`:
+### NCNN
 
-```text
-backend=onnx model=YOLO-Master-EsMoE-N.onnx profile=visdrone imgsz=960 conf=0.2 iou=0.55 output=benchmark_onnx_assets.csv
-count,mean_ms,p50_ms,p95_ms,p99_ms,fps
-2,402.451,400.866,400.866,400.866,2.48478
+```bash
+cmake -S examples/YOLO-Master-Edge-Deployment \
+  -B examples/YOLO-Master-Edge-Deployment/build-ncnn \
+  -DWITH_NCNN=ON \
+  -DNCNN_ROOT=/path/to/ncnn/install
+cmake --build examples/YOLO-Master-Edge-Deployment/build-ncnn
 ```
 
-The CSV contains one row per image:
+If NCNN was built but not installed, pass explicit paths. Include both source and build include dirs so generated headers such as `platform.h` are visible:
 
-```text
-image,preprocess_ms,inference_ms,postprocess_ms,total_ms,detections
+```bash
+-DNCNN_INCLUDE_DIR="/path/to/ncnn/src;/path/to/ncnn/build/src"
+-DNCNN_LIB=/path/to/ncnn/build/src/libncnn.a
 ```
+
+Run:
+
+```bash
+examples/YOLO-Master-Edge-Deployment/build-ncnn/yolo_master_edge_benchmark \
+  --backend ncnn \
+  --model /path/to/exported_ncnn_model_dir \
+  --images /path/to/VisDrone/images/val \
+  --profile visdrone \
+  --imgsz 960 \
+  --limit 500 \
+  --output benchmark_ncnn.csv
+```
+
+### MNN
+
+```bash
+cmake -S examples/YOLO-Master-Edge-Deployment \
+  -B examples/YOLO-Master-Edge-Deployment/build-mnn \
+  -DWITH_MNN=ON \
+  -DMNN_ROOT=/path/to/MNN
+cmake --build examples/YOLO-Master-Edge-Deployment/build-mnn
+```
+
+If needed, pass explicit paths instead of `MNN_ROOT`:
+
+```bash
+-DMNN_INCLUDE_DIR=/path/to/MNN/include
+-DMNN_LIB=/path/to/MNN/lib/libMNN.so
+```
+
+Run:
+
+```bash
+examples/YOLO-Master-Edge-Deployment/build-mnn/yolo_master_edge_benchmark \
+  --backend mnn \
+  --model /path/to/model.mnn \
+  --images /path/to/VisDrone/images/val \
+  --profile visdrone \
+  --imgsz 960 \
+  --limit 500 \
+  --output benchmark_mnn.csv
+```
+
+`--images` accepts either a directory of images or a text file with one image path per line. The CSV contains `image,preprocess_ms,inference_ms,postprocess_ms,total_ms,detections`, and the runner prints summary latency/FPS.
 
 ## Recommended Issue #51 Workflow
 
