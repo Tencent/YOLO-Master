@@ -386,6 +386,7 @@ class MoABlock(nn.Module):
         aux_loss_coeff: float = 0.01,
         block_index: int = 0,
         local_window_size: int = 7,
+        rf_seed: int | None = None,
     ):
         super().__init__()
         assert num_heads % self.NUM_GROUPS == 0, (
@@ -397,7 +398,12 @@ class MoABlock(nn.Module):
         heads_per_group = num_heads // self.NUM_GROUPS
 
         # Three attention head-groups (global head uses a per-block RF seed).
-        global_rf_seed = block_index * 7919 + 2 * 65537
+        # Allow user-specified rf_seed for reproducibility control; fall back
+        # to deterministic per-block seed for checkpoint compatibility.
+        if rf_seed is not None:
+            global_rf_seed = rf_seed
+        else:
+            global_rf_seed = block_index * 7919 + 2 * 65537
         self.local_head   = _LocalAttnHead(dim, heads_per_group, head_dim, window_size=local_window_size)
         self.region_head  = _RegionalAttnHead(dim, heads_per_group, head_dim)
         self.global_head  = _GlobalAttnHead(dim, heads_per_group, head_dim, rf_seed=global_rf_seed)
@@ -508,6 +514,7 @@ class C2fMoA(nn.Module):
         e: float = 0.5,
         aux_loss_coeff: float = 0.01,
         local_window_size: int = 7,
+        rf_seed: int | None = None,
     ):
         super().__init__()
         self.c = int(c2 * e)
@@ -530,7 +537,8 @@ class C2fMoA(nn.Module):
                      shortcut=shortcut,
                      aux_loss_coeff=aux_loss_coeff,
                      block_index=i,
-                     local_window_size=local_window_size)
+                     local_window_size=local_window_size,
+                     rf_seed=rf_seed)
             for i in range(n)
         )
         self.last_aux_loss: torch.Tensor = torch.zeros((), requires_grad=False)
