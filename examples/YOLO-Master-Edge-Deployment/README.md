@@ -141,7 +141,30 @@ examples/YOLO-Master-Edge-Deployment/build-mnn/yolo_master_edge_benchmark \
   --output benchmark_mnn.csv
 ```
 
-`--images` accepts either a directory of images or a text file with one image path per line. The CSV contains `image,preprocess_ms,inference_ms,postprocess_ms,total_ms,detections`, and the runner prints summary latency/FPS.
+`--images` accepts either a directory of images or a text file with one image path per line.
+
+## Benchmark CSV Output
+
+ONNX Runtime, NCNN, and MNN write the same per-image CSV structure:
+
+```text
+image,preprocess_ms,inference_ms,postprocess_ms,total_ms,detections
+```
+
+Column meanings:
+
+- `image`: source image path
+- `preprocess_ms`: OpenCV image load, letterbox, RGB conversion, and tensor packing time
+- `inference_ms`: backend runtime execution time
+- `postprocess_ms`: YOLO decode and NMS time
+- `total_ms`: end-to-end time for one image
+- `detections`: number of detections after confidence filtering and NMS
+
+The aggregate latency summary is printed to stdout, not written to the CSV:
+
+```text
+count,mean_ms,p50_ms,p95_ms,p99_ms,fps
+```
 
 ## Recommended Issue #51 Workflow
 
