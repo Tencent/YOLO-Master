@@ -299,6 +299,8 @@ scripts/runs_*/
 *.npy
 images.zip
 *.mp4
+*.mov
+*.onnx
 *.torchscript
 
 # COCO quick subset data files

@@ -27,37 +27,93 @@ Implementation notes
 
 from __future__ import annotations
 
+import functools
+import inspect
 import math
 from typing import List, Optional, Tuple
 
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
 
 from ultralytics.nn.modules.conv import Conv
 
+
+def all_reduce_mean(tensor: torch.Tensor) -> torch.Tensor:
+    """Average a tensor across DDP ranks (gradient-preserving, no-op on 1 GPU).
+
+    P1 fix (MoA DDP aux-loss sync): local, dependency-free copy of MoE's
+    ``moe.loss.all_reduce_mean`` — duplicated here (rather than imported)
+    so MoA keeps zero compile-time dependency on the MoE package (see the
+    ``get_safe_groups`` fix above for the same rationale). Reduces in
+    float32 to avoid precision loss when the model runs under fp16/bf16 AMP.
+    """
+    if not (dist.is_available() and dist.is_initialized()):
+        return tensor
+    world = dist.get_world_size()
+    if world <= 1:
+        return tensor
+    orig_dtype = tensor.dtype
+    out = tensor.float().clone()
+    dist.all_reduce(out, op=dist.ReduceOp.SUM)
+    out = out / world
+    return out.to(orig_dtype)
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-from ultralytics.nn.modules.moe.utils import get_safe_groups as _safe_groups
+# P1 fix: import the shared, dependency-free helper directly from
+# `nn.modules.utils` instead of `nn.modules.moe.utils`. This removes MoA's
+# compile-time dependency on the MoE package so MoE-internal refactors can no
+# longer break MoA imports.
+from ultralytics.nn.modules.utils import get_safe_groups as _safe_groups
+
+# P2 fix: explicit __all__ restricts `from moa import *` to public symbols only,
+# preventing leakage of internal helpers (_flash_attn, _MoARouter, etc.).
+__all__ = (
+    "MoABlock",
+    "C2fMoA",
+    "NeckMoAFusion",
+    "anneal_moa_temperature",
+    "collect_moa_aux_loss",
+)
 
 
 def _flash_attn(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
                 scale: float) -> torch.Tensor:
-    """Scaled dot-product attention; uses F.sdpa when available (torch ≥ 2.0)."""
+    """Scaled dot-product attention; uses F.sdpa when available (torch ≥ 2.0).
+
+    P0 fix: whether ``F.scaled_dot_product_attention`` accepts a ``scale``
+    keyword is now detected once via ``inspect.signature`` (cached on the
+    module) instead of catching ``TypeError`` and pattern-matching its
+    message string. Matching on exception text is fragile — a PyTorch
+    version bump that rewords the error message would silently defeat the
+    ``"scale" not in str(e)`` check and either re-raise a spurious error or
+    swallow an unrelated one.
+    """
     if hasattr(F, "scaled_dot_product_attention"):
-        try:
+        if _sdpa_supports_scale():
             return F.scaled_dot_product_attention(q, k, v, scale=scale)
-        except TypeError as e:
-            if "scale" not in str(e):
-                raise
-            default_scale = q.shape[-1] ** -0.5
-            return F.scaled_dot_product_attention(q * (scale / default_scale), k, v)
+        default_scale = q.shape[-1] ** -0.5
+        return F.scaled_dot_product_attention(q * (scale / default_scale), k, v)
     # fallback
     attn = (q @ k.transpose(-2, -1)) * scale
     attn = attn.softmax(dim=-1)
     return attn @ v
+
+
+@functools.lru_cache(maxsize=1)
+def _sdpa_supports_scale() -> bool:
+    """Detect (once, cached) whether ``F.scaled_dot_product_attention`` has a ``scale`` kwarg."""
+    try:
+        return "scale" in inspect.signature(F.scaled_dot_product_attention).parameters
+    except (TypeError, ValueError):
+        # Some backends (e.g. compiled/JIT-wrapped builtins) don't expose an
+        # inspectable signature; PyTorch >= 2.1 always supports `scale`, so
+        # default to True rather than silently downgrading precision.
+        return True
 
 
 def _window_flash_attn(
@@ -71,7 +127,14 @@ def _window_flash_attn(
 ) -> torch.Tensor:
     """Window-partitioned SDPA on [B, nh, N, hd] tokens (O(N·win²) complexity)."""
     B, nh, n_tokens, hd = q.shape
-    assert n_tokens == height * width
+    # P0 fix: `assert` is stripped under `python -O` / some JIT export paths,
+    # which would silently let a mismatched N flow into `.view()` below and
+    # raise a much more confusing shape error deep inside `partition()`.
+    if n_tokens != height * width:
+        raise ValueError(
+            f"_window_flash_attn: n_tokens ({n_tokens}) must equal height*width "
+            f"({height}*{width}={height * width})"
+        )
     win = max(1, min(int(window_size), height, width))
 
     def to_spatial(t: torch.Tensor) -> torch.Tensor:
@@ -309,10 +372,14 @@ class _MoARouter(nn.Module):
         super().__init__()
         self.temperature = max(temperature, 0.1)
         hidden = max(dim // reduction, num_groups * 2)
+        # P2 fix: drop inplace=True — the router output feeds both the
+        # softmax weights and the aux-loss graph; in-place SiLU on an
+        # intermediate that autograd needs unmodified can silently corrupt
+        # gradients or raise under complex checkpoint/export scenarios.
         self.router = nn.Sequential(
             nn.Conv2d(dim, hidden, 1, bias=False),
             nn.GroupNorm(_safe_groups(hidden, 4), hidden),
-            nn.SiLU(inplace=True),
+            nn.SiLU(inplace=False),
             nn.Conv2d(hidden, num_groups, 1, bias=True),
         )
         # init: near-uniform routing
@@ -329,10 +396,23 @@ class _MoARouter(nn.Module):
 
 
 def _moa_router_aux_loss(weights: torch.Tensor, logits: torch.Tensor, coeff: float) -> torch.Tensor:
-    """GShard-scale MoA router regularization with a small z/entropy stabilizer."""
+    """GShard-scale MoA router regularization with a small z/entropy stabilizer.
+
+    P1 fix: ``importance`` (the per-group mean routing probability) is now
+    averaged across DDP ranks before computing the balance/entropy terms.
+    Previously each rank computed balance loss purely from its own local
+    batch; under DDP with per-rank data sharding, different ranks can see
+    different local routing distributions, so their balance-loss gradients
+    push the (shared, all-reduced-by-DDP-autograd) router weights in
+    inconsistent directions. Averaging ``importance`` first — mirroring
+    MoE's ``all_reduce_mean`` usage in ``differentiable_balance_loss`` —
+    makes all ranks optimise the same global balance target. No-op on a
+    single GPU / when distributed is not initialised.
+    """
     num_groups = weights.shape[1]
     importance = weights.float().mean(dim=(0, 2, 3))
     importance = importance / importance.sum().clamp_min(1e-6)
+    importance = all_reduce_mean(importance)
     balance_loss = num_groups * torch.sum(importance * importance)
     z_loss = torch.logsumexp(logits.float(), dim=1).pow(2).mean()
     entropy = -(importance * torch.log(importance.clamp_min(1e-6))).sum()
@@ -387,12 +467,22 @@ class MoABlock(nn.Module):
         block_index: int = 0,
         local_window_size: int = 7,
         rf_seed: int | None = None,
+        sequential_heads: bool = False,
     ):
         super().__init__()
-        assert num_heads % self.NUM_GROUPS == 0, (
-            f"num_heads ({num_heads}) must be divisible by NUM_GROUPS ({self.NUM_GROUPS})"
-        )
+        # P0 fix: replace `assert` (stripped under `-O`) with an explicit
+        # exception so a misconfigured YAML head-count fails loudly instead
+        # of silently producing wrong-shaped per-group heads at export time.
+        if num_heads % self.NUM_GROUPS != 0:
+            raise ValueError(
+                f"num_heads ({num_heads}) must be divisible by NUM_GROUPS ({self.NUM_GROUPS})"
+            )
         self.shortcut = shortcut
+        # P2 fix: sequential head computation reduces peak memory from 3×
+        # single-head output to 1× + accumulator, at the cost of giving up
+        # any (theoretical) parallelism between heads. Useful for large
+        # spatial maps (e.g. P3 stride-8) under memory pressure.
+        self.sequential_heads = sequential_heads
         self.aux_loss_coeff = aux_loss_coeff
         head_dim = max(dim // num_heads, 16)
         heads_per_group = num_heads // self.NUM_GROUPS
@@ -452,12 +542,18 @@ class MoABlock(nn.Module):
         w_g = weights[:, 2:3]
 
         # ── Attention head outputs ────────────────────────────────────────
-        out_l = self.local_head(x)
-        out_r = self.region_head(x)
-        out_g = self.global_head(x)
-
-        # ── Soft mixture ─────────────────────────────────────────────────
-        mixed = w_l * out_l + w_r * out_r + w_g * out_g   # [B, C, H, W]
+        # P2 fix: when sequential_heads is enabled, compute and accumulate
+        # heads one at a time so peak memory is 1× single-head output +
+        # accumulator instead of 3× (all heads resident simultaneously).
+        if self.sequential_heads:
+            mixed = w_l * self.local_head(x)
+            mixed = mixed + w_r * self.region_head(x)
+            mixed = mixed + w_g * self.global_head(x)
+        else:
+            out_l = self.local_head(x)
+            out_r = self.region_head(x)
+            out_g = self.global_head(x)
+            mixed = w_l * out_l + w_r * out_r + w_g * out_g   # [B, C, H, W]
         mixed = self.attn_drop(self.fusion(mixed))
 
         # ── Residual + layer-scale ────────────────────────────────────────
@@ -667,10 +763,15 @@ class NeckMoAFusion(nn.Module):
         w_cross = weights[:, 0:1]
         w_self  = weights[:, 1:2]
 
-        assert self_out.shape[1] == cross_out.shape[1], (
-            f"NeckMoAFusion channel mismatch before blend: "
-            f"self_out C={self_out.shape[1]} vs cross_out C={cross_out.shape[1]}"
-        )
+        # P0 fix: replace `assert` with an explicit exception — this is a
+        # user-configuration-dependent invariant (c_hi/num_heads/c_out
+        # combination), not a pure internal-logic sanity check, so it must
+        # still fire under `python -O`.
+        if self_out.shape[1] != cross_out.shape[1]:
+            raise RuntimeError(
+                f"NeckMoAFusion channel mismatch before blend: "
+                f"self_out C={self_out.shape[1]} vs cross_out C={cross_out.shape[1]}"
+            )
         out = w_cross * cross_out + w_self * self_out
 
         if self.shortcut:
