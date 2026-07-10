@@ -12,34 +12,37 @@ Models
       (MoE block: OptimizedMOEImproved -- train/eval-consistent, always-on shared
        expert; no sparse-inference issue.)
   - YOLO-Master-EsMoE-N -> ultralytics/cfg/models/master/v0/det/yolo-master-n.yaml
-      (MoE block: ES_MOE. Its default eval path (`use_sparse_inference=True`)
-       prunes to ~1 unnormalized expert while training blends all experts, which
-       collapses validation mAP.)
+      (MoE block: ES_MOE. The shipped eval path uses sparse inference, while
+       --no-sparse-eval enables train/eval-consistent dense validation.)
 
 Sparse vs dense evaluation (EsMoE-N only)
 -----------------------------------------
-By DEFAULT the scripts reproduce the model exactly as shipped -- ES_MOE keeps
-`use_sparse_inference=True`, so EsMoE-N's validation mAP collapses. This is
-intentional: the default is a faithful, unmodified reproduction.
+By default the scripts reproduce the model exactly as shipped: ES_MOE keeps
+`use_sparse_inference=True`, so validation uses its sparse routing path.
 
-Pass ``--no-sparse-eval`` to opt into the CORRECTED evaluation. It is an explicit
-flag (not a silent default) so the change is visible in the command you ran. It
-registers a training callback that flips `ES_MOE.use_sparse_inference=False` on
-both the live model and its EMA at `on_pretrain_routine_end` (before any
-validation and before checkpoints are written from the EMA), so per-epoch val,
-the saved .pt, and final eval all use the same dense forward as training.
-v0.1-N has no ES_MOE modules, so the flag is a no-op there.
+Pass ``--no-sparse-eval`` for the train/eval-consistent reproduction path. It is
+an explicit flag so the evaluation mode is recorded in the invocation. It
+registers a training callback that flips
+`ES_MOE.use_sparse_inference=False` on both the live model and its EMA at
+`on_pretrain_routine_end` (before validation and before checkpoints are written
+from the EMA), so per-epoch validation, saved checkpoints, and final evaluation
+use the same dense forward as training. v0.1-N has no ES_MOE modules, so the
+flag is a no-op there.
 """
 from __future__ import annotations
 
 import argparse
 import csv
+import os
+import sys
 import time
 import traceback
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
 
 METRIC_KEYS = (
     "metrics/precision(B)",
@@ -71,7 +74,7 @@ class DatasetSpec:
     project: str       # e.g. "runs/reproduce/visdrone"
 
 
-# Both datasets train the same two models. EsMoE-N gets dense validation.
+# Both datasets train the same two models.
 MODELS = (
     ModelSpec("v0.1-N", "ultralytics/cfg/models/master/v0_1/det/yolo-master-n.yaml", uses_esmoe=False),
     ModelSpec("EsMoE-N", "ultralytics/cfg/models/master/v0/det/yolo-master-n.yaml", uses_esmoe=True),
@@ -133,18 +136,21 @@ _WANDB_METRICS = {
 }
 
 
-def _make_wandb_callbacks(run_name: str, dataset: "DatasetSpec", spec: "ModelSpec",
-                          args: argparse.Namespace, dense_val: bool) -> dict:
+def _make_wandb_callbacks() -> dict:
     """Return trainer callbacks that stream per-epoch metrics to Weights & Biases.
 
-    Robust by design: if wandb is missing or init fails (e.g. not logged in for
-    online mode), a warning is emitted and training continues without wandb.
+    If wandb is unavailable or initialization fails, training continues after
+    emitting a warning.
     """
     from ultralytics.utils import LOGGER
 
     state = {"run": None}
 
     def on_train_start(trainer):
+        from ultralytics.utils import RANK
+
+        if RANK not in {-1, 0}:
+            return
         try:
             import wandb
         except Exception as exc:  # noqa: BLE001
@@ -152,20 +158,26 @@ def _make_wandb_callbacks(run_name: str, dataset: "DatasetSpec", spec: "ModelSpe
             return
         try:
             state["run"] = wandb.init(
-                project=args.wandb_project,
-                entity=(args.wandb_entity or None),
-                name=run_name,
-                mode=args.wandb_mode,
+                project=os.getenv("WANDB_PROJECT"),
+                entity=(os.getenv("WANDB_ENTITY") or None),
+                name=os.getenv("WANDB_NAME"),
+                mode=os.getenv("WANDB_MODE", "online"),
                 reinit=True,
                 config={
-                    "model": spec.name, "cfg": spec.cfg,
-                    "dataset": dataset.name, "data": dataset.data,
-                    "epochs": args.epochs, "imgsz": args.imgsz, "batch": args.batch,
-                    "seed": args.seed, "dense_val": dense_val,
+                    "model": Path(str(trainer.args.model)).stem,
+                    "data": trainer.args.data,
+                    "epochs": trainer.args.epochs,
+                    "imgsz": trainer.args.imgsz,
+                    "batch": trainer.args.batch,
+                    "seed": trainer.args.seed,
+                    "eval": "nosparse" if os.getenv("YOLO_MASTER_REPRO_DENSE_EVAL") == "1" else "default",
                 },
             )
             url = getattr(state["run"], "url", None)
-            LOGGER.info(f"[reproduce] wandb run '{run_name}' [{args.wandb_mode}] -> {url}")
+            LOGGER.info(
+                f"[reproduce] wandb run '{os.getenv('WANDB_NAME')}' "
+                f"[{os.getenv('WANDB_MODE', 'online')}] -> {url}"
+            )
         except Exception as exc:  # noqa: BLE001
             LOGGER.warning(
                 f"[reproduce] wandb init failed ({exc}); continuing without wandb. "
@@ -234,27 +246,40 @@ def _float_or_blank(value: str | None) -> str:
         return value
 
 
-def write_summary(project: Path, dataset: DatasetSpec, models=MODELS, sparse_eval: bool = True) -> Path:
+def _eval_mode(spec: ModelSpec, sparse_eval: bool) -> str:
+    return "nosparse" if spec.uses_esmoe and not sparse_eval else "default"
+
+
+def _run_name(dataset: DatasetSpec, spec: ModelSpec, sparse_eval: bool) -> str:
+    name = f"{dataset.name}_{spec.name}"
+    return f"{name}_{_eval_mode(spec, sparse_eval)}" if spec.uses_esmoe else name
+
+
+def write_summary(project: Path, dataset: DatasetSpec) -> Path:
     project.mkdir(parents=True, exist_ok=True)
     out = project / "summary.csv"
-    fieldnames = ["dataset", "model", "cfg", "run_dir", "dense_eval", "epoch", *METRIC_KEYS]
+    fieldnames = ["dataset", "model", "cfg", "eval", "run_dir", "epoch", *METRIC_KEYS]
     with out.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
         w.writeheader()
-        for spec in models:
-            run_dir = project / f"{dataset.name}_{spec.name}"
-            res = _read_last_metrics(run_dir / "results.csv")
-            row = {
-                "dataset": dataset.name,
-                "model": spec.name,
-                "cfg": spec.cfg,
-                "run_dir": str(run_dir.relative_to(ROOT)) if run_dir.is_relative_to(ROOT) else str(run_dir),
-                "dense_eval": (spec.uses_esmoe and not sparse_eval) if spec.uses_esmoe else "n/a",
-                "epoch": res.get("epoch", ""),
-            }
-            for k in METRIC_KEYS:
-                row[k] = _float_or_blank(res.get(k))
-            w.writerow(row)
+        for spec in MODELS:
+            eval_modes = (True, False) if spec.uses_esmoe else (True,)
+            for sparse_eval in eval_modes:
+                run_dir = project / _run_name(dataset, spec, sparse_eval)
+                res = _read_last_metrics(run_dir / "results.csv")
+                if not res:
+                    continue
+                row = {
+                    "dataset": dataset.name,
+                    "model": spec.name,
+                    "cfg": spec.cfg,
+                    "eval": _eval_mode(spec, sparse_eval),
+                    "run_dir": str(run_dir.relative_to(ROOT)) if run_dir.is_relative_to(ROOT) else str(run_dir),
+                    "epoch": res.get("epoch", ""),
+                }
+                for key in METRIC_KEYS:
+                    row[key] = _float_or_blank(res.get(key))
+                w.writerow(row)
     return out
 
 
@@ -269,21 +294,49 @@ def _completed_epoch(run_dir: Path) -> int | None:
         return None
 
 
+@contextmanager
+def _reproduction_environment(args: argparse.Namespace, run_name: str, dense_eval: bool):
+    """Expose script-only settings to Ultralytics DDP worker processes."""
+    script_dir = str(Path(__file__).resolve().parent)
+    pythonpath = os.environ.get("PYTHONPATH", "")
+    updates = {
+        "PYTHONPATH": os.pathsep.join(filter(None, (script_dir, pythonpath))),
+        "YOLO_MASTER_REPRO_DENSE_EVAL": "1" if dense_eval else "0",
+        "YOLO_MASTER_REPRO_WANDB": "1" if args.wandb and args.wandb_mode != "disabled" else "0",
+        "WANDB_PROJECT": args.wandb_project,
+        "WANDB_MODE": args.wandb_mode,
+        "WANDB_NAME": run_name,
+    }
+    if args.wandb_entity:
+        updates["WANDB_ENTITY"] = args.wandb_entity
+    previous = {key: os.environ.get(key) for key in updates}
+    os.environ.update(updates)
+    try:
+        yield
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
 def train_one(args: argparse.Namespace, dataset: DatasetSpec, spec: ModelSpec, project: Path) -> dict:
     from ultralytics import YOLO
+    from _reproduce_trainer import ReproductionTrainer
 
-    run_name = f"{dataset.name}_{spec.name}"
+    run_name = _run_name(dataset, spec, args.sparse_eval)
     run_dir = project / run_name
     last_pt = run_dir / "weights" / "last.pt"
     best_pt = run_dir / "weights" / "best.pt"
     done = _completed_epoch(run_dir)
 
-    if best_pt.exists() and done is not None and done + 1 >= args.epochs:
+    if best_pt.exists() and done is not None and done >= args.epochs:
         print(f"[skip] {run_name}: complete at epoch {done}", flush=True)
         return {"model": spec.name, "status": "skipped"}
 
-    # Corrected dense evaluation is opt-in via --no-sparse-eval, and only affects
-    # ES_MOE models (v0.1-N has none, so it is a no-op there).
+    # Shipped sparse evaluation is the default for ES_MOE. Dense validation is
+    # opt-in via --no-sparse-eval and is a no-op for v0.1-N.
     dense_eval = spec.uses_esmoe and not args.sparse_eval
     if last_pt.exists() and done is not None:
         print(f"[resume] {run_name}: {last_pt} epoch={done} -> {args.epochs}", flush=True)
@@ -295,37 +348,31 @@ def train_one(args: argparse.Namespace, dataset: DatasetSpec, spec: ModelSpec, p
         model = YOLO(str(ROOT / spec.cfg))
         resume = False
 
-    if dense_eval:
-        cb = _make_dense_inference_callback()
-        model.add_callback("on_pretrain_routine_end", cb)
-        model.add_callback("on_train_start", cb)
-
-    if args.wandb and args.wandb_mode != "disabled":
-        for event, fn in _make_wandb_callbacks(run_name, dataset, spec, args, dense_eval).items():
-            model.add_callback(event, fn)
-
     start = time.time()
-    model.train(
-        data=dataset.data,
-        epochs=args.epochs,
-        imgsz=args.imgsz,
-        batch=args.batch,
-        device=args.device,
-        workers=args.workers,
-        seed=args.seed,
-        deterministic=True,
-        project=str(project),
-        name=run_name,
-        exist_ok=True,
-        pretrained=False,
-        val=True,
-        plots=True,
-        cache=args.cache,
-        patience=args.patience,
-        amp=args.amp,
-        resume=resume,
-        verbose=args.verbose,
-    )
+    with _reproduction_environment(args, run_name, dense_eval):
+        model.train(
+            trainer=ReproductionTrainer,
+            data=dataset.data,
+            epochs=args.epochs,
+            imgsz=args.imgsz,
+            batch=args.batch,
+            device=args.device,
+            workers=args.workers,
+            seed=args.seed,
+            deterministic=True,
+            project=str(project),
+            name=run_name,
+            exist_ok=True,
+            pretrained=False,
+            val=True,
+            plots=True,
+            cache=args.cache,
+            patience=args.patience,
+            amp=args.amp,
+            resume=resume,
+            lora_r=0,
+            verbose=args.verbose,
+        )
     return {"model": spec.name, "status": "resumed" if resume else "ok",
             "duration_s": f"{time.time() - start:.1f}"}
 
@@ -348,9 +395,9 @@ def build_parser(dataset: DatasetSpec) -> argparse.ArgumentParser:
     p.add_argument("--model", choices=[m.name for m in MODELS] + ["both"], default="both",
                    help="Which model to train: v0.1-N, EsMoE-N, or both (default).")
     p.add_argument("--sparse-eval", action=argparse.BooleanOptionalAction, default=True,
-                   help="ES_MOE sparse inference at validation/inference. Default True reproduces "
-                        "EsMoE-N as-is (its sparse-eval path collapses mAP). Pass --no-sparse-eval "
-                        "to opt into the CORRECTED dense evaluation (train==eval). No-op for v0.1-N.")
+                   help="ES_MOE sparse inference at validation/inference. Default True "
+                        "reproduces the shipped model path. Pass --no-sparse-eval for the "
+                        "train/eval-consistent dense validation workaround. No-op for v0.1-N.")
     # --- Weights & Biases real-time per-epoch logging ---
     p.add_argument("--wandb", action=argparse.BooleanOptionalAction, default=True,
                    help="Stream mAP50/mAP50-95/box/cls/moe loss to W&B each epoch (default on). Use --no-wandb to disable.")
@@ -361,6 +408,8 @@ def build_parser(dataset: DatasetSpec) -> argparse.ArgumentParser:
     p.add_argument("--check-build", action="store_true", help="Instantiate both models and exit.")
     p.add_argument("--dry-run", action="store_true", help="Print the plan and exit.")
     p.add_argument("--summary-only", action="store_true", help="Only (re)write summary.csv from existing runs.")
+    p.add_argument("--download-only", action="store_true",
+                   help="Download/validate the dataset and exit.")
     p.add_argument("--stop-on-failure", action="store_true")
     p.add_argument("--verbose", action="store_true")
     return p
@@ -389,7 +438,12 @@ def run_dataset(dataset: DatasetSpec) -> int:
             print(f"[build-ok] {s.name}: {sum(p.numel() for p in m.parameters()) / 1e6:.3f}M  ({s.cfg})")
         return 0
     if args.summary_only:
-        print("[summary]", write_summary(project, dataset, specs, sparse_eval=args.sparse_eval))
+        print("[summary]", write_summary(project, dataset))
+        return 0
+    if args.download_only:
+        from ultralytics.data.utils import check_det_dataset
+        data = check_det_dataset(dataset.data, autodownload=True)
+        print(f"[dataset-ok] {dataset.name}: {data.get('path', dataset.data)}")
         return 0
 
     project.mkdir(parents=True, exist_ok=True)
@@ -405,7 +459,7 @@ def run_dataset(dataset: DatasetSpec) -> int:
                 break
         finally:
             try:
-                write_summary(project, dataset, specs, sparse_eval=args.sparse_eval)
+                write_summary(project, dataset)
             except OSError as e:
                 print(f"[summary-warn] {e}", flush=True)
 

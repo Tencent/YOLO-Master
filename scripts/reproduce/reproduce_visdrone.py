@@ -2,14 +2,14 @@
 """Reproduce YOLO-Master-v0.1-N and YOLO-Master-EsMoE-N baselines on VisDrone.
 
 VisDrone (aerial, dense small objects), built-in config VisDrone.yaml.
-By default the models are reproduced as-is (EsMoE-N keeps its sparse eval, which
-collapses mAP). Add --no-sparse-eval to opt into the corrected dense evaluation
-for EsMoE-N (train==eval); v0.1-N is unaffected.
+By default EsMoE-N keeps the shipped sparse evaluation path. Add
+--no-sparse-eval for train/eval-consistent dense validation; v0.1-N is
+unaffected.
 
 Examples:
     python scripts/reproduce/reproduce_visdrone.py --check-build
-    python scripts/reproduce/reproduce_visdrone.py --epochs 300 --batch 64                 # as-is
-    python scripts/reproduce/reproduce_visdrone.py --model EsMoE-N --no-sparse-eval        # corrected
+    python scripts/reproduce/reproduce_visdrone.py --epochs 300 --batch 64
+    python scripts/reproduce/reproduce_visdrone.py --model EsMoE-N --no-sparse-eval
     python scripts/reproduce/reproduce_visdrone.py --model v0.1-N --no-wandb
     python scripts/reproduce/reproduce_visdrone.py --wandb-project my-proj --wandb-mode offline
 """

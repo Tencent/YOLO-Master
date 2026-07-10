@@ -2,14 +2,14 @@
 """Reproduce YOLO-Master-v0.1-N and YOLO-Master-EsMoE-N baselines on SKU-110K.
 
 SKU-110K (retail, dense products, single class), built-in config SKU-110K.yaml.
-By default the models are reproduced as-is (EsMoE-N keeps its sparse eval, which
-collapses mAP). Add --no-sparse-eval to opt into the corrected dense evaluation
-for EsMoE-N (train==eval); v0.1-N is unaffected.
+By default EsMoE-N keeps the shipped sparse evaluation path. Add
+--no-sparse-eval for train/eval-consistent dense validation; v0.1-N is
+unaffected.
 
 Examples:
     python scripts/reproduce/reproduce_sku110k.py --check-build
-    python scripts/reproduce/reproduce_sku110k.py --epochs 300 --batch 64                  # as-is
-    python scripts/reproduce/reproduce_sku110k.py --model EsMoE-N --no-sparse-eval         # corrected
+    python scripts/reproduce/reproduce_sku110k.py --epochs 300 --batch 64
+    python scripts/reproduce/reproduce_sku110k.py --model EsMoE-N --no-sparse-eval
     python scripts/reproduce/reproduce_sku110k.py --model v0.1-N --no-wandb
     python scripts/reproduce/reproduce_sku110k.py --wandb-project my-proj --wandb-mode offline
 """
