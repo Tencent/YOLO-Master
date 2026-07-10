@@ -14,6 +14,7 @@ import csv
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/yolo_master_matplotlib")
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
@@ -339,6 +340,54 @@ def plot_heatmap(records: list[dict[str, str]], out_path: Path, value: str) -> N
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
+
+
+def summarize_router_weights(layer_name: str, weights: torch.Tensor) -> list[SimpleNamespace]:
+    """Summarize per-expert routing statistics for a single MoT layer.
+
+    Args:
+        layer_name: Name of the MoT layer.
+        weights: Router weights of shape ``[B, num_experts, H, W]``.
+
+    Returns one :class:`types.SimpleNamespace` per expert with fields:
+        ``expert``, ``active_tokens``, ``activation_ratio``, ``mean_weight``.
+    """
+    num_experts = weights.shape[1]
+    rows = []
+    for expert_id, expert_name in enumerate(EXPERT_NAMES):
+        expert_weights = weights[:, expert_id]  # [B, H, W]
+        threshold = 1e-6
+        active = (expert_weights.abs() > threshold).sum().item()
+        total = expert_weights.numel()
+        rows.append(
+            SimpleNamespace(
+                expert=expert_name,
+                active_tokens=active,
+                activation_ratio=active / total if total else 0.0,
+                mean_weight=float(expert_weights.mean().item()),
+            )
+        )
+    return rows
+
+
+def scenario_recommendations(rows: list[SimpleNamespace]) -> list[str]:
+    """Generate actionable recommendations based on expert activation patterns.
+
+    Each recommendation string includes the expert name and a numeric metric
+    so downstream tooling can parse them.
+    """
+    recs = []
+    for row in rows:
+        pct = row.activation_ratio * 100
+        if row.active_tokens == 0:
+            recs.append(f"{row.expert}: inactive (0% tokens) — consider pruning in this scenario")
+        elif pct < 10:
+            recs.append(f"{row.expert}: low activation ({pct:.1f}% tokens) — may underfit this scene type")
+        elif pct < 50:
+            recs.append(f"{row.expert}: moderate activation ({pct:.1f}% tokens) — balanced contribution")
+        else:
+            recs.append(f"{row.expert}: high activation ({pct:.1f}% tokens) — dominant expert for this scene")
+    return recs
 
 
 def parse_args() -> argparse.Namespace:

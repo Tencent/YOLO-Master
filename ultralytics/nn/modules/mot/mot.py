@@ -41,13 +41,86 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+import torch.distributed as dist
 from ultralytics.nn.modules.conv import Conv
-from ultralytics.nn.modules.moe.loss import differentiable_balance_loss
-from ultralytics.nn.modules.moe.utils import get_safe_groups as _safe_groups
+# P2 fix: remove MoT's compile-time dependency on the MoE package by
+# inlining `all_reduce_mean` and `differentiable_balance_loss` locally,
+# mirroring the same decoupling already applied in MoA.  This way MoE-
+# internal refactors (file renames, signature changes) can no longer
+# break MoT imports.  The copies are kept in sync with moe/loss.py.
+from ultralytics.nn.modules.utils import get_safe_groups as _safe_groups
 from ultralytics.utils import LOGGER
+
+
+def all_reduce_mean(tensor: torch.Tensor) -> torch.Tensor:
+    """Average a tensor across DDP ranks (gradient-preserving, no-op on 1 GPU).
+
+    Local, dependency-free copy of MoE's ``moe.loss.all_reduce_mean`` —
+    duplicated here (rather than imported) so MoT keeps zero compile-time
+    dependency on the MoE package. Reduces in float32 to avoid precision
+    loss when the model runs under fp16/bf16 AMP.
+    """
+    if not (dist.is_available() and dist.is_initialized()):
+        return tensor
+    world = dist.get_world_size()
+    if world <= 1:
+        return tensor
+    orig_dtype = tensor.dtype
+    out = tensor.float().clone()
+    dist.all_reduce(out, op=dist.ReduceOp.SUM)
+    out = out / world
+    return out.to(orig_dtype)
+
+
+def differentiable_balance_loss(
+    router_probs: torch.Tensor,
+    expert_usage: torch.Tensor,
+    num_experts: int,
+    target_usage: Optional[torch.Tensor] = None,
+    reduce_ddp: bool = False,
+) -> torch.Tensor:
+    """GShard balance loss with gradient flowing to the router via `importance`.
+
+    Local copy of ``moe.loss.differentiable_balance_loss`` — kept in sync
+    with the original. See the MoE version for full documentation.
+    """
+    probs = router_probs.reshape(
+        router_probs.shape[0], router_probs.shape[1], -1
+    ).mean(-1) if router_probs.dim() == 4 else router_probs.reshape(-1, num_experts)
+    importance = probs.mean(dim=0)  # keeps grad
+    importance = importance / importance.sum().clamp_min(1e-6)
+
+    usage = expert_usage.reshape(-1).float().detach()
+    usage = usage / usage.sum().clamp_min(1e-6)
+    if reduce_ddp:
+        importance = all_reduce_mean(importance)
+        usage = all_reduce_mean(usage)
+
+    if target_usage is not None:
+        w = target_usage.reshape(-1).float()
+        w = w / w.sum().clamp_min(1e-6)
+        usage = usage * w * num_experts  # uniform w -> unchanged
+
+    return num_experts * torch.sum(importance * usage)
+
+# P2 fix: explicit __all__ so `from mot import *` only exposes public API
+# symbols, not internal helpers like _LocalConvTransformerExpert, _MoTRouter, etc.
+__all__ = (
+    "MoTBlock",
+    "C2fMoT",
+    "collect_mot_aux_loss",
+    "anneal_mot_temperature",
+)
 
 # Maximum token count for explicit O(N²) SDPA fallback (PyTorch < 2.0).
 _SDPA_EXPLICIT_MAX_TOKENS = 4096
+
+# P2 fix: use separate CUDA streams to overlap expert computation in the dense
+# (training / non-sparse) path. Each expert's forward runs on its own stream,
+# then results are gathered back to the default stream. This is a no-op on CPU.
+# The threshold avoids stream overhead for tiny spatial maps where the launch
+# cost dominates.
+_EXPERT_STREAM_MIN_ELEMENTS = 1024  # H*W above which streams are worthwhile
 
 # ---------------------------------------------------------------------------
 # Shared utilities
@@ -114,7 +187,11 @@ class _LocalConvTransformerExpert(nn.Module):
     def __init__(self, dim: int, num_heads: int, mlp_ratio: float = 2.0,
                  dropout: float = 0.0):
         super().__init__()
-        assert dim % num_heads == 0
+        # P1 fix: user-facing config validation must not be an `assert`
+        # (stripped under `python -O`); a silent pass-through here would
+        # later crash with an opaque reshape error deep in `to_heads()`.
+        if dim % num_heads != 0:
+            raise ValueError(f"_LocalConvTransformerExpert: dim ({dim}) must be divisible by num_heads ({num_heads})")
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
         self.scale = self.head_dim ** -0.5
@@ -201,7 +278,10 @@ class _WindowTransformerExpert(nn.Module):
                  mlp_ratio: float = 2.0, dropout: float = 0.0,
                  shift_size: int = 0):
         super().__init__()
-        assert dim % num_heads == 0
+        # P1 fix: replace `assert` with an explicit exception (see
+        # _LocalConvTransformerExpert for rationale).
+        if dim % num_heads != 0:
+            raise ValueError(f"_WindowTransformerExpert: dim ({dim}) must be divisible by num_heads ({num_heads})")
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
         self.scale = self.head_dim ** -0.5
@@ -253,7 +333,12 @@ class _WindowTransformerExpert(nn.Module):
     @staticmethod
     def _window_reverse(windows: torch.Tensor, win: int, H: int, W: int) -> torch.Tensor:
         """[B*nH*nW, win*win, C] → [B, H, W, C]"""
-        B = int(windows.shape[0] / (H * W / win / win))
+        # P1 fix: use integer floor-division for the window grid instead of
+        # float division + int() truncation. `H` and `W` here are always the
+        # *padded* dims (divisible by `win`), so `//` is exact; the float
+        # path could round down 1 short under floating-point error for large
+        # H*W, silently corrupting the batch dimension.
+        B = windows.shape[0] // ((H // win) * (W // win))
         C = windows.shape[2]
         x = windows.view(B, H // win, W // win, win, win, C)
         return x.permute(0, 1, 3, 2, 4, 5).contiguous().view(B, H, W, C)
@@ -335,7 +420,10 @@ class _DeformableTransformerExpert(nn.Module):
                  mlp_ratio: float = 2.0, dropout: float = 0.0,
                  align_corners: bool = True):
         super().__init__()
-        assert dim % num_heads == 0
+        # P1 fix: replace `assert` with an explicit exception (see
+        # _LocalConvTransformerExpert for rationale).
+        if dim % num_heads != 0:
+            raise ValueError(f"_DeformableTransformerExpert: dim ({dim}) must be divisible by num_heads ({num_heads})")
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
         self.n_points = n_points
@@ -395,7 +483,10 @@ class _DeformableTransformerExpert(nn.Module):
         B, N, C = q.shape
         nh, np_, hd = self.num_heads, self.n_points, self.head_dim
         # Token→coordinate mapping below assumes N == H*W with no padding.
-        assert N == H * W, f"deformable expert expects N==H*W, got N={N}, H*W={H * W}"
+        # P1 fix: this validates caller-supplied H/W against the actual
+        # flattened token count, so it must survive `python -O`.
+        if N != H * W:
+            raise ValueError(f"deformable expert expects N==H*W, got N={N}, H*W={H * W}")
 
         # Predict sampling offsets & attention weights from query
         offsets = self.offset_proj(q)                         # [B, N, nh*np*2]
@@ -492,11 +583,19 @@ class _MoTRouter(nn.Module):
         self.exploration_eps = exploration_eps
 
         hidden = max(dim // 8, num_experts * 4)
+        # P1 fix: drop `inplace=True` on the router's SiLU. In-place
+        # activation on a tensor that also feeds the residual/`aux_loss`
+        # graph (or that autograd otherwise needs unmodified for the
+        # backward of the preceding GroupNorm/Linear) can raise
+        # "a leaf Variable that requires grad is being used in an in-place
+        # operation" or silently corrupt gradients depending on the autograd
+        # version — the router is on the hot path for every MoT forward, so
+        # correctness here matters more than the small memory saving.
         if use_spatial:
             self.router = nn.Sequential(
                 nn.Conv2d(dim, hidden, 1, bias=False),
                 nn.GroupNorm(_safe_groups(hidden, 4), hidden),
-                nn.SiLU(inplace=True),
+                nn.SiLU(inplace=False),
                 nn.Conv2d(hidden, num_experts, 1, bias=True),
             )
         else:
@@ -504,7 +603,7 @@ class _MoTRouter(nn.Module):
                 nn.AdaptiveAvgPool2d(1),
                 nn.Flatten(),
                 nn.Linear(dim, hidden, bias=False),
-                nn.SiLU(inplace=True),
+                nn.SiLU(inplace=False),
                 nn.Linear(hidden, num_experts, bias=True),
             )
         # init: near-uniform
@@ -578,8 +677,15 @@ def _mot_router_aux_loss(
     num_experts: int,
     balance_coeff: float,
     z_coeff: float,
+    reduce_ddp: bool = True,
 ) -> torch.Tensor:
-    """GShard balance + router z-loss for MoT (matches MoE/MoLoRA formulation)."""
+    """GShard balance + router z-loss for MoT (matches MoE/MoLoRA formulation).
+
+    P1 fix: ``reduce_ddp`` defaults to True so that balance statistics are
+    averaged across DDP ranks, matching MoE's ``MoELoss`` and MoLoRA's
+    ``MoLoRALoss``.  On single-GPU/CPU the ``all_reduce_mean`` inside
+    ``differentiable_balance_loss`` is a no-op.
+    """
     if balance_coeff <= 0 and z_coeff <= 0:
         return weights.new_zeros(())
 
@@ -589,7 +695,7 @@ def _mot_router_aux_loss(
     probs = probs.reshape(-1, num_experts)
 
     usage = _MoTRouter.expert_usage_from_indices(indices, num_experts)
-    balance = differentiable_balance_loss(probs, usage, num_experts)
+    balance = differentiable_balance_loss(probs, usage, num_experts, reduce_ddp=reduce_ddp)
     z_loss = _MoTRouter.z_loss_from_logits(logits)
 
     total = weights.new_zeros(())
@@ -654,10 +760,26 @@ class MoTBlock(nn.Module):
         sparse_train: bool = False,
     ):
         super().__init__()
-        assert 1 <= top_k <= self.NUM_EXPERTS
+        # P1 fix: replace `assert` with an explicit exception — this is a
+        # user-supplied config invariant, not an internal-only sanity check.
+        if not (1 <= top_k <= self.NUM_EXPERTS):
+            raise ValueError(f"top_k must be in [1, {self.NUM_EXPERTS}], got {top_k}")
         self.top_k = top_k
         self.balance_loss_coeff = balance_loss_coeff
         self.sparse_train = sparse_train
+        # P1 fix: `balance_loss_coeff` historically doubled as the z-loss
+        # coefficient when `router_z_loss_coeff` was omitted (legacy
+        # YAML/checkpoint compatibility). That implicit coupling is easy to
+        # miss — a user who only sets `balance_loss_coeff` (expecting it to
+        # control *only* the GShard balance term) silently also changes the
+        # z-loss weight. Warn once so the coupling is discoverable without
+        # reading the source.
+        if router_z_loss_coeff is None and balance_loss_coeff > 0:
+            LOGGER.warning(
+                f"MoTBlock(dim={dim}): router_z_loss_coeff not set — defaulting to "
+                f"balance_loss_coeff ({balance_loss_coeff}) for backward compatibility. "
+                "Pass router_z_loss_coeff explicitly to decouple the two terms."
+            )
         # Legacy YAML/checkpoints used balance_loss_coeff for z-loss only; when
         # router_z_loss_coeff is omitted, keep that behaviour for the z term.
         self.router_z_loss_coeff = balance_loss_coeff if router_z_loss_coeff is None else router_z_loss_coeff
@@ -713,6 +835,12 @@ class MoTBlock(nn.Module):
 
         Sparse dispatch keys off discrete Top-K ``indices`` so training-time
         ``exploration_eps`` blending does not force every expert to run.
+
+        P2: On CUDA with large spatial maps, the dense (training) path launches
+        each expert on a separate CUDA stream so their attention/FFN kernels
+        overlap. Streams are only used when (a) we're on CUDA, (b) not tracing
+        for ONNX/TorchScript, and (c) the spatial map is large enough that the
+        kernel launch overhead is amortised.
         """
         out = x.new_zeros(x.shape)
         use_sparse = (not self.training or self.sparse_train) and not torch.onnx.is_in_onnx_export()
@@ -727,11 +855,59 @@ class MoTBlock(nn.Module):
                 if batch_idx.numel() == 0:
                     continue
                 w = weights[batch_idx, e_idx:e_idx + 1]
-                out[batch_idx] = out[batch_idx] + expert(x[batch_idx]) * w
+                expert_out = expert(x[batch_idx])
+                # P0 fix: each Transformer expert must be shape-preserving
+                # ([B,C,H,W] -> [B,C,H,W]); a misconfigured expert (e.g. a
+                # window/deformable expert whose internal pad/crop drops a
+                # row when H or W isn't a multiple of its window size) would
+                # otherwise silently broadcast-fail or corrupt `out` via the
+                # advanced-index assignment below. Fail loudly instead.
+                if expert_out.shape != x[batch_idx].shape:
+                    raise RuntimeError(
+                        f"MoTBlock expert {e_idx} ({type(expert).__name__}) changed tensor shape: "
+                        f"input {tuple(x[batch_idx].shape)} -> output {tuple(expert_out.shape)}. "
+                        "All MoT experts must be shape-preserving."
+                    )
+                out[batch_idx] = out[batch_idx] + expert_out * w
         else:
-            for e_idx, expert in enumerate(self.experts):
-                w = weights[:, e_idx:e_idx + 1]
-                out = out + expert(x) * w
+            # P2: Determine whether CUDA stream parallelization is worthwhile.
+            # Only use streams on CUDA, not during export, and when the spatial
+            # map is large enough (≥ _EXPERT_STREAM_MIN_ELEMENTS per sample).
+            use_streams = (
+                x.is_cuda
+                and not torch.jit.is_scripting()
+                and not torch.onnx.is_in_onnx_export()
+                and x.shape[2] * x.shape[3] >= _EXPERT_STREAM_MIN_ELEMENTS
+            )
+            if use_streams:
+                expert_outs = [None] * len(self.experts)
+                streams = [torch.cuda.Stream() for _ in self.experts]
+                for e_idx, (expert, stream) in enumerate(zip(self.experts, streams)):
+                    with torch.cuda.stream(stream):
+                        expert_outs[e_idx] = expert(x)
+                # Synchronize all streams before gathering results
+                for stream in streams:
+                    stream.synchronize()
+                for e_idx, expert_out in enumerate(expert_outs):
+                    if expert_out.shape != x.shape:
+                        raise RuntimeError(
+                            f"MoTBlock expert {e_idx} ({type(self.experts[e_idx]).__name__}) changed tensor shape: "
+                            f"input {tuple(x.shape)} -> output {tuple(expert_out.shape)}. "
+                            "All MoT experts must be shape-preserving."
+                        )
+                    w = weights[:, e_idx:e_idx + 1]
+                    out = out + expert_out * w
+            else:
+                for e_idx, expert in enumerate(self.experts):
+                    w = weights[:, e_idx:e_idx + 1]
+                    expert_out = expert(x)
+                    if expert_out.shape != x.shape:
+                        raise RuntimeError(
+                            f"MoTBlock expert {e_idx} ({type(expert).__name__}) changed tensor shape: "
+                            f"input {tuple(x.shape)} -> output {tuple(expert_out.shape)}. "
+                            "All MoT experts must be shape-preserving."
+                        )
+                    out = out + expert_out * w
         return out
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
