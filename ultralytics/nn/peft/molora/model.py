@@ -179,13 +179,13 @@ class MoLoRAModel(nn.Module):
 
         device = next(self.model.parameters()).device
         aux_loss = aux_loss.to(device)
-        seen: set[int] = set()
+        # P2 fix: the `seen` set was redundant — `model.modules()` yields each
+        # module exactly once, so MoLoRALayer instances cannot be double-counted.
         for m in self.model.modules():
             if isinstance(m, MoLoRALayer):
                 loss_t = MOE_LOSS_REGISTRY.get(m)
-                if isinstance(loss_t, torch.Tensor) and id(m) not in seen:
+                if isinstance(loss_t, torch.Tensor):
                     aux_loss = aux_loss + loss_t.to(device)
-                    seen.add(id(m))
         return aux_loss
 
     def merge(self) -> None:

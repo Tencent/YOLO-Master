@@ -172,6 +172,16 @@ class MoLoRALayer(nn.Module):
         self._domain_active_mask: Optional[torch.Tensor] = None
         # Expert frozen mask
         self._expert_frozen_mask: Optional[torch.Tensor] = None
+        # P1 fix (merge_weights weighting): EMA of per-expert routing usage,
+        # updated every training forward. `merge_weights()` uses this instead
+        # of a uniform 1/num_experts prior, so the merged single-path weight
+        # better approximates the actual mixture the model was trained with —
+        # a uniform average silently misrepresents experts whose usage share
+        # deviates from uniform (the common case once the router specializes).
+        self.register_buffer(
+            "_usage_ema", torch.full((num_experts,), 1.0 / num_experts), persistent=True
+        )
+        self._usage_ema_momentum = 0.99
 
         # Freeze base layer
         for p in self.base_layer.parameters():
@@ -212,7 +222,7 @@ class MoLoRALayer(nn.Module):
             balance_loss_coef=balance_loss_coef,
             z_loss_coef=z_loss_coef,
             diversity_loss_coef=diversity_loss_coef,
-            reduce_ddp=False,
+            reduce_ddp=True,  # P1 fix: follow DDP (no-op on single GPU)
         )
 
         # Routing stats for diagnostics (not persistent)
@@ -270,6 +280,17 @@ class MoLoRALayer(nn.Module):
 
         When an expert is selected by more than ``capacity_factor * B * K / E`` slots
         in the batch, its Top-K weights are scaled down and renormalized.
+
+        P1 fix — ``capacity_factor`` semantics clarified: valid *limiting*
+        range is the open interval ``0 < capacity_factor < 1``. Both
+        boundary cases are treated as "no limit" but for different reasons,
+        which was previously undocumented and easy to misread as a bug:
+          - ``capacity_factor <= 0``: invalid/disabled — no limit is applied.
+          - ``capacity_factor >= 1.0``: mathematically already >= uniform
+            capacity (``B*K/E``), so the penalty could never trigger anyway;
+            short-circuiting just skips the redundant per-expert loop.
+        Values are validated at config time (``MoLoRAConfig.__post_init__``);
+        this method only guards against a directly-constructed layer.
         """
         if self.capacity_factor <= 0 or self.capacity_factor >= 1.0:
             return top_k_weights
@@ -298,6 +319,19 @@ class MoLoRALayer(nn.Module):
             self._domain_active_mask = None
             return
         active = self.domain_experts[domain]
+        # P1 fix: validate expert indices before building the mask. An
+        # out-of-range index previously reached `mask[active] = True`
+        # unguarded and raised an opaque `IndexError` deep inside routing;
+        # an empty `active` list would silently produce an all-False mask
+        # that later divides-by-zero-guards to uniform routing (misleading).
+        invalid = [i for i in active if not (0 <= i < self.num_experts)]
+        if invalid:
+            raise IndexError(
+                f"[MoLoRA] set_domain('{domain}'): expert indices {invalid} out of range "
+                f"[0, {self.num_experts - 1}]."
+            )
+        if not active:
+            raise ValueError(f"[MoLoRA] set_domain('{domain}'): domain_experts['{domain}'] is empty.")
         mask = torch.zeros(self.num_experts, dtype=torch.bool)
         mask[active] = True
         self._domain_active_mask = mask
@@ -312,6 +346,15 @@ class MoLoRALayer(nn.Module):
 
     def freeze_experts(self, expert_indices: List[int]) -> None:
         """Freeze specific experts so their weights are not updated during training."""
+        # P1 fix: validate expert indices before use.
+        if not expert_indices:
+            raise ValueError("[MoLoRA] freeze_experts: expert_indices is empty.")
+        invalid = [i for i in expert_indices if not (0 <= i < self.num_experts)]
+        if invalid:
+            raise IndexError(
+                f"[MoLoRA] freeze_experts: expert indices {invalid} out of range "
+                f"[0, {self.num_experts - 1}]."
+            )
         mask = torch.zeros(self.num_experts, dtype=torch.bool)
         mask[expert_indices] = True
         self._expert_frozen_mask = mask
@@ -324,6 +367,13 @@ class MoLoRALayer(nn.Module):
         """Unfreeze specific or all experts."""
         if expert_indices is None:
             expert_indices = list(range(self.num_experts))
+        # P1 fix: validate indices for the same reasons as freeze_experts.
+        invalid = [i for i in expert_indices if not (0 <= i < self.num_experts)]
+        if invalid:
+            raise IndexError(
+                f"[MoLoRA] unfreeze_experts: expert indices {invalid} out of range "
+                f"[0, {self.num_experts - 1}]."
+            )
         for idx in expert_indices:
             for p in self.experts[idx].parameters():
                 p.requires_grad = True
@@ -398,13 +448,22 @@ class MoLoRALayer(nn.Module):
                 pass
 
         # Store diagnostics
+        usage_now = self._expert_usage(top_k_indices)
         self._last_routing_stats = {
             "top_k_indices": top_k_indices.detach(),
             "top_k_weights": top_k_weights.detach(),
-            "expert_usage": self._expert_usage(top_k_indices),
+            "expert_usage": usage_now,
             "effective_k": effective_k,
             "domain_mask": self._domain_active_mask,
         }
+
+        # P1 fix (merge_weights weighting): track an EMA of expert usage
+        # during training so `merge_weights()` can weight by actual routing
+        # frequency instead of a uniform 1/E prior.
+        if self.training:
+            with torch.no_grad():
+                m = self._usage_ema_momentum
+                self._usage_ema.mul_(m).add_(usage_now.detach().to(self._usage_ema.device), alpha=1.0 - m)
 
         return base_out + adapted
 
@@ -460,35 +519,61 @@ class MoLoRALayer(nn.Module):
 
         After merge, forward skips the LoRA path.  This is useful for
         ONNX export / inference where you want zero adapter overhead.
+
+        P1 fix: previously merged with a uniform ``1/num_experts`` prior
+        regardless of how the router actually routed traffic during
+        training. That silently misrepresents the trained mixture once the
+        router specializes (the common case) — e.g. an expert used 80% of
+        the time and one used 5% of the time both contributed equally to
+        the merged weight. Now weights by the EMA of per-expert routing
+        usage tracked during training (``self._usage_ema``), falling back
+        to uniform only if the layer was never run in training mode (EMA
+        still at its uniform initial value).
         """
         if self.merged:
             return
 
-        # For inference, compute expected delta across experts (uniform prior)
-        # or sum all if you want full capacity.  Here we use E[ΔW] = mean(delta).
         with torch.no_grad():
+            usage = self._usage_ema.to(dtype=torch.float32)
+            usage = usage / usage.sum().clamp_min(1e-6)
+            # Cache the per-expert weights actually applied so `unmerge_weights`
+            # can exactly reverse this merge even if usage keeps updating
+            # afterwards (merge is meant to be a terminal, inference-only op,
+            # but unmerge should still be safe to call for debugging/tests).
+            self._merged_expert_weights = usage.clone()
+
             if self.experts[0].is_conv:
-                for e in self.experts:
-                    _merge_conv_delta(self.base_layer.weight, e.lora_A, e.lora_B, e.scaling / self.num_experts, groups=getattr(e, 'base_groups', 1))
+                for e, w in zip(self.experts, usage):
+                    _merge_conv_delta(self.base_layer.weight, e.lora_A, e.lora_B, e.scaling * w.item(), groups=getattr(e, 'base_groups', 1))
             else:
-                for e in self.experts:
-                    _merge_linear_delta(self.base_layer.weight, e.lora_A, e.lora_B, e.scaling / self.num_experts)
+                for e, w in zip(self.experts, usage):
+                    _merge_linear_delta(self.base_layer.weight, e.lora_A, e.lora_B, e.scaling * w.item())
 
         self.merged = True
-        LOGGER.debug(f"[MoLoRA] Merged {self.num_experts} experts into base layer.")
+        LOGGER.debug(
+            f"[MoLoRA] Merged {self.num_experts} experts into base layer "
+            f"(usage-weighted: {usage.tolist()})."
+        )
 
     def unmerge_weights(self) -> None:
         """Restore the original base layer weight."""
         if not self.merged:
             return
+        # P1 fix: reverse with the *same* per-expert weights used at merge
+        # time (not a fresh/uniform recompute), so unmerge is an exact
+        # inverse regardless of what happened to `_usage_ema` since.
+        usage = getattr(self, "_merged_expert_weights", None)
+        if usage is None:
+            usage = torch.full((self.num_experts,), 1.0 / self.num_experts)
         with torch.no_grad():
             if self.experts[0].is_conv:
-                for e in self.experts:
-                    _unmerge_conv_delta(self.base_layer.weight, e.lora_A, e.lora_B, e.scaling / self.num_experts, groups=getattr(e, 'base_groups', 1))
+                for e, w in zip(self.experts, usage):
+                    _unmerge_conv_delta(self.base_layer.weight, e.lora_A, e.lora_B, e.scaling * w.item(), groups=getattr(e, 'base_groups', 1))
             else:
-                for e in self.experts:
-                    _unmerge_linear_delta(self.base_layer.weight, e.lora_A, e.lora_B, e.scaling / self.num_experts)
+                for e, w in zip(self.experts, usage):
+                    _unmerge_linear_delta(self.base_layer.weight, e.lora_A, e.lora_B, e.scaling * w.item())
         self.merged = False
+        self._merged_expert_weights = None
         LOGGER.debug("[MoLoRA] Unmerged experts from base layer.")
 
     # ------------------------------------------------------------------

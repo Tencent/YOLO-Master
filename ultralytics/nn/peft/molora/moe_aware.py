@@ -285,8 +285,16 @@ class MoLoRAMoEAwareLayer(MoLoRALayer):
         self.warmup_steps = warmup_steps
         self.domain_experts = domain_experts
         self.register_buffer("_step_count", torch.tensor(0, dtype=torch.long), persistent=True)
+        self._step_count_cpu: int = 0
         self._domain_active_mask: Optional[torch.Tensor] = None
         self._expert_frozen_mask: Optional[torch.Tensor] = None
+
+        # P1 fix (merge_weights weighting): EMA of per-expert routing usage.
+        # Must mirror MoLoRALayer.__init__ since we skip super().__init__.
+        self.register_buffer(
+            "_usage_ema", torch.full((num_experts,), 1.0 / num_experts), persistent=True
+        )
+        self._usage_ema_momentum = 0.99
 
         # MoE-aware additions
         self.router_calibration = router_calibration
