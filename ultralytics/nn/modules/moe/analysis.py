@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import os
 from typing import Dict, Set, List, Tuple
 from dataclasses import dataclass
+from ultralytics.utils import LOGGER
 
 
 @dataclass
@@ -201,22 +202,22 @@ class ExpertUsageTracker:
 
     def _register_hooks(self) -> None:
         """Register forward hooks on all router modules"""
-        print(f"{'Module Name':<50} | {'Type':<30} | {'Status'}")
-        print("-" * 90)
+        LOGGER.info(f"{'Module Name':<50} | {'Type':<30} | {'Status'}")
+        LOGGER.info("-" * 90)
 
         hooked_count = 0
         for name, module in self.model.named_modules():
             if self._is_router_module(name, module):
                 hook = module.register_forward_hook(self._create_router_hook(name))
                 self.hooks.append(hook)
-                print(f"{name:<50} | {type(module).__name__:<30} | ✅ Hooked")
+                LOGGER.info(f"{name:<50} | {type(module).__name__:<30} | ✅ Hooked")
                 hooked_count += 1
 
         if hooked_count == 0:
-            print("⚠️  WARNING: No router modules found! Check naming conventions.")
+            LOGGER.info("⚠️  WARNING: No router modules found! Check naming conventions.")
         else:
-            print(f"\n✅ Successfully hooked {hooked_count} router module(s)")
-        print("-" * 90)
+            LOGGER.info(f"\n✅ Successfully hooked {hooked_count} router module(s)")
+        LOGGER.info("-" * 90)
 
     def remove_hooks(self) -> None:
         """Remove all registered hooks"""
@@ -245,15 +246,15 @@ class ExpertUsageTracker:
 
     def print_report(self) -> None:
         """Print comprehensive diagnostic report"""
-        print("\n" + "=" * 80)
-        print(" 🔍 EXPERT USAGE DIAGNOSIS REPORT ".center(80))
-        print("=" * 80)
+        LOGGER.info("\n" + "=" * 80)
+        LOGGER.info(" 🔍 EXPERT USAGE DIAGNOSIS REPORT ".center(80))
+        LOGGER.info("=" * 80)
 
         if not self.usage_stats:
-            print("\n⚠️  No usage data collected. Did the model run inference?")
+            LOGGER.info("\n⚠️  No usage data collected. Did the model run inference?")
             return
 
-        print(f"\n📊 Total Tokens Processed: {self.total_tokens:,}\n")
+        LOGGER.info(f"\n📊 Total Tokens Processed: {self.total_tokens:,}\n")
 
         # Prepare data for visualization
         layers = []
@@ -268,9 +269,9 @@ class ExpertUsageTracker:
 
             layers.append(layer_name)
 
-            print(f"\n{'─' * 80}")
-            print(f"📍 Layer: {layer_name}")
-            print(f"{'─' * 80}")
+            LOGGER.info(f"\n{'─' * 80}")
+            LOGGER.info(f"📍 Layer: {layer_name}")
+            LOGGER.info(f"{'─' * 80}")
 
             # Calculate total hits and ideal distribution
             total_hits = sum(stats.hits for stats in expert_stats.values())
@@ -278,8 +279,8 @@ class ExpertUsageTracker:
             ideal_share = 100.0 / num_experts if num_experts > 0 else 0
 
             # Table header
-            print(f"{'ID':<6} | {'Usage %':<10} | {'Avg Weight':<12} | {'Hits':<12} | {'Status':<10}")
-            print(f"{'-' * 6}|{'-' * 12}|{'-' * 14}|{'-' * 14}|{'-' * 10}")
+            LOGGER.info(f"{'ID':<6} | {'Usage %':<10} | {'Avg Weight':<12} | {'Hits':<12} | {'Status':<10}")
+            LOGGER.info(f"{'-' * 6}|{'-' * 12}|{'-' * 14}|{'-' * 14}|{'-' * 10}")
 
             # Collect layer data for plotting
             layer_data = {}
@@ -290,7 +291,7 @@ class ExpertUsageTracker:
                 share_pct = (stats.hits / total_hits * 100) if total_hits > 0 else 0
                 status = self._calculate_status(share_pct, ideal_share)
 
-                print(f"{expert_id:<6} | {share_pct:>9.2f}% | {stats.avg_weight:>11.4f} | "
+                LOGGER.info(f"{expert_id:<6} | {share_pct:>9.2f}% | {stats.avg_weight:>11.4f} | "
                       f"{int(stats.hits):>11,} | {status}")
 
                 layer_data[expert_id] = share_pct
@@ -299,17 +300,17 @@ class ExpertUsageTracker:
             data_matrix.append(layer_data)
 
             # Statistical summary
-            print(f"\n📈 Summary:")
-            print(f"   • Total Experts: {num_experts}")
-            print(f"   • Ideal Share: {ideal_share:.2f}%")
-            print(f"   • Total Hits: {int(total_hits):,}")
+            LOGGER.info(f"\n📈 Summary:")
+            LOGGER.info(f"   • Total Experts: {num_experts}")
+            LOGGER.info(f"   • Ideal Share: {ideal_share:.2f}%")
+            LOGGER.info(f"   • Total Hits: {int(total_hits):,}")
 
             # Calculate load balance metric (standard deviation)
             shares = [stats.hits / total_hits * 100 for stats in expert_stats.values()]
             std_dev = np.std(shares) if shares else 0
-            print(f"   • Load Balance (StdDev): {std_dev:.2f}%")
+            LOGGER.info(f"   • Load Balance (StdDev): {std_dev:.2f}%")
 
-        print("\n" + "=" * 80 + "\n")
+        LOGGER.info("\n" + "=" * 80 + "\n")
 
         # Generate visualizations
         self._plot_visualizations(layers, all_experts, data_matrix)
@@ -364,9 +365,9 @@ class ExpertUsageTracker:
             save_path = "expert_usage_heatmap.png"
             plt.savefig(save_path, dpi=150)
             plt.close()
-            print(f"✅ Heatmap saved to: {os.path.abspath(save_path)}")
+            LOGGER.info(f"✅ Heatmap saved to: {os.path.abspath(save_path)}")
         except Exception as e:
-            print(f"❌ Heatmap generation failed: {e}")
+            LOGGER.info(f"❌ Heatmap generation failed: {e}")
 
         # 2. Bar Chart (Aggregated across layers)
         try:
@@ -415,9 +416,9 @@ class ExpertUsageTracker:
             save_path_bar = "expert_usage_bar.png"
             plt.savefig(save_path_bar, dpi=150)
             plt.close()
-            print(f"✅ Bar chart saved to: {os.path.abspath(save_path_bar)}")
+            LOGGER.info(f"✅ Bar chart saved to: {os.path.abspath(save_path_bar)}")
         except Exception as e:
-            print(f"❌ Bar chart generation failed: {e}")
+            LOGGER.info(f"❌ Bar chart generation failed: {e}")
 
     def __enter__(self):
         """Context manager entry"""
@@ -446,20 +447,20 @@ def diagnose_model(
     # Local import to avoid circular dependency
     from ultralytics import YOLO
 
-    print(f"\n🚀 Starting Model Diagnosis")
-    print(f"📁 Model: {model_path}")
-    print(f"📊 Dataset: {dataset}")
+    LOGGER.info(f"\n🚀 Starting Model Diagnosis")
+    LOGGER.info(f"📁 Model: {model_path}")
+    LOGGER.info(f"📊 Dataset: {dataset}")
 
     try:
         model = YOLO(model_path)
-        print("✅ Model loaded successfully")
+        LOGGER.info("✅ Model loaded successfully")
     except Exception as e:
-        print(f"❌ Error loading model: {e}")
+        LOGGER.info(f"❌ Error loading model: {e}")
         return
 
     # Use context manager for automatic hook cleanup
     with ExpertUsageTracker(model.model) as tracker:
-        print(f"\n🔄 Running validation (batch_size={batch_size})...")
+        LOGGER.info(f"\n🔄 Running validation (batch_size={batch_size})...")
         try:
             model.val(
                 data=dataset,
@@ -468,9 +469,9 @@ def diagnose_model(
                 verbose=verbose,
                 device='cpu'
             )
-            print("✅ Validation completed")
+            LOGGER.info("✅ Validation completed")
         except Exception as e:
-            print(f"❌ Validation failed: {e}")
+            LOGGER.info(f"❌ Validation failed: {e}")
             return
 
         tracker.print_report()

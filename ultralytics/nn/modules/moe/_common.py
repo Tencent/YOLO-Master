@@ -199,16 +199,30 @@ def _record_moe_snapshot(
 
     module.last_routing_snapshot = snapshot
 
+def _is_readonly_property(cls, name):
+    """Check if *name* is a property on *cls* (or bases) that has no setter."""
+    for base in cls.__mro__:
+        attr = base.__dict__.get(name)
+        if isinstance(attr, property) and attr.fset is None:
+            return True
+    return False
+
+
 def _robust_deepcopy(obj, memo):
     """
     Robust deepcopy helper that sanitizes the object's __dict__ to remove
     any non-leaf tensors (which cause RuntimeError in deepcopy) before copying.
+    Also skips stale __dict__ entries that shadow read-only @property descriptors
+    (e.g. ``aux_loss`` from older checkpoints) to avoid AttributeError.
     """
     cls = obj.__class__
     new_obj = cls.__new__(cls)
     memo[id(obj)] = new_obj
-    
+
     for k, v in obj.__dict__.items():
+        # Skip stale attributes that shadow a read-only property on the class
+        if _is_readonly_property(cls, k):
+            continue
         # Check for non-leaf tensor (has grad_fn)
         if isinstance(v, torch.Tensor) and v.grad_fn is not None:
             # Replace with a safe scalar zero on the same device/dtype.
@@ -226,8 +240,12 @@ def _robust_deepcopy(obj, memo):
             except Exception:
                 # Best effort copy for other errors (e.g. pickling issues)
                 # If it fails, we assume it's transient state and ignore it or shallow copy
-                setattr(new_obj, k, v) 
-                
+                try:
+                    setattr(new_obj, k, v)
+                except AttributeError:
+                    # Read-only property or descriptor — skip
+                    pass
+
     return new_obj
 
 

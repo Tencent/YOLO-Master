@@ -377,6 +377,16 @@ class ES_MOE(nn.Module):
         self.register_buffer('expert_usage_counts', torch.zeros(num_experts), persistent=False)
         self.last_routing_snapshot = {}
 
+        # Balance-loss coefficient + MoELoss wrapper (needed by
+        # apply_balance_loss_coeff and GiniBalanceScheduler integration).
+        self.balance_loss_coeff: float = 1.0
+        from .loss import MoELoss
+        self.moe_loss_fn = MoELoss(
+            balance_loss_coeff=self.balance_loss_coeff,
+            num_experts=num_experts,
+            top_k=self.top_k,
+        )
+
     def _ensure_compat_attrs(self):
         """One-time legacy checkpoint attribute repair (not per-forward)."""
         if not hasattr(self, "use_top_k"):
@@ -515,6 +525,37 @@ class ES_MOE(nn.Module):
             _registry_set(self, load_balance_loss)
         
         return load_balance_loss
+
+    def get_gflops(self, input_shape):
+        """Estimate per-component GFLOPs for a single forward pass.
+
+        Args:
+            input_shape: Tuple ``(B, C, H, W)`` describing the input tensor.
+        Returns:
+            Dict mapping component names to GFLOPs, including ``total_gflops``.
+        """
+        B, C, H, W = input_shape
+        flops: Dict[str, float] = {}
+
+        # Router: DynamicRoutingLayer is a small conv-based network
+        # Estimate as 2 conv layers (reduction + projection)
+        hidden = max(C // 8, 4)
+        flops['router'] = (B * C * hidden * 3 * 3 + B * hidden * self.num_experts * 1 * 1) * 2 / 1e9
+
+        # Experts: each EfficientExpertGroup is a depthwise-separable conv
+        for i, expert in enumerate(self.experts):
+            # Approximate: depthwise (C*k*k) + pointwise (C*C)
+            k = getattr(expert, 'kernel_size', 3)
+            if isinstance(k, (tuple, list)):
+                k = k[0]
+            expert_flops = (B * C * k * k + B * C * self.out_channels) * H * W * 2 / 1e9
+            flops[f'expert_{i}'] = expert_flops
+
+        # Normalization: BN + SiLU (negligible but include for completeness)
+        flops['norm'] = B * self.out_channels * H * W * 2 / 1e9
+
+        flops['total_gflops'] = sum(flops.values())
+        return flops
 
     def get_load_balancing_loss(self):
         """Get load-balancing loss."""

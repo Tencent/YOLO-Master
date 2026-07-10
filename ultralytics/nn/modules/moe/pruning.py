@@ -6,16 +6,18 @@ import copy
 import argparse
 from typing import Dict, List, Optional, Tuple, Any
 from .analysis import ExpertUsageTracker
+from ultralytics.utils import LOGGER
 
 
 class MoEPruner:
     """Pruner for Mixture-of-Experts models based on usage statistics"""
-    
+
     def __init__(self, model_path: str, threshold: float = 0.15, dataset: str = 'coco8.yaml',
-                 device: Optional[str] = None):
+                 device: Optional[str] = None, importance_mode: str = 'usage',
+                 keep_top_m: Optional[int] = None):
         """
         Initialize MoE pruner
-        
+
         Args:
             model_path: Path to the model file
             threshold: Minimum usage percentage to keep an expert (0.0-1.0)
@@ -23,14 +25,38 @@ class MoEPruner:
             device: Device for validation. ``None`` (default) auto-detects CUDA,
                 falling back to CPU — previously hard-coded to 'cpu', which was
                 needlessly slow on GPU boxes.
+            importance_mode: Scoring mode for expert importance.
+                ``'usage'`` — pure hit count (default, backward-compatible).
+                ``'usage_weight'`` — ``hits * avg_weight`` composite score.
+            keep_top_m: If set, always keep the top-M experts by score regardless
+                of threshold. ``None`` disables this override.
         """
         self.model_path = model_path
         self.threshold = threshold
         self.dataset = dataset
         self.device = device if device is not None else self._auto_device()
+        self.importance_mode = importance_mode
+        self.keep_top_m = keep_top_m
         self.model = None
         self.usage_stats: Dict[str, Dict[int, Any]] = {}
         self.pruning_plan: Dict[str, List[int]] = {}
+
+    def _expert_score(self, stats: Any, total_hits: float) -> float:
+        """Compute a normalized importance score for a single expert.
+
+        Args:
+            stats: ExpertStats-like object with ``hits`` and ``avg_weight``.
+            total_hits: Sum of hits across all experts in the same layer.
+        Returns:
+            Normalized score in [0, 1] range.
+        """
+        if total_hits <= 0:
+            return 0.0
+        if self.importance_mode == 'usage_weight':
+            avg_weight = getattr(stats, 'avg_weight', 0.0)
+            return (stats.hits * avg_weight) / total_hits
+        # Default: pure usage ratio
+        return stats.hits / total_hits
 
     @staticmethod
     def _auto_device() -> str:
@@ -48,13 +74,13 @@ class MoEPruner:
         
         try:
             self.model = YOLO(self.model_path)
-            print(f"✅ Model loaded successfully from {self.model_path}")
+            LOGGER.info(f"✅ Model loaded successfully from {self.model_path}")
         except Exception as e:
             raise RuntimeError(f"Failed to load model: {e}")
     
     def _diagnose_usage(self) -> None:
         """Run diagnosis to collect expert usage statistics"""
-        print("\n[Phase 1] Diagnosing Expert Usage...")
+        LOGGER.info("\n[Phase 1] Diagnosing Expert Usage...")
         
         with ExpertUsageTracker(self.model.model) as tracker:
             try:
@@ -66,13 +92,13 @@ class MoEPruner:
                     device=self.device
                 )
                 self.usage_stats = tracker.usage_stats
-                print(f"✅ Collected usage stats for {len(self.usage_stats)} layers")
+                LOGGER.info(f"✅ Collected usage stats for {len(self.usage_stats)} layers")
             except Exception as e:
                 raise RuntimeError(f"Diagnosis failed: {e}")
     
     def _create_pruning_plan(self) -> None:
         """Create pruning plan based on usage statistics"""
-        print("\n[Phase 2] Planning Surgery...")
+        LOGGER.info("\n[Phase 2] Planning Surgery...")
         
         modules_dict = dict(self.model.model.named_modules())
         
@@ -82,20 +108,20 @@ class MoEPruner:
                 continue
             
             experts_to_keep = []
-            print(f"\n   Layer: {layer_name}")
+            LOGGER.info(f"\n   Layer: {layer_name}")
             
             # Determine which experts to keep based on threshold
             for expert_id, expert_stats in sorted(stats.items()):
                 usage_pct = expert_stats.hits / total_hits
                 if usage_pct >= self.threshold:
                     experts_to_keep.append(expert_id)
-                    print(f"     ✅ Keep E{expert_id} (Usage: {usage_pct:.1%})")
+                    LOGGER.info(f"     ✅ Keep E{expert_id} (Usage: {usage_pct:.1%})")
                 else:
-                    print(f"     🗑️  Drop E{expert_id} (Usage: {usage_pct:.1%})")
+                    LOGGER.info(f"     🗑️  Drop E{expert_id} (Usage: {usage_pct:.1%})")
             
             # Safety check: ensure at least one expert remains
             if len(experts_to_keep) == 0:
-                print(f"     ❌ Error: All experts would be pruned! Keeping top expert.")
+                LOGGER.info(f"     ❌ Error: All experts would be pruned! Keeping top expert.")
                 # Keep the expert with highest usage
                 top_expert = max(stats.items(), key=lambda x: x[1].hits)[0]
                 experts_to_keep = [top_expert]
@@ -106,12 +132,12 @@ class MoEPruner:
                 original_top_k = getattr(module, 'top_k', 2)
                 
                 if len(experts_to_keep) < original_top_k:
-                    print(f"     ⚠️  Warning: Keeping {len(experts_to_keep)} experts, "
+                    LOGGER.info(f"     ⚠️  Warning: Keeping {len(experts_to_keep)} experts, "
                           f"but original top_k={original_top_k}")
             
             self.pruning_plan[layer_name] = sorted(experts_to_keep)
         
-        print(f"\n✅ Pruning plan created for {len(self.pruning_plan)} layers")
+        LOGGER.info(f"\n✅ Pruning plan created for {len(self.pruning_plan)} layers")
     
     def _get_parent_module_name(self, layer_name: str) -> str:
         """
@@ -185,7 +211,7 @@ class MoEPruner:
         if hasattr(moe_module, 'top_k') and moe_module.top_k > moe_module.num_experts:
             old_top_k = moe_module.top_k
             moe_module.top_k = moe_module.num_experts
-            print(f"     📉 Reduced top_k from {old_top_k} to {moe_module.top_k}")
+            LOGGER.info(f"     📉 Reduced top_k from {old_top_k} to {moe_module.top_k}")
     
     def _prune_router_weights(
         self, 
@@ -207,12 +233,12 @@ class MoEPruner:
         result = self._find_projection_layer(router, num_old_experts)
         
         if result is None:
-            print(f"     ⚠️  Could not locate router projection layer. "
+            LOGGER.info(f"     ⚠️  Could not locate router projection layer. "
                   f"Skipping weight pruning.")
             return False
         
         proj_layer, layer_path = result
-        print(f"     ✂️  Pruning router projection ({layer_path})")
+        LOGGER.info(f"     ✂️  Pruning router projection ({layer_path})")
         
         # Create new projection layer with reduced output dimension
         if isinstance(proj_layer, nn.Conv2d):
@@ -259,7 +285,7 @@ class MoEPruner:
         Returns:
             Pruned model
         """
-        print("\n[Phase 3] Performing Surgery...")
+        LOGGER.info("\n[Phase 3] Performing Surgery...")
         
         new_model = copy.deepcopy(self.model.model)
         modules_dict = dict(new_model.named_modules())
@@ -268,29 +294,29 @@ class MoEPruner:
             # Get parent MoE module
             parent_name = self._get_parent_module_name(layer_name)
             if not parent_name:
-                print(f"   ❌ Could not determine parent module for {layer_name}")
+                LOGGER.info(f"   ❌ Could not determine parent module for {layer_name}")
                 continue
             
             if parent_name not in modules_dict:
-                print(f"   ❌ Parent module {parent_name} not found")
+                LOGGER.info(f"   ❌ Parent module {parent_name} not found")
                 continue
             
             moe_module = modules_dict[parent_name]
             
             # Verify MoE structure
             if not hasattr(moe_module, 'experts') or not hasattr(moe_module, 'routing'):
-                print(f"   ❌ {parent_name} missing 'experts' or 'routing' attributes")
+                LOGGER.info(f"   ❌ {parent_name} missing 'experts' or 'routing' attributes")
                 continue
             
             num_old_experts = len(moe_module.experts)
             
             # Skip if no pruning needed
             if len(keep_indices) == num_old_experts:
-                print(f"   ⏭️  Skipping {layer_name} (no changes needed)")
+                LOGGER.info(f"   ⏭️  Skipping {layer_name} (no changes needed)")
                 continue
             
-            print(f"   🔧 Pruning {layer_name}")
-            print(f"     Experts: {num_old_experts} → {len(keep_indices)} "
+            LOGGER.info(f"   🔧 Pruning {layer_name}")
+            LOGGER.info(f"     Experts: {num_old_experts} → {len(keep_indices)} "
                   f"(keeping {keep_indices})")
             
             # Prune experts
@@ -303,7 +329,7 @@ class MoEPruner:
                 num_old_experts
             )
         
-        print("\n✅ Surgery completed")
+        LOGGER.info("\n✅ Surgery completed")
         return new_model
     
     def _save_model(self, pruned_model: nn.Module, output_path: str) -> None:
@@ -314,7 +340,7 @@ class MoEPruner:
             pruned_model: Pruned model
             output_path: Output file path
         """
-        print(f"\n[Phase 4] Saving Pruned Model...")
+        LOGGER.info(f"\n[Phase 4] Saving Pruned Model...")
         
         # Update YOLO wrapper
         self.model.model = pruned_model
@@ -330,7 +356,7 @@ class MoEPruner:
         }
         
         torch.save(checkpoint, output_path)
-        print(f"✅ Saved to: {output_path}")
+        LOGGER.info(f"✅ Saved to: {output_path}")
     
     def _verify_model(self, output_path: str) -> bool:
         """
@@ -342,17 +368,17 @@ class MoEPruner:
         Returns:
             True if verification successful
         """
-        print("\n[Phase 5] Verification...")
+        LOGGER.info("\n[Phase 5] Verification...")
         
         try:
             from ultralytics import YOLO
             
             # Load check
             pruned_model = YOLO(output_path)
-            print("   ✅ Load check: OK")
+            LOGGER.info("   ✅ Load check: OK")
             
             # Validation check
-            print("   🔄 Running validation on pruned model...")
+            LOGGER.info("   🔄 Running validation on pruned model...")
             pruned_model.val(
                 data=self.dataset, 
                 split='val', 
@@ -360,12 +386,12 @@ class MoEPruner:
                 verbose=False, 
                 device=self.device
             )
-            print("   ✅ Validation check: OK")
+            LOGGER.info("   ✅ Validation check: OK")
             
             return True
             
         except Exception as e:
-            print(f"   ❌ Verification failed: {e}")
+            LOGGER.info(f"   ❌ Verification failed: {e}")
             return False
     
     def prune(self, output_path: str) -> bool:
@@ -378,14 +404,14 @@ class MoEPruner:
         Returns:
             True if pruning successful
         """
-        print(f"\n{'='*80}")
-        print(f"✂️  MoE MODEL PRUNING PIPELINE".center(80))
-        print(f"{'='*80}")
-        print(f"\n📋 Configuration:")
-        print(f"   • Input Model: {self.model_path}")
-        print(f"   • Output Model: {output_path}")
-        print(f"   • Usage Threshold: {self.threshold*100:.1f}%")
-        print(f"   • Dataset: {self.dataset}")
+        LOGGER.info(f"\n{'='*80}")
+        LOGGER.info(f"✂️  MoE MODEL PRUNING PIPELINE".center(80))
+        LOGGER.info(f"{'='*80}")
+        LOGGER.info(f"\n📋 Configuration:")
+        LOGGER.info(f"   • Input Model: {self.model_path}")
+        LOGGER.info(f"   • Output Model: {output_path}")
+        LOGGER.info(f"   • Usage Threshold: {self.threshold*100:.1f}%")
+        LOGGER.info(f"   • Dataset: {self.dataset}")
         
         try:
             # Phase 1: Load model
@@ -407,14 +433,14 @@ class MoEPruner:
             success = self._verify_model(output_path)
             
             if success:
-                print(f"\n{'='*80}")
-                print(f"🎉 PRUNING COMPLETED SUCCESSFULLY".center(80))
-                print(f"{'='*80}\n")
+                LOGGER.info(f"\n{'='*80}")
+                LOGGER.info(f"🎉 PRUNING COMPLETED SUCCESSFULLY".center(80))
+                LOGGER.info(f"{'='*80}\n")
             
             return success
             
         except Exception as e:
-            print(f"\n❌ Pruning failed: {e}")
+            LOGGER.info(f"\n❌ Pruning failed: {e}")
             import traceback
             traceback.print_exc()
             return False

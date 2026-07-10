@@ -4,6 +4,11 @@ import torch
 import torch.nn as nn
 from typing import Iterator, Tuple, Union, List
 
+# Re-exported from the shared, dependency-free `nn.modules.utils` so MoA/MoT no
+# longer need to import from the MoE package (P1: removes cross-mixture
+# compile-time dependency — MoE refactors can no longer break MoA/MoT imports).
+from ultralytics.nn.modules.utils import get_safe_groups
+
 # Namespace for full MoE *block* classes (excludes routers/experts/loss helpers).
 _CORE_MOE_MODULE = "ultralytics.nn.modules.moe.modules"
 
@@ -36,16 +41,6 @@ def iter_core_moe_expert_params(model: nn.Module) -> Iterator[torch.nn.Parameter
                 continue
             if "expert" in full:
                 yield param
-
-
-def get_safe_groups(channels: int, desired_groups: int = 8) -> int:
-    """Ensure num_groups divides channels"""
-    if channels <= 0:
-        return 1
-    groups = min(desired_groups, channels)
-    while channels % groups != 0:
-        groups -= 1
-    return max(1, groups)
 
 
 def last_conv_out_channels(module: nn.Module) -> int:
