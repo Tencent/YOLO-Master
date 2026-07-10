@@ -729,7 +729,7 @@ def apply_lora(
     # path (which sits on the same residual stream and has no LayerNorm), plus
     # force alpha warmup when enabled.
     #
-    # CRITICAL FIX (P0): Trainer reads `self.args.lora_lr_mult` and
+    # CRITICAL FIX: Trainer reads `self.args.lora_lr_mult` and
     # `self.args.lora_alpha_warmup` directly when building the optimizer and
     # scheduling alpha warmup. Writing the cap to `kwargs` or `config` alone
     # has *no effect* on the actual training run. We therefore mutate `args`
@@ -980,7 +980,7 @@ def apply_lora(
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-        # P0 FIX: Auto-degrade to manual fallback when PEFT setup fails and the
+        # FIX: Auto-degrade to manual fallback when PEFT setup fails and the
         # request is in principle representable in the in-repo fallback (plain
         # LoRA, r > 0). This avoids hard-killing training runs over recoverable
         # PEFT-side incompatibilities (e.g. unsupported init mode for a single
@@ -1003,7 +1003,7 @@ def apply_lora(
     # Unfreeze detection head (may be frozen by PEFT or random init)
     _unfreeze_detection_head(model)
 
-    # P0 FIX: Honor `freeze_bn` on the PEFT path as well. Previously the field
+    # FIX: Honor `freeze_bn` on the PEFT path as well. Previously the field
     # was only consumed by `apply_manual_lora` so passing `lora_freeze_bn=True`
     # with the PEFT backend silently had no effect.
     if bool(getattr(config, "freeze_bn", False)):

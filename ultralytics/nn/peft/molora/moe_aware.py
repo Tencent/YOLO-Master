@@ -135,8 +135,8 @@ class RouterCalibration(nn.Module):
         calibrated_logits = router_logits + B_r @ A_r(x)
 
     where:
-        A_r: Linear/Conv  (in_channels -> r_r)
-        B_r: Linear       (r_r -> num_experts)
+        A_r: Linear/Conv (in_channels -> r_r)
+        B_r: Linear (r_r -> num_experts)
 
     B_r is initialized to zero so training starts from the frozen router
     distribution (no disruption at step 0).
@@ -268,7 +268,7 @@ class MoLoRAMoEAwareLayer(MoLoRALayer):
         expert_ranks: Optional[List[int]] = None,
     ):
         # If per-expert ranks are provided, we cannot use the parent __init__
-        # directly because it builds experts with uniform rank.  We manually
+        # directly because it builds experts with uniform rank. We manually
         # replicate the parent init logic here with per-expert rank support.
         nn.Module.__init__(self)
         self.base_layer = base_layer
@@ -289,7 +289,7 @@ class MoLoRAMoEAwareLayer(MoLoRALayer):
         self._domain_active_mask: Optional[torch.Tensor] = None
         self._expert_frozen_mask: Optional[torch.Tensor] = None
 
-        # P1 fix (merge_weights weighting): EMA of per-expert routing usage.
+        # merge_weights weighting: EMA of per-expert routing usage.
         # Must mirror MoLoRALayer.__init__ since we skip super().__init__.
         self.register_buffer(
             "_usage_ema", torch.full((num_experts,), 1.0 / num_experts), persistent=True

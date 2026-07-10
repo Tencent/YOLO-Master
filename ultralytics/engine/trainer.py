@@ -744,7 +744,7 @@ class BaseTrainer:
             # MoE Strategy: Freeze experts for initial epochs while router learns balanced routing
             # Key fix: only freeze expert WEIGHTS, not shared_expert/routing — and use shorter warmup
             #
-            # P0 FIX: gate the entire MoE warmup / gain-schedule / collapse-detection
+            # FIX: gate the entire MoE warmup / gain-schedule / collapse-detection
             # block behind `self._has_moe` (set during _setup_train). Previously this
             # block ran unconditionally — it would still scan named_parameters() for
             # 'experts' on every iteration on a plain (non-MoE) YOLO model and
@@ -878,7 +878,7 @@ class BaseTrainer:
                     
                     # ── LoRA Orthogonal Regularization (Strategy 3) ──
                     # Optimized: compute every N batches instead of every batch.
-                    # P1 FIX: cast ortho_loss to the main `loss` dtype before
+                    # FIX: cast ortho_loss to the main `loss` dtype before
                     # adding so AMP runs with bf16/fp16 do not crash on the
                     # `+` between fp32 ortho and the lower-precision detection
                     # loss tensor.

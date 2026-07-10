@@ -2,10 +2,10 @@
 """Unit tests for Mixture-of-Experts modules and auxiliary-loss aggregation.
 
 Covers the issues found in docs/audit/moe_module_and_loss_audit_2026-06-24.md:
-  - P0  aux loss double counting in v8*Loss aggregation
-  - P1  routing gradient flow (detach_routing default False)
-  - P1  MOE_LOSS_REGISTRY no leak across forwards
-  - P1  eval() yields zero aggregated aux
+  - aux loss double counting in v8*Loss aggregation
+  - routing gradient flow (detach_routing default False)
+  - MOE_LOSS_REGISTRY no leak across forwards
+  - eval() yields zero aggregated aux
   - deepcopy safety (used by EMA / attempt_load_one_weight)
   - forward output shapes for the main MoE variants
 """
@@ -66,7 +66,7 @@ def _sum_via_registry(model: nn.Module) -> float:
 
 
 # ---------------------------------------------------------------------------
-# P0: aux loss must not be double-counted
+# aux loss must not be double-counted
 # ---------------------------------------------------------------------------
 def test_aux_aggregation_no_double_count():
     """A2C2fMoE has wrapper modules (ABlockMoE) that delegate aux_loss.
@@ -104,7 +104,7 @@ def test_collect_helper_handles_none_and_eval():
 
 
 # ---------------------------------------------------------------------------
-# P1: routing gradient flow
+# routing gradient flow
 # ---------------------------------------------------------------------------
 def test_routing_gradient_flows_by_default():
     """With detach_routing=False (default), main-task grad reaches the router."""
@@ -138,7 +138,7 @@ def test_routing_detach_isolates_router():
 
 
 # ---------------------------------------------------------------------------
-# P1: registry must not leak
+# registry must not leak
 # ---------------------------------------------------------------------------
 def test_registry_no_leak_across_forwards():
     """Repeated forwards must not grow the registry (one entry per MoE module)."""
@@ -469,7 +469,7 @@ def test_eval_does_not_write_registry():
 
 
 # ===========================================================================
-# rev8: fixes from the 2026-06-25 deep-scan report (P0/P1/P2)
+# rev8: fixes from the 2026-06-25 deep-scan report ()
 # ===========================================================================
 
 def test_p01_hyperultimate_get_gflops_no_attribute_error():

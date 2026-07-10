@@ -49,7 +49,7 @@ def save_lora_adapters(model: "DetectionModel", path: Union[str, Path]) -> bool:
                 "target_audit": getattr(model, "lora_target_audit", {}),
                 "runtime_metadata": getattr(model, "lora_runtime_metadata", {}),
             }
-            # P0 FIX: write fallback metadata to a dedicated filename so it does
+            # FIX: write fallback metadata to a dedicated filename so it does
             # not collide with PEFT's own `adapter_config.json` when both
             # backends save into the same directory (e.g. successive
             # save_lora_adapters calls). Keep an `adapter_config.json` symlink
@@ -109,7 +109,7 @@ def load_lora_adapters(
         LOGGER.error(f"[LoRA] Adapter path not found: {path}")
         return False
 
-    # P0 FIX: prefer dedicated fallback metadata file to avoid mis-classifying
+    # FIX: prefer dedicated fallback metadata file to avoid mis-classifying
     # a PEFT-saved `adapter_config.json` as a fallback config.
     fallback_meta_path = path / "fallback_meta.json"
     config_path = path / "adapter_config.json"

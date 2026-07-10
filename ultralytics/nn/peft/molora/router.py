@@ -92,7 +92,7 @@ class HybridRouter(nn.Module):
         super().__init__()
         self.linear_router = LinearRouter(in_channels, num_experts, hidden_dim)
         self.spatial_router = SpatialRouter(in_channels, num_experts, hidden_dim)
-        # P2 fix: init alpha to 0.0 so sigmoid(0.0)=0.5 gives a truly uniform
+        # init alpha to 0.0 so sigmoid(0.0)=0.5 gives a truly uniform
         # blend at start. The previous 0.5 init produced sigmoid(0.5)≈0.622,
         # biasing the linear router before any learning happens.
         self.alpha = nn.Parameter(torch.tensor(0.0))

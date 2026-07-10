@@ -8,7 +8,7 @@ Unlike MoE which routes *tokens to expert FFNs*, MoA routes tokens to
 *different attention heads with different receptive fields*. For dense
 prediction tasks (object detection), this provides:
 
-1. **Local heads**  – depthwise-3×3-biased QKV, captures fine texture / edge detail
+1. **Local heads** – depthwise-3×3-biased QKV, captures fine texture / edge detail
 2. **Regional heads** – pooled key/value (stride=2), mid-range context
 3. **Global heads** – linear attention (O(N) complexity), scene-level semantics
 
@@ -43,7 +43,7 @@ from ultralytics.nn.modules.conv import Conv
 def all_reduce_mean(tensor: torch.Tensor) -> torch.Tensor:
     """Average a tensor across DDP ranks (gradient-preserving, no-op on 1 GPU).
 
-    P1 fix (MoA DDP aux-loss sync): local, dependency-free copy of MoE's
+    MoA DDP aux-loss sync: local, dependency-free copy of MoE's
     ``moe.loss.all_reduce_mean`` — duplicated here (rather than imported)
     so MoA keeps zero compile-time dependency on the MoE package (see the
     ``get_safe_groups`` fix above for the same rationale). Reduces in
@@ -64,13 +64,13 @@ def all_reduce_mean(tensor: torch.Tensor) -> torch.Tensor:
 # Helpers
 # ---------------------------------------------------------------------------
 
-# P1 fix: import the shared, dependency-free helper directly from
+# import the shared, dependency-free helper directly from
 # `nn.modules.utils` instead of `nn.modules.moe.utils`. This removes MoA's
 # compile-time dependency on the MoE package so MoE-internal refactors can no
 # longer break MoA imports.
 from ultralytics.nn.modules.utils import get_safe_groups as _safe_groups
 
-# P2 fix: explicit __all__ restricts `from moa import *` to public symbols only,
+# explicit __all__ restricts `from moa import *` to public symbols only,
 # preventing leakage of internal helpers (_flash_attn, _MoARouter, etc.).
 __all__ = (
     "MoABlock",
@@ -85,7 +85,7 @@ def _flash_attn(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
                 scale: float) -> torch.Tensor:
     """Scaled dot-product attention; uses F.sdpa when available (torch ≥ 2.0).
 
-    P0 fix: whether ``F.scaled_dot_product_attention`` accepts a ``scale``
+    whether ``F.scaled_dot_product_attention`` accepts a ``scale``
     keyword is now detected once via ``inspect.signature`` (cached on the
     module) instead of catching ``TypeError`` and pattern-matching its
     message string. Matching on exception text is fragile — a PyTorch
@@ -127,7 +127,7 @@ def _window_flash_attn(
 ) -> torch.Tensor:
     """Window-partitioned SDPA on [B, nh, N, hd] tokens (O(N·win²) complexity)."""
     B, nh, n_tokens, hd = q.shape
-    # P0 fix: `assert` is stripped under `python -O` / some JIT export paths,
+    # `assert` is stripped under `python -O` / some JIT export paths,
     # which would silently let a mismatched N flow into `.view()` below and
     # raise a much more confusing shape error deep inside `partition()`.
     if n_tokens != height * width:
@@ -372,7 +372,7 @@ class _MoARouter(nn.Module):
         super().__init__()
         self.temperature = max(temperature, 0.1)
         hidden = max(dim // reduction, num_groups * 2)
-        # P2 fix: drop inplace=True — the router output feeds both the
+        # drop inplace=True — the router output feeds both the
         # softmax weights and the aux-loss graph; in-place SiLU on an
         # intermediate that autograd needs unmodified can silently corrupt
         # gradients or raise under complex checkpoint/export scenarios.
@@ -398,7 +398,7 @@ class _MoARouter(nn.Module):
 def _moa_router_aux_loss(weights: torch.Tensor, logits: torch.Tensor, coeff: float) -> torch.Tensor:
     """GShard-scale MoA router regularization with a small z/entropy stabilizer.
 
-    P1 fix: ``importance`` (the per-group mean routing probability) is now
+    ``importance`` (the per-group mean routing probability) is now
     averaged across DDP ranks before computing the balance/entropy terms.
     Previously each rank computed balance loss purely from its own local
     batch; under DDP with per-rank data sharding, different ranks can see
@@ -431,7 +431,7 @@ class MoABlock(nn.Module):
     """Mixture-of-Attention Block.
 
     Routes each spatial token softly over three attention head-groups:
-      - local  (DW-biased, captures fine-grained detail)
+      - local (DW-biased, captures fine-grained detail)
       - regional (stride-2 pooled KV, mid-range context)
       - global (linear attention, scene semantics)
 
@@ -449,7 +449,7 @@ class MoABlock(nn.Module):
         shortcut (bool): Residual connection around the block.
 
     Shape:
-        - Input:  [B, dim, H, W]
+        - Input: [B, dim, H, W]
         - Output: [B, dim, H, W]
     """
 
@@ -470,7 +470,7 @@ class MoABlock(nn.Module):
         sequential_heads: bool = False,
     ):
         super().__init__()
-        # P0 fix: replace `assert` (stripped under `-O`) with an explicit
+        # replace `assert` (stripped under `-O`) with an explicit
         # exception so a misconfigured YAML head-count fails loudly instead
         # of silently producing wrong-shaped per-group heads at export time.
         if num_heads % self.NUM_GROUPS != 0:
@@ -478,7 +478,7 @@ class MoABlock(nn.Module):
                 f"num_heads ({num_heads}) must be divisible by NUM_GROUPS ({self.NUM_GROUPS})"
             )
         self.shortcut = shortcut
-        # P2 fix: sequential head computation reduces peak memory from 3×
+        # sequential head computation reduces peak memory from 3×
         # single-head output to 1× + accumulator, at the cost of giving up
         # any (theoretical) parallelism between heads. Useful for large
         # spatial maps (e.g. P3 stride-8) under memory pressure.
@@ -542,7 +542,7 @@ class MoABlock(nn.Module):
         w_g = weights[:, 2:3]
 
         # ── Attention head outputs ────────────────────────────────────────
-        # P2 fix: when sequential_heads is enabled, compute and accumulate
+        # when sequential_heads is enabled, compute and accumulate
         # heads one at a time so peak memory is 1× single-head output +
         # accumulator instead of 3× (all heads resident simultaneously).
         if self.sequential_heads:
@@ -558,9 +558,9 @@ class MoABlock(nn.Module):
 
         # ── Residual + layer-scale ────────────────────────────────────────
         # `shortcut` controls *all* block-level residual paths consistently:
-        #   True  → pre-activation residual around both attention and FFN
-        #   False → pure feed-forward transform (no residual anywhere), so the
-        #           block fully replaces its input rather than refining it.
+        # True → pre-activation residual around both attention and FFN
+        # False → pure feed-forward transform (no residual anywhere), so the
+        # block fully replaces its input rather than refining it.
         if self.shortcut:
             x = x + self.ls_attn * mixed
             x = x + self.ls_ffn * self.ffn(x)
@@ -583,8 +583,8 @@ class C2fMoA(nn.Module):
 
     Architecture:
         cv1 (1×1 split)
-        ├── identity branch  (c2 // 2 channels, pass-through)
-        └── n × MoABlock     (c2 // 2 channels)
+        ├── identity branch (c2 // 2 channels, pass-through)
+        └── n × MoABlock (c2 // 2 channels)
         cv2 (1×1 fusion, (n+2) × c2//2 → c2)
 
     Args:
@@ -674,8 +674,8 @@ class NeckMoAFusion(nn.Module):
         shortcut (bool): Residual path.
 
     Input:
-        hi : [B, c_hi, H, W]        (fine-grained, e.g. P3 or P4)
-        lo : [B, c_lo, H/2, W/2]    (semantic, e.g. P4 or P5 after upsample)
+        hi : [B, c_hi, H, W] (fine-grained, e.g. P3 or P4)
+        lo : [B, c_lo, H/2, W/2] (semantic, e.g. P4 or P5 after upsample)
 
     Output: [B, c_out, H, W]
     """
@@ -763,7 +763,7 @@ class NeckMoAFusion(nn.Module):
         w_cross = weights[:, 0:1]
         w_self  = weights[:, 1:2]
 
-        # P0 fix: replace `assert` with an explicit exception — this is a
+        # replace `assert` with an explicit exception — this is a
         # user-configuration-dependent invariant (c_hi/num_heads/c_out
         # combination), not a pure internal-logic sanity check, so it must
         # still fire under `python -O`.

@@ -845,7 +845,7 @@ class PeftProxy(PeftModel):
     def _get_base(self) -> nn.Module:
         """Helper to retrieve the underlying base model, handling nested PEFT wrappers.
 
-        P1 PERF FIX: cache the resolved base module on first access so that hot
+        PERF FIX: cache the resolved base module on first access so that hot
         paths (forward, __getitem__, __getattr__ fallback) do not re-walk the
         wrapper chain on every call. PyTorch's `nn.Module.__getattr__` is
         already non-trivial — repeating `hasattr(model, 'model')` lookups per

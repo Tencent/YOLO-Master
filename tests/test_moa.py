@@ -115,7 +115,7 @@ def test_c2fmoa_aux_loss_not_double_counted_for_nested_blocks():
 
 def test_flash_attn_supports_sdpa_without_scale_keyword(monkeypatch):
     from ultralytics.nn.modules.moa.moa import _sdpa_supports_scale
-    _sdpa_supports_scale.cache_clear()  # P2 fix: clear lru_cache so monkeypatch takes effect
+    _sdpa_supports_scale.cache_clear()  # clear lru_cache so monkeypatch takes effect
 
     original_sdpa = F.scaled_dot_product_attention
 

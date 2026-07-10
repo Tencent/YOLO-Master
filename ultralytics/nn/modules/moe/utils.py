@@ -5,7 +5,7 @@ import torch.nn as nn
 from typing import Iterator, Tuple, Union, List
 
 # Re-exported from the shared, dependency-free `nn.modules.utils` so MoA/MoT no
-# longer need to import from the MoE package (P1: removes cross-mixture
+# longer need to import from the MoE package (removes cross-mixture
 # compile-time dependency — MoE refactors can no longer break MoA/MoT imports).
 from ultralytics.nn.modules.utils import get_safe_groups
 

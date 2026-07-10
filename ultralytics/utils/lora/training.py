@@ -560,7 +560,7 @@ class LoraTrainingStrategy:
             elif hasattr(attr, 'weight') and attr.weight.numel() > 0:
                 weight_pairs.append((attr.weight, is_A))
 
-        # CRITICAL FIX (P0): Do NOT detach() the weight tensors — that severs the
+        # CRITICAL FIX: Do NOT detach() the weight tensors — that severs the
         # gradient graph and the orthogonal regularization becomes a no-op.
         for name, module in model.named_modules():
             lora_a = getattr(module, 'lora_A', None)

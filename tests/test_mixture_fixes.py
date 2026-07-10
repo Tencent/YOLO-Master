@@ -1,4 +1,4 @@
-"""Regression tests for the MoE/MoA/MoT P0/P1 fixes (report v1.0).
+"""Regression tests for the MoE/MoA/MoT fixes (report v1.0).
 
 Covers:
 - MoE-Loss float32 DDP reduce path (numeric stability helper).

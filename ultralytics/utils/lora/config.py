@@ -707,7 +707,7 @@ class LoRAConfigBuilder:
                 )
             filtered_targets = [name for name in targets if isinstance(modules_dict.get(name), nn.Linear)]
             if targets and not filtered_targets:
-                # P1 FIX: silently dropping all targets means AdaLoRA was
+                # FIX: silently dropping all targets means AdaLoRA was
                 # effectively disabled with no clear signal. Raise instead so
                 # the user can pick a compatible variant explicitly.
                 raise ValueError(

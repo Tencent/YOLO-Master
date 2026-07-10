@@ -11,9 +11,9 @@ MoE routes tokens to *different FFN experts*;
 Each "Transformer Expert" is a full Transformer block (Attn + FFN) with a
 distinct inductive bias for a specific aspect of visual feature processing:
 
-  Expert 0 — LocalConvTransformer   (Conv-Attn, DW-biased, best for texture/edges)
-  Expert 1 — WindowTransformer      (Swin-style window partition, shifted, best for medium objects)
-  Expert 2 — DeformableTransformer  (sparse deformable sampling, best for irregular/occluded objects)
+  Expert 0 — LocalConvTransformer (Conv-Attn, DW-biased, best for texture/edges)
+  Expert 1 — WindowTransformer (Swin-style window partition, shifted, best for medium objects)
+  Expert 2 — DeformableTransformer (sparse deformable sampling, best for irregular/occluded objects)
 
 A content-aware router (lightweight 1×1 MLP) assigns each spatial token a
 *sparse Top-K weight* over these experts. The routing is **soft Top-K**:
@@ -43,11 +43,11 @@ import torch.nn.functional as F
 
 import torch.distributed as dist
 from ultralytics.nn.modules.conv import Conv
-# P2 fix: remove MoT's compile-time dependency on the MoE package by
+# remove MoT's compile-time dependency on the MoE package by
 # inlining `all_reduce_mean` and `differentiable_balance_loss` locally,
-# mirroring the same decoupling already applied in MoA.  This way MoE-
+# mirroring the same decoupling already applied in MoA. This way MoE-
 # internal refactors (file renames, signature changes) can no longer
-# break MoT imports.  The copies are kept in sync with moe/loss.py.
+# break MoT imports. The copies are kept in sync with moe/loss.py.
 from ultralytics.nn.modules.utils import get_safe_groups as _safe_groups
 from ultralytics.utils import LOGGER
 
@@ -103,7 +103,7 @@ def differentiable_balance_loss(
 
     return num_experts * torch.sum(importance * usage)
 
-# P2 fix: explicit __all__ so `from mot import *` only exposes public API
+# explicit __all__ so `from mot import *` only exposes public API
 # symbols, not internal helpers like _LocalConvTransformerExpert, _MoTRouter, etc.
 __all__ = (
     "MoTBlock",
@@ -115,7 +115,7 @@ __all__ = (
 # Maximum token count for explicit O(N²) SDPA fallback (PyTorch < 2.0).
 _SDPA_EXPLICIT_MAX_TOKENS = 4096
 
-# P2 fix: use separate CUDA streams to overlap expert computation in the dense
+# use separate CUDA streams to overlap expert computation in the dense
 # (training / non-sparse) path. Each expert's forward runs on its own stream,
 # then results are gathered back to the default stream. This is a no-op on CPU.
 # The threshold avoids stream overhead for tiny spatial maps where the launch
@@ -179,7 +179,7 @@ class _LocalConvTransformerExpert(nn.Module):
     """Transformer expert with convolutional inductive bias.
 
     Uses depthwise-conv pre-processing for QKV to bias attention toward
-    spatially-local patterns.  The FFN is a standard Gated Linear Unit (GLU):
+    spatially-local patterns. The FFN is a standard Gated Linear Unit (GLU):
     ``out = (Sigmoid(W_g x)) ⊙ (W_v x)``. (This is GLU proper — *not* SwiGLU,
     which would gate with SiLU/Swish instead of Sigmoid.)
     """
@@ -187,7 +187,7 @@ class _LocalConvTransformerExpert(nn.Module):
     def __init__(self, dim: int, num_heads: int, mlp_ratio: float = 2.0,
                  dropout: float = 0.0):
         super().__init__()
-        # P1 fix: user-facing config validation must not be an `assert`
+        # user-facing config validation must not be an `assert`
         # (stripped under `python -O`); a silent pass-through here would
         # later crash with an opaque reshape error deep in `to_heads()`.
         if dim % num_heads != 0:
@@ -278,7 +278,7 @@ class _WindowTransformerExpert(nn.Module):
                  mlp_ratio: float = 2.0, dropout: float = 0.0,
                  shift_size: int = 0):
         super().__init__()
-        # P1 fix: replace `assert` with an explicit exception (see
+        # replace `assert` with an explicit exception (see
         # _LocalConvTransformerExpert for rationale).
         if dim % num_heads != 0:
             raise ValueError(f"_WindowTransformerExpert: dim ({dim}) must be divisible by num_heads ({num_heads})")
@@ -333,7 +333,7 @@ class _WindowTransformerExpert(nn.Module):
     @staticmethod
     def _window_reverse(windows: torch.Tensor, win: int, H: int, W: int) -> torch.Tensor:
         """[B*nH*nW, win*win, C] → [B, H, W, C]"""
-        # P1 fix: use integer floor-division for the window grid instead of
+        # use integer floor-division for the window grid instead of
         # float division + int() truncation. `H` and `W` here are always the
         # *padded* dims (divisible by `win`), so `//` is exact; the float
         # path could round down 1 short under floating-point error for large
@@ -409,7 +409,7 @@ class _DeformableTransformerExpert(nn.Module):
     """Deformable-attention Transformer expert.
 
     Each query predicts `n_points` sampling offsets and attention weights,
-    then aggregates sampled features.  This is a simplified single-scale
+    then aggregates sampled features. This is a simplified single-scale
     variant of MS-Deformable-DETR, adapted for CNN feature maps.
 
     Reference:
@@ -420,7 +420,7 @@ class _DeformableTransformerExpert(nn.Module):
                  mlp_ratio: float = 2.0, dropout: float = 0.0,
                  align_corners: bool = True):
         super().__init__()
-        # P1 fix: replace `assert` with an explicit exception (see
+        # replace `assert` with an explicit exception (see
         # _LocalConvTransformerExpert for rationale).
         if dim % num_heads != 0:
             raise ValueError(f"_DeformableTransformerExpert: dim ({dim}) must be divisible by num_heads ({num_heads})")
@@ -473,17 +473,17 @@ class _DeformableTransformerExpert(nn.Module):
         """Core deformable attention.
 
         Args:
-            q     : [B, N, C]    query tokens
-            value : [B, H*W, C]  value feature map (flattened)
-            H, W  : feature map spatial dims
+            q : [B, N, C] query tokens
+            value : [B, H*W, C] value feature map (flattened)
+            H, W : feature map spatial dims
 
         Returns:
-            out   : [B, N, C]
+            out : [B, N, C]
         """
         B, N, C = q.shape
         nh, np_, hd = self.num_heads, self.n_points, self.head_dim
         # Token→coordinate mapping below assumes N == H*W with no padding.
-        # P1 fix: this validates caller-supplied H/W against the actual
+        # this validates caller-supplied H/W against the actual
         # flattened token count, so it must survive `python -O`.
         if N != H * W:
             raise ValueError(f"deformable expert expects N==H*W, got N={N}, H*W={H * W}")
@@ -516,7 +516,7 @@ class _DeformableTransformerExpert(nn.Module):
         locs = sample_locs.permute(0, 2, 1, 3, 4).reshape(B * nh, N, np_, 2)
 
         # grid_sample expects [B, C, H_out, W_out] query grid
-        # Here H_out=N, W_out=np  → treat N*np as 2D grid
+        # Here H_out=N, W_out=np → treat N*np as 2D grid
         # Reshape locs → [B*nh, N, np, 2] already correct for grid_sample
         sampled = F.grid_sample(
             v_4d,                                              # [B*nh, hd, H, W]
@@ -583,7 +583,7 @@ class _MoTRouter(nn.Module):
         self.exploration_eps = exploration_eps
 
         hidden = max(dim // 8, num_experts * 4)
-        # P1 fix: drop `inplace=True` on the router's SiLU. In-place
+        # drop `inplace=True` on the router's SiLU. In-place
         # activation on a tensor that also feeds the residual/`aux_loss`
         # graph (or that autograd otherwise needs unmodified for the
         # backward of the preceding GroupNorm/Linear) can raise
@@ -624,8 +624,8 @@ class _MoTRouter(nn.Module):
     def forward(self, x: torch.Tensor, return_logits: bool = False) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Returns:
-            weights : [B, num_experts, H, W] or [B, num_experts, 1, 1]  (soft, sum-to-1)
-            indices : [B, top_k, H, W] or [B, top_k, 1, 1]  (top-k expert ids)
+            weights : [B, num_experts, H, W] or [B, num_experts, 1, 1] (soft, sum-to-1)
+            indices : [B, top_k, H, W] or [B, top_k, 1, 1] (top-k expert ids)
         """
         logits = self._compute_logits(x)      # [B, E, H, W] or [B, E, 1, 1] after GAP
 
@@ -681,9 +681,9 @@ def _mot_router_aux_loss(
 ) -> torch.Tensor:
     """GShard balance + router z-loss for MoT (matches MoE/MoLoRA formulation).
 
-    P1 fix: ``reduce_ddp`` defaults to True so that balance statistics are
+    ``reduce_ddp`` defaults to True so that balance statistics are
     averaged across DDP ranks, matching MoE's ``MoELoss`` and MoLoRA's
-    ``MoLoRALoss``.  On single-GPU/CPU the ``all_reduce_mean`` inside
+    ``MoLoRALoss``. On single-GPU/CPU the ``all_reduce_mean`` inside
     ``differentiable_balance_loss`` is a no-op.
     """
     if balance_coeff <= 0 and z_coeff <= 0:
@@ -717,8 +717,8 @@ class MoTBlock(nn.Module):
     experts, then softly combines their outputs via learned routing weights.
 
     Experts:
-      0: LocalConvTransformer  — Conv-biased attention + Gated FFN
-      1: WindowTransformer     — Swin-style shifted window attention + FFN
+      0: LocalConvTransformer — Conv-biased attention + Gated FFN
+      1: WindowTransformer — Swin-style shifted window attention + FFN
       2: DeformableTransformer — Deformable sparse sampling attention + FFN
 
     Args:
@@ -735,7 +735,7 @@ class MoTBlock(nn.Module):
         exploration_eps (float): Training-only dense routing floor that keeps all experts trainable.
 
     Shape:
-        Input:  [B, dim, H, W]
+        Input: [B, dim, H, W]
         Output: [B, dim, H, W]
     """
 
@@ -760,14 +760,14 @@ class MoTBlock(nn.Module):
         sparse_train: bool = False,
     ):
         super().__init__()
-        # P1 fix: replace `assert` with an explicit exception — this is a
+        # replace `assert` with an explicit exception — this is a
         # user-supplied config invariant, not an internal-only sanity check.
         if not (1 <= top_k <= self.NUM_EXPERTS):
             raise ValueError(f"top_k must be in [1, {self.NUM_EXPERTS}], got {top_k}")
         self.top_k = top_k
         self.balance_loss_coeff = balance_loss_coeff
         self.sparse_train = sparse_train
-        # P1 fix: `balance_loss_coeff` historically doubled as the z-loss
+        # `balance_loss_coeff` historically doubled as the z-loss
         # coefficient when `router_z_loss_coeff` was omitted (legacy
         # YAML/checkpoint compatibility). That implicit coupling is easy to
         # miss — a user who only sets `balance_loss_coeff` (expecting it to
@@ -836,7 +836,7 @@ class MoTBlock(nn.Module):
         Sparse dispatch keys off discrete Top-K ``indices`` so training-time
         ``exploration_eps`` blending does not force every expert to run.
 
-        P2: On CUDA with large spatial maps, the dense (training) path launches
+        On CUDA with large spatial maps, the dense (training) path launches
         each expert on a separate CUDA stream so their attention/FFN kernels
         overlap. Streams are only used when (a) we're on CUDA, (b) not tracing
         for ONNX/TorchScript, and (c) the spatial map is large enough that the
@@ -856,7 +856,7 @@ class MoTBlock(nn.Module):
                     continue
                 w = weights[batch_idx, e_idx:e_idx + 1]
                 expert_out = expert(x[batch_idx])
-                # P0 fix: each Transformer expert must be shape-preserving
+                # each Transformer expert must be shape-preserving
                 # ([B,C,H,W] -> [B,C,H,W]); a misconfigured expert (e.g. a
                 # window/deformable expert whose internal pad/crop drops a
                 # row when H or W isn't a multiple of its window size) would
@@ -870,7 +870,7 @@ class MoTBlock(nn.Module):
                     )
                 out[batch_idx] = out[batch_idx] + expert_out * w
         else:
-            # P2: Determine whether CUDA stream parallelization is worthwhile.
+            # Determine whether CUDA stream parallelization is worthwhile.
             # Only use streams on CUDA, not during export, and when the spatial
             # map is large enough (≥ _EXPERT_STREAM_MIN_ELEMENTS per sample).
             use_streams = (
@@ -913,8 +913,8 @@ class MoTBlock(nn.Module):
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Returns:
-            out           : [B, C, H, W]
-            aux_loss      : scalar (GShard balance + router z-loss, 0 if both coeffs==0)
+            out : [B, C, H, W]
+            aux_loss : scalar (GShard balance + router z-loss, 0 if both coeffs==0)
         """
         # ── Routing weights ──────────────────────────────────────────────
         weights, indices, router_logits = self.router(x, return_logits=True)   # [B, E, H, W]
@@ -970,7 +970,7 @@ class C2fMoT(nn.Module):
         e (float): Internal channel expansion ratio.
 
     Shape:
-        Input:  [B, c1, H, W]
+        Input: [B, c1, H, W]
         Output: [B, c2, H, W]
     """
 

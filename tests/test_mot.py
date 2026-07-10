@@ -22,11 +22,11 @@ def _has_grad(module):
 
 
 def test_mot_block_forward_backward_all_experts_trainable():
-    # P0-3 fix: this test exercises training-mode forward/backward (aux loss
+    # fix: this test exercises training-mode forward/backward (aux loss
     # requires_grad only when `.training` is True), so use `.train()` rather
     # than `.eval()` + `no_grad()` which structurally could never satisfy the
     # `aux.requires_grad` assertion below.
-    # P2 fix: increase exploration_eps so non-selected experts receive
+    # increase exploration_eps so non-selected experts receive
     # meaningful gradient signal (>0) during backward.
     torch.manual_seed(0)
     block = MoTBlock(32, num_heads=4, top_k=1, window_size=4, n_points=2,
@@ -38,7 +38,7 @@ def test_mot_block_forward_backward_all_experts_trainable():
     assert torch.isfinite(aux)
 
     (out.mean() + aux).backward()
-    # P0-3 fix: variable name was `module` (undefined) — should be `block`.
+    # fix: variable name was `module` (undefined) — should be `block`.
     assert _has_grad(block.router)
     for expert in block.experts:
         assert _has_grad(expert)

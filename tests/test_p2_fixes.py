@@ -1,4 +1,4 @@
-"""P2 fix verification tests — export safety, DDP mock, and quality regressions.
+"""verification tests — export safety, DDP mock, and quality regressions.
 
 Covers:
 - MoA / MoT ONNX export preserves all experts (no data-dependent skip).
@@ -315,7 +315,7 @@ def test_pruning_uses_logger_not_print():
     assert "from ultralytics.utils import LOGGER" in content, "pruning.py must import LOGGER"
 
 
-# ── MoT expert shape check (P0 regression) ────────────────────────────────
+# ── MoT expert shape check ────────────────────────────────
 
 def test_mot_blend_experts_shape_check_raises():
     """MoTBlock._blend_experts must raise RuntimeError on shape-mismatched expert."""

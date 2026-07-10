@@ -148,7 +148,7 @@ class MoLoRAModel(nn.Module):
     """Thin wrapper around a base model that adds MoLoRA bookkeeping.
 
     Not required for training; you can use `get_peft_molora_model` directly
-    and then call `mark_only_molora_as_trainable`.  This wrapper is useful
+    and then call `mark_only_molora_as_trainable`. This wrapper is useful
     when you want a single object that exposes:
       - compute_aux_loss()
       - merge() / unmerge()
@@ -168,7 +168,7 @@ class MoLoRAModel(nn.Module):
         """Collect MoLoRA aux losses from MOE_LOSS_REGISTRY.
 
         Call this after forward() in the training loop and add it to the
-        total loss.  The registry is automatically cleared by tasks.py
+        total loss. The registry is automatically cleared by tasks.py
         before each training forward.
         """
         aux_loss = torch.tensor(0.0)
@@ -179,7 +179,7 @@ class MoLoRAModel(nn.Module):
 
         device = next(self.model.parameters()).device
         aux_loss = aux_loss.to(device)
-        # P2 fix: the `seen` set was redundant — `model.modules()` yields each
+        # the `seen` set was redundant — `model.modules()` yields each
         # module exactly once, so MoLoRALayer instances cannot be double-counted.
         for m in self.model.modules():
             if isinstance(m, MoLoRALayer):

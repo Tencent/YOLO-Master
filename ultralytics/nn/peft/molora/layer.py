@@ -30,7 +30,7 @@ class MoLoRAExpert(nn.Module):
 
     For Conv2d:
       lora_A: 1x1 conv (C_in -> r)
-      lora_B: KxK conv (r -> C_out)  — same kernel size as base conv
+      lora_B: KxK conv (r -> C_out) — same kernel size as base conv
     For Linear:
       lora_A: Linear (in_features -> r)
       lora_B: Linear (r -> out_features)
@@ -172,7 +172,7 @@ class MoLoRALayer(nn.Module):
         self._domain_active_mask: Optional[torch.Tensor] = None
         # Expert frozen mask
         self._expert_frozen_mask: Optional[torch.Tensor] = None
-        # P1 fix (merge_weights weighting): EMA of per-expert routing usage,
+        # merge_weights weighting: EMA of per-expert routing usage,
         # updated every training forward. `merge_weights()` uses this instead
         # of a uniform 1/num_experts prior, so the merged single-path weight
         # better approximates the actual mixture the model was trained with —
@@ -222,7 +222,7 @@ class MoLoRALayer(nn.Module):
             balance_loss_coef=balance_loss_coef,
             z_loss_coef=z_loss_coef,
             diversity_loss_coef=diversity_loss_coef,
-            reduce_ddp=True,  # P1 fix: follow DDP (no-op on single GPU)
+            reduce_ddp=True,  # follow DDP (no-op on single GPU)
         )
 
         # Routing stats for diagnostics (not persistent)
@@ -281,7 +281,7 @@ class MoLoRALayer(nn.Module):
         When an expert is selected by more than ``capacity_factor * B * K / E`` slots
         in the batch, its Top-K weights are scaled down and renormalized.
 
-        P1 fix — ``capacity_factor`` semantics clarified: valid *limiting*
+        — ``capacity_factor`` semantics clarified: valid *limiting*
         range is the open interval ``0 < capacity_factor < 1``. Both
         boundary cases are treated as "no limit" but for different reasons,
         which was previously undocumented and easy to misread as a bug:
@@ -319,7 +319,7 @@ class MoLoRALayer(nn.Module):
             self._domain_active_mask = None
             return
         active = self.domain_experts[domain]
-        # P1 fix: validate expert indices before building the mask. An
+        # validate expert indices before building the mask. An
         # out-of-range index previously reached `mask[active] = True`
         # unguarded and raised an opaque `IndexError` deep inside routing;
         # an empty `active` list would silently produce an all-False mask
@@ -346,7 +346,7 @@ class MoLoRALayer(nn.Module):
 
     def freeze_experts(self, expert_indices: List[int]) -> None:
         """Freeze specific experts so their weights are not updated during training."""
-        # P1 fix: validate expert indices before use.
+        # validate expert indices before use.
         if not expert_indices:
             raise ValueError("[MoLoRA] freeze_experts: expert_indices is empty.")
         invalid = [i for i in expert_indices if not (0 <= i < self.num_experts)]
@@ -367,7 +367,7 @@ class MoLoRALayer(nn.Module):
         """Unfreeze specific or all experts."""
         if expert_indices is None:
             expert_indices = list(range(self.num_experts))
-        # P1 fix: validate indices for the same reasons as freeze_experts.
+        # validate indices for the same reasons as freeze_experts.
         invalid = [i for i in expert_indices if not (0 <= i < self.num_experts)]
         if invalid:
             raise IndexError(
@@ -457,7 +457,7 @@ class MoLoRALayer(nn.Module):
             "domain_mask": self._domain_active_mask,
         }
 
-        # P1 fix (merge_weights weighting): track an EMA of expert usage
+        # merge_weights weighting: track an EMA of expert usage
         # during training so `merge_weights()` can weight by actual routing
         # frequency instead of a uniform 1/E prior.
         if self.training:
@@ -517,10 +517,10 @@ class MoLoRALayer(nn.Module):
     def merge_weights(self) -> None:
         """Merge all expert deltas into the base layer weight.
 
-        After merge, forward skips the LoRA path.  This is useful for
+        After merge, forward skips the LoRA path. This is useful for
         ONNX export / inference where you want zero adapter overhead.
 
-        P1 fix: previously merged with a uniform ``1/num_experts`` prior
+        previously merged with a uniform ``1/num_experts`` prior
         regardless of how the router actually routed traffic during
         training. That silently misrepresents the trained mixture once the
         router specializes (the common case) — e.g. an expert used 80% of
@@ -559,7 +559,7 @@ class MoLoRALayer(nn.Module):
         """Restore the original base layer weight."""
         if not self.merged:
             return
-        # P1 fix: reverse with the *same* per-expert weights used at merge
+        # reverse with the *same* per-expert weights used at merge
         # time (not a fresh/uniform recompute), so unmerge is an exact
         # inverse regardless of what happened to `_usage_ema` since.
         usage = getattr(self, "_merged_expert_weights", None)
