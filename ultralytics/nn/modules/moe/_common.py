@@ -13,7 +13,13 @@ import torch.nn.functional as F
 import copy
 import weakref
 from typing import Tuple, Dict, Optional, Union
-from .utils import FlopsUtils, get_safe_groups, BatchedExpertComputation
+from .utils import (
+    BatchedExpertComputation,
+    FlopsUtils,
+    accumulate_moe_usage,
+    get_safe_groups,
+    moe_usage_accumulator_enabled,
+)
 from .experts import (
     OptimizedSimpleExpert, FusedGhostExpert, SimpleExpert, GhostExpert,
     InvertedResidualExpert, EfficientExpertGroup, SpatialExpert, SharedInvertedExpertGroup
@@ -68,6 +74,9 @@ MOE_SNAPSHOT_INTERVAL = max(int(os.environ.get("MOE_SNAPSHOT_INTERVAL", "10")), 
 
 def _should_record_snapshot(module: nn.Module) -> bool:
     """Per-module forward gate so snapshots are taken every Nth step only."""
+    if getattr(module, "_force_moe_snapshot", False):
+        module._force_moe_snapshot = False
+        return True
     if MOE_SNAPSHOT_INTERVAL <= 1:
         return True
     c = getattr(module, "_moe_snap_counter", 0) + 1
@@ -161,7 +170,9 @@ def _record_moe_snapshot(
     snapshot is kept between samples so consumers always see the most recent
     recorded value.
     """
-    if not _should_record_snapshot(module):
+    should_record = _should_record_snapshot(module)
+    accumulate_epoch = moe_usage_accumulator_enabled(module)
+    if not should_record and not accumulate_epoch:
         return
     # Prefer expert_usage when available; fallback to topk_indices-derived counts
     if isinstance(expert_usage, torch.Tensor):
@@ -172,6 +183,12 @@ def _record_moe_snapshot(
     else:
         usage_tensor = None
         counts_tensor = None
+
+    if accumulate_epoch and isinstance(usage_tensor, torch.Tensor):
+        accumulate_moe_usage(module, usage_tensor)
+
+    if not should_record:
+        return
 
     mean_probs = None
     if isinstance(router_probs, torch.Tensor):

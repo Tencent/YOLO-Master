@@ -1,22 +1,80 @@
 # 🐧Please note that this file has been modified by Tencent on 2026/01/18. All Tencent Modifications are Copyright (C) 2026 Tencent.
 """Utility functions for Mixture-of-Experts models"""
+import threading
+import weakref
+from typing import Iterator, List, Optional, Tuple, Union
+
 import torch
 import torch.nn as nn
-from typing import Iterator, Tuple, Union, List
 
 # Namespace for full MoE *block* classes (excludes routers/experts/loss helpers).
-_CORE_MOE_MODULE = "ultralytics.nn.modules.moe.modules"
+_CORE_MOE_MODULES = {
+    "ultralytics.nn.modules.moe.modules",
+    "ultralytics.nn.modules.moe.base",
+    "ultralytics.nn.modules.moe.advanced",
+    "ultralytics.nn.modules.moe.hybrid",
+    "ultralytics.nn.modules.moe.integration",
+}
+_CORE_MOE_MODULE_SUFFIXES = tuple(name[len("ultralytics") :] for name in _CORE_MOE_MODULES)
+_MOE_USAGE_ACCUMULATORS = weakref.WeakKeyDictionary()
+_MOE_USAGE_ACCUMULATORS_LOCK = threading.Lock()
+
+
+def reset_moe_usage_accumulator(module: nn.Module) -> None:
+    """Enable and reset process-local epoch usage accumulation for a module."""
+    with _MOE_USAGE_ACCUMULATORS_LOCK:
+        _MOE_USAGE_ACCUMULATORS[module] = {"sum": None, "observations": 0}
+
+
+def moe_usage_accumulator_enabled(module: nn.Module) -> bool:
+    """Return whether epoch usage accumulation is enabled for a module."""
+    with _MOE_USAGE_ACCUMULATORS_LOCK:
+        return module in _MOE_USAGE_ACCUMULATORS
+
+
+def accumulate_moe_usage(module: nn.Module, usage: torch.Tensor) -> None:
+    """Add one detached usage vector to a process-local epoch accumulator."""
+    value = usage.detach().float()
+    with _MOE_USAGE_ACCUMULATORS_LOCK:
+        state = _MOE_USAGE_ACCUMULATORS.get(module)
+        if state is None:
+            return
+        current = state["sum"]
+        if not isinstance(current, torch.Tensor) or current.shape != value.shape:
+            current = torch.zeros_like(value)
+        state["sum"] = current + value
+        state["observations"] += 1
+
+
+def get_moe_usage_accumulator(module: nn.Module) -> Tuple[Optional[torch.Tensor], int]:
+    """Return the current detached usage sum and observation count."""
+    with _MOE_USAGE_ACCUMULATORS_LOCK:
+        state = _MOE_USAGE_ACCUMULATORS.get(module)
+        if state is None:
+            return None, 0
+        return state["sum"], int(state["observations"])
 
 
 def is_core_moe_block(module: nn.Module) -> bool:
-    """Return True for top-level MoE blocks in ``moe.modules`` (not routers/sub-experts)."""
+    """Return True for MoE blocks from the facade or its split implementation modules."""
     mod = getattr(module.__class__, "__module__", "") or ""
-    return mod == _CORE_MOE_MODULE or mod.endswith(".moe.modules")
+    return mod in _CORE_MOE_MODULES or mod.endswith(_CORE_MOE_MODULE_SUFFIXES)
 
 
 def model_has_core_moe(model: nn.Module) -> bool:
     """Return True when the model contains at least one core MoE block."""
     return any(is_core_moe_block(m) for m in model.modules())
+
+
+def set_core_moe_balance_loss_coeff(module: nn.Module, coeff: float) -> bool:
+    """Set balance-loss state on a core MoE block, including legacy unpickled checkpoints."""
+    if not is_core_moe_block(module):
+        return False
+    module.balance_loss_coeff = float(coeff)
+    moe_loss_fn = getattr(module, "moe_loss_fn", None)
+    if moe_loss_fn is not None and hasattr(moe_loss_fn, "balance_loss_coeff"):
+        moe_loss_fn.balance_loss_coeff = float(coeff)
+    return True
 
 
 def iter_core_moe_expert_params(model: nn.Module) -> Iterator[torch.nn.Parameter]:

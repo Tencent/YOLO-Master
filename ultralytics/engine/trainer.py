@@ -9,6 +9,7 @@ Usage:
 from __future__ import annotations
 
 import gc
+import json
 import math
 import os
 import subprocess
@@ -27,6 +28,11 @@ from ultralytics import __version__
 from ultralytics.cfg import get_cfg, get_save_dir
 from ultralytics.data.utils import check_cls_dataset, check_det_dataset
 from ultralytics.nn.tasks import load_checkpoint
+from ultralytics.nn.modules.moe.schedule import (
+    GiniBalanceScheduler,
+    apply_balance_loss_coeff,
+    usage_ginis_with_observation_counts_from_model,
+)
 from ultralytics.utils import (
     DEFAULT_CFG,
     GIT,
@@ -240,6 +246,10 @@ class BaseTrainer:
             self.csv.unlink()
         self.plot_idx = [0, 1, 2]
         self.nan_recovery_attempts = 0
+        self.moe_dynamic_scheduler = None
+        self.moe_dynamic_metrics = {}
+        self.moe_dynamic_counts = {"opportunity_count": 0, "event_count": 0, "nontrivial_action_count": 0}
+        self.moe_dynamic_previous_coeff = None
 
         # Callbacks
         self.callbacks = _callbacks or callbacks.get_default_callbacks()
@@ -396,7 +406,12 @@ class BaseTrainer:
         self._detect_moa_mot_modules()
 
         # MoE Routing Collapse Detector (initialize if model has MoE layers)
-        from ultralytics.nn.modules.moe.utils import is_core_moe_block, model_has_core_moe, iter_core_moe_expert_params
+        from ultralytics.nn.modules.moe.utils import (
+            is_core_moe_block,
+            iter_core_moe_expert_params,
+            model_has_core_moe,
+            set_core_moe_balance_loss_coeff,
+        )
 
         has_moe = model_has_core_moe(self.model)
         # Persist the detection result so the train loop can gate MoE-only
@@ -441,8 +456,7 @@ class BaseTrainer:
             for m in self.model.modules():
                 if not is_core_moe_block(m):
                     continue
-                if hasattr(m, 'balance_loss_coeff'):
-                    m.balance_loss_coeff = balance_loss_coeff
+                if set_core_moe_balance_loss_coeff(m, balance_loss_coeff):
                     injected += 1
                 if hasattr(m, 'router_z_loss_coeff'):
                     m.router_z_loss_coeff = router_z_loss_coeff
@@ -454,7 +468,6 @@ class BaseTrainer:
                     m.weight_threshold = weight_threshold
                 # Propagate to internal MoELoss
                 if hasattr(m, 'moe_loss_fn'):
-                    m.moe_loss_fn.balance_loss_coeff = balance_loss_coeff
                     m.moe_loss_fn.z_loss_coeff = router_z_loss_coeff
                 # Propagate to MoLoRA layers
                 if hasattr(m, 'loss_fn') and hasattr(m.loss_fn, 'balance_loss_coef'):
@@ -468,6 +481,7 @@ class BaseTrainer:
                 f"balance_loss={balance_loss_coeff}, z_loss={router_z_loss_coeff}, "
                 f"noise_std={noise_std}, temperature={temperature}"
             )
+            self._setup_moe_dynamic_scheduler(balance_loss_coeff)
 
         # MoT router aux-loss coefficients (separate from core MoE injection)
         try:
@@ -1073,12 +1087,14 @@ class BaseTrainer:
                 self.metrics, self.fitness = self.validate()
 
             # NaN recovery
-            if self._handle_nan_recovery(epoch):
+            recovered = self._handle_nan_recovery(epoch)
+            self._finalize_moe_dynamic_epoch(epoch, recovered=recovered)
+            if recovered:
                 continue
 
             self.nan_recovery_attempts = 0
             if RANK in {-1, 0}:
-                self.save_metrics(metrics={**self.label_loss_items(self.tloss), **self.metrics, **self.lr})
+                self.save_metrics(metrics={**self.label_loss_items(self.tloss), **self.metrics, **self.lr, **self.moe_dynamic_metrics})
                 self.stop |= self.stopper(epoch + 1, self.fitness) or final_epoch
                 if self.args.time:
                     self.stop |= (time.time() - self.train_time_start) > (self.args.time * 3600)
@@ -1121,6 +1137,111 @@ class BaseTrainer:
         self._clear_memory()
         unset_deterministic()
         self.run_callbacks("teardown")
+
+    def _setup_moe_dynamic_scheduler(self, base_balance_loss: float) -> None:
+        """Initialize the opt-in Gini-driven balance-loss scheduler."""
+        schedule = str(getattr(self.args, "moe_dynamic_schedule", "none") or "none").lower()
+        if schedule in {"none", "false", "0", ""}:
+            self.moe_dynamic_scheduler = None
+            self.moe_dynamic_metrics = {}
+            return
+        if schedule != "gini_balance":
+            raise ValueError(f"Unsupported moe_dynamic_schedule={schedule!r}; expected 'none' or 'gini_balance'.")
+        if int(getattr(self, "world_size", 1)) > 1:
+            raise RuntimeError(
+                "moe_dynamic_schedule requires single-process training because epoch routing usage "
+                "is not aggregated across DDP ranks"
+            )
+
+        self.moe_dynamic_scheduler = GiniBalanceScheduler(
+            base=float(base_balance_loss),
+            target=float(getattr(self.args, "moe_dynamic_gini_target", 0.25)),
+            alpha=float(getattr(self.args, "moe_dynamic_gini_alpha", 1.0)),
+            beta=float(getattr(self.args, "moe_dynamic_gini_beta", 0.8)),
+            min_coeff=float(getattr(self.args, "moe_dynamic_balance_min", 0.5)),
+            max_coeff=float(getattr(self.args, "moe_dynamic_balance_max", 2.0)),
+        )
+        self.moe_dynamic_previous_coeff = float(base_balance_loss)
+        armed = self._arm_moe_dynamic_snapshots()
+        LOGGER.info(
+            "[MoE] Dynamic schedule enabled: gini_balance "
+            f"target={self.moe_dynamic_scheduler.target}, base={self.moe_dynamic_scheduler.base}, "
+            f"range=[{self.moe_dynamic_scheduler.min_coeff}, {self.moe_dynamic_scheduler.max_coeff}], "
+            f"armed_modules={armed}"
+        )
+
+    def _arm_moe_dynamic_snapshots(self) -> int:
+        """Reset epoch accumulators and request one visible snapshot from each core MoE block."""
+        from ultralytics.nn.modules.moe.utils import is_core_moe_block, reset_moe_usage_accumulator
+
+        armed = 0
+        for module in unwrap_model(self.model).modules():
+            if is_core_moe_block(module):
+                module._force_moe_snapshot = True
+                reset_moe_usage_accumulator(module)
+                armed += 1
+        return armed
+
+    def _update_moe_dynamic_scheduler(self, epoch: int) -> None:
+        """Update the scheduler and append an auditable per-epoch JSONL event."""
+        if self.moe_dynamic_scheduler is None:
+            self.moe_dynamic_metrics = {}
+            return
+
+        self.moe_dynamic_counts["opportunity_count"] += 1
+        model = unwrap_model(self.model)
+        layer_ginis_and_counts = usage_ginis_with_observation_counts_from_model(model)
+        layer_ginis = [gini for gini, _ in layer_ginis_and_counts]
+        observation_counts = [count for _, count in layer_ginis_and_counts]
+        previous_coeff = float(self.moe_dynamic_previous_coeff)
+        coeff = previous_coeff
+        updated = 0
+
+        if layer_ginis:
+            self.moe_dynamic_counts["event_count"] += 1
+            gini = float(sum(layer_ginis) / len(layer_ginis))
+            coeff = self.moe_dynamic_scheduler.update(gini)
+            updated = apply_balance_loss_coeff(model, coeff)
+            if updated > 0 and not math.isclose(coeff, previous_coeff, rel_tol=1e-9, abs_tol=1e-12):
+                self.moe_dynamic_counts["nontrivial_action_count"] += 1
+            self.moe_dynamic_previous_coeff = coeff
+        else:
+            gini = 0.0
+
+        record = {
+            "epoch": int(epoch + 1),
+            "schedule": "gini_balance",
+            "layer_event_count": len(layer_ginis),
+            "routing_observation_count": sum(observation_counts),
+            "min_layer_observation_count": min(observation_counts, default=0),
+            "max_layer_observation_count": max(observation_counts, default=0),
+            "gini": gini,
+            "ema_gini": float(self.moe_dynamic_scheduler.ema or 0.0),
+            "previous_balance_loss_coeff": previous_coeff,
+            "balance_loss_coeff": coeff,
+            "updated_modules": updated,
+            **self.moe_dynamic_counts,
+        }
+        record["armed_modules_next_epoch"] = self._arm_moe_dynamic_snapshots()
+        self.moe_dynamic_metrics = {f"moe/dynamic_{key}": value for key, value in record.items() if key != "schedule"}
+        if RANK in {-1, 0}:
+            trace_path = Path(self.save_dir) / "moe_dynamic_trace.jsonl"
+            with trace_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, sort_keys=True) + "\n")
+            LOGGER.info(
+                f"[MoE] Dynamic schedule epoch={epoch + 1}: events={len(layer_ginis)}, gini={gini:.4f}, "
+                f"balance_loss_coeff={coeff:.4f}, modules={updated}"
+            )
+
+    def _finalize_moe_dynamic_epoch(self, epoch: int, recovered: bool) -> bool:
+        """Update scheduling only for accepted epochs, resetting observations after recovery."""
+        if recovered:
+            self.moe_dynamic_metrics = {}
+            if self.moe_dynamic_scheduler is not None:
+                self._arm_moe_dynamic_snapshots()
+            return False
+        self._update_moe_dynamic_scheduler(epoch)
+        return True
 
     def auto_batch(self, max_num_obj=0):
         """Calculate optimal batch size based on model and device memory constraints."""

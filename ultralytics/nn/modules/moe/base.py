@@ -328,8 +328,17 @@ class AdaptiveCapacityMoE(UltraOptimizedMoE):
 class ES_MOE(nn.Module):
     """General MoE block with a routing network and multiple expert branches."""
 
-    def __init__(self, in_channels, out_channels=None, num_experts=3, reduction=8,
-                 top_k=None, use_sparse_inference=True, dynamic_threshold=0.4):
+    def __init__(
+        self,
+        in_channels,
+        out_channels=None,
+        num_experts=3,
+        reduction=8,
+        top_k=None,
+        use_sparse_inference=True,
+        dynamic_threshold=0.4,
+        balance_loss_coeff=1.0,
+    ):
         """
         Args:
             in_channels: Input channels
@@ -339,6 +348,7 @@ class ES_MOE(nn.Module):
             top_k: Number of active experts; None means use all experts
             use_sparse_inference: Enable sparse Top-K expert computation during inference
             dynamic_threshold: Threshold for pruning low-confidence experts during inference
+            balance_loss_coeff: Scale applied to the GShard load-balancing loss
         """
         super(ES_MOE, self).__init__()
 
@@ -352,6 +362,7 @@ class ES_MOE(nn.Module):
         self.use_top_k = (top_k is not None)
         self.use_sparse_inference = use_sparse_inference
         self.dynamic_threshold = dynamic_threshold
+        self.balance_loss_coeff = float(balance_loss_coeff)
 
         # Dynamic routing (Top-K supported)
         self.routing = DynamicRoutingLayer(in_channels, num_experts, reduction, top_k)
@@ -379,6 +390,8 @@ class ES_MOE(nn.Module):
 
     def _ensure_compat_attrs(self):
         """One-time legacy checkpoint attribute repair (not per-forward)."""
+        if not hasattr(self, "balance_loss_coeff"):
+            self.balance_loss_coeff = 1.0
         if not hasattr(self, "use_top_k"):
             self.use_top_k = False
         if not hasattr(self, "use_sparse_inference"):
@@ -494,7 +507,9 @@ class ES_MOE(nn.Module):
         expert_usage = routing_weights.mean(dim=(0, 2, 3))
         # reduce_ddp=True → usage averaged across ranks so all GPUs share one
         # global balance target (matches MoELoss; no-op on single GPU).
-        load_balance_loss = gshard_balance_loss(expert_usage, self.num_experts, reduce_ddp=True)
+        load_balance_loss = self.balance_loss_coeff * gshard_balance_loss(
+            expert_usage, self.num_experts, reduce_ddp=True
+        )
 
         # Guard against NaN loss (graph-safe: keep grad_fn instead of new leaf)
         if not torch.isfinite(load_balance_loss).all():
