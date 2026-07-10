@@ -1,6 +1,9 @@
 # YOLO-Master v0.8-MoA 🚀 AGPL-3.0 License
 # Backbone: LowRankHybridAdaptiveGateMoE (v0.7) + C2fMoA in neck
 # Variant: S号
+#
+# C2fMoA is a repeat_module: external repeat is depth-scaled to produce
+# the internal n (stacked MoABlocks).  Do NOT pass n inside args.
 
 nc: 80
 scales:
@@ -29,7 +32,7 @@ backbone:
 head:
   - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
   - [[-1, 8], 1, Concat, [1]]
-  - [-1, 2, C2fMoA, [512, 2, 6, 2.0, 1.0, True]]
+  - [-1, 4, C2fMoA, [512, 6, 2.0, 1.0, True]]
 
   - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
   - [[-1, 5], 1, Concat, [1]]
@@ -37,10 +40,10 @@ head:
 
   - [-1, 1, Conv, [256, 3, 2]]
   - [[-1, 14], 1, Concat, [1]]
-  - [-1, 2, C2fMoA, [512, 2, 6, 2.0, 0.8, True]]
+  - [-1, 4, C2fMoA, [512, 6, 2.0, 0.8, True]]
 
   - [-1, 1, Conv, [512, 3, 2]]
   - [[-1, 11], 1, Concat, [1]]
-  - [-1, 2, C2fMoA, [512, 2, 6, 2.0, 0.8, True]]
+  - [-1, 4, C2fMoA, [512, 6, 2.0, 0.8, True]]
 
   - [[17, 20, 23], 1, Detect, [nc]]

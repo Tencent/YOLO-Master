@@ -1,6 +1,9 @@
 # YOLO-Master v0.8-MoT 🚀 AGPL-3.0 License
 # Backbone: LowRankHybridAdaptiveGateMoE (v0.7) + C2fMoT in neck
 # C2fMoT 替换 Neck 高层 C3k2，引入三专家 Transformer 路由
+#
+# C2fMoT is a repeat_module: external repeat is depth-scaled to produce
+# the internal n (stacked MoTBlocks).  Do NOT pass n inside args.
 
 nc: 80
 scales:
@@ -24,8 +27,8 @@ head:
   # P5 → P4
   - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
   - [[-1, 8], 1, Concat, [1]]
-  # C2fMoT: [c2, n, num_heads, top_k, window_size, n_points, mlp_ratio, temp, balance_coeff, e]
-  - [-1, 2, C2fMoT, [512, 2, 8, 2, 7, 4, 2.0, 1.0, 0.01, 0.5]]
+  # C2fMoT: [c2, num_heads, top_k, window_size, n_points, mlp_ratio, temp, balance_coeff, e]
+  - [-1, 4, C2fMoT, [512, 8, 2, 7, 4, 2.0, 1.0, 0.01, 0.5]]
 
   # P4 → P3
   - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
@@ -35,11 +38,11 @@ head:
   # P3 → P4 bottom-up
   - [-1, 1, Conv, [256, 3, 2]]
   - [[-1, 14], 1, Concat, [1]]
-  - [-1, 2, C2fMoT, [512, 2, 8, 2, 7, 4, 2.0, 0.8, 0.01, 0.5]]
+  - [-1, 4, C2fMoT, [512, 8, 2, 7, 4, 2.0, 0.8, 0.01, 0.5]]
 
   # P4 → P5 bottom-up
   - [-1, 1, Conv, [512, 3, 2]]
   - [[-1, 11], 1, Concat, [1]]
-  - [-1, 2, C2fMoT, [512, 2, 8, 2, 7, 4, 2.0, 0.8, 0.01, 0.5]]
+  - [-1, 4, C2fMoT, [512, 8, 2, 7, 4, 2.0, 0.8, 0.01, 0.5]]
 
   - [[17, 20, 23], 1, Detect, [nc]]

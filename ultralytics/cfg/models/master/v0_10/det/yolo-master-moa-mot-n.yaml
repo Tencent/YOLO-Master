@@ -1,5 +1,8 @@
 # YOLO-Master v0.10-MoA+MoT AGPL-3.0 License - https://ultralytics.com/license
 # Cross mixture variant: VisualEnhancedAdaptiveGateMoE backbone + MoA/MoT neck.
+#
+# C2fMoA/C2fMoT are repeat_modules: external repeat is depth-scaled to
+# produce the internal n (stacked blocks).  Do NOT pass n inside args.
 
 nc: 80
 scales:
@@ -28,18 +31,18 @@ backbone:
 head:
   - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
   - [[-1, 8], 1, Concat, [1]]
-  - [-1, 2, C2fMoT, [512, 2, 8, 2, 7, 4, 2.0, 1.0, 0.01, 0.5]]
+  - [-1, 4, C2fMoT, [512, 8, 2, 7, 4, 2.0, 1.0, 0.01, 0.5]]
 
   - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
   - [[-1, 5], 1, Concat, [1]]
-  - [-1, 2, C2fMoA, [256, 1, 6, 2.0, 0.8, True]]
+  - [-1, 2, C2fMoA, [256, 6, 2.0, 0.8, True]]
 
   - [-1, 1, Conv, [256, 3, 2]]
   - [[-1, 14], 1, Concat, [1]]
-  - [-1, 2, C2fMoT, [512, 2, 8, 2, 7, 4, 2.0, 0.8, 0.01, 0.5]]
+  - [-1, 4, C2fMoT, [512, 8, 2, 7, 4, 2.0, 0.8, 0.01, 0.5]]
 
   - [-1, 1, Conv, [512, 3, 2]]
   - [[-1, 11], 1, Concat, [1]]
-  - [-1, 2, C2fMoT, [512, 2, 8, 1, 7, 4, 2.0, 0.8, 0.01, 0.5]]
+  - [-1, 4, C2fMoT, [512, 8, 1, 7, 4, 2.0, 0.8, 0.01, 0.5]]
 
   - [[17, 20, 23], 1, Detect, [nc]]

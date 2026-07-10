@@ -1,6 +1,10 @@
 # YOLO-Master v0.8-MoT+MoA 🚀 AGPL-3.0 License
 # 联合变体：Backbone MoA(C2fMoA) + Neck MoT(C2fMoT) + MoE(LowRank)
 # 适合高资源场景：全面覆盖局部/中程/全局/多架构多样性
+#
+# C2fMoA/C2fMoT are repeat_modules: external repeat is depth-scaled to
+# produce the internal n (stacked blocks).  n=1 → external=2, n=2 → external=4
+# at depth=0.50.  Do NOT pass n inside args — the framework inserts it.
 
 nc: 80
 scales:
@@ -11,7 +15,7 @@ backbone:
   - [-1, 1, Conv, [128, 3, 2]]
   - [-1, 2, C3k2, [256, False, 0.25]]
   - [-1, 1, Conv, [256, 3, 2]]
-  - [-1, 2, C2fMoA, [512, 1, 6, 2.0, 1.0, True]]  # MoA in backbone P3
+  - [-1, 2, C2fMoA, [512, 6, 2.0, 1.0, True]]  # MoA in backbone P3
   - [-1, 1, LowRankHybridAdaptiveGateMoE, [512, 4, 2, 0.5]]
   - [-1, 1, Conv, [512, 3, 2]]
   - [-1, 4, A2C2f, [512, True, 4]]
@@ -23,18 +27,18 @@ backbone:
 head:
   - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
   - [[-1, 8], 1, Concat, [1]]
-  - [-1, 2, C2fMoT, [512, 2, 8, 2, 7, 4, 2.0, 1.0, 0.01, 0.5]]
+  - [-1, 4, C2fMoT, [512, 8, 2, 7, 4, 2.0, 1.0, 0.01, 0.5]]
 
   - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
   - [[-1, 5], 1, Concat, [1]]
-  - [-1, 2, C2fMoA, [256, 1, 6, 2.0, 0.8, True]]  # MoA in neck P3
+  - [-1, 2, C2fMoA, [256, 6, 2.0, 0.8, True]]  # MoA in neck P3
 
   - [-1, 1, Conv, [256, 3, 2]]
   - [[-1, 14], 1, Concat, [1]]
-  - [-1, 2, C2fMoT, [512, 2, 8, 2, 7, 4, 2.0, 0.8, 0.01, 0.5]]
+  - [-1, 4, C2fMoT, [512, 8, 2, 7, 4, 2.0, 0.8, 0.01, 0.5]]
 
   - [-1, 1, Conv, [512, 3, 2]]
   - [[-1, 11], 1, Concat, [1]]
-  - [-1, 2, C2fMoT, [512, 2, 8, 1, 7, 4, 2.0, 0.8, 0.01, 0.5]]
+  - [-1, 4, C2fMoT, [512, 8, 1, 7, 4, 2.0, 0.8, 0.01, 0.5]]
 
   - [[17, 20, 23], 1, Detect, [nc]]

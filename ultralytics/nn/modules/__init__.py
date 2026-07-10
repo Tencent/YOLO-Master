@@ -109,7 +109,7 @@ from .transformer import (
     TransformerEncoderLayer,
     TransformerLayer,
 )
-from .moa import MoABlock, C2fMoA, NeckMoAFusion, anneal_moa_temperature
+from .moa import MoABlock, C2fMoA, NeckMoAFusion, anneal_moa_temperature, collect_moa_aux_loss
 from .mot import MoTBlock, C2fMoT, collect_mot_aux_loss, anneal_mot_temperature
 from .moe import (
     OptimizedMOE,
@@ -265,6 +265,7 @@ __all__ = (
     "C2fMoA",
     "NeckMoAFusion",
     "anneal_moa_temperature",
+    "collect_moa_aux_loss",
     "MoTBlock",
     "C2fMoT",
     "collect_mot_aux_loss",
