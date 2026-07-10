@@ -478,6 +478,7 @@ class BaseTrainer:
             mot_z = getattr(self.args, "mot_router_z_loss", 0.01)
             mot_sparse = bool(getattr(self.args, "mot_sparse_train", False))
             moa_win = int(getattr(self.args, "moa_local_window_size", 7))
+            moa_aux = float(getattr(self.args, "moa_aux_loss_coeff", 0.01))
             mot_injected = 0
             moa_injected = 0
             for m in self.model.modules():
@@ -488,6 +489,7 @@ class BaseTrainer:
                     mot_injected += 1
                 elif isinstance(m, MoABlock):
                     m.local_head.window_size = max(1, moa_win)
+                    m.aux_loss_coeff = moa_aux
                     moa_injected += 1
             if mot_injected and RANK in {-1, 0}:
                 LOGGER.info(
@@ -497,7 +499,7 @@ class BaseTrainer:
             if moa_injected and RANK in {-1, 0}:
                 LOGGER.info(
                     f"[MoA] Config injected into {moa_injected} MoABlock layers: "
-                    f"local_window_size={moa_win}"
+                    f"local_window_size={moa_win}, aux_loss_coeff={moa_aux}"
                 )
         except Exception:
             pass

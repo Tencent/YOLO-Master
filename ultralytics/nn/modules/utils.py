@@ -9,7 +9,24 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.init import uniform_
 
-__all__ = "inverse_sigmoid", "multi_scale_deformable_attn_pytorch"
+__all__ = "inverse_sigmoid", "multi_scale_deformable_attn_pytorch", "get_safe_groups"
+
+
+def get_safe_groups(channels: int, desired_groups: int = 8) -> int:
+    """Return the largest ``num_groups`` <= ``desired_groups`` that evenly divides ``channels``.
+
+    Shared by MoA/MoE/MoT so ``nn.GroupNorm`` never receives an invalid
+    ``num_groups`` (e.g. a channel count that is prime or smaller than
+    ``desired_groups``). Kept in this dependency-free module so MoA/MoT do not
+    need to import from the MoE package just for this helper (avoids a
+    cross-mixture compile-time dependency).
+    """
+    if channels <= 0:
+        return 1
+    groups = min(desired_groups, channels)
+    while channels % groups != 0:
+        groups -= 1
+    return max(1, groups)
 
 
 def _get_clones(module, n):

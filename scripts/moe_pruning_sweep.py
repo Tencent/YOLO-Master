@@ -86,6 +86,26 @@ def shell_join(command: list[str]) -> str:
     return " ".join(f'"{part}"' if " " in part else part for part in command)
 
 
+def compare_expert_signatures(
+    reference: list[tuple[str, int, int]],
+    candidate: list[tuple[str, int, int]],
+) -> tuple[str, str]:
+    """Compare MoE expert signatures between a pruned model and a candidate.
+
+    Each entry is ``(layer_name, num_experts, top_k)``.
+    Returns ``("preserved", "")`` when structures match, otherwise
+    ``("structure_mismatch", note)`` with a human-readable note.
+    """
+    ref_str = "/".join(f"{e}:{k}" for _, e, k in reference)
+    cand_str = "/".join(f"{e}:{k}" for _, e, k in candidate)
+    ref_counts = [(e, k) for _, e, k in reference]
+    cand_counts = [(e, k) for _, e, k in candidate]
+    if ref_counts == cand_counts:
+        return "preserved", ""
+    note = f"reference={ref_str} candidate={cand_str}"
+    return "structure_mismatch", note
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", type=Path, required=True, help="Trained YOLO-Master-EsMoE-N checkpoint.")

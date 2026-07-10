@@ -1764,6 +1764,8 @@ def parse_model(d, ch, verbose=True):
             C2PSA,
             A2C2f,
             A2C2fMoE,
+            C2fMoA,
+            C2fMoT,
             WaveC2f,
             DyC2f,
             A3C2f,
@@ -1806,6 +1808,8 @@ def parse_model(d, ch, verbose=True):
                 if scale in "lx":  # for L/X sizes
                     args.extend((True, 1.2))
             if m is A2C2fMoE:
+                legacy = False
+            if m is C2fMoA or m is C2fMoT:
                 legacy = False
             if m is C2fCIB:
                 legacy = False
