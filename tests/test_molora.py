@@ -603,14 +603,31 @@ class TestDynamicRouting:
             conv, r=4, alpha=8, num_experts=4, top_k=2,
             top_k_warmup=10, warmup_steps=10
         )
+        x = torch.randn(1, 16, 4, 4)
         # Step 0: should return 1
         assert layer._current_top_k() == 1
         # After 5 steps: should return 1 + (2-1)*5/10 = 1
-        layer._step_count.fill_(5)
+        for _ in range(5):
+            layer(x)
         assert layer._current_top_k() == 1
         # After 10 steps: should return 2
-        layer._step_count.fill_(10)
+        for _ in range(5):
+            layer(x)
         assert layer._current_top_k() == 2
+
+    def test_top_k_warmup_checkpoint_restore(self):
+        kwargs = dict(r=4, alpha=8, num_experts=4, top_k=2, top_k_warmup=10, warmup_steps=10)
+        layer = MoLoRALayer(nn.Conv2d(16, 32, 3, padding=1), **kwargs)
+        x = torch.randn(1, 16, 4, 4)
+        for _ in range(10):
+            layer(x)
+
+        restored = MoLoRALayer(nn.Conv2d(16, 32, 3, padding=1), **kwargs)
+        restored.load_state_dict(layer.state_dict())
+
+        assert restored._step_count.item() == 10
+        assert restored._step_count_cpu == 10
+        assert restored._current_top_k() == 2
 
     def test_expert_dropout(self):
         conv = nn.Conv2d(16, 32, 3, padding=1)

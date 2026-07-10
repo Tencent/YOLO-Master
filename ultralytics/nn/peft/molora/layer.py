@@ -168,6 +168,7 @@ class MoLoRALayer(nn.Module):
         self.register_buffer("_step_count", torch.tensor(0, dtype=torch.long), persistent=True)
         # CPU-side step counter to avoid GPU sync (.item()) on every forward
         self._step_count_cpu: int = 0
+        self.register_load_state_dict_post_hook(self._restore_step_count_cpu)
         # Active mask for domain pre-allocation
         self._domain_active_mask: Optional[torch.Tensor] = None
         # Expert frozen mask
@@ -217,6 +218,10 @@ class MoLoRALayer(nn.Module):
 
         # Routing stats for diagnostics (not persistent)
         self._last_routing_stats: Optional[Dict[str, Any]] = None
+
+    def _restore_step_count_cpu(self, module: nn.Module, incompatible_keys: Any) -> None:
+        """Synchronize the non-persistent CPU mirror after checkpoint loading."""
+        self._step_count_cpu = int(self._step_count.detach().cpu().item())
 
     # ------------------------------------------------------------------
     # Dynamic top-k
