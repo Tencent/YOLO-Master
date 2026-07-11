@@ -12,10 +12,11 @@ class MoEPruner:
     """Pruner for Mixture-of-Experts models based on usage statistics"""
     
     def __init__(self, model_path: str, threshold: float = 0.15, dataset: str = 'coco8.yaml',
-                 device: Optional[str] = None):
+                 device: Optional[str] = None, importance_mode: str = "usage",
+                 keep_top_m: Optional[int] = None):
         """
         Initialize MoE pruner
-        
+
         Args:
             model_path: Path to the model file
             threshold: Minimum usage percentage to keep an expert (0.0-1.0)
@@ -23,14 +24,42 @@ class MoEPruner:
             device: Device for validation. ``None`` (default) auto-detects CUDA,
                 falling back to CPU — previously hard-coded to 'cpu', which was
                 needlessly slow on GPU boxes.
+            importance_mode: Scoring mode for expert importance — ``"usage"``
+                (default, pure hit-rate) or ``"usage_weight"`` (hit-rate ×
+                mean routing weight, which distinguishes equally-selected
+                experts by how strongly the router favours them).
+            keep_top_m: If set, always keep the top-M highest-scoring experts
+                regardless of threshold.
         """
         self.model_path = model_path
         self.threshold = threshold
         self.dataset = dataset
         self.device = device if device is not None else self._auto_device()
+        self.importance_mode = importance_mode
+        self.keep_top_m = keep_top_m
         self.model = None
         self.usage_stats: Dict[str, Dict[int, Any]] = {}
         self.pruning_plan: Dict[str, List[int]] = {}
+
+    def _expert_score(self, stats: Any, total_hits: float) -> float:
+        """Score a single expert for pruning decisions.
+
+        Args:
+            stats: Object with ``hits`` and optionally ``avg_weight`` attributes.
+            total_hits: Sum of hits across all experts in the same layer.
+
+        Returns:
+            Importance score in ``[0, 1]``.  ``"usage"`` mode returns the raw
+            hit-rate; ``"usage_weight"`` mode returns hit-rate × mean weight.
+        """
+        hits = float(getattr(stats, "hits", 0.0))
+        if total_hits <= 0:
+            return 0.0
+        base = hits / total_hits
+        if self.importance_mode == "usage_weight":
+            avg_weight = float(getattr(stats, "avg_weight", 0.0))
+            return base * avg_weight
+        return base
 
     @staticmethod
     def _auto_device() -> str:

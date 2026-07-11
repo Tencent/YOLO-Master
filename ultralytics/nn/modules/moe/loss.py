@@ -305,6 +305,13 @@ class MoELoss(nn.Module):
         if self.dynamic_scheduler is not None:
             schedule_state = self.dynamic_scheduler.step(usage, bl_coeff)
             bl_coeff = schedule_state.balance_loss_coeff
+
+        # Apply MapSaturationScheduler (mAP-driven annealing) on top of dynamic scheduler
+        map_sat_state = None
+        if getattr(self, 'map_saturation_scheduler', None) is not None:
+            map_sat_state = self.map_saturation_scheduler.last_state
+            bl_coeff = self.map_saturation_scheduler.apply(bl_coeff)
+
         # Warn once if the floor silently overrode a deliberately-small user
         # coefficient, so an intended near-zero weight isn't masked unnoticed.
         if floor > 0 and not getattr(self, "_coeff_floor_warned", False):
@@ -346,6 +353,7 @@ class MoELoss(nn.Module):
                 "diversity_loss": diversity_loss.detach() if self.diversity_loss_coeff > 0 else 0.0,
                 "variance_loss": variance_loss.detach() if self.variance_loss_coeff > 0 else 0.0,
                 "dynamic_schedule": schedule_state.to_dict() if schedule_state is not None else None,
+                "map_saturation_schedule": map_sat_state.to_dict() if map_sat_state is not None else None,
             }
             
         return total_loss
