@@ -16,12 +16,21 @@ distinct inductive bias for a specific aspect of visual feature processing:
   Expert 2 — DeformableTransformer  (sparse deformable sampling, best for irregular/occluded objects)
 
 A content-aware router (lightweight 1×1 MLP) assigns each spatial token a
-*sparse Top-K weight* over these experts. The routing is **soft Top-K**:
-all experts are computed every forward and blended by their (Top-K-masked,
-renormalised) weights, so non-selected experts contribute 0 to the blend
-while the graph stays static and ONNX/TorchScript trace-stable. This is a
-deliberate trade-off — true sparse dispatch would save little here because
-the three experts have distinct, individually-cheap compute graphs.
+*Top-K weight* over these experts. The routing is **soft Top-K gated dense
+ensemble**: all experts are computed during training (blended by their
+Top-K-masked, renormalised weights) so the computation graph stays static
+and ONNX/TorchScript trace-stable.  At inference (eval mode), sparse dispatch
+*skips* experts that no token in the batch selected, providing sample-level
+compute savings — but within a single batch each expert is still likely
+activated by at least one token, so end-to-end speedup is modest.  This is a
+deliberate trade-off: true sparse dispatch (gathering/generating variable
+inputs) would break the static graph; the three experts have distinct,
+individually-cheap compute graphs so dense evaluation overhead is acceptable.
+
+.. note::
+    For meaningful conditional-computation savings, consider image-level or
+    region-level routing (``use_spatial_router=False``) so the router assigns
+    one expert set per image rather than per token.
 
 Key properties
 ──────────────
@@ -530,8 +539,11 @@ class _MoTRouter(nn.Module):
         """
         logits = self._compute_logits(x)      # [B, E, H, W] or [B, E, 1, 1] after GAP
 
-        # Use training temperature during train; fixed 1.0 at eval for stable routing.
-        temp = self.temperature if self.training else 1.0
+        # Use the (possibly annealed) temperature in both train and eval so
+        # that routing entropy stays consistent across modes.  Previously eval
+        # hardcoded temp=1.0, which could shift router distributions and
+        # expert combinations after annealing.
+        temp = self.temperature
 
         # Soft weights (always computed for gradient flow)
         weights = F.softmax(logits / temp, dim=1)   # [B, E, H, W]
@@ -699,6 +711,20 @@ class MoTBlock(nn.Module):
 
         self._init_weights()
         self.last_aux_loss: torch.Tensor | None = None
+        self.last_routing_snapshot: dict = {}
+
+    # ── RoutedModule protocol ───────────────────────────────────────────
+    @property
+    def num_experts(self) -> int:
+        """Number of Transformer expert branches."""
+        return self.NUM_EXPERTS
+
+    # top_k is already stored as self.top_k (instance attribute).
+
+    @property
+    def aux_loss(self) -> torch.Tensor:
+        """Router auxiliary loss (GShard balance + z-loss). Zero outside training."""
+        return self.last_aux_loss if self.last_aux_loss is not None else torch.zeros(())
 
     def _init_weights(self):
         nn.init.trunc_normal_(self.out_proj.weight, std=0.02)
@@ -709,12 +735,23 @@ class MoTBlock(nn.Module):
         weights: torch.Tensor,
         indices: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        """Blend expert outputs; sparse when eval or ``sparse_train`` (not during ONNX export).
+        """Blend expert outputs; sparse when eval or ``sparse_train``.
 
         Sparse dispatch keys off discrete Top-K ``indices`` so training-time
         ``exploration_eps`` blending does not force every expert to run.
+
+        .. warning::
+            The sparse path uses ``torch.nonzero`` which produces **data-dependent
+            control flow**.  This is safe for eager inference and ``torch.compile``
+            (which handles dynamic shapes), but **not** for ONNX/TorchScript
+            ``trace`` — tracing will unroll only the batch seen at trace time.
+            ``torch.onnx.is_in_onnx_export()`` is checked to fall back to dense
+            blending during export.  For TorchScript, use ``torch.jit.script``
+            (not ``trace``) or set ``sparse_train=False`` and eval before export.
         """
         out = x.new_zeros(x.shape)
+        # During ONNX export always use dense blending (data-dependent control
+        # flow from nonzero/any is not trace-stable).
         use_sparse = (not self.training or self.sparse_train) and not torch.onnx.is_in_onnx_export()
         B = x.shape[0]
         if use_sparse:
@@ -764,6 +801,18 @@ class MoTBlock(nn.Module):
             aux = x.new_zeros(())
 
         self.last_aux_loss = aux
+
+        # ── Routing snapshot (detached diagnostics) ──────────────────────
+        with torch.no_grad():
+            mean_w = weights.detach().float().mean(dim=(0, 2, 3))  # [E]
+            self.last_routing_snapshot = {
+                "num_experts": self.NUM_EXPERTS,
+                "top_k": self.top_k,
+                "expert_usage": mean_w,
+                "mean_router_probs": mean_w,
+                "aux_loss": float(aux.detach()),
+            }
+
         return out, aux
 
 
@@ -853,6 +902,7 @@ class C2fMoT(nn.Module):
         # device-agnostic scalar so a pre-forward read never injects a stale,
         # wrong-device tensor; requires_grad=False ⇒ filtered by the collector.
         self.last_aux_loss: torch.Tensor = torch.zeros((), requires_grad=False)
+        self.last_routing_snapshot: dict = {}
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         y = list(self.cv1(x).chunk(2, dim=1))
@@ -862,7 +912,38 @@ class C2fMoT(nn.Module):
             y.append(out)
             aux_total = aux_total + aux
         self.last_aux_loss = aux_total
+
+        # ── Routing snapshot (aggregated from child MoTBlocks) ──────────
+        with torch.no_grad():
+            child_snaps = [getattr(m, "last_routing_snapshot", {}) for m in self.m]
+            if child_snaps:
+                usages = [s["expert_usage"] for s in child_snaps if "expert_usage" in s]
+                mean_usage = sum(usages) / len(usages) if usages else x.new_zeros(3)
+                self.last_routing_snapshot = {
+                    "num_experts": MoTBlock.NUM_EXPERTS,
+                    "top_k": self.m[0].top_k if self.m else 0,
+                    "expert_usage": mean_usage,
+                    "mean_router_probs": mean_usage,
+                    "aux_loss": float(aux_total.detach()),
+                }
+            else:
+                self.last_routing_snapshot = {}
+
         return self.cv2(torch.cat(y, dim=1))
+
+    # ── RoutedModule protocol ───────────────────────────────────────────
+    @property
+    def num_experts(self) -> int:
+        return MoTBlock.NUM_EXPERTS
+
+    @property
+    def top_k(self) -> int:
+        """Active experts per forward (from first child MoTBlock)."""
+        return self.m[0].top_k if self.m else 0
+
+    @property
+    def aux_loss(self) -> torch.Tensor:
+        return self.last_aux_loss
 
 
 # ---------------------------------------------------------------------------

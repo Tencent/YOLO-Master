@@ -199,6 +199,40 @@ class MoLoRALayer(nn.Module):
 
         # Routing stats for diagnostics (not persistent)
         self._last_routing_stats: Optional[Dict[str, Any]] = None
+        self.last_routing_snapshot: dict = {}
+
+    # ── RoutedModule protocol ───────────────────────────────────────────
+
+    @property
+    def aux_loss(self) -> torch.Tensor:
+        """Auxiliary loss from the most recent forward pass.
+
+        Reads from ``MOE_LOSS_REGISTRY`` when ``share_moe_registry`` is True,
+        otherwise returns the internally stored ``_last_aux_loss``.
+        """
+        if self.share_moe_registry:
+            from ultralytics.nn.modules.moe.modules import MOE_LOSS_REGISTRY
+            val = MOE_LOSS_REGISTRY.get(self)
+            if val is not None:
+                return val
+        return getattr(self, "_last_aux_loss", torch.zeros(()))
+
+    # ------------------------------------------------------------------
+    # Property proxy to base layer (needed for ultralytics fuse/AutoBackend)
+    # ------------------------------------------------------------------
+
+    def __getattr__(self, name: str) -> Any:
+        """Proxy geometric attributes to base_layer (Conv2d/Linear)."""
+        proxy_names = (
+            "out_channels", "in_channels", "kernel_size",
+            "stride", "padding", "dilation", "groups", "bias",
+            "out_features", "in_features",
+        )
+        if name in proxy_names:
+            base_layer = self._modules.get("base_layer")
+            if base_layer is not None and hasattr(base_layer, name):
+                return getattr(base_layer, name)
+        return super().__getattr__(name)
 
     # ------------------------------------------------------------------
     # Dynamic top-k
@@ -385,6 +419,17 @@ class MoLoRALayer(nn.Module):
             "effective_k": effective_k,
             "domain_mask": self._domain_active_mask,
         }
+
+        # ── RoutedModule protocol: routing snapshot ────────────────────
+        with torch.no_grad():
+            self.last_routing_snapshot = {
+                "num_experts": self.num_experts,
+                "top_k": effective_k,
+                "expert_usage": self._last_routing_stats["expert_usage"].float(),
+                "mean_router_probs": router_probs.detach().float().mean(dim=0),
+                "aux_loss": float(aux_loss.detach()),
+            }
+        self._last_aux_loss = aux_loss
 
         return base_out + adapted
 

@@ -180,13 +180,20 @@ class _RegionalAttnHead(nn.Module):
         nh, hd = self.num_heads, self.head_dim
         inner = nh * hd
 
-        q = self.q_proj(x).flatten(2).view(B, nh, hd, H * W).transpose(2, 3)
-
-        kv = self.kv_pool(x)                                 # [B, 2*inner, H', W']
+        # Safety: AvgPool2d(pool_stride, pool_stride) on H<2 or W<2 collapses
+        # the spatial dim to 1×0 or 0×N, producing empty tensors downstream.
+        # Fall back to a 1×1 KV (identity pooling) when the feature map is too
+        # small for stride-2 downsampling.
+        if min(H, W) < self.pool_stride:
+            kv = self.kv_pool[1](x)                     # use conv only, skip pool
+        else:
+            kv = self.kv_pool(x)                        # [B, 2*inner, H', W']
         H2, W2 = kv.shape[2], kv.shape[3]
         k, v = kv.split(inner, dim=1)
         k = k.flatten(2).view(B, nh, hd, H2 * W2).transpose(2, 3)
         v = v.flatten(2).view(B, nh, hd, H2 * W2).transpose(2, 3)
+
+        q = self.q_proj(x).flatten(2).view(B, nh, hd, H * W).transpose(2, 3)
 
         out = _flash_attn(q, k, v, self.scale)               # [B, nh, N, hd]
         out = out.transpose(2, 3).reshape(B, inner, H, W)
@@ -200,8 +207,17 @@ class _GlobalAttnHead(nn.Module):
     (O(N²)) with an O(N) approximation via random Fourier features.
     Suitable for large spatial maps (e.g., P3 at stride 8).
 
-    Falls back to standard attention when N is small (N ≤ 256).
+    Falls back to standard attention when N is small (N ≤ 512).  The
+    threshold was raised from 256 to 512 to eliminate the discontinuity at
+    N=256/257 where the two attention modes produce visibly different outputs.
+    A linear-blend transition window [512−64, 512] smoothly interpolates
+    between exact and linear-attention so there is no abrupt mode switch.
     """
+
+    # Token count above which linear-attention approximation is used.
+    _LINEAR_ATTN_THRESHOLD: int = 512
+    # Width of the smooth transition window (avoids hard mode switch).
+    _BLEND_WINDOW: int = 64
 
     def __init__(self, dim: int, num_heads: int, head_dim: Optional[int] = None,
                  nb_features: int = 64, rf_seed: int = 0x5F3759DF):
@@ -284,8 +300,14 @@ class _GlobalAttnHead(nn.Module):
 
         q, k, v = to_heads(q), to_heads(k), to_heads(v)
 
-        if N <= 256:
+        if N <= self._LINEAR_ATTN_THRESHOLD:
             out = _flash_attn(q, k, v, self.scale)
+            # Smooth blend in the transition window to avoid discontinuity.
+            blend_start = self._LINEAR_ATTN_THRESHOLD - self._BLEND_WINDOW
+            if N > blend_start:
+                alpha = (N - blend_start) / self._BLEND_WINDOW
+                linear_out = self._linear_attn(q, k, v)
+                out = (1 - alpha) * out + alpha * linear_out
         else:
             out = self._linear_attn(q, k, v)
 
@@ -320,7 +342,11 @@ class _MoARouter(nn.Module):
         nn.init.zeros_(self.router[-1].bias)
 
     def forward(self, x: torch.Tensor, return_logits: bool = False) -> torch.Tensor:
-        temp = self.temperature if self.training else 1.0
+        # Use the (possibly annealed) temperature in both train and eval so
+        # that routing entropy stays consistent across modes.  Previously eval
+        # hardcoded temp=1.0, which could shift router distributions after
+        # annealing and destabilise MoA (no Top-K stable set).
+        temp = self.temperature
         logits = self.router(x) / temp           # [B, M, H, W]
         probs = F.softmax(logits, dim=1)
         if return_logits:
@@ -362,9 +388,10 @@ class MoABlock(nn.Module):
         num_heads (int): Total attention heads, split equally over groups.
         mlp_ratio (float): FFN expansion ratio.
         temperature (float): Router softmax temperature. Starts at 1.0 and
-            can be annealed toward min_temp (default 0.3) via
-            ``anneal_moa_temperature`` — note this must be called from the
-            training loop; it is not hooked automatically.
+            is automatically annealed each epoch by the trainer's
+            ``_anneal_moa_mot_temperature`` callback (factor=0.97,
+            min_temp=0.3 by default). Override via CLI args
+            ``moa_mot_temperature_factor`` / ``moa_mot_min_temperature``.
         attn_drop (float): Dropout on attention output.
         shortcut (bool): Residual connection around the block.
 
@@ -421,6 +448,7 @@ class MoABlock(nn.Module):
         )
         self.ls_ffn = nn.Parameter(torch.ones(dim, 1, 1) * 0.1)
         self.last_aux_loss: torch.Tensor = torch.zeros((), requires_grad=False)
+        self.last_routing_snapshot: dict = {}
 
         self._init_weights()
 
@@ -431,6 +459,22 @@ class MoABlock(nn.Module):
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
 
+    # ── RoutedModule protocol ───────────────────────────────────────────
+    @property
+    def num_experts(self) -> int:
+        """Number of attention head-groups (local/regional/global)."""
+        return self.NUM_GROUPS
+
+    @property
+    def top_k(self) -> int:
+        """All groups always active (soft routing, dense mixture)."""
+        return self.NUM_GROUPS
+
+    @property
+    def aux_loss(self) -> torch.Tensor:
+        """Router auxiliary loss (balance regularizer). Zero outside training."""
+        return self.last_aux_loss
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, C, H, W = x.shape
 
@@ -440,6 +484,17 @@ class MoABlock(nn.Module):
             self.last_aux_loss = _moa_router_aux_loss(weights, router_logits, self.aux_loss_coeff)
         else:
             self.last_aux_loss = x.new_zeros(())
+
+        # ── Routing snapshot (detached diagnostics) ──────────────────────
+        with torch.no_grad():
+            mean_w = weights.detach().float().mean(dim=(0, 2, 3))  # [3]
+            self.last_routing_snapshot = {
+                "num_experts": self.NUM_GROUPS,
+                "top_k": self.NUM_GROUPS,
+                "expert_usage": mean_w,
+                "mean_router_probs": mean_w,
+                "aux_loss": float(self.last_aux_loss.detach()),
+            }
 
         w_l = weights[:, 0:1]     # [B, 1, H, W]
         w_r = weights[:, 1:2]
@@ -534,6 +589,7 @@ class C2fMoA(nn.Module):
             for i in range(n)
         )
         self.last_aux_loss: torch.Tensor = torch.zeros((), requires_grad=False)
+        self.last_routing_snapshot: dict = {}
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         y = list(self.cv1(x).chunk(2, dim=1))   # [identity, dynamic]
@@ -544,7 +600,37 @@ class C2fMoA(nn.Module):
             if isinstance(l, torch.Tensor):
                 aux_total = aux_total + l
         self.last_aux_loss = aux_total
+
+        # ── Routing snapshot (aggregated from child MoABlocks) ──────────
+        with torch.no_grad():
+            child_snaps = [getattr(m, "last_routing_snapshot", {}) for m in self.m]
+            if child_snaps:
+                usages = [s["expert_usage"] for s in child_snaps if "expert_usage" in s]
+                mean_usage = sum(usages) / len(usages) if usages else x.new_zeros(3)
+                self.last_routing_snapshot = {
+                    "num_experts": MoABlock.NUM_GROUPS,
+                    "top_k": MoABlock.NUM_GROUPS,
+                    "expert_usage": mean_usage,
+                    "mean_router_probs": mean_usage,
+                    "aux_loss": float(aux_total.detach()),
+                }
+            else:
+                self.last_routing_snapshot = {}
+
         return self.cv2(torch.cat(y, dim=1))
+
+    # ── RoutedModule protocol ───────────────────────────────────────────
+    @property
+    def num_experts(self) -> int:
+        return MoABlock.NUM_GROUPS
+
+    @property
+    def top_k(self) -> int:
+        return MoABlock.NUM_GROUPS
+
+    @property
+    def aux_loss(self) -> torch.Tensor:
+        return self.last_aux_loss
 
 
 # ---------------------------------------------------------------------------
@@ -615,6 +701,7 @@ class NeckMoAFusion(nn.Module):
         self.res_proj = (nn.Conv2d(c_hi, c_out, 1, bias=False)
                          if c_hi != c_out else nn.Identity())
         self.last_aux_loss: torch.Tensor = torch.zeros((), requires_grad=False)
+        self.last_routing_snapshot: dict = {}
 
         self._init_weights()
 
@@ -659,6 +746,17 @@ class NeckMoAFusion(nn.Module):
         w_cross = weights[:, 0:1]
         w_self  = weights[:, 1:2]
 
+        # ── Routing snapshot ─────────────────────────────────────────────
+        with torch.no_grad():
+            mean_w = weights.detach().float().mean(dim=(0, 2, 3))  # [2]
+            self.last_routing_snapshot = {
+                "num_experts": 2,
+                "top_k": 2,
+                "expert_usage": mean_w,
+                "mean_router_probs": mean_w,
+                "aux_loss": float(self.last_aux_loss.detach()),
+            }
+
         assert self_out.shape[1] == cross_out.shape[1], (
             f"NeckMoAFusion channel mismatch before blend: "
             f"self_out C={self_out.shape[1]} vs cross_out C={cross_out.shape[1]}"
@@ -669,6 +767,19 @@ class NeckMoAFusion(nn.Module):
             out = out + self.res_proj(hi)
 
         return out
+
+    # ── RoutedModule protocol ───────────────────────────────────────────
+    @property
+    def num_experts(self) -> int:
+        return 2
+
+    @property
+    def top_k(self) -> int:
+        return 2
+
+    @property
+    def aux_loss(self) -> torch.Tensor:
+        return self.last_aux_loss
 
 
 # ---------------------------------------------------------------------------
