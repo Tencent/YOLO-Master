@@ -26,6 +26,18 @@ SCENES = {
         "epochs": 30,
         "fraction": 0.25,
     },
+    "sku110k": {
+        "cfg": "examples/lora_examples/yolo_master_sku110k_lora.yaml",
+        "base_name": "yolo_master_sku110k_lora",
+        "epochs": 30,
+        "fraction": 1.0,
+    },
+    "construction_ppe": {
+        "cfg": "examples/lora_examples/yolo_master_construction_ppe_lora.yaml",
+        "base_name": "yolo_master_construction_ppe_lora",
+        "epochs": 40,
+        "fraction": 1.0,
+    },
     "brain_tumor": {
         "cfg": "examples/lora_examples/yolo_master_brain_tumor_lora.yaml",
         "base_name": "yolo_master_brain_tumor_lora",
