@@ -24,6 +24,7 @@ from .api import (
     _fast_parse_int_list,
     _fast_parse_str_list,
     _normalize_lora_init,
+    _unfreeze_detection_head,
     build_lora_target_audit,
     resolve_effective_lora_request,
 )

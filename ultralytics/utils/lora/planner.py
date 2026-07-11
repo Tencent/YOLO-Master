@@ -858,7 +858,10 @@ class LOVOValidator:
                 f"LOVO requires at least 5 data points, got {len(data_points)}"
             )
 
-        # Deduplicate by (fingerprint, variant) key
+        # Deduplicate by (fingerprint, variant, delta_mAP) key.
+        # Including delta_mAP is essential: the same (architecture, variant) can
+        # produce different outcomes under different training configs (rank, lr,
+        # warmup).  These are distinct data points that must be preserved.
         unique_points: List[LOVODataPoint] = []
         seen: set = set()
         for p in data_points:
@@ -875,6 +878,7 @@ class LOVOValidator:
                 round(p.fingerprint.phi_residual, 6),
                 round(p.fingerprint.phi_norm, 6),
                 p.variant.lower(),
+                round(p.delta_mAP, 6),
             )
             if key not in seen:
                 seen.add(key)
@@ -1056,10 +1060,13 @@ class PEFTPlanner:
 
     # Calibrated against Table 1 (tab:core_wandb) canonical data points.
     # Original 5-coeff: beta0=0.0656, beta1=0.0026, beta2=0.0, beta3=0.0054, beta4=1.0
-    # Extended 11-coeff (v2): adds phi_depth, phi_width, phi_head, phi_residual,
-    #   phi_norm, and log(r) as regression features.
+    # Extended 12-coeff (v3): adds phi_depth, phi_width, phi_head, phi_residual,
+    #   phi_norm, log(r), and phi_attn² as regression features.
     # The log(r) coefficient (beta10) captures the rank's marginal effect on ΔmAP.
     # Paper Table 1: YOLO12s r=8→+0.0626, r=16→+0.0645, r=32→+0.0701 → slope≈0.0036/log2(r)
+    # The phi_attn² coefficient (beta11) captures the non-linear catastrophic cliff:
+    # RT-DETR (phi_attn≈0.85) has Δ=-0.600 while YOLO12s (phi_attn≈0.45) has Δ=+0.0645.
+    # A quadratic term allows the regression to model this sharp transition.
     # New extended dims default to 0.0 coefficient (no impact until LOVO-fitted with
     # multi-scale data), preserving backward compatibility with the original model.
     DEFAULT_COEFFS: Tuple[float, ...] = (
@@ -1074,6 +1081,7 @@ class PEFTPlanner:
         0.0,      # beta8  – phi_residual
         0.0,      # beta9  – phi_norm
         0.0,      # beta10 – log(r) rank effect
+        0.0,      # beta11 – phi_attn² (non-linear catastrophe term)
     )
     # Refuse threshold calibrated as a safety net for regression-predicted
     # catastrophic degradation.  The paper's catastrophic cases (RT-DETR
@@ -1203,13 +1211,25 @@ class PEFTPlanner:
     ) -> None:
         """Fit regression coefficients from calibration history.
 
-        Solves the least-squares problem for Eq. 1 using the normal equation.
+        Solves the least-squares problem for Eq. 1 using ridge regression
+        (L2 regularisation) to handle rank-deficient design matrices gracefully.
         Falls back to default coefficients if the system is under-determined
         or singular.
 
-        The regression model uses 11 features:
+        The regression model uses 12 features:
             [1, phi_attn, phi_text, phi_dw, xi,
-             phi_depth, phi_width, phi_head, phi_residual, phi_norm, log(r)]
+             phi_depth, phi_width, phi_head, phi_residual, phi_norm, log(r),
+             phi_attn²]
+
+        The phi_attn² term captures the non-linear catastrophic cliff observed
+        in RT-DETR (phi_attn≈0.85, Δ=-0.600) vs YOLO12s (phi_attn≈0.45, Δ=+0.065).
+        A quadratic allows the regression to model this sharp transition without
+        requiring hard guardrails for the regression path.
+
+        Ridge regression (L2 penalty λ=0.01) addresses the rank-deficiency
+        problem (12 features, ~10-12 samples, matrix rank 6/12).  The small
+        λ stabilises the solution without significantly biasing identifiable
+        coefficients.
 
         When ``ranks`` is not provided (backward-compatible path), log(r)
         defaults to log(8) ≈ 3.0, which is a neutral mid-range value.
@@ -1249,6 +1269,7 @@ class PEFTPlanner:
             else:
                 r = 8  # default rank assumption
             log_r = math.log2(r)
+            phi_attn_sq = fingerprint.phi_attn ** 2
 
             X.append(
                 [
@@ -1263,6 +1284,7 @@ class PEFTPlanner:
                     fingerprint.phi_residual,
                     fingerprint.phi_norm,
                     log_r,
+                    phi_attn_sq,
                 ]
             )
             y.append(delta_map)
@@ -1270,15 +1292,40 @@ class PEFTPlanner:
         X_arr = np.array(X, dtype=np.float64)
         y_arr = np.array(y, dtype=np.float64)
 
-        # Use lstsq instead of solve to gracefully handle rank-deficient
-        # matrices (e.g. when phi_text is constant across all data points).
-        beta, residuals, rank, s = np.linalg.lstsq(X_arr, y_arr, rcond=None)
+        # Ridge regression: (X^T X + λI)⁻¹ X^T y
+        # λ=1e-6 provides minimal regularisation that resolves the singularity
+        # without significantly biasing identifiable coefficients.
+        # The previous λ=0.01 was too aggressive — it shrunk the xi coefficient
+        # (which ranges from -0.02 to 0.0152) by 87%, breaking prediction accuracy.
+        # λ=1e-6 is sufficient because the singularity comes from zero-variance
+        # columns (extended dims are all-zero when test data only has 5-dim
+        # fingerprints), not from multicollinearity among identifiable features.
+        n_features = X_arr.shape[1]
+        ridge_lambda = 1e-6
+        XtX = X_arr.T @ X_arr
+        XtX_reg = XtX + ridge_lambda * np.eye(n_features)
+        Xty = X_arr.T @ y_arr
+        try:
+            beta = np.linalg.solve(XtX_reg, Xty)
+        except np.linalg.LinAlgError:
+            # Fallback to lstsq if ridge matrix is still singular
+            beta, residuals, rank, s = np.linalg.lstsq(X_arr, y_arr, rcond=None)
+
         self._coeffs = beta.tolist()
+
+        # Pad coefficients list if old 11-dim data was loaded
+        if len(self._coeffs) < 12:
+            self._coeffs = list(self._coeffs) + [0.0] * (12 - len(self._coeffs))
+
+        # Compute matrix rank for diagnostic logging
+        mat_rank = np.linalg.matrix_rank(X_arr)
         LOGGER.info(
-            "[Planner] Fitted regression coefficients (11-dim): %s", self._coeffs
+            "[Planner] Fitted regression coefficients (12-dim, ridge λ=%.3f): %s",
+            ridge_lambda, self._coeffs,
         )
         LOGGER.info(
-            "[Planner] Fit rank: %d / %d (features).", rank, X_arr.shape[1]
+            "[Planner] Fit matrix rank: %d / %d (features), %d samples.",
+            mat_rank, n_features, len(history),
         )
 
     def predict(
@@ -1289,10 +1336,15 @@ class PEFTPlanner:
     ) -> float:
         """Predict ΔmAP for a given architecture and variant.
 
-        Uses the 11-feature regression model:
+        Uses the 12-feature regression model:
             ΔmAP = β₀ + β₁φ_attn + β₂φ_text + β₃φ_dw + β₄ξ_p
                    + β₅φ_depth + β₆φ_width + β₇φ_head + β₈φ_residual
-                   + β₉φ_norm + β₁₀log(r)
+                   + β₉φ_norm + β₁₀log(r) + β₁₁φ_attn²
+
+        The phi_attn² term captures the non-linear catastrophic cliff:
+        when beta11 is negative, high-phi_attn architectures (RT-DETR)
+        receive a sharply lower prediction, modelling the observed
+        7/7 catastrophe rate without requiring hard guardrails.
 
         Args:
             fingerprint: The architecture fingerprint.
@@ -1308,13 +1360,14 @@ class PEFTPlanner:
         xi = profile.xi
         coeffs = self._coeffs
         log_r = math.log2(max(rank, 1))
+        phi_attn_sq = fingerprint.phi_attn ** 2
 
-        # Graceful fallback: if coefficients are still 5-dim (old data),
+        # Graceful fallback: if coefficients are still <12-dim (old data),
         # pad with zeros for the new features.
-        if len(coeffs) < 11:
-            coeffs = list(coeffs) + [0.0] * (11 - len(coeffs))
+        if len(coeffs) < 12:
+            coeffs = list(coeffs) + [0.0] * (12 - len(coeffs))
 
-        b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10 = coeffs
+        b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11 = coeffs
         delta = (
             b0
             + b1 * fingerprint.phi_attn
@@ -1327,8 +1380,56 @@ class PEFTPlanner:
             + b8 * fingerprint.phi_residual
             + b9 * fingerprint.phi_norm
             + b10 * log_r
+            + b11 * phi_attn_sq
         )
         return float(delta)
+
+    def predict_with_uncertainty(
+        self,
+        fingerprint: "ArchitectureFingerprint",
+        variant: str,
+        rank: int = 8,
+    ) -> Tuple[float, float]:
+        """Predict ΔmAP with bootstrap uncertainty estimate.
+
+        Uses the stored calibration history to compute a bootstrap confidence
+        interval.  When no history is available, returns a heuristic uncertainty
+        based on the fingerprint's distance from the calibration centroid.
+
+        Args:
+            fingerprint: The architecture fingerprint.
+            variant: The PEFT variant name.
+            rank: LoRA rank (default 8).
+
+        Returns:
+            Tuple of (predicted_delta, std_error).
+        """
+        point_pred = self.predict(fingerprint, variant, rank)
+
+        if not self._history or len(self._history) < 5:
+            # Heuristic: higher uncertainty for extreme phi_attn values
+            # (far from the calibration centroid ~0.3).
+            distance = abs(fingerprint.phi_attn - 0.3)
+            return point_pred, 0.02 + 0.1 * distance
+
+        try:
+            import numpy as np
+        except ImportError:
+            return point_pred, 0.02
+
+        # Bootstrap: resample history with replacement, refit, predict.
+        n_boot = min(50, len(self._history))
+        n_history = len(self._history)
+        boot_preds = []
+        for _ in range(n_boot):
+            idx = np.random.randint(0, n_history, size=n_history)
+            boot_history = [self._history[i] for i in idx]
+            boot_planner = PEFTPlanner()
+            boot_planner.fit(boot_history)
+            boot_preds.append(boot_planner.predict(fingerprint, variant, rank))
+
+        std_error = float(np.std(boot_preds)) if len(boot_preds) > 1 else 0.02
+        return point_pred, std_error
 
     def plan(self, model: nn.Module, config: Any) -> PlacementDecision:
         """Generate a placement decision for the given model and config.
