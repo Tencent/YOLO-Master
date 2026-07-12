@@ -563,7 +563,8 @@ class TestPlacementDecision:
 
     def test_refusal_error(self):
         err = RefusalError("test refusal")
-        assert str(err) == "test refusal"
+        # RefusalError now inherits PEFTRefusalError which prefixes the message
+        assert "test refusal" in str(err)
 
 
 # =============================================================================

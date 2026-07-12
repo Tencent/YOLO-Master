@@ -86,9 +86,9 @@ def test_mot_block_reuses_router_logits_for_z_loss(monkeypatch):
 
 def test_mot_temperature_anneal():
     module = C2fMoT(64, 64, n=2, num_heads=4)
-    before = [m.router.temperature for m in module.m]
+    before = [float(m.router.temperature) for m in module.m]
     anneal_mot_temperature(module, factor=0.5, min_temp=0.3)
-    after = [m.router.temperature for m in module.m]
+    after = [float(m.router.temperature) for m in module.m]
     assert after == [max(t * 0.5, 0.3) for t in before]
 
 
@@ -102,11 +102,11 @@ def test_trainer_detects_and_anneals_moa_mot_temperatures():
     trainer._detect_moa_mot_modules()
     assert trainer._has_moa_mot is True
 
-    moa_before = [m.router.temperature for m in moa.m]
-    mot_before = [m.router.temperature for m in mot.m]
+    moa_before = [float(m.router.temperature) for m in moa.m]
+    mot_before = [float(m.router.temperature) for m in mot.m]
     trainer._anneal_moa_mot_temperature()
-    assert [m.router.temperature for m in moa.m] == [max(t * 0.5, 0.3) for t in moa_before]
-    assert [m.router.temperature for m in mot.m] == [max(t * 0.5, 0.3) for t in mot_before]
+    assert [float(m.router.temperature) for m in moa.m] == [max(t * 0.5, 0.3) for t in moa_before]
+    assert [float(m.router.temperature) for m in mot.m] == [max(t * 0.5, 0.3) for t in mot_before]
 
 
 def test_mot_model_configs_parse():

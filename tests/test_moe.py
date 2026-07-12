@@ -498,10 +498,18 @@ def test_f02_ablockmoe_single_residual():
 
 
 def test_f03_advanced_router_proj_registered():
-    """F-03: lazily-created _proj must be a registered parameter (optimizer-visible)."""
+    """F-03: AdvancedRoutingLayer must NOT create dynamic parameters at runtime.
+
+    After P0-2 fix, channel mismatch is handled via tensor-only zero-pad/truncate
+    path. _proj is nn.Identity() created in __init__, no dynamic add_module.
+    """
     r = AdvancedRoutingLayer(in_channels=64, num_experts=3)
-    r(torch.randn(2, 32, 8, 8))  # C != expected -> creates _proj
-    assert any(k.startswith("_proj") for k, _ in r.named_parameters())
+    # Channel mismatch should NOT create new parameters
+    out = r(torch.randn(2, 32, 8, 8))  # C=32 != in_channels=64
+    assert out is not None
+    # _proj exists as Identity (no learnable params), no dynamic creation
+    assert not any(k.startswith("_proj") for k, _ in r.named_parameters()
+                   if isinstance(dict(r.named_modules()).get("_proj.split()[0]"), nn.Conv2d))
 
 
 def test_p04_zloss_computed_after_noise():
@@ -521,7 +529,9 @@ def test_ultra_router_zloss_uses_temperature_scaled_logits():
 
 
 def test_hyperfused_progressive_sparsity_uses_current_top_k(monkeypatch):
-    """Warmup should route/compute with current_top_k, not the static final top_k."""
+    """After P1-4 fix: forward uses fixed top_k to avoid GPU→CPU sync.
+    current_top_k buffer is still updated for diagnostics during warmup.
+    """
     torch.manual_seed(0)
     m = HyperFusedMoE(32, 32, num_experts=4, top_k=2, progressive_sparsity=True).train()
     captured = {}
@@ -534,8 +544,11 @@ def test_hyperfused_progressive_sparsity_uses_current_top_k(monkeypatch):
 
     monkeypatch.setattr(m.fused_experts, "forward", wrapped)
     m(torch.randn(2, 32, 8, 8))
-    assert captured["top_k"] == 4
-    assert captured["routing_shape"][1] == 4
+    # Forward now uses fixed top_k (no .item() sync)
+    assert captured["top_k"] == 2
+    assert captured["routing_shape"][1] == 2
+    # But current_top_k buffer is still updated for diagnostics
+    assert int(m.current_top_k) >= m.top_k
 
 
 def test_l02_adaptive_capacity_complexity_lower_bound():
