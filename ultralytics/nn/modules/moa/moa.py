@@ -470,8 +470,10 @@ class MoABlock(nn.Module):
         aux_loss_coeff: float = 0.01,
         block_index: int = 0,
         local_window_size: int = 7,
+        sequential_heads: bool = False,
     ):
         super().__init__()
+        self.sequential_heads = sequential_heads
         assert num_heads % self.NUM_GROUPS == 0, (
             f"num_heads ({num_heads}) must be divisible by NUM_GROUPS ({self.NUM_GROUPS})"
         )
@@ -554,12 +556,18 @@ class MoABlock(nn.Module):
         w_g = weights[:, 2:3]
 
         # ── Attention head outputs ────────────────────────────────────────
-        out_l = self.local_head(x)
-        out_r = self.region_head(x)
-        out_g = self.global_head(x)
-
-        # ── Soft mixture ─────────────────────────────────────────────────
-        mixed = w_l * out_l + w_r * out_r + w_g * out_g   # [B, C, H, W]
+        if self.sequential_heads:
+            # Sequential path: compute and accumulate one head at a time.
+            # Mathematically identical to the default path; useful for
+            # memory-constrained environments and ONNX export validation.
+            mixed = w_l * self.local_head(x)
+            mixed = mixed + w_r * self.region_head(x)
+            mixed = mixed + w_g * self.global_head(x)
+        else:
+            out_l = self.local_head(x)
+            out_r = self.region_head(x)
+            out_g = self.global_head(x)
+            mixed = w_l * out_l + w_r * out_r + w_g * out_g   # [B, C, H, W]
         mixed = self.attn_drop(self.fusion(mixed))
 
         # ── Residual + layer-scale ────────────────────────────────────────
@@ -878,3 +886,12 @@ def collect_moa_aux_loss(model: nn.Module) -> torch.Tensor:
             if isinstance(l, torch.Tensor) and l.requires_grad:
                 total = l if total is None else total + l
     return total if total is not None else torch.zeros(1, device=_aux_loss_device(model))
+
+
+__all__ = [
+    "MoABlock",
+    "C2fMoA",
+    "NeckMoAFusion",
+    "anneal_moa_temperature",
+    "collect_moa_aux_loss",
+]

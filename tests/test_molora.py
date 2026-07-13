@@ -644,10 +644,10 @@ class TestDynamicRouting:
         # Step 0: should return 1
         assert layer._current_top_k() == 1
         # After 5 steps: should return 1 + (2-1)*5/10 = 1 (integer floor)
-        layer._step_count_cpu = 5
+        layer._step_count.fill_(5)
         assert layer._current_top_k() == 1
         # After 10 steps: should return 2
-        layer._step_count_cpu = 10
+        layer._step_count.fill_(10)
         assert layer._current_top_k() == 2
 
     def test_expert_dropout(self):

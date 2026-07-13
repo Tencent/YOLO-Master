@@ -874,11 +874,25 @@ class MoTBlock(nn.Module):
                 if batch_idx.numel() == 0:
                     continue
                 w = weights[batch_idx, e_idx:e_idx + 1]
-                out[batch_idx] = out[batch_idx] + expert(x[batch_idx]) * w
+                expert_out = expert(x[batch_idx])
+                if expert_out.shape != x[batch_idx].shape:
+                    raise RuntimeError(
+                        f"Expert {e_idx} is not shape-preserving: input {tuple(x[batch_idx].shape)} "
+                        f"→ output {tuple(expert_out.shape)}. All experts must preserve "
+                        f"the input tensor shape."
+                    )
+                out[batch_idx] = out[batch_idx] + expert_out * w
         else:
             for e_idx, expert in enumerate(self.experts):
                 w = weights[:, e_idx:e_idx + 1]
-                out = out + expert(x) * w
+                expert_out = expert(x)
+                if expert_out.shape != x.shape:
+                    raise RuntimeError(
+                        f"Expert {e_idx} is not shape-preserving: input {tuple(x.shape)} "
+                        f"→ output {tuple(expert_out.shape)}. All experts must preserve "
+                        f"the input tensor shape."
+                    )
+                out = out + expert_out * w
         return out
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:

@@ -277,16 +277,24 @@ class MoLoRAModel(nn.Module):
         LOGGER.info(f"[MoLoRA] Expert replay buffer loaded for domain '{buffer.get('domain')}'")
 
     def save_checkpoint(self, path: str) -> None:
-        """Save a versioned MoLoRA-only checkpoint with explicit compatibility metadata."""
-        state_dict = self.model.state_dict()
-        adapter_state = {k: v for k, v in state_dict.items() if _is_molora_state_key(k)}
+        """Save a versioned MoLoRA-only checkpoint with explicit compatibility metadata.
+
+        Includes registered buffers (e.g. ``_step_count``, ``_usage_ema``)
+        alongside trainable parameters, since these carry training state
+        needed for correct resume.
+        """
+        molora_keys = ("lora_A", "lora_B", "router", "molora",
+                       "_step_count", "_usage_ema", "_domain_active_mask")
         config = asdict(self.config) if is_dataclass(self.config) else dict(self.config)
         state = {
             "schema_version": 1,
             "format": "molora_adapter",
             "config": config,
             "structure": _molora_structure(self.model),
-            "state_dict": adapter_state,
+            "state_dict": {
+                k: v for k, v in self.model.state_dict().items()
+                if any(p in k for p in molora_keys)
+            },
         }
         torch.save(state, path)
         LOGGER.info(f"[MoLoRA] Checkpoint saved to {path}")
@@ -343,12 +351,16 @@ class MoLoRAModel(nn.Module):
             raise RuntimeError(f"MoLoRA checkpoint tensor shape mismatch: {exc}") from exc
         LOGGER.info(f"[MoLoRA] Checkpoint loaded from {path}")
 
+    def param_stats(self) -> Dict[str, Any]:
+        """Return parameter statistics for the wrapped model."""
+        return count_parameters(self.model)
+
 
 def _is_molora_state_key(key: str) -> bool:
     """Return whether a state key belongs to adapter parameters or state buffers."""
     return any(token in key for token in (
-        "lora_A", "lora_B", "router", "loss_fn", "_step_count",
-        "_usage_ema", "_domain_active_mask",
+        "lora_A", "lora_B", "router", "loss_fn", "molora",
+        "_step_count", "_usage_ema", "_domain_active_mask",
     ))
 
 
@@ -371,6 +383,3 @@ def _molora_structure(model: nn.Module) -> List[Dict[str, Any]]:
             item.update({"kernel_size": tuple(base.kernel_size), "groups": base.groups})
         structure.append(item)
     return structure
-
-    def param_stats(self) -> Dict[str, Any]:
-        return count_parameters(self.model)

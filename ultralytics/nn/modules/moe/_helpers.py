@@ -37,20 +37,8 @@ def autocast(enabled=True, **kwargs):
 # atomic, and concurrent forward passes (e.g. multi-threaded eval / hook
 # callbacks) could otherwise corrupt its internal weakref bookkeeping.
 
-MOE_LOSS_REGISTRY = weakref.WeakKeyDictionary()
-_MOE_LOSS_REGISTRY_LOCK = _threading.Lock()
-
-
-def _registry_set(module: nn.Module, value: torch.Tensor) -> None:
-    """Thread-safe write to the MoE aux-loss registry."""
-    with _MOE_LOSS_REGISTRY_LOCK:
-        MOE_LOSS_REGISTRY[module] = value
-
-
-def _registry_get(module: nn.Module):
-    """Thread-safe read from the MoE aux-loss registry."""
-    with _MOE_LOSS_REGISTRY_LOCK:
-        return MOE_LOSS_REGISTRY.get(module)
+# Re-export the single canonical registry from _common to avoid dual-dict bugs.
+from ._common import MOE_LOSS_REGISTRY, _MOE_LOSS_REGISTRY_LOCK, _registry_set, _registry_get  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

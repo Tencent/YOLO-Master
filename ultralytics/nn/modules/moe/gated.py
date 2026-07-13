@@ -777,7 +777,9 @@ class HyperFusedMoE(nn.Module):
         if self.training and self.progressive_sparsity:
             self._update_sparsity()
         
-        adaptive_top_k = int(self.current_top_k.item()) if self.training and self.progressive_sparsity else self.top_k
+        # Use fixed top_k — avoids per-forward .item() GPU→CPU sync.
+        # Progressive sparsity still fills the buffer for diagnostics.
+        adaptive_top_k = self.top_k
 
         # === 1. Zero-cost Routing ===
         # routing_weights: [B, k, 1, 1], routing_indices: [B, k, 1, 1]

@@ -1779,6 +1779,8 @@ def parse_model(d, ch, verbose=True):
             C3k2UltraPro,
             C3k2MA,
             C3k2MA_Lite,
+            C2fMoA,
+            C2fMoT,
         }
     )
     for i, (f, n, m, args) in enumerate(d["backbone"] + d["head"]):  # from, number, module, args
