@@ -45,6 +45,17 @@ os.environ.setdefault("YOLO_VERBOSE", "false")
 
 import numpy as np
 import torch
+
+# This experiment script uses one process per run. A stale torchrun
+# environment would make the trainer enter its CUDA-only DDP path.
+if not torch.cuda.is_available() and any(
+    os.environ.get(name) not in (None, "", "-1") for name in ("RANK", "LOCAL_RANK", "WORLD_SIZE")
+):
+    raise RuntimeError(
+        "Distributed environment detected without CUDA. "
+        "Run this script with plain python3 and unset RANK, LOCAL_RANK, WORLD_SIZE."
+    )
+
 import torch.nn as nn
 
 from ultralytics.utils import SETTINGS

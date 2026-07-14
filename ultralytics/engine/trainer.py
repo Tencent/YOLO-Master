@@ -190,8 +190,17 @@ class BaseTrainer:
         self.args = get_cfg(cfg, overrides)
         self.check_resume(overrides)
         self.device = select_device(self.args.device)
+        # DDP in this trainer is CUDA-only. Never let a stale torchrun
+        # environment route CPU/MPS training into the CUDA DDP path.
+        if self.device.type != "cuda" and any(
+            os.getenv(name) not in (None, "", "-1") for name in ("RANK", "LOCAL_RANK", "WORLD_SIZE")
+        ):
+            raise RuntimeError(
+                f"Distributed environment detected for device={self.device}. "
+                "Run CPU/MPS training without torchrun and unset RANK, LOCAL_RANK, WORLD_SIZE."
+            )
         # Update "-1" devices so post-training val does not repeat search
-        self.args.device = os.getenv("CUDA_VISIBLE_DEVICES") if "cuda" in str(self.device) else str(self.device)
+        self.args.device = os.getenv("CUDA_VISIBLE_DEVICES") if self.device.type == "cuda" else str(self.device)
         self.validator = None
         self.metrics = None
         self.plots = {}
@@ -255,6 +264,11 @@ class BaseTrainer:
         else:  # i.e. device=None or device=''
             world_size = 0
 
+        if world_size > 1 and self.device.type != "cuda":
+            raise RuntimeError(
+                f"Multi-device training requires CUDA, but resolved device is {self.device}. "
+                "Use a single CPU/MPS device or run DDP only with CUDA devices."
+            )
         self.ddp = world_size > 1 and "LOCAL_RANK" not in os.environ
         self.world_size = world_size
         # Run subprocess if DDP training, else train normally
@@ -635,7 +649,9 @@ class BaseTrainer:
             torch.amp.GradScaler("cuda", enabled=self.amp) if TORCH_2_4 else torch.cuda.amp.GradScaler(enabled=self.amp)
         )
         if self.world_size > 1:
-            self.model = nn.parallel.DistributedDataParallel(self.model, device_ids=[RANK], find_unused_parameters=True)
+            self.model = nn.parallel.DistributedDataParallel(
+                self.model, device_ids=[RANK] if self.device.type == "cuda" else None, find_unused_parameters=True
+            )
 
         self.ema = ModelEMA(self.model)
         self.optimizer = self.build_optimizer(
