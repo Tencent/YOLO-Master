@@ -10,7 +10,8 @@ _seaborn_stub.heatmap = lambda *_args, **_kw: None  # type: ignore[attr-defined]
 sys.modules.setdefault("seaborn", _seaborn_stub)
 
 from ultralytics.nn.modules.moe.loss import MoELoss
-from ultralytics.nn.modules.moe.modules import AdaptiveBalanceController
+from ultralytics.engine.trainer import BaseTrainer
+from ultralytics.nn.modules.moe.modules import AdaptiveBalanceController, UltraOptimizedMoE
 from ultralytics.nn.modules.moe.scheduler import (
     MoEDynamicScheduler,
     MoEDynamicSchedulerConfig,
@@ -161,6 +162,25 @@ def test_map_saturation_state_dict_round_trip():
     assert restored.saturation_scale == pytest.approx(scheduler.saturation_scale)
     assert restored.map_history == scheduler.map_history
     assert restored.config.window_size == 3
+
+
+@pytest.mark.parametrize(
+    ("recovered", "validated", "expected_updates"),
+    [(True, True, 0), (False, False, 0), (False, True, 1)],
+)
+def test_map_saturation_updates_only_for_accepted_epoch(recovered, validated, expected_updates):
+    block = UltraOptimizedMoE(8, 8, num_experts=2, top_k=1, router_reduction=2, router_pool_scale=1, num_groups=1)
+    block.map_saturation_scheduler = MapSaturationScheduler(MapSaturationSchedulerConfig(window_size=1))
+    trainer = types.SimpleNamespace(
+        _has_moe=True,
+        args=types.SimpleNamespace(moe_map_saturation_enabled=True),
+        model=torch.nn.Sequential(block),
+        fitness=0.5,
+    )
+
+    BaseTrainer._finalize_moe_map_saturation_epoch(trainer, recovered=recovered, validated=validated)
+
+    assert len(block.map_saturation_scheduler.map_history) == expected_updates
 
 
 def test_map_saturation_config_validation():
