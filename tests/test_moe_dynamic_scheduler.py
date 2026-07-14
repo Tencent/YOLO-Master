@@ -170,6 +170,7 @@ def test_map_saturation_state_dict_round_trip():
         (True, True, 0.5, 0),
         (False, False, 0.5, 0),
         (False, True, None, 0),
+        (False, True, float("nan"), 0),
         (False, True, 0.5, 1),
     ],
 )
