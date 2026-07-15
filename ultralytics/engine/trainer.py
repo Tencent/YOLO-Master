@@ -1191,28 +1191,16 @@ class BaseTrainer:
 
             # Validation
             final_epoch = epoch + 1 >= self.epochs
+            validated = False
             if self.args.val or final_epoch or self.stopper.possible_stop or self.stop:
                 self._clear_memory(threshold=0.5)  # prevent VRAM spike
                 self.metrics, self.fitness = self.validate()
-
-                # Update MapSaturationScheduler with validation fitness (mAP)
-                if getattr(self, '_has_moe', False) and getattr(self.args, 'moe_map_saturation_enabled', False):
-                    from ultralytics.nn.modules.moe.utils import is_core_moe_block
-                    for m in self.model.modules():
-                        if not is_core_moe_block(m):
-                            continue
-                        scheduler = getattr(m, 'map_saturation_scheduler', None)
-                        if scheduler is not None:
-                            scheduler.update(self.fitness)
-                            if RANK in {-1, 0} and scheduler.last_state is not None:
-                                LOGGER.debug(
-                                    f"[MoE] MapSaturationScheduler updated: "
-                                    f"scale={scheduler.last_state.saturation_scale:.4f}, "
-                                    f"plateau={scheduler.last_state.plateau_detected}"
-                                )
+                validated = self.fitness is not None and math.isfinite(float(self.fitness))
 
             # NaN recovery
-            if self._handle_nan_recovery(epoch):
+            recovered = self._handle_nan_recovery(epoch)
+            self._finalize_moe_map_saturation_epoch(recovered=recovered, validated=validated)
+            if recovered:
                 continue
 
             self.nan_recovery_attempts = 0
@@ -1263,6 +1251,28 @@ class BaseTrainer:
         self._clear_memory()
         unset_deterministic()
         self.run_callbacks("teardown")
+
+    def _finalize_moe_map_saturation_epoch(self, *, recovered: bool, validated: bool) -> None:
+        """Update mAP-driven MoE scheduling only for validated, accepted epochs."""
+        if recovered or not validated or self.fitness is None or not math.isfinite(float(self.fitness)):
+            return
+        if not getattr(self, "_has_moe", False) or not getattr(self.args, "moe_map_saturation_enabled", False):
+            return
+
+        from ultralytics.nn.modules.moe.utils import is_core_moe_block
+
+        for module in self.model.modules():
+            if not is_core_moe_block(module):
+                continue
+            scheduler = getattr(module, "map_saturation_scheduler", None)
+            if scheduler is None:
+                continue
+            scheduler.update(self.fitness)
+            if RANK in {-1, 0} and scheduler.last_state is not None:
+                LOGGER.debug(
+                    f"[MoE] MapSaturationScheduler updated: scale={scheduler.last_state.saturation_scale:.4f}, "
+                    f"plateau={scheduler.last_state.plateau_detected}"
+                )
 
     def auto_batch(self, max_num_obj=0):
         """Calculate optimal batch size based on model and device memory constraints."""
