@@ -1135,9 +1135,11 @@ def collect_mot_aux_loss(model: nn.Module, ddp_sync: bool = True) -> torch.Tenso
 
     # P1-2 fix: DDP synchronize the aux-loss scalar so all ranks optimise a shared global target
     if ddp_sync and dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1:
-        sync_tensor = total.float().to('cuda' if total.device.type == 'cpu' else total.device)
+        sync_tensor = total.detach().float().to(total.device)
         dist.all_reduce(sync_tensor, op=dist.ReduceOp.SUM)
-        total = sync_tensor / dist.get_world_size()
+        global_value = sync_tensor / dist.get_world_size()
+        # Keep the local autograd path while using the globally averaged value.
+        total = total + (global_value.to(dtype=total.dtype) - total.detach())
 
     return total
 

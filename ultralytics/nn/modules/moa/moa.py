@@ -222,10 +222,7 @@ class _RegionalAttnHead(nn.Module):
         # P2-6 fix: use adaptive_avg_pool2d instead of AvgPool2d so that when
         # H,W are not divisible by stride the output size is floor(H/stride) which
         # preserves spatial information better than hard-cropping.
-        self.kv_pool = nn.Sequential(
-            nn.AdaptiveAvgPool2d(max(1, 4)),       # adapts to any input resolution
-            nn.Conv2d(dim, inner * 2, 1, bias=False),
-        )
+        self.kv_proj = nn.Conv2d(dim, inner * 2, 1, bias=False)
         self.proj = nn.Conv2d(inner, dim, 1, bias=False)
         self.norm = nn.GroupNorm(_safe_groups(dim, 8), dim)
         self.scale = self.head_dim ** -0.5
@@ -239,9 +236,12 @@ class _RegionalAttnHead(nn.Module):
         # empty spatial KV after pooling. Fall back to identity (full-res KV) in
         # that edge case.
         if min(H, W) <= 1:
-            kv = self.kv_pool[1](x)                  # conv-only, skip pool
+            kv = self.kv_proj(x)                    # conv-only, skip pool
         else:
-            kv = self.kv_pool(x)                     # [B, 2*inner, H', W']
+            target_h = max(1, H // self.pool_stride)
+            target_w = max(1, W // self.pool_stride)
+            pooled = F.adaptive_avg_pool2d(x, (target_h, target_w))
+            kv = self.kv_proj(pooled)               # [B, 2*inner, H', W']
         H2, W2 = kv.shape[2], kv.shape[3]
 
         # Guard: if pooling collapsed the spatial dim to zero (extreme edge case),

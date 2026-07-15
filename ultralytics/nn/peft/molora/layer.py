@@ -194,7 +194,7 @@ class MoLoRALayer(nn.Module):
             balance_loss_coef=balance_loss_coef,
             z_loss_coef=z_loss_coef,
             diversity_loss_coef=diversity_loss_coef,
-            reduce_ddp=False,
+            reduce_ddp=True,
         )
 
         # Routing stats for diagnostics (not persistent)
