@@ -1622,6 +1622,13 @@ class BaseTrainer:
                 "gradient", epoch=getattr(self, "epoch", -1), step=getattr(self, "ni", -1), parameter=bad_parameter
             )
             self.optimizer.zero_grad()
+            # scaler.update() alone cannot downscale because it needs the
+            # found_inf state that step() records.  Calling step() here lets
+            # GradScaler detect the inf/NaN gradients, skip the optimizer step,
+            # and mark found_inf so update() will halve the scale.  Without
+            # this the scale stays at 65536 forever and every backward overflow
+            # continues to produce NaN gradients.  (PyTorch issue-like pattern.)
+            self.scaler.step(self.optimizer)
             self.scaler.update()
             return
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=10.0)
