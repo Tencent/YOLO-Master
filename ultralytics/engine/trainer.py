@@ -1347,7 +1347,9 @@ class BaseTrainer:
         buffer = io.BytesIO()
         torch.save(
             {
-                "epoch": self.epoch,
+                # Bootstrap checkpoints are created before the training loop sets
+                # ``self.epoch``; use the resumed epoch boundary in that case.
+                "epoch": getattr(self, "epoch", self.start_epoch - 1),
                 "best_fitness": self.best_fitness,
                 "model": None,
                 "ema": deepcopy(unwrap_model(self.ema.ema)).half(),

@@ -86,6 +86,18 @@ def test_zero_fitness_is_not_nonfinite_or_recovery_trigger(tmp_path):
     assert t._handle_nan_recovery(3) is False
 
 
+def test_bootstrap_checkpoint_serializes_before_training_epoch_is_set(tmp_path):
+    trainer = bootstrap_trainer(tmp_path)
+    trainer.start_epoch = 7
+    del trainer.epoch
+
+    checkpoint = torch.load(
+        __import__("io").BytesIO(trainer._serialize_checkpoint()), map_location="cpu", weights_only=False
+    )
+
+    assert checkpoint["epoch"] == 6
+
+
 def test_nonfinite_loss_recovers_from_healthy_checkpoint(tmp_path):
     t = recovery_trainer(tmp_path, loss=float("nan"))
     write_healthy(t.healthy)
@@ -113,6 +125,7 @@ def bootstrap_trainer(tmp_path):
     t.scheduler = SimpleNamespace(last_epoch=0)
     t.args = SimpleNamespace()
     t.epoch = 0
+    t.start_epoch = 0
     t.best_fitness = 0.0
     t.fitness = 0.0
     t.metrics = {}
