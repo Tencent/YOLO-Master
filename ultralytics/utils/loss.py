@@ -31,7 +31,12 @@ def _collect_moe_aux_loss(model: nn.Module | None, device: torch.device) -> torc
     for m in model.modules():
         loss_t = MOE_LOSS_REGISTRY.get(m)
         if isinstance(loss_t, torch.Tensor) and id(m) not in seen:
-            moe_loss = moe_loss + loss_t.to(device)
+            lt = loss_t.to(device)
+            # Guard against NaN from corrupted registry entries
+            if not torch.isfinite(lt):
+                LOGGER.warning(f"[NaN guard] MoE aux_loss for {m} is non-finite ({lt}), skipping")
+                continue
+            moe_loss = moe_loss + lt
             seen.add(id(m))
     return moe_loss
 
@@ -47,7 +52,11 @@ def _collect_mot_aux_loss(model: nn.Module | None, device: torch.device) -> torc
         return mot_loss
     loss_t = collect_mot_aux_loss(model)
     if isinstance(loss_t, torch.Tensor):
-        mot_loss = mot_loss + loss_t.to(device)
+        lt = loss_t.to(device)
+        if not torch.isfinite(lt):
+            LOGGER.warning(f"[NaN guard] MoT aux_loss is non-finite ({lt}), skipping")
+        else:
+            mot_loss = mot_loss + lt
     return mot_loss
 
 
@@ -62,12 +71,17 @@ def _collect_moa_aux_loss(model: nn.Module | None, device: torch.device) -> torc
         return moa_loss
     loss_t = collect_moa_aux_loss(model)
     if isinstance(loss_t, torch.Tensor):
-        moa_loss = moa_loss + loss_t.to(device)
+        lt = loss_t.to(device)
+        if not torch.isfinite(lt):
+            LOGGER.warning(f"[NaN guard] MoA aux_loss is non-finite ({lt}), skipping")
+        else:
+            moa_loss = moa_loss + lt
     return moa_loss
 
 
 _MIXTURE_LOSS_EMA_DECAY = 0.99
-_MIXTURE_LOSS_EMA_FLOOR = 1e-4
+_MIXTURE_LOSS_EMA_FLOOR   = 1e-4
+_MIXTURE_LOSS_MAX_ENTRY   = 1e4    # clamp EMA entry to prevent runaway growth
 _MIXTURE_LOSS_EMA_DEFAULTS = {"moe": 1.0, "mot": 0.1, "moa": 0.1}
 # Keys in fixed order for buffer indexing.
 _MIXTURE_LOSS_EMA_KEYS = ("moe", "mot", "moa")
@@ -148,8 +162,14 @@ def _update_mixture_loss_ema(model: nn.Module | None, key: str, loss_t: torch.Te
     idx = _MIXTURE_LOSS_EMA_KEYS.index(key)
     with torch.no_grad():
         val = float(loss_t.detach().abs().reshape(-1)[0]) if loss_t.numel() else 0.0
+        # Self-heal: if buf[idx] is already NaN/Inf, reset to default before updating.
+        # Without this, once corrupted the buffer stays NaN forever (NaN*x=NaN).
+        old_val = float(buf[idx].item()) if buf[idx].isfinite().any() else _MIXTURE_LOSS_EMA_DEFAULTS.get(key, 0.1)
+        buf[idx] = torch.tensor(old_val, dtype=buf.dtype, device=buf.device)
+        # Clamp incoming value to prevent runaway buffer growth
+        val = max(_MIXTURE_LOSS_EMA_FLOOR, min(val, _MIXTURE_LOSS_MAX_ENTRY))
         if val > _MIXTURE_LOSS_EMA_FLOOR:
-            buf[idx] = _MIXTURE_LOSS_EMA_DECAY * buf[idx] + (1.0 - _MIXTURE_LOSS_EMA_DECAY) * val
+            buf[idx] = _MIXTURE_LOSS_EMA_DECAY * float(buf[idx]) + (1.0 - _MIXTURE_LOSS_EMA_DECAY) * val
 
 
 def _collect_mixture_aux_loss(
@@ -179,11 +199,10 @@ def _collect_mixture_aux_loss(
         model._mixture_aux_nonfinite = {name: bad for name, bad in zip(aux_names, nonfinite)}
         model._mixture_aux_isolated = False
     if any(nonfinite):
-        if not _mixture_aux_isolation_enabled(model):
-            # Keep the failure visible by returning the original non-finite term.
-            return sum(aux_losses)
+        # Always isolate non-finite aux components — never let raw NaN/Inf
+        # propagate to the main loss.  This replaces the old `mixture_aux_isolate_nonfinite`
+        # flag which was never enabled in any config (it is now always on).
         # The flag is synchronized above: every DDP rank substitutes the same
-        # optional auxiliary component with a graph-safe zero.
         aux_losses = tuple(loss.new_zeros(()) if bad else loss for loss, bad in zip(aux_losses, nonfinite))
         moe_l, mot_l, moa_l = aux_losses
 
@@ -210,8 +229,9 @@ def _collect_mixture_aux_loss(
 
     aux_result = ((moe_l / moe_scale_val * moe_gain) + (mot_l / mot_scale_val * mot_gain) +
                   (moa_l / moa_scale_val * moa_gain))
-    # Final non-finite guard: if anything went wrong upstream, return safe zero
-    if not torch.isfinite(aux_result).all():
+    # Final non-finite guard + magnitude clamp: prevent any runaway aux_loss
+    # from poisoning the total even if individual components are "finite" but extreme.
+    if not torch.isfinite(aux_result).all() or torch.abs(aux_result) > _MIXTURE_LOSS_MAX_ENTRY:
         return moe_l.new_zeros(())
     return aux_result
 

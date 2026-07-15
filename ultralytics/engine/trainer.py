@@ -281,6 +281,7 @@ class BaseTrainer:
         self.plot_idx = [0, 1, 2]
         self.nan_recovery_attempts = 0
         self._gradient_nonfinite = False
+        self._nonfinite_diagnostic = None
 
         # Callbacks
         self.callbacks = _callbacks or callbacks.get_default_callbacks()
@@ -971,6 +972,7 @@ class BaseTrainer:
                 self.run_callbacks("on_train_batch_start")
                 # Warmup
                 ni = i + nb * epoch
+                self.ni = ni
                 if ni <= nw:
                     xi = [0, nw]  # x interp
                     self.accumulate = max(1, int(np.interp(ni, xi, [1, self.args.nbs / self.batch_size]).round()))
@@ -1085,6 +1087,12 @@ class BaseTrainer:
                     if RANK != -1:
                         self.loss *= self.world_size
                     self.tloss = self.loss_items if self.tloss is None else (self.tloss * i + self.loss_items) / (i + 1)
+
+                loss_finite = bool(torch.isfinite(self.loss.detach()).all().item())
+                if not loss_finite:
+                    self._record_nonfinite_diagnostic("loss", epoch=epoch, step=ni, loss_items=self.loss_items)
+                    sync_context.__exit__(None, None, None)
+                    continue
 
                 # Backward. Always unwind no_sync if forward/backward raises.
                 try:
@@ -1480,13 +1488,41 @@ class BaseTrainer:
         self.model = self.get_model(cfg=cfg, weights=weights, verbose=RANK == -1)  # calls Model(cfg, weights)
         return ckpt
 
+    def _record_nonfinite_diagnostic(self, component, *, epoch, step, loss_items=None, parameter=None):
+        """Keep the first local non-finite event without introducing DDP collectives."""
+        if getattr(self, "_nonfinite_diagnostic", None) is not None:
+            return
+        stats = None
+        if isinstance(loss_items, torch.Tensor):
+            values = loss_items.detach().float().reshape(-1)
+            stats = [float(value) for value in values[:16].cpu()]
+        model = unwrap_model(self.model)
+        aux = getattr(model, "_mixture_aux_nonfinite", {})
+        self._nonfinite_diagnostic = {
+            "component": component,
+            "rank": RANK,
+            "epoch": int(epoch),
+            "step": int(step),
+            "loss_items": stats,
+            "aux_nonfinite": dict(aux),
+            "parameter": parameter,
+            "scaler_scale": float(self.scaler.get_scale()),
+        }
+        LOGGER.warning(f"[NaN diagnostic] {self._nonfinite_diagnostic}")
+
     def optimizer_step(self):
         """Perform a single step of the training optimizer with gradient clipping and EMA update."""
         self.scaler.unscale_(self.optimizer)  # unscale gradients
-        self._gradient_nonfinite = getattr(self, "_gradient_nonfinite", False) or any(
-            p.grad is not None and not bool(torch.isfinite(p.grad).all().item()) for p in self.model.parameters()
+        bad_parameter = next(
+            (name for name, p in self.model.named_parameters()
+             if p.grad is not None and not bool(torch.isfinite(p.grad).all().item())),
+            None,
         )
+        self._gradient_nonfinite = getattr(self, "_gradient_nonfinite", False) or bad_parameter is not None
         if self._gradient_nonfinite:
+            self._record_nonfinite_diagnostic(
+                "gradient", epoch=getattr(self, "epoch", -1), step=getattr(self, "ni", -1), parameter=bad_parameter
+            )
             self.optimizer.zero_grad()
             self.scaler.update()
             return
@@ -2129,6 +2165,9 @@ class BaseTrainer:
         if not any(flags):
             return False
         reason = ", ".join(name for name, active in zip(("Loss NaN/Inf", "Fitness NaN/Inf", "Gradient NaN/Inf"), flags) if active)
+        diagnostic = getattr(self, "_nonfinite_diagnostic", None)
+        if diagnostic is not None:
+            LOGGER.warning(f"[NaN diagnostic] first local event before recovery: {diagnostic}")
 
         healthy = getattr(self, "healthy", None)
         if healthy is None:
@@ -2162,6 +2201,7 @@ class BaseTrainer:
             target.load_state_dict(ema_state)
         self._load_checkpoint_state(ckpt)
         self._gradient_nonfinite = False
+        self._nonfinite_diagnostic = None
         del ckpt, ema_state
         self.scheduler.last_epoch = epoch - 1
         return True
