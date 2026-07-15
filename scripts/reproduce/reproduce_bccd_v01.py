@@ -19,10 +19,10 @@ def main():
         amp=False,
         optimizer="AdamW",
         project="YOLO-Master-Issue49",
-        name="BCCD-v0.1-N-Baseline"
+        name="BCCD-v0.1-N-Baseline",
     )
     wandb.finish()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
