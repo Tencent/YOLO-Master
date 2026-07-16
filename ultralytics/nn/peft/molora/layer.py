@@ -23,6 +23,11 @@ from .utils import (
     _unmerge_conv_delta,
     _unmerge_linear_delta,
 )
+from ultralytics.nn.modules.routing_protocol import (
+    export_capabilities as _export_routing_capabilities,
+    publish_aux_loss,
+    routing_snapshot as _routing_snapshot,
+)
 
 
 class MoLoRAExpert(nn.Module):
@@ -91,19 +96,13 @@ class MoLoRAExpert(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Compute delta = B @ A(x) for this expert.
 
-        AMP-safe: cast the low-rank path to float32 to prevent FP16/FP8
-        overflow in intermediate convolutions (rank r is very small, so
-        the extra memory cost is negligible).  The result is returned in
-        the input dtype to stay compatible with the residual connection.
+        Keep low-rank execution in parameter dtype so half parameters work on CPU.
         """
         x = self.dropout(x)
-        dtype = x.dtype
-        if dtype not in (torch.float32,):
-            # Upcast LoRA path to float32 when running under AMP (FP16/BF16).
-            with torch.autocast(device_type="cuda", enabled=False):
-                out = self.lora_B(self.lora_A(x.to(torch.float32))) * self.scaling
-            return out.to(dtype) if dtype != torch.float32 else out
-        return self.lora_B(self.lora_A(x)) * self.scaling
+        input_dtype = x.dtype
+        parameter_dtype = self.lora_A.weight.dtype
+        out = self.lora_B(self.lora_A(x.to(parameter_dtype))) * self.scaling
+        return out.to(input_dtype) if input_dtype != parameter_dtype else out
 
     def delta_weight(self) -> torch.Tensor:
         """Return the equivalent full-rank delta weight (for inspection / merge)."""
@@ -212,6 +211,22 @@ class MoLoRALayer(nn.Module):
         # Routing stats for diagnostics (not persistent)
         self._last_routing_stats: Optional[Dict[str, Any]] = None
         self.last_routing_snapshot: dict = {}
+        self._last_dispatch_stats: dict = {}
+        self._merge_metadata: dict = {"mode": "dynamic", "approximate": True, "expert_weights": []}
+
+    def publish_aux_loss(self, *, step: int, training: bool) -> torch.Tensor:
+        return publish_aux_loss(self, getattr(self, "_last_aux_loss", torch.zeros(())), step=step, kind="molora", training=training)
+
+    def routing_snapshot(self) -> dict:
+        return _routing_snapshot(self)
+
+    def export_capabilities(self) -> dict:
+        return _export_routing_capabilities(self)
+
+    def __deepcopy__(self, memo):
+        from ultralytics.nn.modules.moe._common import _robust_deepcopy
+
+        return _robust_deepcopy(self, memo)
 
     # ── RoutedModule protocol ───────────────────────────────────────────
 
@@ -454,6 +469,7 @@ class MoLoRALayer(nn.Module):
                 "aux_loss": float(aux_loss.detach()),
             }
         self._last_aux_loss = aux_loss
+        publish_aux_loss(self, aux_loss, kind="molora", training=self.training)
 
         return base_out + adapted
 
@@ -471,30 +487,32 @@ class MoLoRALayer(nn.Module):
         B = x.shape[0]
         K = top_k_indices.shape[1]
         expert_out = torch.zeros_like(out_template)
-
-        for k in range(K):
-            expert_idx = top_k_indices[:, k]  # [B]
-            weights = top_k_weights[:, k]      # [B]
-
-            # Batched: group all samples selecting the same expert.
-            # Use pure-tensor path (no mask.any() GPU→CPU sync): compute
-            # masked outputs and use scatter_add to accumulate, skipping
-            # empty experts via torch.where on scalar bools.
-            for e in range(self.num_experts):
-                mask = expert_idx == e  # [B] bool
-                mask_f = mask.float().view(-1, *([1] * (x.dim() - 1)))
-                # Pure-tensor path: compute expert on full batch and zero
-                # contribution for non-selected samples.  This eliminates
-                # K×E GPU→CPU syncs from mask.any() at the cost of computing
-                # all E experts (acceptable for small E typical in MoLoRA).
-                if self._expert_frozen_mask is not None and self._expert_frozen_mask[e]:
-                    with torch.no_grad():
-                        out_e = self.experts[e](x)
-                else:
-                    out_e = self.experts[e](x)
-                w = (weights * mask_f.squeeze()).view(-1, *([1] * (out_e.dim() - 1)))
-                expert_out += out_e * w
-
+        grouped = not self.training and B >= 4
+        calls = 0
+        for e in range(self.num_experts):
+            mask = top_k_indices == e
+            selected = mask.any(dim=1)
+            batch_idx = torch.nonzero(selected, as_tuple=True)[0]
+            if batch_idx.numel() == 0:
+                continue
+            calls += 1
+            x_e = x[batch_idx] if grouped else x
+            out_e = self.experts[e](x_e)
+            if grouped:
+                weights = (top_k_weights[batch_idx] * mask[batch_idx].to(top_k_weights.dtype)).sum(dim=1)
+            else:
+                weights = (top_k_weights * mask.to(top_k_weights.dtype)).sum(dim=1)
+            shape = (-1,) + (1,) * (out_e.dim() - 1)
+            if grouped:
+                expert_out[batch_idx] += out_e * weights.view(shape)
+            else:
+                expert_out += out_e * weights.view(shape)
+        self._last_dispatch_stats = {
+            "mode": "grouped_sparse" if grouped else "dense_small_batch",
+            "expert_calls": calls if grouped else self.num_experts,
+            "selected_samples": B,
+            "top_k": K,
+        }
         return expert_out
 
     def _expert_usage(self, expert_indices: torch.Tensor) -> torch.Tensor:
@@ -507,26 +525,35 @@ class MoLoRALayer(nn.Module):
     # Merge / Unmerge
     # ------------------------------------------------------------------
 
-    def merge_weights(self) -> None:
+    def merge_weights(self, mode: str = "uniform", calibration: Optional[List[float]] = None) -> None:
         """Merge all expert deltas into the base layer weight.
 
         After merge, forward skips the LoRA path.  This is useful for
         ONNX export / inference where you want zero adapter overhead.
         """
+        if mode not in {"uniform", "calibrated"}:
+            raise ValueError("MoLoRA merge mode must be 'uniform' or 'calibrated'")
         if self.merged:
             return
-
-        # For inference, compute expected delta across experts (uniform prior)
-        # or sum all if you want full capacity.  Here we use E[ΔW] = mean(delta).
+        if mode == "calibrated":
+            if calibration is None or len(calibration) != self.num_experts:
+                raise ValueError("calibration must provide one weight per expert")
+            weights = torch.as_tensor(calibration, dtype=torch.float32)
+            if not torch.isfinite(weights).all() or (weights < 0).any() or float(weights.sum()) <= 0:
+                raise ValueError("calibration weights must be finite, non-negative, and non-zero")
+            weights = weights / weights.sum()
+        else:
+            weights = torch.full((self.num_experts,), 1.0 / self.num_experts)
         with torch.no_grad():
             if self.experts[0].is_conv:
-                for e in self.experts:
-                    _merge_conv_delta(self.base_layer.weight, e.lora_A, e.lora_B, e.scaling / self.num_experts)
+                for weight, e in zip(weights.tolist(), self.experts):
+                    _merge_conv_delta(self.base_layer.weight, e.lora_A, e.lora_B, e.scaling * weight)
             else:
-                for e in self.experts:
-                    _merge_linear_delta(self.base_layer.weight, e.lora_A, e.lora_B, e.scaling / self.num_experts)
+                for weight, e in zip(weights.tolist(), self.experts):
+                    _merge_linear_delta(self.base_layer.weight, e.lora_A, e.lora_B, e.scaling * weight)
 
         self.merged = True
+        self._merge_metadata = {"mode": mode, "approximate": True, "expert_weights": weights.tolist()}
         LOGGER.debug(f"[MoLoRA] Merged {self.num_experts} experts into base layer.")
 
     def unmerge_weights(self) -> None:
@@ -534,12 +561,13 @@ class MoLoRALayer(nn.Module):
         if not self.merged:
             return
         with torch.no_grad():
+            weights = self._merge_metadata.get("expert_weights") or [1.0 / self.num_experts] * self.num_experts
             if self.experts[0].is_conv:
-                for e in self.experts:
-                    _unmerge_conv_delta(self.base_layer.weight, e.lora_A, e.lora_B, e.scaling / self.num_experts)
+                for weight, e in zip(weights, self.experts):
+                    _unmerge_conv_delta(self.base_layer.weight, e.lora_A, e.lora_B, e.scaling * weight)
             else:
-                for e in self.experts:
-                    _unmerge_linear_delta(self.base_layer.weight, e.lora_A, e.lora_B, e.scaling / self.num_experts)
+                for weight, e in zip(weights, self.experts):
+                    _unmerge_linear_delta(self.base_layer.weight, e.lora_A, e.lora_B, e.scaling * weight)
         self.merged = False
         LOGGER.debug("[MoLoRA] Unmerged experts from base layer.")
 

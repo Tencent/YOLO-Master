@@ -51,6 +51,8 @@ from ultralytics.utils.lora import (
     get_lora_training_stats,
     load_lora_compatible_state_dict,
     resolve_adalora_total_step,
+    discover_adapter_backend,
+    save_adapters,
     save_lora_adapters,
 )
 from ultralytics.utils.checks import check_amp, check_file, check_imgsz, check_model_file_from_stem, print_args
@@ -58,6 +60,7 @@ from ultralytics.utils.dist import collect_ddp_error_logs, ddp_cleanup, generate
 from ultralytics.utils.files import get_latest_run
 from ultralytics.utils.plotting import plot_results
 from ultralytics.utils.loss import _get_mixture_loss_ema
+from ultralytics.nn.modules.moe.config import apply_mixture_config, resolve_mixture_config
 from ultralytics.utils.torch_utils import (
     TORCH_2_4,
     EarlyStopping,
@@ -513,7 +516,7 @@ class BaseTrainer:
         self._detect_moa_mot_modules()
 
         # MoE Routing Collapse Detector (initialize if model has MoE layers)
-        from ultralytics.nn.modules.moe.utils import is_core_moe_block, model_has_core_moe, iter_core_moe_expert_params
+        from ultralytics.nn.modules.moe.utils import is_core_moe_block, model_has_core_moe
 
         has_moe = model_has_core_moe(self.model)
         # Persist the detection result so the train loop can gate MoE-only
@@ -525,61 +528,6 @@ class BaseTrainer:
             collapse_thr = getattr(self.args, 'moe_collapse_threshold', 0.8)
             self._moe_collapse_detector = RoutingCollapseDetector(collapse_threshold=collapse_thr)
             LOGGER.info(f"[MoE] Routing collapse detector initialized (threshold={collapse_thr})")
-
-            # Inject MoE hyperparameters from training config into model modules
-            # This bridges the gap: YAML config (moe_balance_loss) → module defaults (balance_loss_coeff)
-            balance_loss_coeff = getattr(self.args, 'moe_balance_loss', 1.0)
-            router_z_loss_coeff = getattr(self.args, 'moe_router_z_loss', 1.0)
-
-            # Guard: prevent moe_balance_loss from being too small
-            # (legacy configs or stale caches may inject 0.01/0.001 values)
-            if balance_loss_coeff < 0.1:
-                LOGGER.warning(
-                    f"[MoE] moe_balance_loss={balance_loss_coeff} is too small (<0.1), "
-                    f"forcing to 1.0. Please check your config/hyperparameters."
-                )
-                balance_loss_coeff = 1.0
-            if router_z_loss_coeff < 0.1:
-                LOGGER.warning(
-                    f"[MoE] moe_router_z_loss={router_z_loss_coeff} is too small (<0.1), "
-                    f"forcing to 1.0."
-                )
-                router_z_loss_coeff = 1.0
-
-            LOGGER.info(
-                f"[MoE] Config injection: balance_loss_coeff={balance_loss_coeff}, "
-                f"z_loss_coeff={router_z_loss_coeff}"
-            )
-            noise_std = getattr(self.args, 'moe_noise_std', 0.5)
-            temperature = getattr(self.args, 'moe_temperature', 1.0)
-            weight_threshold = getattr(self.args, 'moe_weight_threshold', 0.01)
-
-            injected = 0
-            for m in self.model.modules():
-                if not is_core_moe_block(m):
-                    continue
-                if hasattr(m, 'balance_loss_coeff'):
-                    m.balance_loss_coeff = balance_loss_coeff
-                    injected += 1
-                if hasattr(m, 'router_z_loss_coeff'):
-                    m.router_z_loss_coeff = router_z_loss_coeff
-                if hasattr(m, 'routing') and hasattr(m.routing, 'noise_std'):
-                    m.routing.noise_std = noise_std
-                if hasattr(m, 'routing') and hasattr(m.routing, 'temperature'):
-                    m.routing.temperature = temperature
-                if hasattr(m, 'weight_threshold'):
-                    m.weight_threshold = weight_threshold
-                # Propagate to internal MoELoss
-                if hasattr(m, 'moe_loss_fn'):
-                    m.moe_loss_fn.balance_loss_coeff = balance_loss_coeff
-                    m.moe_loss_fn.z_loss_coeff = router_z_loss_coeff
-                # Propagate to MoLoRA layers
-                if hasattr(m, 'loss_fn') and hasattr(m.loss_fn, 'balance_loss_coef'):
-                    m.loss_fn.balance_loss_coef = getattr(self.args, 'molora_balance_loss', 0.01)
-                if hasattr(m, 'loss_fn') and hasattr(m.loss_fn, 'z_loss_coef'):
-                    m.loss_fn.z_loss_coef = getattr(self.args, 'molora_router_z_loss', 0.001)
-                if hasattr(m, 'loss_fn') and hasattr(m.loss_fn, 'diversity_loss_coef'):
-                    m.loss_fn.diversity_loss_coef = getattr(self.args, 'molora_diversity_loss', 0.0)
 
             # ── MapSaturationScheduler injection (mAP-driven balance annealing) ──
             if getattr(self.args, 'moe_map_saturation_enabled', False):
@@ -604,71 +552,9 @@ class BaseTrainer:
                     f"decay={moe_map_sat_config.decay_factor}, min_scale={moe_map_sat_config.min_scale}"
                 )
 
-            LOGGER.info(
-                f"[MoE] Config injected into {injected} MoE modules: "
-                f"balance_loss={balance_loss_coeff}, z_loss={router_z_loss_coeff}, "
-                f"noise_std={noise_std}, temperature={temperature}"
-            )
-
-        # MoT router aux-loss coefficients (separate from core MoE injection)
-        try:
-            from ultralytics.nn.modules.mot import MoTBlock
-            from ultralytics.nn.modules.moa import MoABlock, C2fMoA
-
-            mot_balance = getattr(self.args, "mot_balance_loss", 0.01)
-            mot_z = getattr(self.args, "mot_router_z_loss", 0.01)
-            mot_sparse = bool(getattr(self.args, "mot_sparse_train", False))
-            moa_win = int(getattr(self.args, "moa_local_window_size", 7))
-            mot_injected = 0
-            moa_injected = 0
-            for m in self.model.modules():
-                if isinstance(m, MoTBlock):
-                    m.balance_loss_coeff = mot_balance
-                    m.router_z_loss_coeff = mot_z
-                    m.sparse_train = mot_sparse
-                    mot_injected += 1
-                elif isinstance(m, MoABlock):
-                    m.local_head.window_size = max(1, moa_win)
-                    moa_injected += 1
-            if mot_injected and RANK in {-1, 0}:
-                LOGGER.info(
-                    f"[MoT] Config injected into {mot_injected} MoTBlock layers: "
-                    f"balance_loss={mot_balance}, z_loss={mot_z}, sparse_train={mot_sparse}"
-                )
-            if moa_injected and RANK in {-1, 0}:
-                LOGGER.info(
-                    f"[MoA] Config injected into {moa_injected} MoABlock layers: "
-                    f"local_window_size={moa_win}"
-                )
-        except (ImportError, AttributeError) as e:
-            if RANK in {-1, 0}:
-                LOGGER.warning(
-                    f"[MoT/MoA] Config injection skipped: {e}",
-                    exc_info=LOGGER.isEnabledFor(10),
-                )
-
-        # MoLoRA injection (even if no MoE layers present)
-        has_molora = any(
-            getattr(m, 'molora_enabled', False) for m in self.model.modules()
-        )
-        if has_molora:
-            LOGGER.info("[MoLoRA] Detected MoLoRA layers in model.")
-            molora_balance = getattr(self.args, 'molora_balance_loss', 0.01)
-            molora_z = getattr(self.args, 'molora_router_z_loss', 0.001)
-            molora_diversity = getattr(self.args, 'molora_diversity_loss', 0.0)
-            molora_injected = 0
-            for m in self.model.modules():
-                if hasattr(m, 'loss_fn') and hasattr(m.loss_fn, 'balance_loss_coef'):
-                    m.loss_fn.balance_loss_coef = molora_balance
-                    molora_injected += 1
-                if hasattr(m, 'loss_fn') and hasattr(m.loss_fn, 'z_loss_coef'):
-                    m.loss_fn.z_loss_coef = molora_z
-                if hasattr(m, 'loss_fn') and hasattr(m.loss_fn, 'diversity_loss_coef'):
-                    m.loss_fn.diversity_loss_coef = molora_diversity
-            LOGGER.info(
-                f"[MoLoRA] Config injected into {molora_injected} MoLoRA layers: "
-                f"balance_loss={molora_balance}, z_loss={molora_z}, diversity_loss={molora_diversity}"
-            )
+        # Canonical final pass: resolve YAML/module annotations before legacy
+        # trainer compatibility code can leave stale values behind.
+        self._resolve_mixture_runtime_config()
 
         # Few-shot mode: load teacher model for knowledge distillation
         if getattr(self.args, 'lora_few_shot_mode', False):
@@ -870,6 +756,17 @@ class BaseTrainer:
             factor = getattr(self.args, "moa_mot_temperature_factor", 0.97)
             min_temp = getattr(self.args, "moa_mot_min_temperature", 0.3)
             LOGGER.info(f"[MoA/MoT] Router temperature annealing enabled (factor={factor}, min_temp={min_temp}).")
+
+    def _resolve_mixture_runtime_config(self):
+        """Resolve and apply all mixture runtime settings once per train setup."""
+        model = unwrap_model(self.model)
+        self.mixture_config = resolve_mixture_config(self.args, model)
+        applied = apply_mixture_config(model, self.mixture_config)
+        if RANK in {-1, 0} and self.mixture_config.audit:
+            LOGGER.info(
+                f"[Mixture] Runtime config resolved for {len(self.mixture_config.audit)} modules; "
+                f"applied={applied}. Audit is available on `model.mixture_config_audit`."
+            )
 
     def _anneal_moa_mot_temperature(self):
         """Anneal MoA/MoT router temperatures once after each completed training epoch."""
@@ -1530,9 +1427,11 @@ class BaseTrainer:
     def _reset_non_checkpoint_moe_runtime_state():
         """Clear per-process MoE auxiliary state omitted from recovery checkpoints."""
         from ultralytics.nn.modules.moe._common import MOE_LOSS_REGISTRY, _MOE_LOSS_REGISTRY_LOCK
+        from ultralytics.nn.modules.routing_protocol import reset_routing_runtime_state
 
         with _MOE_LOSS_REGISTRY_LOCK:
             MOE_LOSS_REGISTRY.clear()
+        reset_routing_runtime_state()
 
     def _save_healthy_checkpoint(self, serialized_ckpt):
         """Atomically replace the recovery checkpoint only with a finite complete state.
@@ -1603,13 +1502,14 @@ class BaseTrainer:
             self.best.write_bytes(serialized_ckpt)
 
         lora_model = unwrap_model(self.model)
-        if getattr(lora_model, "lora_enabled", False) and getattr(self.args, "lora_save_adapters", True):
+        adapter_backend = discover_adapter_backend(lora_model)
+        if adapter_backend is not None and getattr(self.args, "lora_save_adapters", True):
             adapter_dir = self.wdir / (getattr(self.args, "lora_adapter_dir", "lora_adapter") + f"_epoch{self.epoch}")
             if self.best_fitness == self.fitness:
                 best_adapter_dir = self.wdir / (getattr(self.args, "lora_adapter_dir", "lora_adapter") + "_best")
-                save_lora_adapters(lora_model, best_adapter_dir)
+                save_adapters(lora_model, best_adapter_dir)
             if self.save_period > 0 and self.epoch % self.save_period == 0:
-                save_lora_adapters(lora_model, adapter_dir)
+                save_adapters(lora_model, adapter_dir)
         if self.save_period > 0 and self.epoch % self.save_period == 0:
             (self.wdir / f"epoch{self.epoch}.pt").write_bytes(serialized_ckpt)
 

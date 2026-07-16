@@ -430,6 +430,30 @@ class Model(torch.nn.Module):
         LOGGER.warning("[LoRA] Save skipped: no active LoRA adapters found on trainer.model or model.")
         return False
 
+    def save_adapters(self, path: str | Path) -> bool:
+        """Save the active standard LoRA or MoLoRA backend artifact."""
+        self._check_is_pytorch_model()
+        from ultralytics.utils.lora import save_adapters
+        from ultralytics.utils.torch_utils import unwrap_model
+
+        return save_adapters(unwrap_model(getattr(self.trainer, "model", None) or self.model), path)
+
+    def load_adapters(self, path: str | Path) -> bool:
+        """Load an adapter artifact using its recorded backend metadata."""
+        self._check_is_pytorch_model()
+        from ultralytics.utils.lora import load_adapters
+        from ultralytics.utils.torch_utils import unwrap_model
+
+        return load_adapters(unwrap_model(self.model), path)
+
+    def merge_adapters(self, **kwargs: Any) -> bool:
+        """Merge the active adapter with explicit backend-specific semantics."""
+        self._check_is_pytorch_model()
+        from ultralytics.utils.lora import merge_adapters
+        from ultralytics.utils.torch_utils import unwrap_model
+
+        return merge_adapters(unwrap_model(getattr(self.trainer, "model", None) or self.model), **kwargs)
+
     def merge_lora(self) -> bool:
         """Merge active LoRA adapters into the base model in-place.
 
