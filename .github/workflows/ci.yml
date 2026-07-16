@@ -45,7 +45,7 @@ jobs:
           from ultralytics.nn.modules.moe import STABLE_MOE_CLASSES, EXPERIMENTAL_MOE_CLASSES
           overlap = STABLE_MOE_CLASSES & EXPERIMENTAL_MOE_CLASSES
           assert not overlap, f'STABLE/EXPERIMENTAL overlap: {overlap}'
-          assert 'HybridAdaptiveGateMoE' in STABLE_MOE_CLASSES, 'v0.6 stable MoE missing from STABLE'
+          assert 'OptimalHybridGateMoE' in STABLE_MOE_CLASSES, 'stable hybrid MoE missing from STABLE'
           assert 'ES_MOE' in STABLE_MOE_CLASSES, 'ES_MOE missing from STABLE'
           print('MoE tier consistency: PASS')
           "
@@ -59,7 +59,27 @@ jobs:
           print(f'Stable model build: PASS ({len(moe_layers)} MoE layers)')
           "
       - name: MoE unit tests
-        run: python -m pytest tests/test_moe.py -x -q --no-header --tb=short 2>&1 | tail -20
+        run: python -m pytest tests/test_moe.py -x -q --no-header --tb=short
+
+  mixture-p0-regression:
+    name: Mixture P0 regression gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install package and CPU torch
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]" 2>/dev/null || pip install -e .
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+      - name: Configuration and adapter integrity
+        run: python -m pytest -q tests/test_default_config_integrity.py tests/test_master_model_configs.py tests/test_molora_dtype.py --tb=long
+      - name: Core mixture smoke tests
+        run: python -m pytest -q tests/test_moe.py tests/test_moa.py tests/test_mot.py --tb=long
+      - name: Compile core mixture packages
+        run: python -m compileall -q ultralytics/nn/modules ultralytics/nn/peft ultralytics/utils/lora ultralytics/vpeft
 
   version-check:
     runs-on: ubuntu-latest

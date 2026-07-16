@@ -1,9 +1,11 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+import pytest
 import torch
 
 from tests import MODEL
@@ -113,7 +115,8 @@ def test_convert_ndjson_to_yolo_if_needed_converts_ndjson(monkeypatch, tmp_path)
 
     monkeypatch.setattr(validator_module, "convert_ndjson_to_yolo", fake_convert_ndjson_to_yolo)
 
-    assert validator_module.convert_ndjson_to_yolo_if_needed("coco8-ndjson.ndjson") == str(converted_yaml)
+    actual = validator_module.convert_ndjson_to_yolo_if_needed("coco8-ndjson.ndjson")
+    assert Path(actual).resolve() == converted_yaml.resolve()
 
 
 def test_rtdetr_lora_safety_guard_mutates_training_args():
