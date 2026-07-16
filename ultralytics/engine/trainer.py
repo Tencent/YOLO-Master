@@ -2109,7 +2109,13 @@ class BaseTrainer:
 
             if isinstance(e, MoERouterError):
                 LOGGER.warning(f"Validation failed with nonfinite router input: {e}")
-                return {}, float("nan")
+                if not getattr(self, "_warned_disable_val_due_to_router", False):
+                    LOGGER.warning("Disabling further validation for this run due to nonfinite router input.")
+                    self._warned_disable_val_due_to_router = True
+                self._disable_val_due_to_router = True
+                if hasattr(self, "args") and hasattr(self.args, "val"):
+                    self.args.val = False
+                return None, None
             raise
         if metrics is None:
             return None, None
