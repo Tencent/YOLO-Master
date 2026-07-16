@@ -204,10 +204,23 @@ def test_nonfinite_gradient_is_consumed_by_scaler_before_clear():
     trainer.fitness = 0.0
 
     trainer.model.weight.grad = torch.full_like(trainer.model.weight, float("nan"))
-    trainer.optimizer_step()
+    assert trainer.optimizer_step() is False
 
     assert trainer.scaler.events == ["unscale", "step", "update"]
     assert trainer.model.weight.grad is None
+
+
+def test_finite_optimizer_step_reports_commit():
+    trainer = object.__new__(BaseTrainer)
+    trainer.model = nn.Linear(1, 1)
+    trainer.optimizer = torch.optim.SGD(trainer.model.parameters(), lr=0.01)
+    trainer.scaler = torch.amp.GradScaler("cuda", enabled=False)
+    trainer.ema = None
+    trainer._gradient_nonfinite = False
+    trainer.args = SimpleNamespace(lora_few_shot_mode=False)
+    trainer.model(torch.ones(1, 1)).sum().backward()
+
+    assert trainer.optimizer_step() is True
 
 
 def test_validate_converts_router_nan_to_recovery_signal():

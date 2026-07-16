@@ -1191,7 +1191,12 @@ class BaseTrainer:
                             module._update_importance()
                 
                 if should_step:
-                    self.optimizer_step()
+                    step_succeeded = self.optimizer_step()
+                    if not step_succeeded:
+                        # A skipped optimizer step invalidates the epoch boundary. Stop immediately:
+                        # do not run more batches, epoch callbacks, EMA validation, or checkpointing
+                        # against a partially applied epoch. Recovery below restores and retries it.
+                        break
                     last_opt_step = ni
 
                     # Timed stopping
@@ -1222,6 +1227,13 @@ class BaseTrainer:
                         self.plot_training_samples(batch, ni)
 
                 self.run_callbacks("on_train_batch_end")
+
+            # Reject the partial epoch at the first detected gradient overflow. Recovery
+            # owns the retry and must happen before any accepted-epoch side effects.
+            if self._gradient_nonfinite:
+                if not self._handle_nan_recovery(epoch):
+                    raise RuntimeError("Gradient NaN/Inf was detected but recovery was not triggered.")
+                continue
 
             self.lr = {f"lr/pg{ir}": x["lr"] for ir, x in enumerate(self.optimizer.param_groups)}  # for loggers
             self._anneal_moa_mot_temperature()
@@ -1672,7 +1684,7 @@ class BaseTrainer:
         LOGGER.warning(f"[NaN diagnostic] {self._nonfinite_diagnostic}")
 
     def optimizer_step(self):
-        """Perform a single step of the training optimizer with gradient clipping and EMA update."""
+        """Perform one optimizer step and return whether it committed finite gradients."""
         self.scaler.unscale_(self.optimizer)  # unscale gradients
         bad_parameter = next(
             (name for name, p in self.model.named_parameters()
@@ -1686,7 +1698,7 @@ class BaseTrainer:
             )
             if not self.scaler.is_enabled():
                 self.optimizer.zero_grad()
-                return
+                return False
             # scaler.update() alone cannot downscale because it needs the
             # found_inf state that step() records.  Calling step() here lets
             # GradScaler detect the inf/NaN gradients, skip the optimizer step,
@@ -1696,7 +1708,7 @@ class BaseTrainer:
             self.scaler.step(self.optimizer)
             self.scaler.update()
             self.optimizer.zero_grad()
-            return
+            return False
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=10.0)
         self.scaler.step(self.optimizer)
         self.scaler.update()
@@ -1710,7 +1722,7 @@ class BaseTrainer:
                 LOGGER.warning("[debug-point skip-ema-nonfinite] Skipping EMA update because model state is nonfinite.")
                 self._warned_skip_ema_nonfinite = True
             #endregion debug-point skip-ema-nonfinite
-        
+
         # v3: Update EMA teacher for progressive self-distillation
         if getattr(self.args, 'lora_few_shot_mode', False) and hasattr(self, 'teacher_ema') and self.teacher_ema is not None:
             ema_decay = getattr(self, 'teacher_ema_decay', 0.999)
@@ -1718,6 +1730,7 @@ class BaseTrainer:
                 for ema_p, stu_p in zip(self.teacher_ema.parameters(), self.model.parameters()):
                     if ema_p.shape == stu_p.shape:
                         ema_p.data.mul_(ema_decay).add_(stu_p.data, alpha=1.0 - ema_decay)
+        return True
 
     def preprocess_batch(self, batch):
         """Allow custom preprocessing model inputs and ground truths depending on task type."""

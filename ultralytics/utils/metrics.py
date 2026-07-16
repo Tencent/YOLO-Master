@@ -105,6 +105,13 @@ def bbox_iou(
     Returns:
         (torch.Tensor): IoU, GIoU, DIoU, or CIoU values depending on the specified flags.
     """
+    promote_low_precision = box1.is_floating_point() and box2.is_floating_point() and (
+        box1.dtype in (torch.float16, torch.bfloat16) or box2.dtype in (torch.float16, torch.bfloat16)
+    )
+    if promote_low_precision:
+        box1, box2 = box1.float(), box2.float()
+        eps = max(float(eps), torch.finfo(torch.float32).eps)
+
     # Get the coordinates of bounding boxes
     if xywh:  # transform from xywh to xyxy
         (x1, y1, w1, h1), (x2, y2, w2, h2) = box1.chunk(4, -1), box2.chunk(4, -1)
