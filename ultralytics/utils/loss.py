@@ -13,31 +13,42 @@ from ultralytics.utils.metrics import OKS_SIGMA
 from ultralytics.utils.ops import crop_mask, xywh2xyxy, xyxy2xywh
 from ultralytics.utils.tal import RotatedTaskAlignedAssigner, TaskAlignedAssigner, dist2bbox, dist2rbox, make_anchors
 from ultralytics.utils.torch_utils import autocast
+from ultralytics.utils import LOGGER
 
 from .metrics import bbox_iou, probiou
 from .tal import bbox2dist
 
 
 def _collect_moe_aux_loss(model: nn.Module | None, device: torch.device) -> torch.Tensor:
-    """Sum MoE aux losses from the registry only (avoids wrapper double-counting)."""
-    moe_loss = torch.tensor(0.0, device=device)
+    """Collect canonical MoE and MoLoRA losses with registry fallback semantics."""
     if model is None or not getattr(model, "training", True):
-        return moe_loss
+        return torch.tensor(0.0, device=device)
+    from ultralytics.nn.modules.routing_protocol import collect_aux_loss, get_aux_record
+
+    moe_loss = collect_aux_loss(
+        model,
+        device=device,
+        include_kinds=("moe", "molora"),
+    )
+    # Compatibility bridge for callers that intentionally populate only the
+    # legacy registry (older hooks/checkpoint tests). Canonical publications
+    # always win, so this cannot double-count normal forwards.
     try:
         from ultralytics.nn.modules.moe.modules import MOE_LOSS_REGISTRY
-    except Exception:
-        return moe_loss
-    seen: set[int] = set()
-    for m in model.modules():
-        loss_t = MOE_LOSS_REGISTRY.get(m)
-        if isinstance(loss_t, torch.Tensor) and id(m) not in seen:
-            lt = loss_t.to(device)
-            # Guard against NaN from corrupted registry entries
-            if not torch.isfinite(lt):
-                LOGGER.warning(f"[NaN guard] MoE aux_loss for {m} is non-finite ({lt}), skipping")
+        for module in model.modules():
+            if get_aux_record(module) is not None:
                 continue
-            moe_loss = moe_loss + lt
-            seen.add(id(m))
+            value = MOE_LOSS_REGISTRY.get(module)
+            if not isinstance(value, torch.Tensor):
+                continue
+            value = value.to(device)
+            if torch.isfinite(value).all():
+                moe_loss = moe_loss + value
+    except Exception:
+        pass
+    if not torch.isfinite(moe_loss):
+        LOGGER.warning(f"[NaN guard] canonical MoE/MoLoRA aux_loss is non-finite ({moe_loss}), skipping")
+        return moe_loss.new_zeros(())
     return moe_loss
 
 
@@ -202,6 +213,14 @@ def _collect_mixture_aux_loss(
     # validation at different speeds or one rank GPU-hangs on a particular batch.
     if model is not None and not getattr(model, "training", True):
         return torch.tensor(0.0, device=device)
+    from ultralytics.nn.modules.routing_protocol import collect_aux_loss
+
+    # Keep a structured per-kind view for logging/debugging. The numerical
+    # path below remains unchanged, including the existing three EMA scales.
+    if model is not None:
+        _, model._mixture_aux_diagnostics = collect_aux_loss(
+            model, device=device, return_diagnostics=True
+        )
     moe_l = _collect_moe_aux_loss(model, device)
     mot_l = _collect_mot_aux_loss(model, device)
     moa_l = _collect_moa_aux_loss(model, device)

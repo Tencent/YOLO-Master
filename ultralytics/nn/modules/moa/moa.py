@@ -37,6 +37,12 @@ import torch.distributed as dist
 import warnings
 
 from ultralytics.nn.modules.conv import Conv
+from ultralytics.nn.modules.routing_protocol import (
+    collect_aux_loss,
+    export_capabilities as _export_routing_capabilities,
+    publish_aux_loss,
+    routing_snapshot as _routing_snapshot,
+)
 
 
 def _init_conv_weights(module: nn.Module) -> None:
@@ -585,6 +591,20 @@ class MoABlock(nn.Module):
         """Router auxiliary loss (balance regularizer). Zero outside training."""
         return self.last_aux_loss
 
+    def publish_aux_loss(self, *, step: int, training: bool) -> torch.Tensor:
+        return publish_aux_loss(self, self.last_aux_loss, step=step, kind="moa", training=training)
+
+    def routing_snapshot(self) -> dict:
+        return _routing_snapshot(self)
+
+    def export_capabilities(self) -> dict:
+        return _export_routing_capabilities(self)
+
+    def __deepcopy__(self, memo):
+        from ultralytics.nn.modules.moe._common import _robust_deepcopy
+
+        return _robust_deepcopy(self, memo)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, C, H, W = x.shape
 
@@ -594,6 +614,7 @@ class MoABlock(nn.Module):
             self.last_aux_loss = _moa_router_aux_loss(weights, router_logits, self.aux_loss_coeff)
         else:
             self.last_aux_loss = x.new_zeros(())
+        publish_aux_loss(self, self.last_aux_loss, kind="moa", training=self.training)
 
         # ── Routing snapshot (detached diagnostics) ──────────────────────
         with torch.no_grad():
@@ -733,6 +754,7 @@ class C2fMoA(nn.Module):
             if isinstance(l, torch.Tensor):
                 aux_total = aux_total + l
         self.last_aux_loss = aux_total
+        publish_aux_loss(self, aux_total, kind="moa", training=self.training, covered_modules=self.m)
 
         # ── Routing snapshot (aggregated from child MoABlocks) ──────────
         with torch.no_grad():
@@ -764,6 +786,22 @@ class C2fMoA(nn.Module):
     @property
     def aux_loss(self) -> torch.Tensor:
         return self.last_aux_loss
+
+    def publish_aux_loss(self, *, step: int, training: bool) -> torch.Tensor:
+        return publish_aux_loss(
+            self, self.last_aux_loss, step=step, kind="moa", training=training, covered_modules=self.m
+        )
+
+    def routing_snapshot(self) -> dict:
+        return _routing_snapshot(self)
+
+    def export_capabilities(self) -> dict:
+        return _export_routing_capabilities(self)
+
+    def __deepcopy__(self, memo):
+        from ultralytics.nn.modules.moe._common import _robust_deepcopy
+
+        return _robust_deepcopy(self, memo)
 
 
 # ---------------------------------------------------------------------------
@@ -872,6 +910,7 @@ class NeckMoAFusion(nn.Module):
             self.last_aux_loss = _moa_router_aux_loss(weights, router_logits, self.aux_loss_coeff)
         else:
             self.last_aux_loss = hi.new_zeros(())
+        publish_aux_loss(self, self.last_aux_loss, kind="moa", training=self.training)
         w_cross = weights[:, 0:1]
         w_self  = weights[:, 1:2]
 
@@ -910,6 +949,20 @@ class NeckMoAFusion(nn.Module):
     def aux_loss(self) -> torch.Tensor:
         return self.last_aux_loss
 
+    def publish_aux_loss(self, *, step: int, training: bool) -> torch.Tensor:
+        return publish_aux_loss(self, self.last_aux_loss, step=step, kind="moa", training=training)
+
+    def routing_snapshot(self) -> dict:
+        return _routing_snapshot(self)
+
+    def export_capabilities(self) -> dict:
+        return _export_routing_capabilities(self)
+
+    def __deepcopy__(self, memo):
+        from ultralytics.nn.modules.moe._common import _robust_deepcopy
+
+        return _robust_deepcopy(self, memo)
+
 
 # ---------------------------------------------------------------------------
 # Utility: update router temperature (call each epoch or step)
@@ -943,25 +996,7 @@ def collect_moa_aux_loss(model: nn.Module) -> torch.Tensor:
     in the iteration order.  This mirrors the pattern used by C2fMoA and makes the
     function robust against future nested architectures.
     """
-    total = None
-    covered: set[int] = set()
-    for m in model.modules():
-        if isinstance(m, C2fMoA):
-            l = m.last_aux_loss
-            if isinstance(l, torch.Tensor) and l.requires_grad:
-                total = l if total is None else total + l
-            covered.update(id(child) for child in m.modules())
-        elif isinstance(m, NeckMoAFusion):
-            l = m.last_aux_loss
-            if isinstance(l, torch.Tensor) and l.requires_grad:
-                total = l if total is None else total + l
-            # P2-2 fix: mark children as covered to prevent double-counting
-            covered.update(id(child) for child in m.modules())
-        elif isinstance(m, MoABlock) and id(m) not in covered:
-            l = m.last_aux_loss
-            if isinstance(l, torch.Tensor) and l.requires_grad:
-                total = l if total is None else total + l
-    return total if total is not None else torch.zeros(1, device=_aux_loss_device(model))
+    return collect_aux_loss(model, include_kinds=("moa",), device=_aux_loss_device(model))
 
 
 __all__ = [

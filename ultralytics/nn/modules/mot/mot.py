@@ -54,6 +54,12 @@ import torch.distributed as dist
 from ultralytics.nn.modules.conv import Conv
 from ultralytics.nn.modules.moe.loss import differentiable_balance_loss as _moe_balance_loss
 from ultralytics.nn.modules.moe.utils import get_safe_groups as _safe_groups
+from ultralytics.nn.modules.routing_protocol import (
+    collect_aux_loss,
+    export_capabilities as _export_routing_capabilities,
+    publish_aux_loss,
+    routing_snapshot as _routing_snapshot,
+)
 from ultralytics.utils import LOGGER
 
 
@@ -839,6 +845,7 @@ class MoTBlock(nn.Module):
         self._init_weights()
         self.last_aux_loss: torch.Tensor | None = None
         self.last_routing_snapshot: dict = {}
+        self._last_dispatch_stats: dict = {}
 
     # ── RoutedModule protocol ───────────────────────────────────────────
     @property
@@ -852,6 +859,21 @@ class MoTBlock(nn.Module):
     def aux_loss(self) -> torch.Tensor:
         """Router auxiliary loss (GShard balance + z-loss). Zero outside training."""
         return self.last_aux_loss if self.last_aux_loss is not None else torch.zeros(())
+
+    def publish_aux_loss(self, *, step: int, training: bool) -> torch.Tensor:
+        value = self.last_aux_loss if self.last_aux_loss is not None else torch.zeros(())
+        return publish_aux_loss(self, value, step=step, kind="mot", training=training)
+
+    def routing_snapshot(self) -> dict:
+        return _routing_snapshot(self)
+
+    def export_capabilities(self) -> dict:
+        return _export_routing_capabilities(self)
+
+    def __deepcopy__(self, memo):
+        from ultralytics.nn.modules.moe._common import _robust_deepcopy
+
+        return _robust_deepcopy(self, memo)
 
     def _init_weights(self):
         nn.init.trunc_normal_(self.out_proj.weight, std=0.02)
@@ -882,6 +904,7 @@ class MoTBlock(nn.Module):
         use_sparse = (not self.training or self.sparse_train) and not torch.onnx.is_in_onnx_export()
         B = x.shape[0]
         if use_sparse:
+            expert_calls = 0
             for e_idx, expert in enumerate(self.experts):
                 if indices is not None:
                     active = (indices == e_idx).reshape(B, -1).any(dim=1)
@@ -890,6 +913,7 @@ class MoTBlock(nn.Module):
                 batch_idx = torch.nonzero(active, as_tuple=True)[0]
                 if batch_idx.numel() == 0:
                     continue
+                expert_calls += 1
                 w = weights[batch_idx, e_idx:e_idx + 1]
                 expert_out = expert(x[batch_idx])
                 if expert_out.shape != x[batch_idx].shape:
@@ -899,6 +923,7 @@ class MoTBlock(nn.Module):
                         f"the input tensor shape."
                     )
                 out[batch_idx] = out[batch_idx] + expert_out * w
+            self._last_dispatch_stats = {"mode": "sample_sparse", "expert_calls": expert_calls, "selected_samples": B}
         else:
             for e_idx, expert in enumerate(self.experts):
                 w = weights[:, e_idx:e_idx + 1]
@@ -910,6 +935,7 @@ class MoTBlock(nn.Module):
                         f"the input tensor shape."
                     )
                 out = out + expert_out * w
+            self._last_dispatch_stats = {"mode": "dense", "expert_calls": len(self.experts), "selected_samples": B}
         return out
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -942,6 +968,7 @@ class MoTBlock(nn.Module):
             aux = x.new_zeros(())
 
         self.last_aux_loss = aux
+        publish_aux_loss(self, aux, kind="mot", training=self.training)
 
         # ── Routing snapshot (detached diagnostics) ──────────────────────
         with torch.no_grad():
@@ -1053,6 +1080,7 @@ class C2fMoT(nn.Module):
             y.append(out)
             aux_total = aux_total + aux
         self.last_aux_loss = aux_total
+        publish_aux_loss(self, aux_total, kind="mot", training=self.training, covered_modules=self.m)
 
         # ── Routing snapshot (aggregated from child MoTBlocks) ──────────
         with torch.no_grad():
@@ -1086,6 +1114,22 @@ class C2fMoT(nn.Module):
     def aux_loss(self) -> torch.Tensor:
         return self.last_aux_loss
 
+    def publish_aux_loss(self, *, step: int, training: bool) -> torch.Tensor:
+        return publish_aux_loss(
+            self, self.last_aux_loss, step=step, kind="mot", training=training, covered_modules=self.m
+        )
+
+    def routing_snapshot(self) -> dict:
+        return _routing_snapshot(self)
+
+    def export_capabilities(self) -> dict:
+        return _export_routing_capabilities(self)
+
+    def __deepcopy__(self, memo):
+        from ultralytics.nn.modules.moe._common import _robust_deepcopy
+
+        return _robust_deepcopy(self, memo)
+
 
 # ---------------------------------------------------------------------------
 # Utility: collect aux losses from all MoT modules
@@ -1117,27 +1161,17 @@ def collect_mot_aux_loss(model: nn.Module, ddp_sync: bool = True) -> torch.Tenso
     Call in the training loss function:
         loss = det_loss + collect_mot_aux_loss(model)  # ddp_sync=True by default
     """
-    total = None
-    seen: set[int] = set()
-    for m in model.modules():
-        if isinstance(m, (C2fMoT, MoTBlock)):
-            if id(m) in seen:
-                continue
-            l = getattr(m, 'last_aux_loss', None)
-            if isinstance(l, torch.Tensor) and l.requires_grad:
-                total = l if total is None else total + l
-            # Mark this module and all its children as seen
-            seen.update(id(child) for child in m.modules())
-
-    zero = torch.zeros(1, device=_aux_loss_device(model))
-    if total is None:
-        return zero
+    total = collect_aux_loss(model, include_kinds=("mot",), device=_aux_loss_device(model))
+    if not total.requires_grad:
+        return total
 
     # P1-2 fix: DDP synchronize the aux-loss scalar so all ranks optimise a shared global target
     if ddp_sync and dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1:
-        sync_tensor = total.detach().float().to(total.device)
-        dist.all_reduce(sync_tensor, op=dist.ReduceOp.SUM)
-        global_value = sync_tensor / dist.get_world_size()
+        # Collective operations must not mutate a graph-connected tensor.
+        with torch.no_grad():
+            sync_tensor = total.detach().float().to(total.device).clone()
+            dist.all_reduce(sync_tensor, op=dist.ReduceOp.SUM)
+            global_value = sync_tensor / dist.get_world_size()
         # Keep the local autograd path while using the globally averaged value.
         total = total + (global_value.to(dtype=total.dtype) - total.detach())
 

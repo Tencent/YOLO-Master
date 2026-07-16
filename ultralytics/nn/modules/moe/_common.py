@@ -37,6 +37,7 @@ def autocast(enabled=True, **kwargs):
     return nullcontext() if not enabled else nullcontext()
 from .loss import MoELoss, gshard_balance_loss, weighted_gshard_balance_loss, differentiable_balance_loss, all_reduce_mean
 from .scheduler import MoEDynamicScheduler, MoEDynamicSchedulerConfig
+from ..routing_protocol import publish_aux_loss
 
 # Global registry to store auxiliary losses for MoE modules
 # This prevents storing non-leaf tensors in the module instance, avoiding deepcopy errors.
@@ -53,6 +54,9 @@ def _registry_set(module: nn.Module, value: torch.Tensor) -> None:
     """Thread-safe write to the MoE aux-loss registry."""
     with _MOE_LOSS_REGISTRY_LOCK:
         MOE_LOSS_REGISTRY[module] = value
+    # Keep the legacy registry as a transport adapter while canonical readers
+    # use step-aware records and can reject stale autograd graphs.
+    publish_aux_loss(module, value, kind="moe", training=module.training)
 
 
 def _registry_get(module: nn.Module):

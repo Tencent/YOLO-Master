@@ -133,6 +133,15 @@ from ultralytics.utils.torch_utils import (
     smart_inference_mode,
     time_sync,
 )
+from ultralytics.nn.modules.moe.config import annotate_mixture_yaml_config
+
+# YOLO26 YAMLs use versioned head names while the runtime keeps the canonical
+# Ultralytics implementations. Keep these aliases explicit and compatible.
+Segment26 = Segment
+Pose26 = Pose
+OBB26 = OBB
+YOLOESegment26 = YOLOESegment
+YOLOEDetect26 = YOLOEDetect
 
 
 class BaseModel(torch.nn.Module):
@@ -216,7 +225,9 @@ class BaseModel(torch.nn.Module):
         if self.training:
             try:
                 from ultralytics.nn.modules.moe.modules import MOE_LOSS_REGISTRY
+                from ultralytics.nn.modules.routing_protocol import reset_routing_runtime_state
                 MOE_LOSS_REGISTRY.clear()
+                reset_routing_runtime_state(self)
             except Exception:
                 pass
 
@@ -1002,7 +1013,9 @@ class RTDETRDetectionModel(DetectionModel):
         if self.training:
             try:
                 from ultralytics.nn.modules.moe.modules import MOE_LOSS_REGISTRY
+                from ultralytics.nn.modules.routing_protocol import reset_routing_runtime_state
                 MOE_LOSS_REGISTRY.clear()
+                reset_routing_runtime_state(self)
             except Exception:
                 pass
 
@@ -1848,6 +1861,7 @@ def parse_model(d, ch, verbose=True):
             if isinstance(a, str):
                 with contextlib.suppress(ValueError):
                     args[j] = locals()[a] if a in locals() else ast.literal_eval(a)
+        yaml_args = deepcopy(args)
         n = n_ = max(round(n * depth), 1) if n > 1 else n  # depth gain
         if m in base_modules:
             c1, c2 = ch[f], args[0]
@@ -1861,6 +1875,10 @@ def parse_model(d, ch, verbose=True):
             if m in repeat_modules:
                 args.insert(2, n)  # number of repeats
                 n = 1
+            # YOLO26 encodes C3k2 as (c3k, e, shortcut), whereas this local
+            # implementation retains the explicit `g` argument.
+            if m is C3k2 and len(args) == 6 and isinstance(args[-1], bool):
+                args = [*args[:5], 1, args[5]]
             if m is C3k2:  # for M/L/X sizes
                 legacy = False
                 if scale in "mlx":
@@ -1888,12 +1906,39 @@ def parse_model(d, ch, verbose=True):
         elif m is Concat:
             c2 = sum(ch[x] for x in f)
         elif m in frozenset(
-            {Detect, WorldDetect, YOLOEDetect, Segment, YOLOESegment, Pose, OBB, ImagePoolingAttn, v10Detect}
+            {
+                Detect,
+                WorldDetect,
+                YOLOEDetect,
+                Segment,
+                YOLOESegment,
+                Pose,
+                OBB,
+                ImagePoolingAttn,
+                v10Detect,
+                Segment26,
+                Pose26,
+                OBB26,
+                YOLOESegment26,
+                YOLOEDetect26,
+            }
         ):
             args.append([ch[x] for x in f])
-            if m is Segment or m is YOLOESegment:
+            if m in {Segment, Segment26, YOLOESegment, YOLOESegment26}:
                 args[2] = make_divisible(min(args[2], max_channels) * width, 8)
-            if m in {Detect, YOLOEDetect, Segment, YOLOESegment, Pose, OBB}:
+            if m in {
+                Detect,
+                YOLOEDetect,
+                Segment,
+                YOLOESegment,
+                Pose,
+                OBB,
+                Segment26,
+                Pose26,
+                OBB26,
+                YOLOESegment26,
+                YOLOEDetect26,
+            }:
                 m.legacy = legacy
         elif m is RTDETRDecoder:  # special case, channels arg must be passed in index 1
             args.insert(1, [ch[x] for x in f])
@@ -1911,6 +1956,7 @@ def parse_model(d, ch, verbose=True):
             c2 = ch[f]
 
         m_ = torch.nn.Sequential(*(m(*args) for _ in range(n))) if n > 1 else m(*args)  # module
+        annotate_mixture_yaml_config(m_, getattr(m, "__name__", m.__class__.__name__), yaml_args)
 
         # Inject MoE hyperparameters from global config into MoE modules
         # This bridges the gap between YAML config (moe_balance_loss, etc.)

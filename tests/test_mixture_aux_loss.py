@@ -29,6 +29,10 @@ def test_mixture_aux_loss_uses_ema_scales():
     # EMA scales should stay positive and stable across steps
     ema_buf = model._mixture_loss_ema_buf
     assert all(float(ema_buf[i]) >= 1e-4 for i in range(ema_buf.numel()))
+    diagnostics = model._mixture_aux_diagnostics
+    assert diagnostics["counts_by_kind"]["moa"] == 1
+    assert diagnostics["counts_by_kind"]["mot"] == 1
+    assert diagnostics["counts_by_kind"]["moe"] == 1
 
 
 def test_mixture_loss_ema_initializes_for_parameterized_model_without_tensor_bool():

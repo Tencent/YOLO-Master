@@ -29,6 +29,8 @@ from typing import Any, Dict, Optional, Protocol, runtime_checkable, Tuple
 import torch
 import torch.nn as nn
 
+from ..routing_protocol import RoutingAuxPublisher
+
 
 @runtime_checkable
 class RoutedModule(Protocol):
@@ -122,6 +124,7 @@ def collect_routed_children(module: nn.Module) -> list:
 
 
 __all__ = [
+    "RoutingAuxPublisher",
     "RoutedModule",
     "RoutedModuleMixin",
     "is_routed_module",
