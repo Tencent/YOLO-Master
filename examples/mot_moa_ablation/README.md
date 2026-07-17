@@ -69,16 +69,23 @@ LocalConv   Window      Deformable
 
 > **注意：** coco128 仅 128 张训练图，mAP 绝对值参考意义有限。关键结论是 4 个变体均**无 NaN、无 loss 发散**、训练稳定。
 
-### 实测路由分析 (训练后 MoT 模型, 合成场景)
+### 实测路由分析 (训练后 MoT 模型)
 
-| 场景 | LocalConv | Window | Deformable | 主导专家 |
+**合成场景 vs 真实图片：**
+
+| 场景 | 来源 | LocalConv | Window | Deformable |
 |:---|---:|---:|---:|:---|
-| dense_small | 24.0% | **55.8%** | 20.2% | Window |
-| irregular_occluded | 25.0% | **54.5%** | 20.5% | Window |
-| large_regular | 26.7% | **51.9%** | 21.4% | Window |
-| sparse_small | 23.8% | **55.8%** | 20.4% | Window |
+| dense_small | 合成 | 24.0% | **55.8%** | 20.2% |
+| irregular_occluded | 合成 | 25.0% | **54.5%** | 20.5% |
+| large_regular | 合成 | 26.7% | **51.9%** | 21.4% |
+| sparse_small | 合成 | 23.8% | **55.8%** | 20.4% |
+| **train2017 (真实)** | COCO128 | 25.1% | **54.2%** | 20.7% |
 
-> **分析：** 训练后的 router 形成了差异化路由：WindowTransformer 在各类场景中主导（52-56%），LocalConv 和 Deformable 各占 20-27%。Deformable 在 irregular_occluded 场景中激活率略高（20.5% vs 20.2%），但合成数据差异有限。需真实遮挡场景图片验证。**与未训练模型（全部选择 LocalConv）形成鲜明对比，证明 router 已通过学习形成了有意义的专家分配策略。**
+> **关键发现：**
+> 1. 训练后的 router 形成了差异化分配：WindowTransformer 主导（52-56%），LocalConv 和 Deformable 各占 20-27%
+> 2. 与**未训练模型（100% 选 LocalConv）**形成鲜明对比，证明 router 确实学到了有意义的专家分配
+> 3. 合成场景与真实 COCO 图片的路由分布高度一致（误差 <2%），表明合成探针可作为无数据集时的有效替代
+> 4. **DeformableTransformer 遮挡场景验证：** 合成数据上 irregular_occluded vs dense_small 的 Deformable 激活率差异仅为 +0.3%（20.5% vs 20.2%），未达统计显著。需要真实遮挡场景图片（如 COCO occlusion split 或 VisDrone 遮挡标注）进行进一步验证
 
 ### 训练命令
 
