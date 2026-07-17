@@ -1,96 +1,87 @@
-# YOLO-Master-EsMoE-N LoRA Scenario Guide
+# YOLO-Master Extra LoRA Scenarios
 
-This guide documents two deliberately different LoRA adaptation scenes for YOLO-Master-EsMoE-N:
+This document tracks two additional YOLO-Master-EsMoE-N LoRA adaptation
+experiments. It is intended to make the SKU-110K and Construction-PPE rank
+sweeps reproducible and provide a compact place for result tables and run
+links.
 
-| Scene | Dataset | Transfer setting | Config |
-| :--- | :--- | :--- | :--- |
-| Dense aerial detection | `VisDrone.yaml` | many tiny objects, heavy scale variation, crowded images | `yolo_master_visdrone_lora.yaml` |
-| Sparse medical detection | `brain-tumor.yaml` | few boxes per image, grayscale-like MRI signal, small dataset | `yolo_master_brain_tumor_lora.yaml` |
+## Runtime Environment
 
-Both configs expose the requested LoRA controls: `lora_r`, `lora_alpha`, `lora_use_rslora`, `lora_target_modules`, `lora_include_attention`, and `lora_gradient_checkpointing`.
+| Item | Value |
+| --- | --- |
+| GPU | NVIDIA L20 |
+| Public curves | [Weights & Biases](https://wandb.ai/zhangjch98-sun-yat-sen-university/yolo-master-issue50) |
 
-## Config Choices
+## Scope
 
-| Setting | VisDrone | brain-tumor |
-| :--- | :--- | :--- |
-| Default rank | `8` | `4` |
-| Epochs | `30` | `40` |
-| Data fraction | `0.25` | `1.0` |
-| Image size | `768` | `640` |
-| Batch size | `8` | `16` |
+- Model family: YOLO-Master detection models
+- Primary model config: `ultralytics/cfg/models/master/v0_10/det/yolo-master-n.yaml`
+- LoRA configs:
+  - `examples/lora_examples/yolo_master_sku110k_lora.yaml`
+  - `examples/lora_examples/yolo_master_construction_ppe_lora.yaml`
+- Completed experiment set:
+  - SKU-110K LoRA rank sweep: `r=4`, `r=8`, `r=16`
+  - Construction-PPE LoRA rank sweep: `r=4`, `r=8`, `r=16`
+
+## Repository Layout
+
+```text
+examples/lora_examples/
+  yolo_master_sku110k_lora.yaml
+  yolo_master_construction_ppe_lora.yaml
+  yolo_master_lora_scenarios_README.md
+  run_yolo_master_lora_rank_sweep.py
+```
+
+## Experimental Setup
+
+| Dataset | Data config | Epochs | Batch | Image size | Fraction | AMP |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| SKU-110K | `ultralytics/cfg/datasets/SKU-110K.yaml` | 30 | 16 | 640 | 1.0 | Disabled |
+| Construction-PPE | `ultralytics/cfg/datasets/construction-ppe.yaml` | 40 | 16 | 640 | 1.0 | Enabled |
+
+## LoRA Hyperparameters
+
+Both configs use the same LoRA hyperparameter sweep.
+
+| Setting | SKU-110K | Construction-PPE |
+| --- | --- | --- |
+| `lora_r` | `4`, `8`, `16` | `4`, `8`, `16` |
+| `lora_alpha` | `8`, `16`, `32` | `8`, `16`, `32` |
 | `lora_use_rslora` | `True` | `True` |
 | `lora_include_attention` | `False` | `False` |
 | `lora_gradient_checkpointing` | `True` | `True` |
-| Router/gating LoRA | excluded | excluded |
 
-The target modules include backbone convolutions and EsMoE expert paths:
+## Commands
 
-```yaml
-lora_target_modules:
-  - conv
-  - fused_conv
-  - bottleneck.0
-  - shared_feature.0
-  - static_net.3
-  - proj
-  - expert_projections.0.0
-  ...
-  - expert_projections.15.0
-```
+The rank list is executed sequentially on the selected device. Set `--device`
+to an available CUDA device id for the local machine.
 
-Routing and gating layers are intentionally excluded via:
-
-```yaml
-lora_exclude_modules: ["router", "routing", "gate", "gating"]
-```
-
-For short few-shot runs, router LoRA can change expert assignment before the target dataset has enough examples to stabilize the routing distribution. The default recipes adapt the expert/backbone feature transforms while keeping the router priors fixed. Router adaptation should be treated as a separate ablation.
-
-## Rank Sweep
-
-Run the same `r=4,8,16` comparison for both scenes:
+Run the SKU-110K rank sweep:
 
 ```bash
-python examples/lora_examples/run_yolo_master_lora_rank_sweep.py --scene all --device 0
+python examples/lora_examples/run_yolo_master_lora_rank_sweep.py \
+  --scene sku110k \
+  --ranks 4 8 16 \
+  --device 0
 ```
 
-The helper writes `examples/lora_examples/yolo_master_lora_rank_sweep_results.csv` and logs to `runs/lora_rank_sweeps/logs/`. Rank overrides use `lora_alpha=2*r`.
+Run the Construction-PPE rank sweep:
 
-## Current Results
+```bash
+python examples/lora_examples/run_yolo_master_lora_rank_sweep.py \
+  --scene construction_ppe \
+  --ranks 4 8 16 \
+  --device 0
+```
 
-All runs use YOLO-Master-EsMoE-N with the scene configs above, `lora_use_rslora=True`, `lora_include_attention=False`, and router/gating LoRA excluded.
+## Result Summary
 
-| Scene | Rank | Epochs | Fraction | mAP50-95 | Best epoch | Trainable params | Adapter params | Train time | Peak VRAM |
-| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | :--- | :--- |
-| brain-tumor | 4 | 40 | 1.0 | 0.27129 | 36 | 468,290 | 123,116 | 13.31 min | 3.20 GB |
-| brain-tumor | 8 | 40 | 1.0 | 0.31259 | 40 | 596,782 | 251,608 | 13.74 min | 3.21 GB |
-| brain-tumor | 16 | 40 | 1.0 | 0.33535 | 37 | 848,390 | 503,216 | 14.82 min | 3.30 GB |
-| VisDrone | 4 | 30 | 0.25 | 0.01239 | 20 | 472,410 | 123,116 | 34.82 min | 12.50 GB |
-| VisDrone | 8 | 30 | 0.25 | 0.0149 | 23 | 600,902 | 251,608 | 35.12 min | 12.50 GB |
-| VisDrone | 16 | 30 | 0.25 | 0.02615 | 26 | 852,510 | 503,216 | 36.04 min | 12.60 GB |
-
-## Rank Recommendations
-
-For brain-tumor, `r=16` is currently the best completed rank by mAP50-95. The gain from `r=8` to `r=16` is modest but measurable, while VRAM remains nearly flat on this small dataset. Use `r=8` if faster iteration is preferred, and use `r=16` for the current best accuracy.
-
-For VisDrone, compare `r=8` after it finishes before locking the recommendation. Among completed runs, `r=16` is better than `r=4` on dense aerial detection. This matches the expectation that crowded small-object scenes need more adapter capacity.
-
-## Target Module Guidance
-
-Use convolution and MoE expert modules first. These cover the domain-specific feature transforms while preserving the routing policy. Keep `lora_include_attention=False` for the default YOLO-Master-EsMoE-N configs because the current stable recipes focus on conv and expert-projection adaptation; attention LoRA can be revisited as a separate ablation.
-
-Keep `lora_use_rslora=True` when sweeping rank. RS-LoRA improves scaling stability as rank increases, especially for `r=16`.
-
-Keep `lora_gradient_checkpointing=True` for both scenes. VisDrone is memory-heavy because of larger images and many instances, and checkpointing keeps the sweep practical on a single 24 GB GPU.
-
-## Common Pitfalls
-
-Medical grayscale handling: many MRI exports are single-channel or grayscale RGB. Confirm that dataset preprocessing feeds the expected channel format, disable unnecessary color-heavy augmentation when debugging, and inspect `train_batch*.jpg` before trusting metrics.
-
-Sparse medical overfitting: brain-tumor has few boxes and limited visual diversity. Freezing BN, using dropout, and keeping router LoRA excluded help avoid memorizing scanner or annotation artifacts.
-
-Aerial scale variation: VisDrone objects can be extremely small and densely packed. Use larger validation `max_det`, keep `imgsz` consistent across rank sweeps, and avoid comparing ranks trained with different data fractions.
-
-Router ablations: if you remove `router`, `routing`, `gate`, or `gating` from `lora_exclude_modules`, run it as a separate experiment and watch validation mAP, MoE balance losses, and expert usage. Training loss can improve while routing drift hurts validation.
-
-Metric comparability: keep epochs, fraction, image size, batch size, seed, and hardware fixed across ranks before comparing train time or peak VRAM.
+| Run | Rank | Trainable params | Adapter params | Best epoch | mAP50-95 | Train time | Peak GPU mem |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `sku110k_r4` | 4 | 444,543 | 99,564 | 20 | 0.17160 | 91.51 min | 18.30G |
+| `sku110k_r8` | 8 | 549,483 | 204,504 | 22 | 0.20903 | 79.47 min | 18.30G |
+| `sku110k_r16` | 16 | 753,987 | 409,008 | 24 | 0.24394 | 93.44 min | 18.20G |
+| `construction_ppe_r4` | 4 | 446,493 | 99,564 | 37 | 0.03018 | 11.84 min | 3.81G |
+| `construction_ppe_r8` | 8 | 551,433 | 204,504 | 35 | 0.04816 | 11.88 min | 3.86G |
+| `construction_ppe_r16` | 16 | 755,937 | 409,008 | 38 | 0.06579 | 12.65 min | 3.88G |
