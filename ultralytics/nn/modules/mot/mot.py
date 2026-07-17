@@ -47,12 +47,12 @@ import math
 from typing import List, Optional, Tuple
 
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.distributed as dist
 
 from ultralytics.nn.modules.conv import Conv
-from ultralytics.nn.modules.moe.loss import differentiable_balance_loss as _moe_balance_loss
+from ultralytics.nn.modules.moe import loss as _moe_loss
 from ultralytics.nn.modules.moe.utils import get_safe_groups as _safe_groups
 from ultralytics.nn.modules.routing_protocol import (
     collect_aux_loss,
@@ -86,39 +86,6 @@ def _roll_via_cat(x: torch.Tensor, shift: int, dims: tuple) -> torch.Tensor:
     return x
 
 
-def all_reduce_mean(tensor: torch.Tensor) -> torch.Tensor:
-    """Average a tensor across DDP ranks (gradient-preserving, no-op on 1 GPU).
-
-    Local, dependency-free copy of MoE's ``moe.loss.all_reduce_mean`` —
-    duplicated here (rather than imported) so MoT keeps zero compile-time
-    dependency on the MoE package. Reduces in float32 to avoid precision
-    loss when the model runs under fp16/bf16 AMP.
-    """
-    if not (dist.is_available() and dist.is_initialized()):
-        return tensor
-    world = dist.get_world_size()
-    if world <= 1:
-        return tensor
-    orig_dtype = tensor.dtype
-    if tensor.device.type == "cpu" and dist.get_backend() == "nccl":
-        tensor = tensor.cuda()
-    local = tensor.float()
-    global_value = local.detach().clone()
-    dist.all_reduce(global_value, op=dist.ReduceOp.SUM)
-    global_value = global_value / world
-    # c10d has no autograd kernel: preserve local Jacobian explicitly.
-    return (local + (global_value - local.detach())).to(orig_dtype)
-
-
-def _fp_min(val: float, dtype: torch.dtype) -> float:
-    """Dtype-aware floor for clamp operations (fp16-safe)."""
-    if dtype == torch.float16:
-        return max(val, 1e-4)
-    if dtype == torch.bfloat16:
-        return max(val, 1e-3)
-    return val
-
-
 def differentiable_balance_loss(
     router_probs: torch.Tensor,
     expert_usage: torch.Tensor,
@@ -126,24 +93,33 @@ def differentiable_balance_loss(
     target_usage: Optional[torch.Tensor] = None,
     reduce_ddp: bool = True,  # P1-2 fix: default True for DDP safety (was False)
 ) -> torch.Tensor:
-    """GShard balance loss with gradient flowing to the router via `importance`.
+    """GShard loss with local router gradients and globally averaged detached usage.
 
-    Uses canonical ``moe.loss.differentiable_balance_loss`` internally for correctness.
-    This wrapper provides fp16-safe clamping for the local usage tensor and defaults
-    to ``reduce_ddp=True`` so that multi-GPU training gets correct balance statistics.
+    MoT intentionally keeps ``importance`` local so DDP never touches a graph-connected
+    router tensor. The detached discrete usage uses MoE's canonical reduction helper.
 
     Args:
         reduce_ddp: If True, synchronize expert usage across ranks before computing
             balance loss. Defaults to True (P1-2 fix). Set False only for debugging.
     """
-    _dtype = expert_usage.dtype  # used for fp16-safe clamping
-    return _moe_balance_loss(
-        router_probs=router_probs,
-        expert_usage=expert_usage,
-        num_experts=num_experts,
-        target_usage=target_usage,
-        reduce_ddp=reduce_ddp,
+    probs = (
+        router_probs.reshape(router_probs.shape[0], router_probs.shape[1], -1).mean(-1)
+        if router_probs.dim() == 4
+        else router_probs.reshape(-1, num_experts)
     )
+    importance = probs.mean(dim=0)
+    importance = importance / importance.sum().clamp_min(torch.finfo(importance.dtype).tiny)
+
+    usage = expert_usage.reshape(-1).float().detach()
+    usage = usage / usage.sum().clamp_min(torch.finfo(usage.dtype).tiny)
+    if reduce_ddp:
+        usage = _moe_loss.all_reduce_mean(usage)
+
+    if target_usage is not None:
+        weights = target_usage.reshape(-1).float()
+        weights = weights / weights.sum().clamp_min(torch.finfo(weights.dtype).tiny)
+        usage = usage * weights * num_experts
+    return num_experts * torch.sum(importance * usage)
 
 # explicit __all__ so `from mot import *` only exposes public API
 # symbols, not internal helpers like _LocalConvTransformerExpert, _MoTRouter, etc.

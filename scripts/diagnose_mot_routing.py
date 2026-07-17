@@ -25,11 +25,6 @@ import torch  # noqa: E402
 import numpy as np  # noqa: E402
 from PIL import Image  # noqa: E402
 
-from ultralytics import YOLO  # noqa: E402
-from ultralytics.nn.modules.mot import MoTBlock  # noqa: E402
-from ultralytics.nn.tasks import DetectionModel  # noqa: E402
-
-
 EXPERT_NAMES = ("LocalConvTransformer", "WindowTransformer", "DeformableTransformer")
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
@@ -43,15 +38,22 @@ def normalize_torch_device(device: str) -> str:
 
 
 def load_model(model_path: Path, device: str, nc: int) -> torch.nn.Module:
+    # Keep analysis-only helpers importable without loading optional YOLO/SAM backends.
     if model_path.suffix.lower() in {".pt", ".pth"}:
+        from ultralytics import YOLO
+
         model = YOLO(str(model_path)).model
     else:
+        from ultralytics.nn.tasks import DetectionModel
+
         model = DetectionModel(str(model_path), ch=3, nc=nc, verbose=False)
     model.to(torch.device(device)).eval()
     return model
 
 
 def register_router_hooks(model: torch.nn.Module, records: list[dict[str, str]], current_scene: dict[str, str]):
+    from ultralytics.nn.modules.mot import MoTBlock
+
     handles = []
 
     def make_hook(layer_name: str):
