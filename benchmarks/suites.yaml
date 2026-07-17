@@ -1,0 +1,50 @@
+schema_version: 1
+
+defaults:
+  task: inference
+  device: cpu
+  dtype: fp32
+  batch_size: 1
+  image_size: 64
+  warmup: 1
+  iterations: 3
+  seed: 0
+  collect_flops: true
+  collect_routing: true
+
+suites:
+  mixture_smoke:
+    description: Fast structural and eager-inference comparison of v0.10 no-MoE, MoE, MoA, and MoT variants.
+    cases:
+      - id: v10_no_moe
+        label: v0.10 no-MoE baseline
+        model: ultralytics/cfg/models/master/v0_10/det/yolo-master-n-no-moe.yaml
+      - id: v10_moe
+        label: v0.10 MoE
+        model: ultralytics/cfg/models/master/v0_10/det/yolo-master-n.yaml
+      - id: v10_moa
+        label: v0.10 MoA
+        model: ultralytics/cfg/models/master/v0_10/det/yolo-master-moa-n.yaml
+      - id: v10_mot
+        label: v0.10 MoT
+        model: ultralytics/cfg/models/master/v0_10/det/yolo-master-mot-n.yaml
+
+  moa_vs_mot:
+    description: Focused eager-inference and routing comparison of v0.10 MoA and MoT.
+    cases:
+      - id: v10_moa
+        label: v0.10 MoA
+        model: ultralytics/cfg/models/master/v0_10/det/yolo-master-moa-n.yaml
+      - id: v10_mot
+        label: v0.10 MoT
+        model: ultralytics/cfg/models/master/v0_10/det/yolo-master-mot-n.yaml
+
+  mot_scene_router:
+    description: Compare the v0.10 MoT router with its experimental scene-aware residual.
+    cases:
+      - id: v10_mot
+        label: v0.10 MoT
+        model: ultralytics/cfg/models/master/v0_10/det/yolo-master-mot-n.yaml
+      - id: v10_mot_scene
+        label: v0.10 scene-aware MoT
+        model: ultralytics/cfg/models/master/v0_10/det/yolo-master-mot-scene-n.yaml
