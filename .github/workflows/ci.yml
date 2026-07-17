@@ -88,7 +88,13 @@ jobs:
           pip install -e ".[dev]" 2>/dev/null || pip install -e .
           pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
       - name: Configuration and adapter integrity
-        run: python -m pytest -q tests/test_default_config_integrity.py tests/test_master_model_configs.py tests/test_molora_dtype.py --tb=long
+        run: |
+          python tools/config_drift_detector.py
+          python -m pytest -q tests/test_config_drift_detector.py tests/test_default_config_integrity.py tests/test_master_model_configs.py tests/test_molora_dtype.py tests/test_molora_routing_aware_merge.py tests/test_adapter_backend_contract.py --tb=long
+      - name: Export capability governance
+        run: |
+          python scripts/generate_export_capability_docs.py --check
+          python -m pytest -q tests/test_export_capability_matrix.py tests/test_export_preflight.py tests/test_mot_scene_aware_router.py --tb=long
       - name: Core mixture smoke tests
         run: python -m pytest -q tests/test_moe.py tests/test_moa.py tests/test_mot.py --tb=long
       - name: Existing torch.compile entrypoint compatibility

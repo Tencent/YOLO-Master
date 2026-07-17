@@ -436,10 +436,12 @@ class AdapterBackend(Protocol):
 
 **Files:**
 
-- Create: `docs/governance/export-capability-matrix.yaml`
+- Create: `ultralytics/cfg/export-capability-matrix.yaml`（canonical runtime source）
+- Create: `docs/governance/export-capability-matrix.md`（由 canonical YAML 自动生成）
+- Create: `ultralytics/utils/export_capabilities.py`
 - Modify: `ultralytics/nn/modules/routing_protocol.py`
 - Modify: `ultralytics/engine/exporter.py`
-- Test: `tests/test_mixture_export.py`
+- Test: `tests/test_export_capability_matrix.py`、`tests/test_export_preflight.py`
 
 **维度：**
 
@@ -736,4 +738,3 @@ feat(vpeft): add opt-in solver application
 - MoT/MoLoRA 真正 grouped sparse dispatch 达到性能门禁。
 - V-PEFT opt-in placement 能落地到 adapter backend。
 - 多 seed、多数据集、多 backend 的结果写入结构化实验 manifest。
-

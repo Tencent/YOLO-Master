@@ -1,0 +1,41 @@
+schema_version: 1
+formats:
+  pytorch: {supported: true, default: dynamic, known_error: null}
+  torchscript: {supported: true, default: dense_fallback, known_error: trace uses shape-specific dense fallback}
+  onnx: {supported: true, default: dense_fallback, known_error: data-dependent routing is replaced by dense fallback}
+  openvino: {supported: true, default: dense_fallback, known_error: inherits ONNX dense fallback limitations}
+  engine: {supported: true, default: dense_fallback, known_error: TensorRT verification is backend and hardware specific}
+  coreml: {supported: true, default: dense_fallback, known_error: dynamic sparse dispatch is not preserved}
+  saved_model: {supported: true, default: dense_fallback, known_error: dynamic sparse dispatch is not preserved}
+  pb: {supported: true, default: dense_fallback, known_error: dynamic sparse dispatch is not preserved}
+  tflite: {supported: true, default: dense_fallback, known_error: dynamic sparse dispatch is not preserved}
+  edgetpu: {supported: true, default: dense_fallback, known_error: Edge TPU support requires downstream operator validation}
+  tfjs: {supported: true, default: dense_fallback, known_error: dynamic sparse dispatch is not preserved}
+  paddle: {supported: true, default: dense_fallback, known_error: component roundtrip is unverified}
+  mnn: {supported: true, default: dense_fallback, known_error: component roundtrip is unverified}
+  ncnn: {supported: true, default: dense_fallback, known_error: component roundtrip is unverified}
+  imx: {supported: true, default: dense_fallback, known_error: hardware-specific validation is required}
+  rknn: {supported: true, default: dense_fallback, known_error: hardware-specific validation is required}
+  executorch: {supported: true, default: dense_fallback, known_error: component roundtrip is unverified}
+  axelera: {supported: false, default: refuse, known_error: routed module export has not been validated for Axelera}
+modules:
+  MoE:
+    supported: true
+    dense_fallback: true
+    requires_merge: false
+    known_error: null
+  MoA:
+    supported: true
+    dense_fallback: true
+    requires_merge: false
+    known_error: null
+  MoT:
+    supported: true
+    dense_fallback: true
+    requires_merge: false
+    known_error: Deformable expert uses grid_sample and requires backend operator support
+  MoLoRA:
+    supported: true
+    dense_fallback: true
+    requires_merge: false
+    known_error: dynamic router cannot be represented as an exact static merge
