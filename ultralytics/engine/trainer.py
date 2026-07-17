@@ -1423,6 +1423,71 @@ class BaseTrainer:
             pass
         return True
 
+    def _checkpoint_forward_smoke(self, checkpoint):
+        """Run a small FP32 inference pass and reject checkpoints with non-finite activations."""
+        model = checkpoint.get("ema") or checkpoint.get("model")
+        if not isinstance(model, nn.Module):
+            return False, "checkpoint has no loadable model or EMA module"
+        try:
+            model = model.float().cpu().eval()
+            yaml = getattr(model, "yaml", {}) or {}
+            channels = int(yaml.get("channels", 3))
+            stride = getattr(model, "stride", torch.tensor([32.0]))
+            stride = max(1, int(torch.as_tensor(stride).max().item()))
+            configured_imgsz = getattr(getattr(self, "args", None), "imgsz", 64)
+            if isinstance(configured_imgsz, (list, tuple)):
+                configured_imgsz = max(configured_imgsz)
+            imgsz = max(32, min(int(configured_imgsz), 64))
+            imgsz = math.ceil(imgsz / stride) * stride
+
+            first_parameter = next(model.parameters(), None)
+            if not yaml and first_parameter is not None and first_parameter.ndim == 2:
+                sample = torch.zeros(1, first_parameter.shape[1], dtype=torch.float32)
+            else:
+                sample = torch.zeros(1, channels, imgsz, imgsz, dtype=torch.float32)
+            samples = (sample, torch.linspace(-1.0, 1.0, sample.numel(), dtype=torch.float32).reshape_as(sample))
+            with torch.inference_mode():
+                for index, smoke_input in enumerate(samples):
+                    output = model(smoke_input)
+                    if not self._state_is_finite(output):
+                        return False, f"forward smoke sample {index} produced non-finite output"
+        except Exception as exc:
+            return False, f"forward smoke failed: {type(exc).__name__}: {exc}"
+        return True, ""
+
+    def _validate_checkpoint_artifact(self, path):
+        """Verify that a checkpoint is readable, finite, and executable before validation."""
+        path = Path(path)
+        try:
+            checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+        except (OSError, RuntimeError, ValueError, EOFError) as exc:
+            return False, f"unreadable checkpoint: {type(exc).__name__}: {exc}"
+        if not isinstance(checkpoint, dict) or not self._state_is_finite(checkpoint):
+            return False, "checkpoint contains missing or non-finite state"
+        return self._checkpoint_forward_smoke(checkpoint)
+
+    def _select_final_eval_checkpoints(self):
+        """Select healthy final-evaluation artifacts on rank 0 and share the ordered decision."""
+        decision = None
+        if RANK in {-1, 0}:
+            candidates, rejected = [], []
+            for path in (self.best, self.healthy):
+                path = Path(path)
+                if not path.exists() or path in candidates:
+                    continue
+                healthy, reason = self._validate_checkpoint_artifact(path)
+                if healthy:
+                    candidates.append(path)
+                else:
+                    rejected.append(f"{path.name}: {reason}")
+            decision = ([str(path) for path in candidates], rejected)
+        if RANK != -1 and dist.is_initialized():
+            shared = [decision]
+            dist.broadcast_object_list(shared, src=0)
+            decision = shared[0]
+        paths, rejected = decision or ([], ["rank 0 did not provide a checkpoint decision"])
+        return [Path(path) for path in paths], rejected
+
     @staticmethod
     def _reset_non_checkpoint_moe_runtime_state():
         """Clear per-process MoE auxiliary state omitted from recovery checkpoints."""
@@ -1444,6 +1509,10 @@ class BaseTrainer:
         checkpoint = torch.load(io.BytesIO(serialized_ckpt), map_location="cpu", weights_only=False)
         if not self._state_is_finite(checkpoint):
             LOGGER.warning("Skipping nonfinite recovery checkpoint state.")
+            return False
+        forward_healthy, reason = self._checkpoint_forward_smoke(checkpoint)
+        if not forward_healthy:
+            LOGGER.warning(f"Skipping recovery checkpoint that failed inference health check: {reason}")
             return False
         # Cross-module: also verify MoX aux_loss registries are finite (P0-2 cross-module fix)
         try:
@@ -1494,9 +1563,13 @@ class BaseTrainer:
         """Save a normal checkpoint and atomically refresh the finite recovery checkpoint."""
         serialized_ckpt = self._serialize_checkpoint()
         self.wdir.mkdir(parents=True, exist_ok=True)
-        self._save_healthy_checkpoint(serialized_ckpt)
+        if not self._save_healthy_checkpoint(serialized_ckpt):
+            self._checkpoint_health_failed = True
+            LOGGER.warning("Checkpoint health gate failed; preserving the previous last.pt and best.pt files.")
+            return False
+        self._checkpoint_health_failed = False
         if healthy_only:
-            return
+            return True
         self.last.write_bytes(serialized_ckpt)
         if self.best_fitness == self.fitness:
             self.best.write_bytes(serialized_ckpt)
@@ -1512,6 +1585,7 @@ class BaseTrainer:
                 save_adapters(lora_model, adapter_dir)
         if self.save_period > 0 and self.epoch % self.save_period == 0:
             (self.wdir / f"epoch{self.epoch}.pt").write_bytes(serialized_ckpt)
+        return True
 
     def get_dataset(self):
         """Get train and validation datasets from data dictionary.
@@ -2169,20 +2243,34 @@ class BaseTrainer:
 
     def final_eval(self):
         """Perform final evaluation and validation for object detection YOLO model."""
-        model = self.best if self.best.exists() else None
         with torch_distributed_zero_first(LOCAL_RANK):  # strip only on GPU 0; other GPUs should wait
             if RANK in {-1, 0}:
                 ckpt = strip_optimizer(self.last) if self.last.exists() else {}
-                if model:
+                if self.best.exists():
                     # update best.pt train_metrics from last.pt
                     strip_optimizer(self.best, updates={"train_results": ckpt.get("train_results")})
-        if model:
+        candidates, rejected = self._select_final_eval_checkpoints()
+        if not candidates:
+            detail = "; ".join(rejected) or "no checkpoint files exist"
+            raise RuntimeError(f"No healthy checkpoint is available for final evaluation: {detail}")
+
+        self.validator.args.plots = self.args.plots
+        self.validator.args.compile = False  # disable final val compile as too slow
+        router_failures = []
+        from ultralytics.utils.errors import MoERouterError
+
+        for model in candidates:
             LOGGER.info(f"\nValidating {model}...")
-            self.validator.args.plots = self.args.plots
-            self.validator.args.compile = False  # disable final val compile as too slow
-            self.metrics = self.validator(model=model)
-            self.metrics.pop("fitness", None)
-            self.run_callbacks("on_fit_epoch_end")
+            try:
+                self.metrics = self.validator(model=model)
+                self.metrics.pop("fitness", None)
+                self.run_callbacks("on_fit_epoch_end")
+                return
+            except MoERouterError as exc:
+                router_failures.append(f"{model.name}: {exc}")
+                LOGGER.warning(f"Final validation rejected {model.name}; trying recovery checkpoint: {exc}")
+        detail = "; ".join((*rejected, *router_failures))
+        raise RuntimeError(f"No healthy checkpoint is available for final evaluation: {detail}")
 
     def check_resume(self, overrides):
         """Check if resume checkpoint exists and update arguments accordingly."""

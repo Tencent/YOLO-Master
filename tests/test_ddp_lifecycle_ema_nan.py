@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 import torch
@@ -14,6 +14,19 @@ class E(nn.Module):
     def __init__(self, p=False):
         super().__init__()
         self.register_buffer("diagnostic", torch.tensor(1.0), persistent=p)
+
+
+class ImageSmokeModel(nn.Module):
+    def __init__(self, nonfinite=False):
+        super().__init__()
+        self.conv = nn.Conv2d(3, 4, 1)
+        self.yaml = {"channels": 3}
+        self.stride = torch.tensor([32.0])
+        self.nonfinite = nonfinite
+
+    def forward(self, x):
+        output = self.conv(x)
+        return output / 0.0 if self.nonfinite else output
 
 
 def tr(m):
@@ -272,6 +285,106 @@ def test_healthy_checkpoint_rejects_nonfinite_state_and_preserves_prior(tmp_path
     torch.save({"tensor": torch.tensor(float("nan"))}, buffer)
     assert t._save_healthy_checkpoint(buffer.getvalue()) is False
     assert t.healthy.read_bytes() == b"known-good"
+
+
+def test_checkpoint_forward_smoke_rejects_nonfinite_activation():
+    t = object.__new__(BaseTrainer)
+    t.args = SimpleNamespace(imgsz=640)
+    checkpoint = {"model": ImageSmokeModel(nonfinite=True), "ema": None}
+
+    healthy, reason = t._checkpoint_forward_smoke(checkpoint)
+
+    assert healthy is False
+    assert "non-finite output" in reason
+
+
+def test_save_model_does_not_overwrite_last_or_best_when_health_gate_fails(tmp_path):
+    t = object.__new__(BaseTrainer)
+    t.wdir = tmp_path
+    t.last = tmp_path / "last.pt"
+    t.best = tmp_path / "best.pt"
+    t.last.write_bytes(b"prior-last")
+    t.best.write_bytes(b"prior-best")
+    t.best_fitness = t.fitness = 0.5
+    t._serialize_checkpoint = MagicMock(return_value=b"bad-checkpoint")
+    t._save_healthy_checkpoint = MagicMock(return_value=False)
+
+    assert t.save_model() is False
+    assert t._checkpoint_health_failed is True
+    assert t.last.read_bytes() == b"prior-last"
+    assert t.best.read_bytes() == b"prior-best"
+
+
+def final_eval_trainer(tmp_path):
+    t = object.__new__(BaseTrainer)
+    t.best = tmp_path / "best.pt"
+    t.last = tmp_path / "last.pt"
+    t.healthy = tmp_path / "last_healthy.pt"
+    for path in (t.best, t.last, t.healthy):
+        path.write_bytes(b"checkpoint")
+    t.args = SimpleNamespace(plots=False)
+    t.validator = MagicMock(return_value={"fitness": 0.5, "metrics/mAP50": 0.4})
+    t.run_callbacks = MagicMock()
+    return t
+
+
+def test_final_eval_falls_back_from_bad_best_to_healthy_checkpoint(tmp_path):
+    t = final_eval_trainer(tmp_path)
+    t._validate_checkpoint_artifact = MagicMock(
+        side_effect=lambda path: (False, "bad best") if path == t.best else (True, "")
+    )
+
+    with patch("ultralytics.engine.trainer.strip_optimizer", return_value={}):
+        t.final_eval()
+
+    t.validator.assert_called_once_with(model=t.healthy)
+    assert t.metrics == {"metrics/mAP50": 0.4}
+
+
+def test_final_eval_catches_router_error_and_retries_healthy(tmp_path):
+    t = final_eval_trainer(tmp_path)
+    t._validate_checkpoint_artifact = MagicMock(return_value=(True, ""))
+    t.validator.side_effect = [
+        MoERouterError("Router input contains NaN/Inf values [EfficientSpatialRouter]"),
+        {"fitness": 0.5, "metrics/mAP50": 0.4},
+    ]
+
+    with patch("ultralytics.engine.trainer.strip_optimizer", return_value={}):
+        t.final_eval()
+
+    assert t.validator.call_args_list == [
+        call(model=t.best),
+        call(model=t.healthy),
+    ]
+
+
+def test_final_eval_raises_clear_error_when_best_and_healthy_are_bad(tmp_path):
+    t = final_eval_trainer(tmp_path)
+    t._validate_checkpoint_artifact = MagicMock(return_value=(False, "non-finite output"))
+
+    with patch("ultralytics.engine.trainer.strip_optimizer", return_value={}), pytest.raises(
+        RuntimeError, match="No healthy checkpoint is available for final evaluation"
+    ):
+        t.final_eval()
+
+    t.validator.assert_not_called()
+
+
+def test_final_eval_checkpoint_decision_is_broadcast_to_nonzero_rank(tmp_path):
+    t = final_eval_trainer(tmp_path)
+
+    def share_rank0_decision(container, src):
+        assert src == 0
+        container[0] = ([str(t.healthy)], ["best.pt: failed smoke"])
+
+    with patch("ultralytics.engine.trainer.RANK", 1), patch(
+        "torch.distributed.is_initialized", return_value=True
+    ), patch("torch.distributed.broadcast_object_list", side_effect=share_rank0_decision) as broadcast:
+        candidates, rejected = t._select_final_eval_checkpoints()
+
+    assert candidates == [t.healthy]
+    assert rejected == ["best.pt: failed smoke"]
+    broadcast.assert_called_once()
 
 
 def bootstrap_trainer(tmp_path):
