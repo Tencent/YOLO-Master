@@ -1,6 +1,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 import torch
 
 from ultralytics.engine.trainer import BaseTrainer
@@ -155,20 +156,19 @@ def test_mot_window_expert_handles_window_larger_than_feature_map():
 
 
 def test_mot_window_expert_shift_spatial_alignment():
-    """Shifted-window expert output must keep input spatial dims and stay finite.
-
-    The shift/un-shift residual alignment is the subtle correctness point: an
-    identity-ish check ensures no cyclic spatial misalignment leaks through.
-    """
+    """A zeroed shifted expert must be an exact identity even for odd H/W."""
     from ultralytics.nn.modules.mot.mot import _WindowTransformerExpert
 
     torch.manual_seed(0)
-    block = MoTBlock(32, num_heads=4, top_k=2, window_size=5, n_points=2, window_shift=True).eval()
+    expert = _WindowTransformerExpert(32, num_heads=4, window_size=5, shift_size=2).eval()
+    torch.nn.init.zeros_(expert.proj.weight)
+    torch.nn.init.zeros_(expert.ffn[-1].weight)
+    torch.nn.init.zeros_(expert.ffn[-1].bias)
     x = torch.randn(2, 32, 9, 11)
     with torch.no_grad():
-        out, _ = block(x)
+        out = expert(x)
     assert out.shape == x.shape
-    assert torch.isfinite(out).all()
+    assert torch.equal(out, x)
 
 
 def test_mot_window_expert_shift_handles_odd_spatial_sizes():
@@ -181,6 +181,17 @@ def test_mot_window_expert_shift_handles_odd_spatial_sizes():
         out = expert(x)
     assert out.shape == x.shape
     assert torch.isfinite(out).all()
+
+
+def test_mot_window_expert_preserves_and_validates_explicit_shift():
+    """The public shift argument must not be silently replaced by win//2."""
+    from ultralytics.nn.modules.mot.mot import _WindowTransformerExpert
+
+    assert _WindowTransformerExpert(16, num_heads=4, window_size=7, shift_size=1).shift_size == 1
+    with pytest.raises(ValueError, match="window_size must be positive"):
+        _WindowTransformerExpert(16, num_heads=4, window_size=0)
+    with pytest.raises(ValueError, match="shift_size must satisfy"):
+        _WindowTransformerExpert(16, num_heads=4, window_size=7, shift_size=7)
 
 
 def test_mot_router_disables_exploration_eps_in_eval():

@@ -211,12 +211,18 @@ class _WindowTransformerExpert(nn.Module):
                  shift_size: int = 0):
         super().__init__()
         assert dim % num_heads == 0
+        if window_size <= 0:
+            raise ValueError(f"window_size must be positive, got {window_size}")
+        if not 0 <= shift_size < window_size:
+            raise ValueError(
+                f"shift_size must satisfy 0 <= shift_size < window_size, got {shift_size} and {window_size}"
+            )
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
         self.scale = self.head_dim ** -0.5
         self.win = window_size
-        # Fixed cyclic shift (0 = regular window, win//2 = shifted window).
-        self.shift_size = (window_size // 2) if shift_size else 0
+        # Fixed cyclic shift supplied by the caller (0 = regular window).
+        self.shift_size = int(shift_size)
 
         self.qkv = nn.Linear(dim, dim * 3, bias=False)
         self.proj = nn.Linear(dim, dim, bias=False)
