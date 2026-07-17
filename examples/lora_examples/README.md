@@ -18,6 +18,24 @@ We provide optimized LoRA configurations for the following model families:
 | **YOLO12** | `yolo12_lora.yaml` | Hybrid (CNN+Attn) | `include_attention=True` |
 | **RT-DETR** | `rtdetr_lora.yaml` | Transformer | `include_attention=True` |
 | **YOLO-World** | `yoloworld_lora.yaml` | Multi-modal | `include_attention=True` |
+| **YOLO-Master** | `yolo_master_visdrone_lora.yaml` / `yolo_master_brain_tumor_lora.yaml` | MoE (Conv+Expert) | `include_moe=True`, routing excluded |
+
+## 🔬 YOLO-Master 垂类场景 LoRA 微调
+
+针对 MoE 架构的 YOLO-Master-EsMoE-N 模型，我们提供了两个差异化垂类场景的完整 LoRA 微调方案：
+
+| 场景 | 数据集 | 配置文件 | 详细指南 |
+| :--- | :--- | :--- | :--- |
+| 密集航拍检测 | VisDrone | `yolo_master_visdrone_lora.yaml` | [yolo_master_lora_README.md](yolo_master_lora_README.md) |
+| 稀疏医疗检测 | Brain Tumor | `yolo_master_brain_tumor_lora.yaml` | [yolo_master_lora_README.md](yolo_master_lora_README.md) |
+
+该方案包含 rank 扫描对比（r=4/8/16）、MoE 路由层 LoRA 策略、目标模块选择指导和常见陷阱说明。详见 [YOLO-Master LoRA 适配指南](yolo_master_lora_README.md)。
+
+```bash
+# 快速开始
+bash examples/lora_examples/run_lora_brain_tumor_sweep.sh   # Brain Tumor rank 扫描
+bash examples/lora_examples/run_lora_visdrone_sweep.sh      # VisDrone rank 扫描
+```
 
 ## 🚀 Usage Guide
 

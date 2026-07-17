@@ -24,7 +24,7 @@ SCENES = {
         "cfg": "examples/lora_examples/yolo_master_visdrone_lora.yaml",
         "base_name": "yolo_master_visdrone_lora",
         "epochs": 30,
-        "fraction": 0.25,
+        "fraction": 0.2,
     },
     "brain_tumor": {
         "cfg": "examples/lora_examples/yolo_master_brain_tumor_lora.yaml",
