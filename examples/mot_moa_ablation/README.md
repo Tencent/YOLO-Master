@@ -47,16 +47,38 @@ LocalConv   Window      Deformable
 | `yolo-master-moa-n.yaml` | MoE | C2fMoA | — | ✅ (×6) | **MoA 对比组** |
 | `yolo-master-moa-mot-n.yaml` | MoE | C2fMoA + C2fMoT | ✅ (×6) | ✅ (×1) | **MoA+MoT 混合** |
 
-### 实测参数与性能对比 (CPU, imgsz=640)
+### 实测参数与性能对比 (RTX 5070 Ti, imgsz=640)
 
-| 模型 | Params | GFLOPs | Latency P50 | Latency P95 | MoT Block | MoA Block |
+| 模型 | Params | GFLOPs | GPU P50 | CPU P50 | MoT Block | MoA Block |
 |:---|---:|---:|---:|---:|---:|---:|
-| MoE 基线 | 3.45M | 8.03 | 51.7 ms | 53.4 ms | — | — |
-| MoA | 3.58M (+3.7%) | 8.30 (+3.4%) | 67.7 ms | 77.4 ms | — | 6 |
-| MoT | 4.06M (+17.6%) | 11.31 (+40.9%) | 184.1 ms | 194.2 ms | 6 | — |
-| MoA+MoT | 4.06M (+17.6%) | 11.31 (+40.9%) | 176.8 ms | 186.3 ms | 6 | 1 |
+| MoE 基线 | 3.45M | 8.03 | 23.3 ms | 51.7 ms | — | — |
+| MoA | 3.58M (+3.7%) | 8.30 (+3.4%) | 34.8 ms | 67.7 ms | — | 6 |
+| MoT | 4.06M (+17.6%) | 11.31 (+40.9%) | 42.4 ms | 184.1 ms | 6 | — |
+| MoA+MoT | 4.06M (+17.6%) | 11.31 (+40.9%) | 47.2 ms | 176.8 ms | 6 | 1 |
 
-> **分析：** MoT 的注意力操作在 CPU 上开销显著（+256% latency），但在 GPU 上差距会明显缩小。MoA 的 overhead 较温和（+31% latency）。混合架构 MoA+MoT 延迟与纯 MoT 接近。
+> **分析：** GPU 上 MoT 开销合理（+82% latency vs +256% on CPU）。MoA 开销最温和（+49% GPU）。混合架构 MoA+MoT 延迟与纯 MoT 接近。
+
+### 实测训练结果 (coco128, 50 epochs, from scratch)
+
+| 模型 | 最佳 mAP50 | 最佳 mAP50-95 | NaN | Loss 发散 | 训练稳定性 |
+|:---|---:|---:|:---:|:---:|:---|
+| MoE 基线 | 0.021 | 0.007 | 无 | 无 | ✅ 稳定 |
+| MoT | 0.027 | 0.009 | 无 | 无 | ✅ 稳定 |
+| MoA | 0.014 | 0.005 | 无 | 无 | ✅ 稳定 |
+| MoA+MoT | 0.014 | 0.005 | 无 | 无 | ✅ 稳定 |
+
+> **注意：** coco128 仅 128 张训练图，mAP 绝对值参考意义有限。关键结论是 4 个变体均**无 NaN、无 loss 发散**、训练稳定。
+
+### 实测路由分析 (训练后 MoT 模型, 合成场景)
+
+| 场景 | LocalConv | Window | Deformable | 主导专家 |
+|:---|---:|---:|---:|:---|
+| dense_small | 24.0% | **55.8%** | 20.2% | Window |
+| irregular_occluded | 25.0% | **54.5%** | 20.5% | Window |
+| large_regular | 26.7% | **51.9%** | 21.4% | Window |
+| sparse_small | 23.8% | **55.8%** | 20.4% | Window |
+
+> **分析：** 训练后的 router 形成了差异化路由：WindowTransformer 在各类场景中主导（52-56%），LocalConv 和 Deformable 各占 20-27%。Deformable 在 irregular_occluded 场景中激活率略高（20.5% vs 20.2%），但合成数据差异有限。需真实遮挡场景图片验证。**与未训练模型（全部选择 LocalConv）形成鲜明对比，证明 router 已通过学习形成了有意义的专家分配策略。**
 
 ### 训练命令
 

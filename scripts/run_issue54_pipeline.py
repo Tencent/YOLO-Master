@@ -86,10 +86,11 @@ def step_train(args: argparse.Namespace) -> int:
         "--imgsz", str(args.imgsz),
         "--batch", str(args.batch),
         "--device", args.device,
-        "--workers", str(args.workers),
+        "--workers", "0",
         "--patience", str(args.patience),
         "--plots",
         "--exist-ok",
+        "--resume",
     ], f"Step 3/5: 训练 {len(MODELS)} 个模型变体 ({args.epochs} epochs each)")
 
 
@@ -229,7 +230,7 @@ def main() -> int:
     if not args.skip_train:
         rc = step_train(args)
         if rc != 0:
-            print(f"\n❌ 训练失败 (exit {rc})")
+            print(f"\n[FAIL] Training failed (exit {rc})")
             return rc
 
     # 4. Routing analysis on best MoT checkpoint
