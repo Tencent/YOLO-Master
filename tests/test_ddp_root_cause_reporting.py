@@ -44,6 +44,6 @@ def test_collect_error_logs(tmp_path):
 
 def test_windows_ddp_launch_disables_libuv(monkeypatch):
     monkeypatch.setattr(dist_utils, "WINDOWS", True)
-    monkeypatch.delenv("USE_LIBUV", raising=False)
+    monkeypatch.setenv("USE_LIBUV", "1")
 
     assert ddp_launch_env()["USE_LIBUV"] == "0"

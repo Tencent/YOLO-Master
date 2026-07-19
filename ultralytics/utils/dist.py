@@ -19,7 +19,7 @@ def ddp_launch_env() -> dict[str, str]:
     """Return a torchrun environment compatible with Windows builds that omit libuv."""
     env = os.environ.copy()
     if WINDOWS:
-        env.setdefault("USE_LIBUV", "0")
+        env["USE_LIBUV"] = "0"
     return env
 
 
