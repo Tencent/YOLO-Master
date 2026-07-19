@@ -32,7 +32,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--device", default="0")
     parser.add_argument("--fraction", type=float, default=0.03)
-    parser.add_argument("--amp", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--amp", dest="amp", action="store_true")
+    parser.add_argument("--no-amp", dest="amp", action="store_false")
+    parser.set_defaults(amp=True)
     return parser.parse_args()
 
 

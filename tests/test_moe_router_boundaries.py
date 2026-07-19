@@ -257,7 +257,12 @@ class TestEfficientSpatialRouterPrecision:
         torch.manual_seed(0)
         router = EfficientSpatialRouter(IN_CHANNELS, NUM_EXPERTS, top_k=TOP_K).eval().half()
         x = torch.randn(2, IN_CHANNELS, 32, 32, dtype=torch.float16)
-        weights, indices, _ = router(x)
+        try:
+            weights, indices, _ = router(x)
+        except RuntimeError as exc:
+            if "not implemented for 'Half'" in str(exc):
+                pytest.skip(f"CPU fp16 operator unavailable: {exc}")
+            raise
 
         assert weights.dtype == torch.float32
         assert indices.dtype == torch.long

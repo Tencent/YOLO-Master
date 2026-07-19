@@ -12,7 +12,6 @@ Covers:
 """
 import math
 
-import pytest
 import torch
 
 from ultralytics.nn.modules.moe.loss import MoELoss, all_reduce_mean
@@ -100,7 +99,6 @@ def test_ultimate_moe_gflops_no_fake_skip_and_consistent_total():
 
 def test_mot_sdpa_fallback_is_memory_bounded(monkeypatch):
     # Force the fallback path by pretending F has no scaled_dot_product_attention.
-    import torch.nn.functional as F
     monkeypatch.setattr(mot_mod.F, "scaled_dot_product_attention", None, raising=False)
     monkeypatch.delattr(mot_mod.F, "scaled_dot_product_attention", raising=False)
     # Small explicit-limit + chunk so the test stays fast but exercises chunking.
@@ -178,5 +176,9 @@ def test_moa_global_head_linear_vs_softmax_correlated():
         exact = ((q @ k.transpose(-2, -1)) * head.scale).softmax(-1) @ v
         exact = exact.reshape(-1)
     # Pearson correlation > 0 confirms the approximation tracks the true op.
-    corr = torch.corrcoef(torch.stack([approx, exact]))[0, 1]
+    approx_centered = approx - approx.mean()
+    exact_centered = exact - exact.mean()
+    corr = (approx_centered * exact_centered).sum() / (
+        approx_centered.square().sum().sqrt() * exact_centered.square().sum().sqrt()
+    )
     assert corr > 0.1, f"linear attn should correlate with softmax attn, got {corr:.3f}"

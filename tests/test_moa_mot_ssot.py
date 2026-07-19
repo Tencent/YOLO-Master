@@ -12,6 +12,7 @@ from ultralytics.nn.modules.moa.heads import _GlobalAttnHead
 from ultralytics.nn.modules.mot import C2fMoT, MoTBlock
 from ultralytics.nn.modules.mot.block import MoTBlock as CanonicalMoTBlock
 from ultralytics.nn.modules.mot.experts import _WindowTransformerExpert
+from ultralytics.utils.patches import torch_load
 
 
 def test_old_module_paths_resolve_to_canonical_objects():
@@ -51,7 +52,7 @@ def test_split_modules_pickle_roundtrip(tmp_path):
     ]
     path = tmp_path / "mixtures.pt"
     torch.save(modules, path)
-    restored = torch.load(path, map_location="cpu", weights_only=False)
+    restored = torch_load(path, map_location="cpu", weights_only=False)
 
     assert isinstance(restored[0], MoABlock)
     assert isinstance(restored[1], MoTBlock)

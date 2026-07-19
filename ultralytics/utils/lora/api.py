@@ -284,6 +284,40 @@ def resolve_effective_lora_request(**kwargs) -> Dict[str, Any]:
     return dict(kwargs)
 
 
+def _attach_planner_decision(
+    model: nn.Module,
+    config: "LoRAConfig",
+    decision: "PlacementDecision",
+    *,
+    full_sft: bool = False,
+) -> nn.Module:
+    """Persist planner decisions on both adapted and full-SFT fallback paths."""
+    payload = decision.to_dict()
+    model.lora_planner_decision = payload
+    inner = getattr(model, "model", None)
+    if isinstance(inner, nn.Module):
+        inner.lora_planner_decision = payload
+
+    metadata = dict(getattr(model, "lora_runtime_metadata", {}) or {})
+    if full_sft:
+        metadata = resolve_effective_lora_request(
+            requested_backend=config.backend,
+            effective_backend="full_sft",
+            requested_variant=config.variant,
+            effective_variant="full_sft",
+            peft_type=config.peft_type,
+            requested_init_lora_weights=config.init_lora_weights,
+            effective_init_lora_weights=None,
+            include_head=config.include_head,
+            freeze_bn=bool(getattr(config, "freeze_bn", False)),
+            target_modules=[],
+            target_audit={},
+        )
+    metadata["planner_decision"] = payload
+    model.lora_runtime_metadata = metadata
+    return model
+
+
 def build_lora_target_audit(
     valid_targets: Optional[List[str]] = None,
     selected_targets: Optional[List[str]] = None,
@@ -651,27 +685,24 @@ def apply_lora(
             try:
                 decision = planner.plan(model.model if hasattr(model, "model") else model, config)
             except RefusalError as exc:
-                LOGGER.warning(
-                    f"[Planner] RefusalError: {exc}. "
-                    f"Falling back to full fine-tuning (Full-SFT). "
-                    f"This is a valid planning decision, not an error."
+                from .planner import PlacementDecision
+
+                decision = PlacementDecision(
+                    status="REFUSE",
+                    refusal_reason=str(exc),
+                    safety_overrides={"planner_refused": True},
                 )
-                # Mark the model so downstream code knows Planner ran but refused.
-                if hasattr(model, 'model'):
-                    model.model.lora_planner_decision = "REFUSED"
-                else:
-                    model.lora_planner_decision = "REFUSED"
-                return model  # graceful fallback to Full-SFT
 
             planner_decision = decision
 
             if decision.status == "REFUSE":
+                predicted = "unknown" if decision.predicted_delta is None else f"{decision.predicted_delta:.3f}"
                 LOGGER.warning(
                     f"[Planner] REFUSE — {decision.refusal_reason} "
-                    f"(predicted ΔmAP={decision.predicted_delta:.3f}). "
+                    f"(predicted ΔmAP={predicted}). "
                     f"Falling back to full-model fine-tuning."
                 )
-                return model
+                return _attach_planner_decision(model, config, decision, full_sft=True)
 
             if decision.status == "ADAPT":
                 LOGGER.info("[Planner] ADAPT — applying recommended overrides.")
@@ -689,8 +720,16 @@ def apply_lora(
                     else:
                         LOGGER.debug(f"[Planner]   skipping unknown override key '{k}'")
 
-            # ACCEPT — continue normally
-            LOGGER.info(f"[Planner] ACCEPT (predicted ΔmAP={decision.predicted_delta:.3f}).")
+            if decision.status == "ACCEPT":
+                predicted = "unknown" if decision.predicted_delta is None else f"{decision.predicted_delta:.3f}"
+                LOGGER.info(f"[Planner] ACCEPT (predicted ΔmAP={predicted}).")
+            planner_targets = list(decision.target_modules_hint or [])
+            if not planner_targets:
+                LOGGER.warning(
+                    "[Planner] No safe target modules were selected; falling back to full-model fine-tuning."
+                )
+                return _attach_planner_decision(model, config, decision, full_sft=True)
+            config.target_modules = planner_targets
 
     variant = _effective_peft_variant(config)
     if variant == "loha" and str(config.backend).lower() == "fallback":
@@ -703,7 +742,10 @@ def apply_lora(
         supports_fallback=supports_fallback_request(config),
     )
     if backend_decision["effective_backend"] == "fallback":
-        return apply_manual_lora(model, config, include_head=config.include_head)
+        model = apply_manual_lora(model, config, include_head=config.include_head)
+        if planner_decision is not None:
+            _attach_planner_decision(model, config, planner_decision)
+        return model
 
     # 2. Check Dependencies for the PEFT path
     if not PEFT_AVAILABLE:
@@ -808,6 +850,7 @@ def apply_lora(
         "bias": config.bias,
         "include_moe": config.include_moe,
         "include_attention": config.include_attention,
+        "include_head": config.include_head,
         "only_backbone": config.only_backbone,
         "exclude_modules": config.exclude_modules,
         "last_n": config.last_n,
@@ -818,6 +861,7 @@ def apply_lora(
         "skip_stem": getattr(config, "skip_stem", True),  # Default True: skip un-normalized stem layers (prevents FP16 NaN)
         "min_channels": getattr(config, "min_channels", 0),
         "target_modules": config.target_modules, # This might be ['conv']
+        "planner_enabled": False,
         "gradient_checkpointing": config.gradient_checkpointing,
         "auto_r_ratio": config.auto_r_ratio,
         "use_dora": config.use_dora,
@@ -1015,7 +1059,10 @@ def apply_lora(
                 "manual LoRA backend (set lora_backend=peft to disable this fallback)."
             )
             try:
-                return apply_manual_lora(model, config, include_head=config.include_head)
+                model = apply_manual_lora(model, config, include_head=config.include_head)
+                if planner_decision is not None:
+                    _attach_planner_decision(model, config, planner_decision)
+                return model
             except Exception as fb_err:
                 LOGGER.error(f"[LoRA] Fallback path also failed: {fb_err}")
                 raise e

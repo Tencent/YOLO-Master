@@ -21,12 +21,14 @@ MIXTURE_DEFAULTS: dict[str, dict[str, Any]] = {
         "temperature": 1.0,
         "weight_threshold": 0.01,
         "aux_gain": 1.0,
+        "aux_budget": 3.0,
     },
     "moa": {
         "temperature": 1.0,
         "local_window_size": 7,
         "aux_loss_coeff": 0.01,
         "aux_gain": 1.0,
+        "aux_budget": 3.0,
     },
     "mot": {
         "balance_loss_coeff": 0.01,
@@ -37,6 +39,7 @@ MIXTURE_DEFAULTS: dict[str, dict[str, Any]] = {
         "scene_hidden_dim": None,
         "scene_consistency_coeff": 0.0,
         "aux_gain": 1.0,
+        "aux_budget": 3.0,
     },
     "molora": {
         "balance_loss_coef": 0.01,
@@ -58,12 +61,14 @@ CLI_FIELDS: dict[str, dict[str, str]] = {
         "temperature": "moe_temperature",
         "weight_threshold": "moe_weight_threshold",
         "aux_gain": "moe_aux_gain",
+        "aux_budget": "mixture_aux_budget",
     },
     "moa": {
         "temperature": "moa_temperature",
         "local_window_size": "moa_local_window_size",
         "aux_loss_coeff": "moa_aux_loss_coeff",
         "aux_gain": "moa_aux_gain",
+        "aux_budget": "mixture_aux_budget",
     },
     "mot": {
         "balance_loss_coeff": "mot_balance_loss",
@@ -74,6 +79,7 @@ CLI_FIELDS: dict[str, dict[str, str]] = {
         "scene_hidden_dim": "mot_scene_hidden_dim",
         "scene_consistency_coeff": "mot_scene_consistency",
         "aux_gain": "mot_aux_gain",
+        "aux_budget": "mixture_aux_budget",
     },
     "molora": {
         "balance_loss_coef": "molora_balance_loss",

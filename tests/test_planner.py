@@ -4,10 +4,15 @@ Tests calibration of regression coefficients (Eq. 1) and hard policy rules
 against the paper's experimental data (Table 1, Fig. 4, Table 2).
 """
 
+from types import SimpleNamespace
+from unittest.mock import patch
+
 import pytest
-import torch
 import torch.nn as nn
 
+from ultralytics.engine.trainer import update_args_with_lora_runtime_metadata
+from ultralytics.nn.modules.moa import MoABlock
+from ultralytics.utils.lora.api import apply_lora
 from ultralytics.utils.lora.config import LoRAConfig
 from ultralytics.utils.lora.planner import (
     ArchitectureFingerprint,
@@ -50,6 +55,70 @@ class MockTextFusion(nn.Module):
 
     def forward(self, x):
         return x
+
+
+def test_placement_decision_round_trip_preserves_target_modules():
+    decision = PlacementDecision(
+        status="ADAPT",
+        recommended_variant="lora",
+        recommended_rank=8,
+        target_modules_hint=["stage1", "stage2"],
+        safety_overrides={"include_attention": False},
+    )
+
+    assert PlacementDecision.from_dict(decision.to_dict()) == decision
+
+
+def test_apply_lora_refusal_records_full_sft_runtime_metadata():
+    model = nn.Sequential(nn.Conv2d(3, 4, 1))
+    config = LoRAConfig(r=4, alpha=8, backend="fallback", planner_enabled=True)
+    refusal = PlacementDecision(
+        status="REFUSE",
+        refusal_reason="unsafe architecture",
+        safety_overrides={"planner_refused": True},
+    )
+
+    with patch("ultralytics.utils.lora.planner.PEFTPlanner.plan", return_value=refusal):
+        result = apply_lora(model, config)
+
+    args = SimpleNamespace()
+    update_args_with_lora_runtime_metadata(args, result)
+    assert result is model
+    assert result.lora_runtime_metadata["effective_backend"] == "full_sft"
+    assert result.lora_runtime_metadata["planner_decision"] == refusal.to_dict()
+    assert args.lora_planner_refused is True
+    assert args.planner_refusal_reason == "unsafe architecture"
+
+
+def test_apply_lora_empty_targets_with_unknown_prediction_falls_back_cleanly():
+    model = nn.Sequential(nn.Conv2d(3, 4, 1))
+    config = LoRAConfig(r=4, alpha=8, backend="fallback", planner_enabled=True)
+    decision = PlacementDecision(status="ACCEPT", predicted_delta=None, target_modules_hint=[])
+
+    with patch("ultralytics.utils.lora.planner.PEFTPlanner.plan", return_value=decision):
+        result = apply_lora(model, config)
+
+    assert result is model
+    assert result.lora_runtime_metadata["effective_backend"] == "full_sft"
+    assert result.lora_runtime_metadata["planner_decision"] == decision.to_dict()
+
+
+def test_apply_lora_fallback_preserves_adapt_decision_metadata():
+    model = nn.Sequential(nn.Conv2d(3, 4, 1))
+    config = LoRAConfig(r=4, alpha=8, backend="fallback", planner_enabled=True)
+    decision = PlacementDecision(
+        status="ADAPT",
+        recommended_variant="lora",
+        recommended_rank=2,
+        predicted_delta=0.01,
+        target_modules_hint=["0"],
+    )
+
+    with patch("ultralytics.utils.lora.planner.PEFTPlanner.plan", return_value=decision):
+        result = apply_lora(model, config)
+
+    assert result.lora_runtime_metadata["planner_decision"] == decision.to_dict()
+    assert result.lora_target_modules == ["0"]
 
 
 # =============================================================================
@@ -114,6 +183,41 @@ def _make_rtdetr_like():
             self.head = nn.Linear(64, 80)
 
     return _Model()
+
+
+def test_planner_ddp_nonzero_rank_uses_rank0_targets_without_local_scan():
+    planner = PEFTPlanner()
+    config = LoRAConfig(r=8, planner_enabled=True)
+    rank0 = PlacementDecision(status="ACCEPT", predicted_delta=0.05, target_modules_hint=["stage1"])
+
+    def broadcast_rank0(container, src):
+        assert src == 0
+        container[0] = {"decision": rank0.to_dict(), "error": None}
+
+    with patch("torch.distributed.is_available", return_value=True), patch(
+        "torch.distributed.is_initialized", return_value=True
+    ), patch("torch.distributed.get_rank", return_value=1), patch(
+        "torch.distributed.broadcast_object_list", side_effect=broadcast_rank0
+    ), patch.object(planner, "_plan_local", side_effect=AssertionError("rank 1 must not plan locally")):
+        decision = planner.plan(_make_yolo11s_like(), config)
+
+    assert decision.target_modules_hint == ["stage1"]
+
+
+def test_planner_ddp_nonzero_rank_receives_rank0_failure():
+    planner = PEFTPlanner()
+    config = LoRAConfig(r=8, planner_enabled=True)
+
+    def broadcast_rank0_failure(container, src):
+        assert src == 0
+        container[0] = {"decision": None, "error": "ValueError: invalid planner state"}
+
+    with patch("torch.distributed.is_available", return_value=True), patch(
+        "torch.distributed.is_initialized", return_value=True
+    ), patch("torch.distributed.get_rank", return_value=1), patch(
+        "torch.distributed.broadcast_object_list", side_effect=broadcast_rank0_failure
+    ), pytest.raises(RuntimeError, match="Rank-0 PEFT Planner failed"):
+        planner.plan(_make_yolo11s_like(), config)
 
 
 def _make_yolo_world_like():
@@ -266,7 +370,6 @@ class TestPEFTPlannerFit:
         predictions on the training data are accurate (which is the property
         that actually matters for downstream decisions).
         """
-        import math
         planner = PEFTPlanner()
         planner.fit(self._PAPER_HISTORY)
         assert len(planner._coeffs) == 12  # v3: 12-dimensional
@@ -543,6 +646,35 @@ class TestPEFTPlannerDetectTargets:
         config = LoRAConfig(only_backbone=True)
         targets = planner.detect_targets(model, config)
         assert all("head" not in t for t in targets)
+
+    def test_yolo26_specialized_head_is_explicit_opt_in(self):
+        from ultralytics.nn.tasks import DetectionModel
+
+        model = DetectionModel("yolo26.yaml", ch=3, nc=5, verbose=False)
+        head_index = len(model.model) - 1
+        planner = PEFTPlanner()
+
+        default_targets = planner.detect_targets(model, LoRAConfig())
+        head_targets = planner.detect_targets(model, LoRAConfig(include_head=True))
+
+        assert not any(name.startswith(f"{head_index}.") for name in default_targets)
+        assert any(name.startswith(f"{head_index}.") for name in head_targets)
+
+    def test_routed_ancestor_is_excluded_without_moe_path_keyword(self):
+        class RoutedStage(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.stage = MoABlock(24, num_heads=3)
+                self.tail = nn.Conv2d(24, 24, 1)
+
+        model = RoutedStage()
+        planner = PEFTPlanner()
+
+        routed_targets = planner.detect_targets(model, LoRAConfig(include_moe=True))
+        dense_targets = planner.detect_targets(model, LoRAConfig(include_moe=False))
+
+        assert any(name.startswith("stage.") for name in routed_targets)
+        assert dense_targets == ["tail"]
 
 
 # =============================================================================

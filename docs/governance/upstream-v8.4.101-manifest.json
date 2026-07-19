@@ -1,0 +1,233 @@
+{
+  "counts": {
+    "backends": 19,
+    "export_modules": 17,
+    "yolo26_configs": 10
+  },
+  "exact_files": {
+    "ultralytics/cfg/models/26/yolo26-cls.yaml": {
+      "bytes": 1432,
+      "sha256": "1a668bbe707ad97eabf7f999c29c746f62d3458217cd562a4aa47731ccb7dfa8"
+    },
+    "ultralytics/cfg/models/26/yolo26-obb.yaml": {
+      "bytes": 2146,
+      "sha256": "03d360e6764ea30ef8b5891e8f1a15c86076c33b488bf72e36ac58aea0794f7f"
+    },
+    "ultralytics/cfg/models/26/yolo26-p2.yaml": {
+      "bytes": 2405,
+      "sha256": "0dbc2fa3dfede5edcda2566ab8c7ea150ad066ea29d79e68d6c4da2bab476279"
+    },
+    "ultralytics/cfg/models/26/yolo26-p6.yaml": {
+      "bytes": 2457,
+      "sha256": "60559a1fa340387a0b6261f84dedde75c8f9f9ced027e825ceb8bec4f164e14d"
+    },
+    "ultralytics/cfg/models/26/yolo26-pose.yaml": {
+      "bytes": 2245,
+      "sha256": "07ba82d9637023f261e526c38fa9aeb8ab05d911766ffd8cf4f48cd33f27188d"
+    },
+    "ultralytics/cfg/models/26/yolo26-seg.yaml": {
+      "bytes": 2156,
+      "sha256": "53c0348a36a3e19bbc3bd4f695f50cbbfc97a3059f62e9b251f278ad74fdd7cb"
+    },
+    "ultralytics/cfg/models/26/yolo26-sem.yaml": {
+      "bytes": 1850,
+      "sha256": "ad7de0daf064ed4f53ede8ed0a32d6aa339a5da3cd304791d815aada87b99d82"
+    },
+    "ultralytics/cfg/models/26/yolo26.yaml": {
+      "bytes": 2120,
+      "sha256": "b1d1fa0c69eced64f9939536038bd8d697c32e72200b34187a767de431af7ef0"
+    },
+    "ultralytics/cfg/models/26/yoloe-26-seg.yaml": {
+      "bytes": 2223,
+      "sha256": "425c8addac232ce8ecf6ad2b6a3d307b94021b5b43cbe36f436b90cca0e80589"
+    },
+    "ultralytics/cfg/models/26/yoloe-26.yaml": {
+      "bytes": 2191,
+      "sha256": "616b014b80f77fb421a8b433613f8b55d08e212a3455a4c82c868b2a6ba30dda"
+    },
+    "ultralytics/nn/backends/__init__.py": {
+      "bytes": 1496,
+      "sha256": "eb8ef0b029ca6debeaf154f72d49500997bc058c5ad736386d3f2a583731be5d"
+    },
+    "ultralytics/nn/backends/axelera.py": {
+      "bytes": 1808,
+      "sha256": "2029b9bd6a661b42a3f67eeef0d75293538c60c6e799c2922215992acaa8ab3c"
+    },
+    "ultralytics/nn/backends/base.py": {
+      "bytes": 5610,
+      "sha256": "a0a891c38e53e43ffae5b1e64d040fc557af0a155942298f2cc2733250bc84c4"
+    },
+    "ultralytics/nn/backends/coreml.py": {
+      "bytes": 3217,
+      "sha256": "b9d12e8132f25237ec5c32db34a5d6d02ad8599dd0f44c699cde340184688196"
+    },
+    "ultralytics/nn/backends/deepx.py": {
+      "bytes": 2795,
+      "sha256": "33865fbdb7edd9f48d2e294ee4faff9c7c0d7fe8df341e719526b9fcabf00ad4"
+    },
+    "ultralytics/nn/backends/executorch.py": {
+      "bytes": 1867,
+      "sha256": "f968b645cd62c3acbef75f40cdc6cce8e890cf8c245c0a377d41d4c36959757b"
+    },
+    "ultralytics/nn/backends/hailo.py": {
+      "bytes": 10158,
+      "sha256": "d05e3dd7884382fbc5640311ddef838ce08b8853f2c40fa62d1fe1c5d11d4ae4"
+    },
+    "ultralytics/nn/backends/litert.py": {
+      "bytes": 5472,
+      "sha256": "ef2453b42552a40f94e4e339d853647ed2edbe22b08097258cee868a74959d4c"
+    },
+    "ultralytics/nn/backends/mnn.py": {
+      "bytes": 2220,
+      "sha256": "51883f6bb1a6b0ef5f59625473e1c88797bf74c99d83a0febe7468a1be784db3"
+    },
+    "ultralytics/nn/backends/ncnn.py": {
+      "bytes": 2474,
+      "sha256": "f6b6b739f7291906c0a95d143bc57218b6772064154f5931feae3f4388a44ffa"
+    },
+    "ultralytics/nn/backends/onnx.py": {
+      "bytes": 8892,
+      "sha256": "0d352ea6075eeb334f7a07b110a268991908d8a5f98ab0c47b3452a6d2db207a"
+    },
+    "ultralytics/nn/backends/openvino.py": {
+      "bytes": 4330,
+      "sha256": "1bf0e90bfae813dc7612bd25cd6a698a900f2bde035b821e4fb0f45d01377b56"
+    },
+    "ultralytics/nn/backends/paddle.py": {
+      "bytes": 3020,
+      "sha256": "01019d89093d487665d3068e9bfe41e700f8ea638cb01d6ca58c4fb6b83a3116"
+    },
+    "ultralytics/nn/backends/pytorch.py": {
+      "bytes": 5575,
+      "sha256": "eab69efaaadcb274d2aa4d16f395ada43fae12e6990463a4e063dd75fbc252e5"
+    },
+    "ultralytics/nn/backends/qnn.py": {
+      "bytes": 3402,
+      "sha256": "4253eeecbdd569840604074dfa45f558831ed27eff3a4e3c698522e09a513240"
+    },
+    "ultralytics/nn/backends/rknn.py": {
+      "bytes": 2303,
+      "sha256": "debb795712009d7df7f5fca27804a8d964199eda157bd2f8e784ae281649e4ac"
+    },
+    "ultralytics/nn/backends/tensorflow.py": {
+      "bytes": 7670,
+      "sha256": "fc0b94db15d4b3ebf18a82af8fb1548ed77be221295682e8e27c39228ad3ffba"
+    },
+    "ultralytics/nn/backends/tensorrt.py": {
+      "bytes": 6128,
+      "sha256": "14a4c8a716be0a40b336c466c6e3bc87d5e15ca26aafd43b3b77a32e5dd5bad2"
+    },
+    "ultralytics/nn/backends/triton.py": {
+      "bytes": 1463,
+      "sha256": "b5f3e689f30dc52947f7904f8aa01219077eea4ffd511187604f474e54296057"
+    },
+    "ultralytics/utils/export/__init__.py": {
+      "bytes": 918,
+      "sha256": "cc280dfbdf8a5a9d7ca2ecb962c43fedaf3580a9e8b087ab85ce12de8ff6c318"
+    },
+    "ultralytics/utils/export/axelera.py": {
+      "bytes": 5597,
+      "sha256": "406e5b1ea9b3b609dc43072817f6336f51d622f25da1bb877f8fa433cb3943c4"
+    },
+    "ultralytics/utils/export/coreml.py": {
+      "bytes": 11598,
+      "sha256": "7244ec7bf4d60d5732b1c7a7dec34173ade2c113637059b44c9436a900f242f0"
+    },
+    "ultralytics/utils/export/deepx.py": {
+      "bytes": 2713,
+      "sha256": "823bc52f91a6fddc0a0630ac01012a0d2b94c76e557fd4cbc310afc6dae86b8a"
+    },
+    "ultralytics/utils/export/engine.py": {
+      "bytes": 19611,
+      "sha256": "a3269282a1f6ec12df99b53ec5548dd6dadeb5547fc126b9f2969f7a742d1d6c"
+    },
+    "ultralytics/utils/export/executorch.py": {
+      "bytes": 2829,
+      "sha256": "01c20087490b58b3b610dd832b68f0e6591137234181b2baf1730c0e0d44f9fe"
+    },
+    "ultralytics/utils/export/imx.py": {
+      "bytes": 15243,
+      "sha256": "6a0dac047815e7cf115071fb50a914d4eb9e28f33581a7ce8393793a21098f04"
+    },
+    "ultralytics/utils/export/litert.py": {
+      "bytes": 8348,
+      "sha256": "4340cc3b52af4d4fa49e358af230bbe46dc5f1a3176b4ce0e8c88101150761ba"
+    },
+    "ultralytics/utils/export/mnn.py": {
+      "bytes": 1892,
+      "sha256": "6dcf8ea0fde61413f52f8a03e5bd6f3fd1524f490b91744c77614c9d68137c1b"
+    },
+    "ultralytics/utils/export/ncnn.py": {
+      "bytes": 2571,
+      "sha256": "982c8a1ff9b22c60eeb549ef381583af23f2575506bb2377d7ab929b1a30cb7b"
+    },
+    "ultralytics/utils/export/onnx.py": {
+      "bytes": 2530,
+      "sha256": "fbaaa297d11896965a540efcf0b8259443120e4f0128861d1bc1b496da43a3ec"
+    },
+    "ultralytics/utils/export/openvino.py": {
+      "bytes": 2657,
+      "sha256": "94fb4f19afcf980db39f35092ccd45fa75904f163c711dbbd71b809059f69b3a"
+    },
+    "ultralytics/utils/export/paddle.py": {
+      "bytes": 2107,
+      "sha256": "dc5b07413e75b1e8b69e2fd0ddb62e719a1983bd6a6865c321c76abba11c64d9"
+    },
+    "ultralytics/utils/export/qnn.py": {
+      "bytes": 8108,
+      "sha256": "c58709ed3ee169c2423295100f9775675cf363ae31760069dff3d6cd77318859"
+    },
+    "ultralytics/utils/export/rknn.py": {
+      "bytes": 3581,
+      "sha256": "2e3d8316a8a79f3c1f08a3794fd7f672940e5cc4b6fa84af7e5af191c681e361"
+    },
+    "ultralytics/utils/export/tensorflow.py": {
+      "bytes": 13195,
+      "sha256": "534809a54982c2a13b5ccded89d29ae58bf01360ec4c9905705cbf16edd56f18"
+    },
+    "ultralytics/utils/export/torchscript.py": {
+      "bytes": 1209,
+      "sha256": "4882ab89b247bbbe880c412eecf7c050cd743afd4db9a309af1f4251ea39717a"
+    }
+  },
+  "extension_points": {
+    "ultralytics/cfg/__init__.py": {
+      "bytes": 46546,
+      "sha256": "23f13053c53a0562e36d9f72a51f1102e255a20a0346420638dc1a0553c358b8"
+    },
+    "ultralytics/cfg/default.yaml": {
+      "bytes": 9782,
+      "sha256": "6abe4641db08d713bea4d49b8737956e1d1fc59332c37936ac42de44216fa631"
+    },
+    "ultralytics/engine/exporter.py": {
+      "bytes": 84464,
+      "sha256": "997ccaf50d7b54ef4d8a3a9a555eb719968ade3b521e9a7acff3e152321583a2"
+    },
+    "ultralytics/engine/trainer.py": {
+      "bytes": 64350,
+      "sha256": "45c808290416fb29e39846b942ad63f3b84219110d9e915c0bf415b0687a63c2"
+    },
+    "ultralytics/nn/modules/__init__.py": {
+      "bytes": 3366,
+      "sha256": "87077a78c85b1c509c7f7598cd9859e5bc97edf8e1e3bbf4881e41ac169a64e6"
+    },
+    "ultralytics/nn/tasks.py": {
+      "bytes": 88747,
+      "sha256": "25974f2eecf0e0d7de38928ae90774b5bca792f6799d4d79e86ced1a552c9c74"
+    },
+    "ultralytics/utils/loss.py": {
+      "bytes": 64610,
+      "sha256": "955c7ea94499ece609d641246bef7355cad2619d0b7aee4016ffd466ca1034cc"
+    }
+  },
+  "policy": {
+    "exact_paths_are_byte_identical": true,
+    "extension_points_require_symbol_level_review": true,
+    "official_yolo26_configs_are_not_overwritten": true
+  },
+  "schema_version": 1,
+  "upstream": {
+    "commit": "579b389c87c04b7f6a9a247730dac04922be8007",
+    "ref": "v8.4.101"
+  }
+}

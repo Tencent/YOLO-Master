@@ -10,17 +10,26 @@ Covers:
 - analysis.py / pruning.py use LOGGER (no bare print()).
 """
 import io
+import inspect
 import re
 from pathlib import Path
 
 import torch
 import torch.nn as nn
 
-from ultralytics.nn.modules.moa import MoABlock, C2fMoA, NeckMoAFusion
-from ultralytics.nn.modules.mot import MoTBlock, C2fMoT
+from ultralytics.nn.modules.moa import MoABlock, C2fMoA
+from ultralytics.nn.modules.mot import MoTBlock
+from ultralytics.utils.torch_utils import TORCH_1_13
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _legacy_onnx_export_kwargs():
+    kwargs = {"opset_version": 17 if TORCH_1_13 else 12, "do_constant_folding": False}
+    if "dynamo" in inspect.signature(torch.onnx.export).parameters:
+        kwargs["dynamo"] = False
+    return kwargs
 
 
 # ── MoA sequential_heads equivalence ──────────────────────────────────────
@@ -73,7 +82,7 @@ def test_moa_onnx_export():
     torch.onnx.export(
         block, x, buf,
         input_names=["input"], output_names=["output"],
-        opset_version=17, dynamo=False, do_constant_folding=False,
+        **_legacy_onnx_export_kwargs(),
     )
     assert len(buf.getvalue()) > 0, "ONNX export produced empty buffer"
 
@@ -92,7 +101,7 @@ def test_c2fmoa_onnx_export():
     torch.onnx.export(
         module, x, buf,
         input_names=["input"], output_names=["output"],
-        opset_version=17, dynamo=False, do_constant_folding=False,
+        **_legacy_onnx_export_kwargs(),
     )
     assert len(buf.getvalue()) > 0
 
@@ -108,7 +117,7 @@ def test_mot_onnx_export():
     torch.onnx.export(
         block, x, buf,
         input_names=["input"], output_names=["output"],
-        opset_version=17, dynamo=False, do_constant_folding=False,
+        **_legacy_onnx_export_kwargs(),
     )
     assert len(buf.getvalue()) > 0, "ONNX export produced empty buffer"
 
@@ -281,7 +290,7 @@ def test_molora_aux_loss_single_gpu_no_crash():
 def test_analysis_uses_logger_not_print():
     """analysis.py should use LOGGER, not bare print()."""
     analysis_path = ROOT / "ultralytics/nn/modules/moe/analysis.py"
-    content = analysis_path.read_text()
+    content = analysis_path.read_text(encoding="utf-8")
 
     # No bare print( calls (except inside strings or comments)
     # Check for print( at start of line or after whitespace
@@ -301,7 +310,7 @@ def test_analysis_uses_logger_not_print():
 def test_pruning_uses_logger_not_print():
     """pruning.py should use LOGGER, not bare print()."""
     pruning_path = ROOT / "ultralytics/nn/modules/moe/pruning.py"
-    content = pruning_path.read_text()
+    content = pruning_path.read_text(encoding="utf-8")
 
     print_lines = [
         line.strip()

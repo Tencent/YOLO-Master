@@ -10,28 +10,7 @@ from typing import Optional, Dict, Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.distributed as dist
-
-
-def all_reduce_mean(tensor: torch.Tensor) -> torch.Tensor:
-    """Average a tensor across DDP ranks (no-op on single GPU)."""
-    if not (dist.is_available() and dist.is_initialized()):
-        return tensor
-    world = dist.get_world_size()
-    if world <= 1:
-        return tensor
-    orig_dtype = tensor.dtype
-    # NCCL backend only supports CUDA tensors. If the tensor is on CPU but
-    # the process group is NCCL, move it to the current CUDA device to avoid
-    # "No backend type associated with device type cpu".
-    if tensor.device.type == "cpu" and dist.get_backend() == "nccl":
-        tensor = tensor.cuda()
-    local = tensor.float()
-    global_value = local.detach().clone()
-    dist.all_reduce(global_value, op=dist.ReduceOp.SUM)
-    global_value = global_value / world
-    # Keep a global forward value without backpropagating through raw c10d.
-    return (local + (global_value - local.detach())).to(orig_dtype)
+from ultralytics.nn.modules._numeric import all_reduce_mean, should_reduce_ddp
 
 
 class MoLoRALoss(nn.Module):
@@ -50,7 +29,7 @@ class MoLoRALoss(nn.Module):
         balance_loss_coef: float = 0.01,
         z_loss_coef: float = 0.001,
         diversity_loss_coef: float = 0.0,
-        reduce_ddp: bool = False,
+        reduce_ddp: bool = True,
     ):
         super().__init__()
         self.num_experts = num_experts
@@ -82,7 +61,7 @@ class MoLoRALoss(nn.Module):
         usage = counts / max(total, 1)
         usage = usage.detach()  # non-differentiable usage
 
-        if self.reduce_ddp:
+        if self.reduce_ddp and should_reduce_ddp(self):
             importance = all_reduce_mean(importance)
             usage = all_reduce_mean(usage)
 

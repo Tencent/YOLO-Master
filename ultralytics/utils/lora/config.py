@@ -388,6 +388,7 @@ class LoRAConfigBuilder:
         r: int,
         include_moe: bool = True,
         include_attention: bool = False,
+        include_head: bool = False,
         only_backbone: bool = False,
         exclude_modules: Optional[List[str]] = None,
         layer_from: Optional[int] = None,
@@ -463,6 +464,14 @@ class LoRAConfigBuilder:
 
         # Iterate through all sub-modules
         modules_by_name = dict(model.named_modules())
+        try:
+            from ultralytics.vpeft.graph import ComputationGraphBuilder
+
+            structural_annotations = {
+                node.name: node.annotations or {} for node in ComputationGraphBuilder().build(model).nodes
+            }
+        except (AttributeError, KeyError, TypeError):
+            structural_annotations = {}
         for name, module in model.named_modules():
             if not name: continue 
             
@@ -499,6 +508,9 @@ class LoRAConfigBuilder:
             is_conv = isinstance(module, nn.Conv2d)
             is_linear = isinstance(module, nn.Linear)
             if not (is_conv or is_linear):
+                continue
+
+            if structural_annotations.get(name, {}).get("in_head") and not include_head:
                 continue
 
             # 2b. Min-channel filter: avoid attaching LoRA to very narrow layers

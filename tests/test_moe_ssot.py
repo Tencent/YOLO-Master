@@ -3,6 +3,7 @@ from pathlib import Path
 
 import torch
 from scripts.check_moe_ssot import find_duplicate_classes
+from ultralytics.utils.patches import torch_load
 
 
 def test_moe_public_classes_have_one_implementation_source():
@@ -75,7 +76,7 @@ def test_compatibility_alias_survives_torch_serialization():
     buffer = io.BytesIO()
     torch.save(model, buffer)
     buffer.seek(0)
-    loaded = torch.load(buffer, map_location="cpu", weights_only=False)
+    loaded = torch_load(buffer, map_location="cpu", weights_only=False)
 
     assert type(loaded) is modules.UltraOptimizedMoE
     assert loaded.state_dict().keys() == model.state_dict().keys()

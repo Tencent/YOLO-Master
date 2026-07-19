@@ -1,7 +1,9 @@
 """Regression: LoRA must not target MoE control paths that break DDP."""
 import torch
 import torch.nn as nn
+from types import SimpleNamespace
 
+from ultralytics.engine.extensions import AdapterRuntimeController
 from ultralytics.nn.modules.moe.gated import AdaptiveGateMoE
 from ultralytics.utils.lora.config import LoRAConfigBuilder
 
@@ -43,3 +45,47 @@ def test_is_under_moe_block_detects_nested_control_path():
     assert LoRAConfigBuilder._is_under_moe_block("0.complexity_estimator.1", modules)
     assert LoRAConfigBuilder._is_under_moe_block("0.proj", modules)
     assert not LoRAConfigBuilder._is_under_moe_block("does.not.exist", modules)
+
+
+def test_adalora_schedule_advances_after_optimizer_step():
+    class AdapterModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = nn.Parameter(torch.ones(1))
+            self.lora_enabled = True
+            self.steps = []
+
+        def update_and_allocate(self, step):
+            self.steps.append(step)
+
+    trainer = SimpleNamespace(model=AdapterModel())
+    controller = AdapterRuntimeController(trainer)
+
+    controller.after_optimizer_step()
+    controller.after_optimizer_step()
+
+    assert trainer.model.steps == [1, 2]
+
+
+def test_adapter_controller_active_recognizes_molora():
+    model = nn.Linear(4, 4)
+    model.molora_enabled = True
+    controller = AdapterRuntimeController(SimpleNamespace(model=model))
+
+    assert controller.enabled is False
+    assert controller.active is True
+
+
+def test_distillation_helpers_preserve_gradient_to_student():
+    model = nn.Linear(4, 4)
+    trainer = SimpleNamespace(model=model)
+    controller = AdapterRuntimeController(trainer)
+    student = torch.randn(2, 8, 6, requires_grad=True)
+    teacher = torch.randn(2, 8, 6)
+
+    loss = controller.compute_distillation_loss(student, teacher)
+    response = controller.compute_response_distillation_loss(student, teacher)
+    (loss + response).backward()
+
+    assert student.grad is not None
+    assert torch.isfinite(student.grad).all()

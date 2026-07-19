@@ -114,12 +114,16 @@ def test_c2fmoa_aux_loss_not_double_counted_for_nested_blocks():
 
 
 def test_flash_attn_supports_sdpa_without_scale_keyword(monkeypatch):
-    original_sdpa = F.scaled_dot_product_attention
+    original_sdpa = getattr(F, "scaled_dot_product_attention", None)
+
+    if original_sdpa is None:
+        def original_sdpa(q, k, v):
+            return (q @ k.transpose(-2, -1) / q.shape[-1] ** 0.5).softmax(dim=-1) @ v
 
     def torch20_sdpa(q, k, v):
         return original_sdpa(q, k, v)
 
-    monkeypatch.setattr("ultralytics.nn.modules.moa.moa.F.scaled_dot_product_attention", torch20_sdpa)
+    monkeypatch.setattr("ultralytics.nn.modules.moa.moa.F.scaled_dot_product_attention", torch20_sdpa, raising=False)
     q = torch.randn(1, 2, 4, 4)
     k = torch.randn(1, 2, 4, 4)
     v = torch.randn(1, 2, 4, 4)
@@ -204,6 +208,13 @@ def test_moa_temperature_anneal():
     anneal_moa_temperature(module, factor=0.5, min_temp=0.3)
     after = [m.router.temperature for m in module.m]
     assert after == [max(t * 0.5, 0.3) for t in before]
+
+
+def test_moa_default_temperature_anneal_matches_shared_schedule():
+    module = C2fMoA(64, 64, n=1, num_heads=6)
+    anneal_moa_temperature(module)
+
+    assert [m.router.temperature for m in module.m] == [0.97]
 
 
 def test_moa_global_head_per_block_seed():

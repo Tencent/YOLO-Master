@@ -4,6 +4,7 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 from ultralytics.nn.modules.conv import Conv
+from ultralytics.nn.modules.utils import robust_deepcopy
 from ultralytics.nn.modules.routing_protocol import collect_aux_loss, export_capabilities as _export_routing_capabilities, publish_aux_loss, routing_snapshot as _routing_snapshot
 from ultralytics.utils import LOGGER
 from .block import MoTBlock
@@ -152,9 +153,7 @@ class C2fMoT(nn.Module):
         return _export_routing_capabilities(self)
 
     def __deepcopy__(self, memo):
-        from ultralytics.nn.modules.moe._common import _robust_deepcopy
-
-        return _robust_deepcopy(self, memo)
+        return robust_deepcopy(self, memo)
 
 def _aux_loss_device(model: nn.Module) -> torch.device:
     """Best-effort device lookup for zero aux-loss fallbacks."""

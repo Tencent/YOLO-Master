@@ -7,6 +7,8 @@ import torch
 import yaml
 
 from ultralytics.nn.modules.moa import MoABlock
+from ultralytics.nn.modules.block import DyMoEBlock
+from ultralytics.nn.modules.moe import AdaptiveGateMoE
 from ultralytics.nn.modules.moe.modules import OptimizedMOE
 from ultralytics.nn.modules.mot import MoTBlock
 from ultralytics.nn.peft.molora.layer import MoLoRALayer
@@ -54,6 +56,8 @@ def test_format_aliases_and_routed_module_classification():
     assert normalize_export_format("TensorRT") == "engine"
     assert normalize_export_format("trt") == "engine"
     assert classify_routed_module(OptimizedMOE(16, 16, num_experts=2, top_k=1)) == "MoE"
+    assert classify_routed_module(AdaptiveGateMoE(16, 16, num_experts=2, top_k=1)) == "MoE"
+    assert classify_routed_module(DyMoEBlock(16, num_experts=2, top_k=1)) == "MoE"
     assert classify_routed_module(MoABlock(16, num_heads=3)) == "MoA"
     assert classify_routed_module(MoTBlock(16, num_heads=2, top_k=1)) == "MoT"
     assert classify_routed_module(MoLoRALayer(torch.nn.Linear(16, 16), r=2, num_experts=2, top_k=1)) == "MoLoRA"

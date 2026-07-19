@@ -1,5 +1,4 @@
 """MoLoRA (Mixture-of-LoRA) unit tests — 55 tests covering core + integration."""
-import copy
 import os
 import tempfile
 
@@ -10,7 +9,6 @@ import torch.nn.functional as F
 
 from ultralytics.nn.peft.molora import (
     MoLoRAConfig,
-    MoLoRAConfigBuilder,
     get_molora_preset,
     build_router,
     LinearRouter,
@@ -457,6 +455,24 @@ class TestMoLoRAModelWrapper:
                 # base layer params should be frozen
                 pass
 
+    def test_configured_experts_frozen_after_wrap(self):
+        model = self._make_model()
+        cfg = MoLoRAConfig(
+            r=4, alpha=8, num_experts=3, top_k=1,
+            target_modules=["conv1", "conv2", "fc"], freeze_experts=[1],
+        )
+
+        wrapped = get_peft_molora_model(model, cfg)
+        layers = [module for module in wrapped.modules() if isinstance(module, MoLoRALayer)]
+
+        assert len(layers) == 3
+        for layer in layers:
+            assert not any(param.requires_grad for param in layer.base_layer.parameters())
+            assert not any(param.requires_grad for param in layer.experts[1].parameters())
+            assert any(param.requires_grad for param in layer.experts[0].parameters())
+            assert any(param.requires_grad for param in layer.experts[2].parameters())
+            assert any(param.requires_grad for param in layer.router.parameters())
+
     def test_aux_loss(self):
         model = self._make_model()
         cfg = MoLoRAConfig(
@@ -483,6 +499,27 @@ class TestMoLoRAModelWrapper:
         wrapper.unmerge()
         out2 = wrapper(x)
         assert out1.shape == out2.shape
+
+    def test_batchnorm_fusion_preserves_dynamic_conv_output(self):
+        torch.manual_seed(0)
+        base = nn.Conv2d(8, 8, 3, padding=1, bias=False)
+        layer = MoLoRALayer(base, r=2, alpha=4, num_experts=2, top_k=1).eval()
+        bn = nn.BatchNorm2d(8).eval()
+        bn.weight.data.uniform_(0.5, 1.5)
+        bn.bias.data.uniform_(-0.2, 0.2)
+        bn.running_mean.uniform_(-0.1, 0.1)
+        bn.running_var.uniform_(0.5, 1.5)
+        for expert in layer.experts:
+            expert.lora_B.weight.data.normal_()
+        x = torch.randn(2, 8, 6, 6)
+
+        with torch.no_grad():
+            expected = bn(layer(x))
+        layer.fuse_batchnorm(bn)
+        with torch.no_grad():
+            actual = layer(x)
+
+        assert torch.allclose(actual, expected, atol=1e-5, rtol=1e-4)
 
     def test_save_load_checkpoint(self):
         model = self._make_model()

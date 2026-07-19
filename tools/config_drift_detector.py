@@ -104,6 +104,7 @@ class ConfigDriftDetector:
     MIXTURE_CONFIG = Path("ultralytics/nn/modules/moe/config.py")
     CFG_INIT = Path("ultralytics/cfg/__init__.py")
     TASKS = Path("ultralytics/nn/tasks.py")
+    MIXTURE_REGISTRY = Path("ultralytics/nn/mixture_registry.py")
     MASTER_MODELS = Path("ultralytics/cfg/models/master")
     TYPE_REGISTRIES = ("CFG_FLOAT_KEYS", "CFG_FRACTION_KEYS", "CFG_INT_KEYS", "CFG_BOOL_KEYS")
     TORCH_MODULE_SIGNATURES = {"nn.Upsample": _Signature(0, 5)}
@@ -160,9 +161,7 @@ class ConfigDriftDetector:
             return issues
 
         lora_fields, lora_mapping, lora_line = self._class_mapping(lora_tree, "LoRAConfig", "mapping")
-        molora_fields, molora_mapping, molora_line = self._class_mapping(
-            molora_tree, "MoLoRAConfig", "molora_mapping"
-        )
+        molora_fields, molora_mapping, molora_line = self._class_mapping(molora_tree, "MoLoRAConfig", "molora_mapping")
         for path, class_name, mapping_name, fields, mapping, line in (
             (lora_path, "LoRAConfig", "mapping", lora_fields, lora_mapping, lora_line),
             (molora_path, "MoLoRAConfig", "molora_mapping", molora_fields, molora_mapping, molora_line),
@@ -243,9 +242,7 @@ class ConfigDriftDetector:
                 )
                 continue
             for field in sorted(set(runtime_fields) - set(mappings)):
-                issues.append(
-                    DriftIssue("MIXTURE_FIELD_UNMAPPED", path, f"{kind}.{field} has no CLI_FIELDS mapping")
-                )
+                issues.append(DriftIssue("MIXTURE_FIELD_UNMAPPED", path, f"{kind}.{field} has no CLI_FIELDS mapping"))
             for field in sorted(set(mappings) - set(runtime_fields)):
                 issues.append(
                     DriftIssue("MIXTURE_MAPPING_UNKNOWN_FIELD", path, f"{kind}.{field} has no runtime default")
@@ -332,7 +329,15 @@ class ConfigDriftDetector:
 
         class_index, resolvable_names = self._build_class_index(tasks_tree)
         base_modules, repeat_modules, channel_append_modules = self._parse_model_groups(tasks_tree)
-        known_names = resolvable_names | set(self.TORCH_MODULE_SIGNATURES)
+        registry_tree, registry_issues = self._parse_python(self.root / self.MIXTURE_REGISTRY)
+        issues.extend(registry_issues)
+        mixture_names = self._assigned_mapping_keys(registry_tree, "MIXTURE_MODULES") if registry_tree else set()
+        mixture_repeats = (
+            self._assigned_collection_names(registry_tree, "MIXTURE_REPEAT_MODULES") if registry_tree else set()
+        )
+        base_modules.update(mixture_names)
+        repeat_modules.update(mixture_repeats)
+        known_names = resolvable_names | mixture_names | set(self.TORCH_MODULE_SIGNATURES)
         model_paths = sorted((self.root / self.MASTER_MODELS).rglob("*.yaml"))
         for path in model_paths:
             data, yaml_issues = self._load_yaml_for_check(path)
@@ -516,37 +521,92 @@ class ConfigDriftDetector:
                 )
         return issues
 
-    @staticmethod
-    def _assigned_literal(tree: ast.Module, name: str) -> Any:
+    @classmethod
+    def _assigned_literal(cls, tree: ast.Module, name: str) -> Any:
+        values = {}
         for node in tree.body:
+            targets = []
             if isinstance(node, ast.Assign):
-                if any(isinstance(target, ast.Name) and target.id == name for target in node.targets):
-                    return ConfigDriftDetector._literal_value(node.value)
-            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.target.id == name:
-                return ConfigDriftDetector._literal_value(node.value)
-        return None
+                targets = [target.id for target in node.targets if isinstance(target, ast.Name)]
+            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                targets = [node.target.id]
+            if not targets:
+                continue
+            value = cls._literal_value(node.value, values)
+            for target in targets:
+                values[target] = value
+        return values.get(name)
 
     @staticmethod
-    def _literal_value(node: ast.AST | None) -> Any:
+    def _literal_value(node: ast.AST | None, names: dict[str, Any] | None = None) -> Any:
         if node is None:
             return None
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in {
-            "dict",
-            "frozenset",
-            "list",
-            "set",
-            "tuple",
-        }:
+        if isinstance(node, ast.Name):
+            return (names or {}).get(node.id)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+            left = ConfigDriftDetector._literal_value(node.left, names)
+            right = ConfigDriftDetector._literal_value(node.right, names)
+            try:
+                return left | right
+            except TypeError:
+                return None
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id
+            in {
+                "dict",
+                "frozenset",
+                "list",
+                "set",
+                "tuple",
+            }
+        ):
             if node.keywords:
                 return None
-            values = ast.literal_eval(node.args[0]) if node.args else ()
-            return {"dict": dict, "frozenset": frozenset, "list": list, "set": set, "tuple": tuple}[
-                node.func.id
-            ](values)
+            values = ConfigDriftDetector._literal_value(node.args[0], names) if node.args else ()
+            if values is None:
+                return None
+            return {"dict": dict, "frozenset": frozenset, "list": list, "set": set, "tuple": tuple}[node.func.id](
+                values
+            )
         try:
             return ast.literal_eval(node)
         except (ValueError, TypeError):
             return None
+
+    @staticmethod
+    def _assigned_mapping_keys(tree: ast.Module, name: str) -> set[str]:
+        for node in tree.body:
+            targets = (
+                node.targets
+                if isinstance(node, ast.Assign)
+                else [node.target]
+                if isinstance(node, ast.AnnAssign)
+                else []
+            )
+            if not any(isinstance(target, ast.Name) and target.id == name for target in targets):
+                continue
+            if not isinstance(node.value, ast.Dict):
+                return set()
+            return {
+                key.value for key in node.value.keys if isinstance(key, ast.Constant) and isinstance(key.value, str)
+            }
+        return set()
+
+    @staticmethod
+    def _assigned_collection_names(tree: ast.Module, name: str) -> set[str]:
+        for node in tree.body:
+            targets = (
+                node.targets
+                if isinstance(node, ast.Assign)
+                else [node.target]
+                if isinstance(node, ast.AnnAssign)
+                else []
+            )
+            if any(isinstance(target, ast.Name) and target.id == name for target in targets):
+                return ConfigDriftDetector._names_from_collection(node.value)
+        return set()
 
     def _build_class_index(self, tasks_tree: ast.Module) -> tuple[dict[str, list[_ClassInfo]], set[str]]:
         index: dict[str, list[_ClassInfo]] = {}

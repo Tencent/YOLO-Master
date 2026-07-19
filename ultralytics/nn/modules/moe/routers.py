@@ -122,11 +122,11 @@ class UltraEfficientRouter(nn.Module):
             # Depthwise
             nn.Conv2d(in_channels, in_channels, 3, padding=1, groups=in_channels, bias=False),
             nn.GroupNorm(get_safe_groups(in_channels, 8), in_channels),
-            nn.SiLU(inplace=True),
+            nn.SiLU(inplace=False),
             # Pointwise compression
             nn.Conv2d(in_channels, reduced_channels, 1, bias=False),
             nn.GroupNorm(get_safe_groups(reduced_channels, 4), reduced_channels),
-            nn.SiLU(inplace=True),
+            nn.SiLU(inplace=False),
             # Expert projection
             nn.Conv2d(reduced_channels, num_experts, 1, bias=True)
         )
@@ -149,7 +149,7 @@ class UltraEfficientRouter(nn.Module):
 
         # 3) Noise injection (training only)
         if self.training and self.noise_std > 0:
-            logits = logits + torch.randn_like(logits).mul_(self.noise_std)
+            logits = logits + torch.randn_like(logits) * self.noise_std
 
         # 4) Clamp the final logits that actually feed softmax
         logits_clamped = logits.clamp(-30.0, 30.0)
@@ -168,8 +168,8 @@ class UltraEfficientRouter(nn.Module):
         
         topk_vals, topk_indices = torch.topk(pooled_weights, current_top_k, dim=1)
         
-        # In-place normalization
-        topk_vals.div_(topk_vals.sum(dim=1, keepdim=True).add_(1e-6))
+        # Out-of-place normalization preserves the Top-K autograd graph.
+        topk_vals = topk_vals / topk_vals.sum(dim=1, keepdim=True).clamp_min(1e-6)
 
         if self.training:
             importance = pooled_weights.mean(dim=0).view(self.num_experts)
@@ -290,7 +290,7 @@ class EfficientSpatialRouter(BaseRouter):
         self.router = nn.Sequential(
             nn.Conv2d(in_channels, reduced_channels, 3, padding=1, bias=False),
             nn.BatchNorm2d(reduced_channels),
-            nn.SiLU(inplace=True),
+            nn.SiLU(inplace=False),
             nn.Conv2d(reduced_channels, num_experts, 1, bias=False),
             nn.BatchNorm2d(num_experts)  # numerical stability
         )
@@ -334,7 +334,7 @@ class AdaptiveRoutingLayer(BaseRouter):
         self.router = nn.Sequential(
             nn.Conv2d(in_channels, reduced_channels, 1, bias=False),
             nn.BatchNorm2d(reduced_channels),
-            nn.SiLU(inplace=True),
+            nn.SiLU(inplace=False),
             nn.Conv2d(reduced_channels, num_experts, 1, bias=False),
             nn.BatchNorm2d(num_experts)
         )
@@ -361,7 +361,7 @@ class LocalRoutingLayer(BaseRouter):
         self.router = nn.Sequential(
             nn.Conv2d(in_channels, reduced_channels, 3, padding=1, bias=False),
             nn.BatchNorm2d(reduced_channels),
-            nn.SiLU(inplace=True),
+            nn.SiLU(inplace=False),
             nn.Conv2d(reduced_channels, num_experts, 1, bias=False),
             nn.BatchNorm2d(num_experts)
         )
@@ -403,7 +403,7 @@ class AdvancedRoutingLayer(nn.Module):
         reduced = max(in_channels // 8, 8)
         self.router = nn.Sequential(
             nn.Conv2d(in_channels, reduced, 1, bias=False),
-            nn.SiLU(inplace=True),
+            nn.SiLU(inplace=False),
             nn.Conv2d(reduced, num_experts, 1, bias=True),
         )
         # Pre-create identity adapter; replaced only if a mismatched channel
@@ -459,7 +459,7 @@ class DynamicRoutingLayer(nn.Module):
         # Remove Softmax and control manually
         self.routing_network = nn.Sequential(
             nn.Conv2d(in_channels, reduced_channels, kernel_size=1),
-            nn.SiLU(inplace=True),
+            nn.SiLU(inplace=False),
             nn.Conv2d(reduced_channels, num_experts, kernel_size=1),
         )
 

@@ -1,6 +1,7 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
 import copy
+import logging
 import math
 
 import numpy as np
@@ -9,24 +10,55 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.init import uniform_
 
-__all__ = "inverse_sigmoid", "multi_scale_deformable_attn_pytorch", "get_safe_groups"
+__all__ = "inverse_sigmoid", "multi_scale_deformable_attn_pytorch", "get_safe_groups", "robust_deepcopy"
 
 
 def get_safe_groups(channels: int, desired_groups: int = 8) -> int:
-    """Return the largest ``num_groups`` <= ``desired_groups`` that evenly divides ``channels``.
-
-    Shared by MoA/MoE/MoT so ``nn.GroupNorm`` never receives an invalid
-    ``num_groups`` (e.g. a channel count that is prime or smaller than
-    ``desired_groups``). Kept in this dependency-free module so MoA/MoT do not
-    need to import from the MoE package just for this helper (avoids a
-    cross-mixture compile-time dependency).
-    """
+    """Return the largest ``num_groups`` <= ``desired_groups`` that evenly divides ``channels``."""
     if channels <= 0:
         return 1
     groups = min(desired_groups, channels)
     while channels % groups != 0:
         groups -= 1
     return max(1, groups)
+
+
+def robust_deepcopy(obj, memo):
+    """Deep-copy a module while dropping transient graph tensors and stale property shadows."""
+
+    def is_readonly_property(cls, name):
+        return any(
+            isinstance(base.__dict__.get(name), property) and base.__dict__[name].fset is None
+            for base in cls.__mro__
+        )
+
+    def detached_zero(value):
+        return value.detach().new_zeros(()) if isinstance(value, torch.Tensor) else torch.tensor(0.0)
+
+    cls = obj.__class__
+    new_obj = cls.__new__(cls)
+    memo[id(obj)] = new_obj
+    for name, value in obj.__dict__.items():
+        if is_readonly_property(cls, name):
+            continue
+        if isinstance(value, torch.Tensor) and value.grad_fn is not None:
+            setattr(new_obj, name, detached_zero(value))
+            continue
+        try:
+            setattr(new_obj, name, copy.deepcopy(value, memo))
+        except RuntimeError as exc:
+            if "Only Tensors created explicitly" not in str(exc):
+                raise
+            logging.getLogger("ultralytics").warning(
+                "Skipped deepcopy for attribute '%s' in %s due to a non-leaf tensor", name, cls.__name__
+            )
+            setattr(new_obj, name, detached_zero(value))
+        except Exception:
+            try:
+                setattr(new_obj, name, value)
+            except AttributeError:
+                pass
+    return new_obj
 
 
 def _get_clones(module, n):
@@ -52,7 +84,8 @@ def _get_clones(module, n):
 def bias_init_with_prob(prior_prob=0.01):
     """Initialize conv/fc bias value according to a given probability value.
 
-    This function calculates the bias initialization value based on a prior probability using the inverse error
+    This function calculates the bias initialization value based on a prior probability using the inverse sigmoid
+    (logit)
     function. It's commonly used in object detection models to initialize classification layers with a specific positive
     prediction probability.
 
@@ -74,18 +107,15 @@ def linear_init(module):
     """Initialize the weights and biases of a linear module.
 
     This function initializes the weights of a linear module using a uniform distribution within bounds calculated from
-    the input dimension. If the module has a bias, it is also initialized.
+    the output dimension. If the module has a bias, it is also initialized.
 
     Args:
         module (nn.Module): Linear module to initialize.
 
-    Returns:
-        (nn.Module): The initialized module.
-
     Examples:
         >>> import torch.nn as nn
         >>> linear = nn.Linear(10, 5)
-        >>> initialized_linear = linear_init(linear)
+        >>> linear_init(linear)
     """
     bound = 1 / math.sqrt(module.weight.shape[0])
     uniform_(module.weight, -bound, bound)
@@ -119,57 +149,48 @@ def inverse_sigmoid(x, eps=1e-5):
 
 def multi_scale_deformable_attn_pytorch(
     value: torch.Tensor,
-    value_spatial_shapes: torch.Tensor,
+    value_spatial_shapes: list,
     sampling_locations: torch.Tensor,
     attention_weights: torch.Tensor,
 ) -> torch.Tensor:
     """Implement multi-scale deformable attention in PyTorch.
 
-    This function performs deformable attention across multiple feature map scales, allowing the model to attend to
-    different spatial locations with learned offsets.
+    Folds the (num_levels, num_points) axes into a single num_total_points axis so every traced tensor stays at rank <=
+    5, the maximum rank supported by CoreML's MIL converter. Numerically equivalent to the rank-6 reference
+    implementation on CUDA and CPU.
 
     Args:
-        value (torch.Tensor): The value tensor with shape (bs, num_keys, num_heads, embed_dims).
-        value_spatial_shapes (torch.Tensor): Spatial shapes of the value tensor with shape (num_levels, 2).
-        sampling_locations (torch.Tensor): The sampling locations with shape (bs, num_queries, num_heads, num_levels,
+        value (torch.Tensor): Value tensor with shape (bs, num_keys, num_heads, embed_dims).
+        value_spatial_shapes (list): Per-level spatial shapes as [(H_0, W_0), ..., (H_{L-1}, W_{L-1})].
+        sampling_locations (torch.Tensor): Sampling locations with shape (bs, num_queries, num_heads, num_levels *
             num_points, 2).
-        attention_weights (torch.Tensor): The attention weights with shape (bs, num_queries, num_heads, num_levels,
+        attention_weights (torch.Tensor): Attention weights with shape (bs, num_queries, num_heads, num_levels *
             num_points).
 
     Returns:
-        (torch.Tensor): The output tensor with shape (bs, num_queries, embed_dims).
+        (torch.Tensor): Output tensor with shape (bs, num_queries, num_heads * embed_dims).
 
     References:
         https://github.com/IDEA-Research/detrex/blob/main/detrex/layers/multi_scale_deform_attn.py
     """
     bs, _, num_heads, embed_dims = value.shape
-    _, num_queries, num_heads, num_levels, num_points, _ = sampling_locations.shape
-    value_list = value.split([H_ * W_ for H_, W_ in value_spatial_shapes], dim=1)
-    sampling_grids = 2 * sampling_locations - 1
+    _, num_queries, _, num_total_points, _ = sampling_locations.shape
+    num_points = num_total_points // len(value_spatial_shapes)
+
+    # (bs, num_keys, num_heads, embed_dims) -> tuple of (bs*num_heads, embed_dims, H*W) per level
+    value_list = value.permute(0, 2, 3, 1).flatten(0, 1).split([h * w for h, w in value_spatial_shapes], dim=-1)
+    # Map to grid_sample coords in [-1, 1] and split per level: tuple of (bs*num_heads, num_queries, num_points, 2)
+    sampling_grids = (2 * sampling_locations - 1).permute(0, 2, 1, 3, 4).flatten(0, 1).split(num_points, dim=-2)
+
     sampling_value_list = []
-    for level, (H_, W_) in enumerate(value_spatial_shapes):
-        # bs, H_*W_, num_heads, embed_dims ->
-        # bs, H_*W_, num_heads*embed_dims ->
-        # bs, num_heads*embed_dims, H_*W_ ->
-        # bs*num_heads, embed_dims, H_, W_
-        value_l_ = value_list[level].flatten(2).transpose(1, 2).reshape(bs * num_heads, embed_dims, H_, W_)
-        # bs, num_queries, num_heads, num_points, 2 ->
-        # bs, num_heads, num_queries, num_points, 2 ->
-        # bs*num_heads, num_queries, num_points, 2
-        sampling_grid_l_ = sampling_grids[:, :, :, level].transpose(1, 2).flatten(0, 1)
-        # bs*num_heads, embed_dims, num_queries, num_points
-        sampling_value_l_ = F.grid_sample(
-            value_l_, sampling_grid_l_, mode="bilinear", padding_mode="zeros", align_corners=False
+    for level, (h, w) in enumerate(value_spatial_shapes):
+        value_l = value_list[level].reshape(bs * num_heads, embed_dims, h, w)
+        sampling_value_list.append(
+            F.grid_sample(value_l, sampling_grids[level], mode="bilinear", padding_mode="zeros", align_corners=False)
         )
-        sampling_value_list.append(sampling_value_l_)
-    # (bs, num_queries, num_heads, num_levels, num_points) ->
-    # (bs, num_heads, num_queries, num_levels, num_points) ->
-    # (bs, num_heads, 1, num_queries, num_levels*num_points)
-    attention_weights = attention_weights.transpose(1, 2).reshape(
-        bs * num_heads, 1, num_queries, num_levels * num_points
-    )
+    attention_weights = attention_weights.permute(0, 2, 1, 3).reshape(bs * num_heads, 1, num_queries, num_total_points)
     output = (
-        (torch.stack(sampling_value_list, dim=-2).flatten(-2) * attention_weights)
+        (torch.cat(sampling_value_list, dim=-1) * attention_weights)
         .sum(-1)
         .view(bs, num_heads * embed_dims, num_queries)
     )

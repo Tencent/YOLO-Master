@@ -30,6 +30,7 @@ from ultralytics.utils.lora.planner import (
 # Mock models (mirrors test_planner.py helpers for end-to-end independence)
 # =============================================================================
 
+
 class AAttn(nn.Module):
     """Dummy attention module (AAttn-style, no submodules)."""
 
@@ -123,6 +124,7 @@ def _make_yolo_world_like():
 # Paper canonical data helpers
 # =============================================================================
 
+
 def _paper_points_10():
     """10 canonical points (Table 1, non-catastrophic)."""
     return [
@@ -150,17 +152,38 @@ def _paper_points_full():
     term to distinguish signal from noise.
     """
     points = _paper_points_10()
-    points.extend([
-        LOVODataPoint(ArchitectureFingerprint(0.85, 0.0, 0.0, 0.0, 0.25), "lora", -0.600, model_name="RT-DETR-l", notes="catastrophic"),
-        LOVODataPoint(ArchitectureFingerprint(0.80, 0.0, 0.0, 0.0, 0.25), "lora", -0.450, model_name="RT-DETR-m", notes="catastrophic"),
-        LOVODataPoint(ArchitectureFingerprint(0.45, 0.0, 0.0, 0.0, 0.333), "dora", -0.055, model_name="YOLO12s", notes="catastrophic"),
-    ])
+    points.extend(
+        [
+            LOVODataPoint(
+                ArchitectureFingerprint(0.85, 0.0, 0.0, 0.0, 0.25),
+                "lora",
+                -0.600,
+                model_name="RT-DETR-l",
+                notes="catastrophic",
+            ),
+            LOVODataPoint(
+                ArchitectureFingerprint(0.80, 0.0, 0.0, 0.0, 0.25),
+                "lora",
+                -0.450,
+                model_name="RT-DETR-m",
+                notes="catastrophic",
+            ),
+            LOVODataPoint(
+                ArchitectureFingerprint(0.45, 0.0, 0.0, 0.0, 0.333),
+                "dora",
+                -0.055,
+                model_name="YOLO12s",
+                notes="catastrophic",
+            ),
+        ]
+    )
     return points
 
 
 # =============================================================================
 # CLI end-to-end tests
 # =============================================================================
+
 
 class TestLOVOE2ECLI:
     """Exercise the standalone CLI script via subprocess."""
@@ -195,9 +218,13 @@ class TestLOVOE2ECLI:
         # collect --from-paper --include-catastrophic
         result = subprocess.run(
             [
-                sys.executable, str(self.SCRIPT),
-                "collect", "--from-paper", "--include-catastrophic",
-                "--output", str(data_file),
+                sys.executable,
+                str(self.SCRIPT),
+                "collect",
+                "--from-paper",
+                "--include-catastrophic",
+                "--output",
+                str(data_file),
             ],
             capture_output=True,
             text=True,
@@ -209,9 +236,13 @@ class TestLOVOE2ECLI:
         # validate --input
         result = subprocess.run(
             [
-                sys.executable, str(self.SCRIPT),
-                "validate", "--input", str(data_file),
-                "--report", str(report_file),
+                sys.executable,
+                str(self.SCRIPT),
+                "validate",
+                "--input",
+                str(data_file),
+                "--report",
+                str(report_file),
             ],
             capture_output=True,
             text=True,
@@ -230,9 +261,13 @@ class TestLOVOE2ECLI:
         coeffs = tmp_path / "coeffs.json"
         result = subprocess.run(
             [
-                sys.executable, str(self.SCRIPT),
-                "fit", "--from-paper", "--include-catastrophic",
-                "--coefficients", str(coeffs),
+                sys.executable,
+                str(self.SCRIPT),
+                "fit",
+                "--from-paper",
+                "--include-catastrophic",
+                "--coefficients",
+                str(coeffs),
             ],
             capture_output=True,
             text=True,
@@ -260,6 +295,7 @@ class TestLOVOE2ECLI:
 # =============================================================================
 # Paper metrics regression tests
 # =============================================================================
+
 
 class TestLOVOPaperMetrics:
     """Verify LOVO metrics approach the paper's claimed values."""
@@ -305,6 +341,7 @@ class TestLOVOPaperMetrics:
         planner.fit(collector.to_history())
 
         import numpy as np
+
         y = []
         y_pred = []
         for p in _paper_points_10():
@@ -344,6 +381,7 @@ class TestLOVOPaperMetrics:
 # =============================================================================
 # Regression-driven decision end-to-end tests
 # =============================================================================
+
 
 class TestLOVORegressionDrivenDecision:
     """Verify that PEFTPlanner.plan() uses regression as the primary driver."""
@@ -399,8 +437,8 @@ class TestLOVORegressionDrivenDecision:
         planner = PEFTPlanner()
         planner.fit(collector.to_history())
         assert len(planner._coeffs) == 12  # v3: 12-dim regression (added phi_attn²)
-        assert planner._coeffs[0] > 0.0   # intercept positive (base gain)
-        assert planner._coeffs[4] > 0.0   # xi coefficient positive (HRA > LoRA)
+        assert planner._coeffs[0] > 0.0  # intercept positive (base gain)
+        assert planner._coeffs[4] > 0.0  # xi coefficient positive (HRA > LoRA)
 
     def test_end_to_end_workflow(self, tmp_path):
         """Complete workflow: collect → save → load → fit → validate → decide."""
@@ -434,7 +472,8 @@ class TestLOVORegressionDrivenDecision:
         model = _make_yolo11s_like()
         config = LoRAConfig(peft_type="hra", r=16)
         decision = planner.plan(model, config)
-        assert decision.status == "ACCEPT"
+        assert decision.status == "ADAPT"
+        assert decision.safety_overrides == {"planner_low_confidence": True}
         assert decision.predicted_delta > 0.05
 
         # 7. Catastrophe detection sanity check

@@ -5,10 +5,18 @@ to ONNX without losing experts. The dense path computes all experts and uses
 torch.gather for Top-K selection, which is fully traceable.
 """
 import io
+import inspect
 import torch
-import torch.nn as nn
+
+from ultralytics.utils.torch_utils import TORCH_1_13
 
 # ── Test helpers ────────────────────────────────────────────────────────
+
+def _legacy_onnx_export_kwargs():
+    kwargs = {"opset_version": 18 if TORCH_1_13 else 12, "do_constant_folding": False}
+    if "dynamo" in inspect.signature(torch.onnx.export).parameters:
+        kwargs["dynamo"] = False
+    return kwargs
 
 def _count_conv_nodes(model_proto, conv_nodes_seen):
     """Count unique Conv nodes in an ONNX model proto."""
@@ -44,9 +52,7 @@ def _export_and_count_experts(module, num_experts, input_shape, module_name):
         buf,
         input_names=["input"],
         output_names=["output"],
-        opset_version=18,
-        do_constant_folding=False,  # Keep all ops visible
-        dynamo=False,               # Force legacy tracer for is_in_onnx_export()
+        **_legacy_onnx_export_kwargs(),
     )
 
     # Parse the ONNX model
@@ -140,7 +146,14 @@ def test_output_consistency():
         torch_out = module(dummy)
 
     buf = io.BytesIO()
-    torch.onnx.export(module, dummy, buf, opset_version=18, input_names=["x"], output_names=["y"], dynamo=False)
+    torch.onnx.export(
+        module,
+        dummy,
+        buf,
+        input_names=["x"],
+        output_names=["y"],
+        **_legacy_onnx_export_kwargs(),
+    )
     buf.seek(0)
 
     try:

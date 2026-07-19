@@ -30,8 +30,8 @@ import torch.nn.functional as F
 
 from ultralytics.utils import LOGGER
 
-from .graph import ComputationGraph, GraphNode, GATv2ArchitectureEncoder
-from .constraints import ConstraintRegistry, BudgetConstraint
+from .constraints import ConstraintRegistry
+from .graph import ComputationGraph
 
 __all__ = [
     "PlacementPolicy",
@@ -392,8 +392,6 @@ class SoftRankAllocator(RankAllocator, nn.Module):
             # Fallback: create dummy embeddings (for testing / cold-start)
             node_embeddings = torch.randn(graph.n_nodes, self.hidden_dim, dtype=torch.float32)
 
-        N = node_embeddings.shape[0]
-
         # Continuous prediction hat_r_i
         hat_r = self.rank_predictor(node_embeddings).squeeze(-1)  # [N]
         hat_r = self.rank_act(hat_r)
@@ -474,6 +472,7 @@ class GreedyRankAllocator(RankAllocator):
         budget: int,
         variant: str,
         utilities: Optional[torch.Tensor] = None,  # backward-compat with solver.py
+        constraints: Optional[ConstraintRegistry] = None,
     ) -> torch.Tensor:
         N = graph.n_nodes
         device = placement.device
@@ -488,6 +487,8 @@ class GreedyRankAllocator(RankAllocator):
         for i in placed_indices:
             u_i = self._get_utility(graph, i, utilities)
             for r in self.rank_set:
+                if constraints is not None and not constraints.is_rank_feasible(graph, i, variant, r):
+                    continue
                 cost = int(graph.estimate_params(i, r, variant))
                 if cost <= 0:
                     continue
@@ -522,6 +523,8 @@ class GreedyRankAllocator(RankAllocator):
                 # Try higher ranks in ascending order (cheapest first)
                 for r in sorted(self.rank_set):
                     if r <= current_r:
+                        continue
+                    if constraints is not None and not constraints.is_rank_feasible(graph, i, variant, r):
                         continue
                     cost_diff = int(graph.estimate_params(i, r, variant)) - int(graph.estimate_params(i, current_r, variant))
                     if cost_diff <= 0 or B_rem < cost_diff:
@@ -708,7 +711,7 @@ class HybridTrainingProtocol:
                 # Forward
                 z = policy(node_emb, global_emb, var_emb)
                 hard_mask = policy.constraint_registry.get_hard_mask(
-                    graph, variant="lora"
+                    graph, variant="lora", candidate_ranks=RANK_SET
                 ).to(device)
                 pi_hat = policy.compute_constrained_probs(z, hard_mask)
 

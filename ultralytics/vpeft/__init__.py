@@ -1,4 +1,9 @@
-"""V-PEFT Compiler — Constraint-aware Optimization Solver Framework."""
+"""V-PEFT Compiler - constraint-aware optimization solver framework.
+
+The graph, policy, constraint, and solver APIs are usable today. The dynamic
+MoE adapter proposed for the research track is intentionally not exported
+until its implementation and integration contracts are complete.
+"""
 
 from .solver import (
     PlacementDecision,
@@ -39,15 +44,6 @@ from .policy import (
     RANK_SET,
 )
 
-# MoE-aware Dynamic Adapter (Module 5)
-from .moe_adapter import (
-    DynamicAdapterExpert,
-    DynamicAdapterLayer,
-    DynamicAdapterModel,
-    DynamicMoEConstraint,
-    get_peft_dynamic_molora_model,
-)
-
 __all__ = [
     # Solver
     "PlacementDecision",
@@ -75,6 +71,7 @@ __all__ = [
     "MoEConsistencyConstraint",
     "DivisibilityConstraint",
     # Policy
+    "PlacementPolicy",
     "RankAllocator",
     "SoftRankAllocator",
     "GreedyRankAllocator",
@@ -82,10 +79,4 @@ __all__ = [
     "HybridTrainingProtocol",
     "SEMANTIC_UTILITY",
     "RANK_SET",
-    # Dynamic Adapter (MoE)
-    "DynamicAdapterExpert",
-    "DynamicAdapterLayer",
-    "DynamicAdapterModel",
-    "DynamicMoEConstraint",
-    "get_peft_dynamic_molora_model",
 ]

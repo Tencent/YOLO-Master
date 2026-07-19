@@ -1,12 +1,13 @@
 """Attention heads for Mixture-of-Attention blocks."""
 from __future__ import annotations
+import inspect
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional
 from ultralytics.nn.modules._numeric import fp_clamp_floor
 from ultralytics.nn.modules.moa._constants import DEFAULT_RF_SEED, LINEAR_ATTN_ACTIVATION_LIMIT, LINEAR_ATTN_BLEND_WINDOW, LINEAR_ATTN_THRESHOLD
-from ultralytics.nn.modules.moe.utils import get_safe_groups as _safe_groups
+from ultralytics.nn.modules.utils import get_safe_groups as _safe_groups
 
 _DEFAULT_RF_SEED = DEFAULT_RF_SEED
 _fp_min = fp_clamp_floor
@@ -26,14 +27,17 @@ def _init_conv_weights(module: nn.Module) -> None:
 def _flash_attn(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
                 scale: float) -> torch.Tensor:
     """Scaled dot-product attention; uses F.sdpa when available (torch ≥ 2.0)."""
-    if hasattr(F, "scaled_dot_product_attention"):
+    sdpa = getattr(F, "scaled_dot_product_attention", None)
+    if callable(sdpa):
         try:
-            return F.scaled_dot_product_attention(q, k, v, scale=scale)
-        except TypeError as e:
-            if "scale" not in str(e):
-                raise
-            default_scale = q.shape[-1] ** -0.5
-            return F.scaled_dot_product_attention(q * (scale / default_scale), k, v)
+            accepts_scale = "scale" in inspect.signature(sdpa).parameters
+        except (TypeError, ValueError):
+            signature_text = (getattr(sdpa, "__text_signature__", None) or getattr(sdpa, "__doc__", "") or "")
+            accepts_scale = "scale" in signature_text
+        if accepts_scale:
+            return sdpa(q, k, v, scale=scale)
+        default_scale = q.shape[-1] ** -0.5
+        return sdpa(q * (scale / default_scale), k, v)
     # fallback
     attn = (q @ k.transpose(-2, -1)) * scale
     attn = attn.softmax(dim=-1)
@@ -50,7 +54,10 @@ def _window_flash_attn(
 ) -> torch.Tensor:
     """Window-partitioned SDPA on [B, nh, N, hd] tokens (O(N·win²) complexity)."""
     B, nh, n_tokens, hd = q.shape
-    assert n_tokens == height * width
+    if n_tokens != height * width:
+        raise ValueError(
+            f"window attention token count mismatch: N={n_tokens}, expected H*W={height * width}"
+        )
     win = max(1, min(int(window_size), height, width))
 
     def to_spatial(t: torch.Tensor) -> torch.Tensor:
@@ -261,6 +268,9 @@ class _GlobalAttnHead(nn.Module):
         q, k, v: [B, nh, N, hd]
         """
         B, nh, N, hd = q.shape
+        output_dtype = q.dtype
+        if output_dtype in (torch.float16, torch.bfloat16):
+            q, k, v = q.float(), k.float(), v.float()
         rf = self._get_rf(q.device, q.dtype)     # [eff_nb, hd]
         eff_nb = rf.shape[0]
         scale = eff_nb ** -0.5
@@ -292,7 +302,7 @@ class _GlobalAttnHead(nn.Module):
         # denominator: q @ k_sum^T → [B*nh, N, 1]; cast k_sum back to q.dtype for matmul
         denom = (q_flat @ k_sum_f32.to(q_flat.dtype).unsqueeze(-1)).clamp(min=_fp_min(1e-6, q_flat.dtype))
 
-        return (numer / denom).reshape(B, nh, N, hd)
+        return (numer / denom).reshape(B, nh, N, hd).to(output_dtype)
 
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

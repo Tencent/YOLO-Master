@@ -305,8 +305,9 @@ class RoutingInterpreter:
                 continue
             confidence, assignments = spatial.max(dim=0)
             layer_written: dict[str, Path] = {}
+            confidence_min, confidence_max = self._display_range(confidence)
             for artifact_name, values, categorical, cmap, vmin, vmax in (
-                ("confidence_heatmap", confidence, False, "magma", 0.0, 1.0),
+                ("confidence_heatmap", confidence, False, "magma", confidence_min, confidence_max),
                 ("assignment_map", assignments.float(), True, "tab20", None, None),
             ):
                 path = output_path / f"{safe_name}_{artifact_name}.png"
@@ -317,8 +318,8 @@ class RoutingInterpreter:
                     title=f"{name} - {artifact_name.replace('_', ' ')}",
                     categorical=categorical,
                     cmap=cmap,
-                    vmin=vmin,
-                    vmax=vmax,
+                    vmin=vmin if vmin is not None else self._display_range(values)[0],
+                    vmax=vmax if vmax is not None else self._display_range(values)[1],
                 )
                 layer_written[artifact_name] = path
             for expert_idx in range(spatial.shape[0]):
@@ -331,8 +332,8 @@ class RoutingInterpreter:
                     title=f"{name} - expert {expert_idx} activation",
                     categorical=False,
                     cmap="inferno",
-                    vmin=0.0,
-                    vmax=1.0,
+                    vmin=self._display_range(spatial[expert_idx])[0],
+                    vmax=self._display_range(spatial[expert_idx])[1],
                 )
                 layer_written[artifact_name] = path
 
@@ -343,7 +344,17 @@ class RoutingInterpreter:
             panels = [(confidence, "confidence", False, "magma"), (assignments.float(), "top-1 assignment", True, "tab20")]
             panels.extend((spatial[idx], f"expert {idx}", False, "inferno") for idx in range(spatial.shape[0]))
             for panel_idx, (values, title, categorical, cmap) in enumerate(panels):
-                self._plot_map(axes.flat[panel_idx], values, background, title=title, categorical=categorical, cmap=cmap)
+                low, high = (self._display_range(values) if not categorical else (None, None))
+                self._plot_map(
+                    axes.flat[panel_idx],
+                    values,
+                    background,
+                    title=title,
+                    categorical=categorical,
+                    cmap=cmap,
+                    vmin=low,
+                    vmax=high,
+                )
             for axis in axes.flat[len(panels) :]:
                 axis.axis("off")
             figure.suptitle(f"{name} ({heatmap.module_type})")
@@ -948,9 +959,22 @@ class RoutingInterpreter:
 
         figure, axis = plt.subplots(figsize=(7.0, 5.0))
         self._plot_map(axis, values, background, title=title, categorical=categorical, cmap=cmap, vmin=vmin, vmax=vmax)
+        if not categorical:
+            figure.colorbar(axis.images[-1], ax=axis, fraction=0.046, pad=0.04, label="activation")
         figure.tight_layout()
         figure.savefig(path, dpi=180, bbox_inches="tight")
         plt.close(figure)
+
+    @staticmethod
+    def _display_range(values: torch.Tensor) -> tuple[float, float]:
+        """Use robust per-map limits so low-contrast activations remain visible."""
+        flat = values.detach().float().reshape(-1)
+        low, high = torch.quantile(flat, torch.tensor([0.02, 0.98])).tolist()
+        if not math.isfinite(low) or not math.isfinite(high) or high <= low:
+            low, high = float(flat.min()), float(flat.max())
+        if high <= low:
+            high = low + 1e-6
+        return low, high
 
     @staticmethod
     def _plot_map(

@@ -10,12 +10,12 @@ Soft constraints  → scalar penalties (≥ 0) weighted by Lagrange multipliers.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
 
-from .graph import ComputationGraph, GraphNode, ModuleNode
+from .graph import ComputationGraph, GraphNode, ModuleNode, _estimate_adapter_params
 
 __all__ = [
     "NodeInfo",
@@ -56,6 +56,11 @@ class NodeInfo:
 
         # Normalise operator_type from GraphNode tau_i
         if isinstance(obj, GraphNode):
+            module = getattr(obj, "module", None)
+            self.groups = int(getattr(module, "groups", self.groups))
+            module_kernel = getattr(module, "kernel_size", None)
+            if module_kernel is not None:
+                self.kernel_size = module_kernel
             tau_map = {
                 0: "Conv2d",
                 1: "Linear",
@@ -193,7 +198,7 @@ class OperatorCompatibilityConstraint(Constraint):
     """
 
     _VARIANT_OP_MAP: Dict[str, List[str]] = {
-        "lora": ["Linear", "Conv2d"],
+        "lora": ["Linear", "Conv2d", "GroupConv2d", "DepthwiseConv2d"],
         "dora": ["Linear"],
         "loha": ["Linear", "Conv2d"],
         "lokr": ["Linear", "Conv2d"],
@@ -220,10 +225,10 @@ class OperatorCompatibilityConstraint(Constraint):
         if op not in supported:
             return False
 
-        # For Conv2d variants, require groups == 1 (except depthwise handled above)
-        if op in ("Conv2d", "GroupConv2d"):
-            if node_info.groups != 1:
-                return False
+        # A node labelled as plain Conv2d must not hide grouped semantics.
+        # Proper GroupConv2d nodes are supported by LoRA and validated by C_div.
+        if op == "Conv2d" and node_info.groups != 1:
+            return False
 
         return True
 
@@ -242,8 +247,8 @@ class SemanticProtectionConstraint(Constraint):
     """
 
     _ALWAYS_PROTECTED = {
-        "DFL",
-        "MSDeformAttn",
+        "dfl",
+        "msdeformattn",
         "text_fusion",
         "stem",
         "focus",
@@ -259,7 +264,7 @@ class SemanticProtectionConstraint(Constraint):
         super().__init__("C_sem", weight)
         self.include_head = include_head
         self.only_backbone = only_backbone
-        self.exclude_modules = set(exclude_modules or [])
+        self.exclude_modules = {name.lower() for name in exclude_modules or []}
 
     def is_feasible(self, node_info: NodeInfo, variant: str, rank: int) -> bool:
         role = node_info.semantic_role.lower()
@@ -321,20 +326,15 @@ class BudgetConstraint(Constraint):
         module = node_info.module
         if module is not None and hasattr(module, "params_for_rank"):
             return int(module.params_for_rank(rank, variant))
-        # Fallback formula matching graph.estimate_params logic
-        op = node_info.operator_type
-        if variant in ("lora", "dora"):
-            if op in ("Conv2d", "DepthwiseConv2d", "GroupConv2d"):
-                k = node_info.kernel_size[0] * node_info.kernel_size[1]
-                return int(rank * (node_info.in_channels + node_info.out_channels) * k)
-            else:
-                return int(rank * (node_info.in_channels + node_info.out_channels))
-        elif variant == "ia3":
-            return node_info.in_channels
-        elif variant in ("loha", "lokr"):
-            return int((rank ** 2) * min(node_info.in_channels, node_info.out_channels))
-        else:
-            return int(rank * (node_info.in_channels + node_info.out_channels))
+        return int(_estimate_adapter_params(
+            rank,
+            variant,
+            node_info.operator_type,
+            node_info.in_channels,
+            node_info.out_channels,
+            node_info.kernel_size,
+            node_info.groups,
+        ))
 
     def update_usage(self, node_info: NodeInfo, variant: str, rank: int) -> None:
         """Incrementally add a node's usage to the running total."""
@@ -671,16 +671,27 @@ class ConstraintRegistry:
 
     # -- legacy interface (required by policy.py & solver.py) --
 
-    def get_hard_mask(self, graph: ComputationGraph, variant: str) -> torch.Tensor:
+    def get_hard_mask(
+        self,
+        graph: ComputationGraph,
+        variant: str,
+        candidate_ranks: Union[int, Iterable[int]] = 1,
+    ) -> torch.Tensor:
         """Return a binary mask [N] where ``1`` means the module can be adapted
         with the given variant under hard constraints, ``0`` means forbidden.
+
+        A node is feasible when at least one candidate rank satisfies all hard
+        constraints. This matters for grouped convolutions, where rank 4 may be
+        invalid but rank 8 is valid.
         """
+        ranks = (candidate_ranks,) if isinstance(candidate_ranks, int) else tuple(candidate_ranks)
+        if not ranks or any(rank <= 0 for rank in ranks):
+            raise ValueError("candidate_ranks must contain positive integers")
         mask = torch.ones(graph.n_nodes, dtype=torch.bool)
         for i in range(graph.n_nodes):
             # Build NodeInfo from the graph's module/node at index i
             node_info = self._node_info_from_graph(graph, i)
-            # Use unit rank for feasibility check (rank-independent hard constraints)
-            if not self.check_hard(node_info, variant, rank=1):
+            if not any(self.check_hard(node_info, variant, rank=rank) for rank in ranks):
                 mask[i] = False
         return mask
 
@@ -728,6 +739,10 @@ class ConstraintRegistry:
             if not c.is_feasible(node_info, variant, rank):
                 return False
         return True
+
+    def is_rank_feasible(self, graph: ComputationGraph, idx: int, variant: str, rank: int) -> bool:
+        """Return whether a concrete graph node, variant, and rank satisfy all hard constraints."""
+        return self.check_hard(self._node_info_from_graph(graph, idx), variant, rank)
 
     def check_hard_with_reason(
         self, node_info: NodeInfo, variant: str, rank: int
@@ -833,16 +848,12 @@ class ConstraintRegistry:
     @staticmethod
     def _fallback_budget_usage(node_info: NodeInfo, variant: str, rank: int) -> int:
         """Fallback parameter estimation when no BudgetConstraint is registered."""
-        op = node_info.operator_type
-        if variant in ("lora", "dora"):
-            if op in ("Conv2d", "DepthwiseConv2d", "GroupConv2d"):
-                k = node_info.kernel_size[0] * node_info.kernel_size[1]
-                return int(rank * (node_info.in_channels + node_info.out_channels) * k)
-            else:
-                return int(rank * (node_info.in_channels + node_info.out_channels))
-        elif variant == "ia3":
-            return node_info.in_channels
-        elif variant in ("loha", "lokr"):
-            return int((rank ** 2) * min(node_info.in_channels, node_info.out_channels))
-        else:
-            return int(rank * (node_info.in_channels + node_info.out_channels))
+        return int(_estimate_adapter_params(
+            rank,
+            variant,
+            node_info.operator_type,
+            node_info.in_channels,
+            node_info.out_channels,
+            node_info.kernel_size,
+            node_info.groups,
+        ))

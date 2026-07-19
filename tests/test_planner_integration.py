@@ -21,14 +21,15 @@ import pytest
 YOLO_MASTER_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(YOLO_MASTER_ROOT))
 
-import torch
-import torch.nn as nn
+import torch  # noqa: E402
+import torch.nn as nn  # noqa: E402
 
-from ultralytics.utils.lora.config import LoRAConfig
-from ultralytics.utils.lora.planner import (
+from ultralytics.utils.lora.config import LoRAConfig  # noqa: E402
+from ultralytics.utils.lora.planner import (  # noqa: E402
     ArchitectureFingerprint,
     PEFTPlanner,
 )
+from ultralytics.utils.patches import torch_load  # noqa: E402
 
 
 # =============================================================================
@@ -37,7 +38,7 @@ from ultralytics.utils.lora.planner import (
 
 def _load_model(path: Path):
     """Load a .pt checkpoint and return the DetectionModel (or raw nn.Module)."""
-    ckpt = torch.load(path, map_location="cpu", weights_only=False)
+    ckpt = torch_load(path, map_location="cpu", weights_only=False)
     if isinstance(ckpt, dict) and "model" in ckpt:
         return ckpt["model"]
     return ckpt

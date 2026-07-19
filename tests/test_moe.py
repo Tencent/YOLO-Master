@@ -30,7 +30,6 @@ from ultralytics.nn.modules.moe.modules import (
     MOE_LOSS_REGISTRY,
     OptimizedMOE,
     OptimizedMOEImproved,
-    UltimateOptimizedMoE,
     UltraOptimizedMoE,
     _compute_usage_from_topk,
     _record_moe_snapshot,
@@ -142,8 +141,14 @@ def test_improved_moe_rejects_nonfinite_after_low_precision_output_conversion(mo
     monkeypatch.setattr(m.shared_expert, "forward", lambda x: torch.full_like(x.float(), 1e5))
     monkeypatch.setattr(m.routing, "forward", lambda x, top_k: (torch.tensor([[1.0, 0.0]], device=x.device).expand(x.shape[0], -1), torch.tensor([[0, 1]], device=x.device).expand(x.shape[0], -1), {}))
     monkeypatch.setattr(m.experts[0], "forward", lambda x: torch.zeros_like(x))
-    with pytest.raises(RuntimeError, match="dtype conversion"):
+    try:
         m(torch.randn(2, 32, 16, 16, dtype=torch.float16))
+    except RuntimeError as exc:
+        if "not implemented for 'Half'" in str(exc):
+            pytest.skip(f"CPU fp16 operator unavailable: {exc}")
+        assert "dtype conversion" in str(exc)
+    else:
+        pytest.fail("expected low-precision output conversion to reject overflow")
 
 
 def test_routing_detach_isolates_router():
@@ -360,7 +365,8 @@ def test_weighted_gshard_balance_scale():
     assert abs(float(weighted_gshard_balance_loss(uni, uni, E)) - float(gshard_balance_loss(uni, E))) < 1e-4
     tgt = torch.softmax(torch.randn(E), dim=0)
     assert abs(float(weighted_gshard_balance_loss(tgt, tgt, E)) - 1.0) < 1e-4  # min at usage==target
-    col = torch.zeros(E); col[0] = 1.0
+    col = torch.zeros(E)
+    col[0] = 1.0
     assert abs(float(weighted_gshard_balance_loss(col, uni, E)) - E) < 1e-3
 
 
@@ -373,7 +379,8 @@ def test_adaptive_balance_controller_gshard_scale_and_nonneg():
     aux_late = float(ctrl({'expert_usage': bal}, torch.tensor(10 ** 6)))
     assert aux_early >= 0.0 and aux_late >= 0.0, "aux must be non-negative"
     assert aux_late >= 0.05, f"late-stage balanced aux collapsed to {aux_late} (should stay O(0.1))"
-    col = torch.zeros(E); col[0] = 1.0
+    col = torch.zeros(E)
+    col[0] = 1.0
     assert float(ctrl({'expert_usage': col}, torch.tensor(0))) > aux_early  # collapse penalized more
 
 

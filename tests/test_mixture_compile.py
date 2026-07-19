@@ -27,7 +27,7 @@ def test_mixture_modules_compile_through_existing_entrypoint(module, sample):
         warmup_input=sample,
     )
 
-    with torch.inference_mode():
+    with torch.no_grad():
         eager_output = module(sample)
         compiled_output = compiled(sample)
     assert unwrap_model(compiled) is module

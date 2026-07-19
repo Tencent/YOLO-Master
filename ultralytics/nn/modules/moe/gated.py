@@ -81,10 +81,10 @@ class DualStreamGateRouter(nn.Module):
         self.local_conv = nn.Sequential(
             nn.Conv2d(in_channels, in_channels, 3, padding=1, groups=in_channels, bias=False),
             nn.GroupNorm(get_safe_groups(in_channels, 8), in_channels),
-            nn.SiLU(inplace=True),
+            nn.SiLU(inplace=False),
             nn.Conv2d(in_channels, reduced, 1, bias=False),
             nn.GroupNorm(get_safe_groups(reduced, 4), reduced),
-            nn.SiLU(inplace=True),
+            nn.SiLU(inplace=False),
             nn.Conv2d(reduced, num_experts, 1, bias=True),
         )
 
@@ -308,7 +308,7 @@ class AdaptiveGateMoE(nn.Module):
             nn.AdaptiveAvgPool2d(1),
             nn.Flatten(),
             nn.Linear(in_channels, se_hidden, bias=False),
-            nn.SiLU(inplace=True),
+            nn.SiLU(inplace=False),
             nn.Linear(se_hidden, in_channels, bias=True),
             nn.Sigmoid(),
         )
@@ -318,10 +318,10 @@ class AdaptiveGateMoE(nn.Module):
             nn.Conv2d(self.static_channels, self.static_channels, 3,
                       padding=1, groups=self.static_channels, bias=False),
             nn.BatchNorm2d(self.static_channels),
-            nn.SiLU(inplace=True),
+            nn.SiLU(inplace=False),
             nn.Conv2d(self.static_channels, self.out_static, 1, bias=False),
             nn.BatchNorm2d(self.out_static),
-            nn.SiLU(inplace=True),
+            nn.SiLU(inplace=False),
         )
 
         # ── Dual-Stream Gate Router ──
@@ -422,6 +422,8 @@ class AdaptiveGateMoE(nn.Module):
 
     def _update_temperature(self):
         """Cosine annealing of router temperature over training."""
+        if getattr(self.routing, "_external_temperature_schedule", False):
+            return
         # Short schedule: anneal over 2000 steps (not 5000)
         anneal_steps = 2000
         progress = min(1.0, self._training_step_value / anneal_steps)
@@ -578,17 +580,17 @@ class HyperSplitMoE(nn.Module):
         self.static_net = nn.Sequential(
             nn.Conv2d(self.static_channels, self.static_channels, 3, padding=1, groups=self.static_channels, bias=False),
             nn.BatchNorm2d(self.static_channels),
-            nn.SiLU(inplace=True),
+            nn.SiLU(inplace=False),
             nn.Conv2d(self.static_channels, self.out_static, 1, bias=False),
             nn.BatchNorm2d(self.out_static),
-            nn.SiLU(inplace=True)
+            nn.SiLU(inplace=False)
         )
 
         # 2. Dynamic Router (Global Pooling -> Conv -> Expert Scores)
         self.router = nn.Sequential(
             nn.AdaptiveAvgPool2d(1), 
             nn.Conv2d(self.dynamic_channels, self.dynamic_channels // router_reduction, 1),
-            nn.SiLU(inplace=True),
+            nn.SiLU(inplace=False),
             nn.Conv2d(self.dynamic_channels // router_reduction, num_experts, 1)
         )
 
@@ -744,7 +746,7 @@ class HyperFusedMoE(nn.Module):
         self.shared_path = nn.Sequential(
             nn.Conv2d(in_channels, out_channels, 1, bias=False, groups=num_groups),
             nn.GroupNorm(get_safe_groups(out_channels, num_groups), out_channels),
-            nn.SiLU(inplace=True)
+            nn.SiLU(inplace=False)
         )
         
         # Adaptive Load Balancing
@@ -971,7 +973,7 @@ class FusedExpertGroup(nn.Module):
         self.expert_norm_weight = nn.Parameter(torch.ones(num_experts, out_channels))
         self.expert_norm_bias = nn.Parameter(torch.zeros(num_experts, out_channels))
         
-        self.activation = nn.SiLU(inplace=True)
+        self.activation = nn.SiLU(inplace=False)
 
     def _load_from_state_dict(self, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs):
         """Map legacy per-expert GroupNorm keys to compact affine tables."""
@@ -1063,7 +1065,7 @@ class LowRankFusedExpertGroup(nn.Module):
         self.bottleneck = nn.Sequential(
             nn.Conv2d(in_channels, self.bottleneck_channels, 1, bias=False),
             nn.GroupNorm(get_safe_groups(self.bottleneck_channels, num_groups), self.bottleneck_channels),
-            nn.SiLU(inplace=True),
+            nn.SiLU(inplace=False),
         )
         self.fused = FusedExpertGroup(
             self.bottleneck_channels,
@@ -1092,9 +1094,9 @@ class VisualDetailGate(nn.Module):
         self.detail_filter = nn.Sequential(
             nn.Conv2d(channels, channels, 3, padding=1, groups=channels, bias=False),
             nn.GroupNorm(get_safe_groups(channels, num_groups), channels),
-            nn.SiLU(inplace=True),
+            nn.SiLU(inplace=False),
             nn.Conv2d(channels, hidden, 1, bias=False),
-            nn.SiLU(inplace=True),
+            nn.SiLU(inplace=False),
             nn.Conv2d(hidden, channels, 1, bias=True),
             nn.Sigmoid(),
         )
@@ -1143,13 +1145,13 @@ class PyramidContextMixer(nn.Module):
         self.local_context = nn.Sequential(
             nn.Conv2d(channels, channels, 3, padding=1, groups=channels, bias=False),
             nn.GroupNorm(get_safe_groups(channels, num_groups), channels),
-            nn.SiLU(inplace=True),
+            nn.SiLU(inplace=False),
         )
         self.pool_projections = nn.ModuleList(
             nn.Sequential(
                 nn.Conv2d(channels, channels, 1, bias=False),
                 nn.GroupNorm(get_safe_groups(channels, num_groups), channels),
-                nn.SiLU(inplace=True),
+                nn.SiLU(inplace=False),
             )
             for _ in self.pool_scales
         )
@@ -1558,12 +1560,12 @@ class RefinedLowRankHybridAdaptiveGateMoE(LowRankHybridAdaptiveGateMoE):
         self.feature_refiner = nn.Sequential(
             nn.Conv2d(out_channels, out_channels, 3, padding=1, groups=out_channels, bias=False),
             nn.GroupNorm(get_safe_groups(out_channels, num_groups), out_channels),
-            nn.SiLU(inplace=True),
+            nn.SiLU(inplace=False),
         )
         self.feature_gate = nn.Sequential(
             nn.AdaptiveAvgPool2d(1),
             nn.Conv2d(out_channels, refine_hidden, 1, bias=False),
-            nn.SiLU(inplace=True),
+            nn.SiLU(inplace=False),
             nn.Conv2d(refine_hidden, out_channels, 1, bias=True),
             nn.Sigmoid(),
         )
@@ -1978,7 +1980,7 @@ class OptimalHybridGateMoE(HybridAdaptiveGateMoEv2):
             self.refine_gate = nn.Sequential(
                 nn.AdaptiveAvgPool2d(1),
                 nn.Conv2d(out_channels, refine_hidden, 1, bias=False),
-                nn.SiLU(inplace=True),
+                nn.SiLU(inplace=False),
                 nn.Conv2d(refine_hidden, out_channels, 1, bias=True),
                 nn.Sigmoid(),
             )
@@ -2148,10 +2150,10 @@ class MultiHeadRouterV3(nn.Module):
         self.local_conv = nn.Sequential(
             nn.Conv2d(in_channels, in_channels, 3, padding=1, groups=in_channels, bias=False),
             nn.GroupNorm(get_safe_groups(in_channels, 8), in_channels),
-            nn.SiLU(inplace=True),
+            nn.SiLU(inplace=False),
             nn.Conv2d(in_channels, reduced, 1, bias=False),
             nn.GroupNorm(get_safe_groups(reduced, 4), reduced),
-            nn.SiLU(inplace=True),
+            nn.SiLU(inplace=False),
             nn.Conv2d(reduced, num_experts, 1, bias=True),
         )
 
@@ -2307,7 +2309,7 @@ class DiversifiedExpertGroup(nn.Module):
         self.shared_expand = nn.Sequential(
             nn.Conv2d(in_channels, hidden_dim, 1, bias=False),
             _gn(hidden_dim),
-            nn.SiLU(inplace=True),
+            nn.SiLU(inplace=False),
         )
 
         # Unified 3x3 DW with per-expert learnable dilation rate.
@@ -2324,7 +2326,7 @@ class DiversifiedExpertGroup(nn.Module):
                 nn.Conv2d(hidden_dim, hidden_dim, 3, padding=init_dil,
                           dilation=init_dil, groups=hidden_dim, bias=False),
                 _gn(hidden_dim),
-                nn.SiLU(inplace=True),
+                nn.SiLU(inplace=False),
             ))
             # Store as learnable parameter (initialized to init_dil, clamped in forward)
             self.dw_dilations.append(nn.Parameter(torch.tensor(float(init_dil))))
@@ -2424,7 +2426,7 @@ class CrossPathGate(nn.Module):
             nn.AdaptiveAvgPool2d(1),
             nn.Flatten(),
             nn.Linear(stat_dim, gate_hidden, bias=False),
-            nn.SiLU(inplace=True),
+            nn.SiLU(inplace=False),
             nn.Linear(gate_hidden, out_channels * 2, bias=True),
         )
         # Init gate to produce small deviations from 0.5 (sigmoid(0)=0.5)
@@ -2736,4 +2738,3 @@ class MatMulFusedExperts(FusedExpertGroup):
     """
     def __init__(self, in_channels, out_channels, num_experts, num_groups=8):
         super().__init__(in_channels, out_channels, num_experts, num_groups)
-

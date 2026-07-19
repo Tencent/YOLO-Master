@@ -1,739 +1,279 @@
-<img width="960" height="180" alt="Image" src="https://github.com/user-attachments/assets/5d2ab671-cf2f-4697-9c1b-1dfe611111e3" />
+<div align="center">
+  <p>
+    <a href="https://platform.ultralytics.com/?utm_source=github&utm_medium=referral&utm_campaign=platform_launch&utm_content=banner&utm_term=ultralytics_github" target="_blank">
+      <img width="100%" src="https://raw.githubusercontent.com/ultralytics/assets/main/yolov8/banner-yolov8.png" alt="Ultralytics YOLO banner"></a>
+  </p>
 
-<p align="center">
-  <a href="https://huggingface.co/spaces/gatilin/YOLO-Master-WebUI-Demo"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-blue" alt="Hugging Face Spaces"></a>
-  <a href="https://colab.research.google.com/drive/1gTKkCsE4sXIOWpu1cdNBjdFHEahBoZD0?usp=sharing"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a>
-  <a href="https://arxiv.org/abs/2512.23273"><img src="https://img.shields.io/badge/arXiv-2512.23273-b31b1b.svg" alt="arXiv"></a>
-  <a href="#-citation"><img src="https://img.shields.io/badge/CVPR-2026-6420AA.svg" alt="CVPR 2026"></a>
-  <a href="https://github.com/Tencent/YOLO-Master/releases/tag/YOLO-Master-v26.02"><img src="https://img.shields.io/badge/%F0%9F%93%A6-Model%20Zoo-orange" alt="Model Zoo"></a>
-  <a href="./LICENSE"><img src="https://img.shields.io/badge/License-AGPL%203.0-blue.svg" alt="AGPL 3.0"></a>
-  <a href="https://github.com/ultralytics/ultralytics"><img src="https://img.shields.io/badge/Ultralytics-YOLO-blue" alt="Ultralytics"></a>
-</p>
+[中文](https://docs.ultralytics.com/zh) | [한국어](https://docs.ultralytics.com/ko) | [日本語](https://docs.ultralytics.com/ja) | [Русский](https://docs.ultralytics.com/ru) | [Deutsch](https://docs.ultralytics.com/de) | [Français](https://docs.ultralytics.com/fr) | [Español](https://docs.ultralytics.com/es) | [Português](https://docs.ultralytics.com/pt) | [Türkçe](https://docs.ultralytics.com/tr) | [Tiếng Việt](https://docs.ultralytics.com/vi) | [العربية](https://docs.ultralytics.com/ar) <br>
 
-<p align="center">
-  <b>YOLO-Master: <u>M</u>OE-<u>A</u>ccelerated with <u>S</u>pecialized <u>T</u>ransformers for <u>E</u>nhanced <u>R</u>eal-time Detection.</b>
-</p>
-
-<p align="center">
-  <a href="https://github.com/isLinXu">Xu Lin</a><sup>1*</sup>, 
-  <a href="https://pjl1995.github.io/">Jinlong Peng</a><sup>1*</sup>, 
-  <a href="https://scholar.google.com/citations?user=fa4NkScAAAAJ">Zhenye Gan</a><sup>1</sup>, 
-  <a href="https://scholar.google.com/citations?hl=en&user=cU0UfhwAAAAJ">Jiawen Zhu</a><sup>2</sup>, 
-  <a href="https://scholar.google.com/citations?user=JIKuf4AAAAAJ&hl=zh-TW">Jun Liu</a><sup>1</sup>
-  <br>
-  <sup>1</sup><b>Tencent Youtu Lab</b> &nbsp;&nbsp; <sup>2</sup><b>Singapore Management University</b>
-  <br>
-  <sup>*</sup>Equal Contribution
-</p>
+<div>
+    <a href="https://github.com/ultralytics/ultralytics/actions/workflows/ci.yml"><img src="https://github.com/ultralytics/ultralytics/actions/workflows/ci.yml/badge.svg" alt="Ultralytics CI"></a>
+    <a href="https://clickpy.clickhouse.com/dashboard/ultralytics"><img src="https://static.pepy.tech/badge/ultralytics" alt="Ultralytics Downloads"></a>
+    <a href="https://discord.com/invite/ultralytics"><img alt="Ultralytics Discord" src="https://img.shields.io/discord/1089800235347353640?logo=discord&logoColor=white&label=Discord&color=blue"></a>
+    <a href="https://community.ultralytics.com/"><img alt="Ultralytics Forums" src="https://img.shields.io/discourse/users?server=https%3A%2F%2Fcommunity.ultralytics.com&logo=discourse&label=Forums&color=blue"></a>
+    <a href="https://www.reddit.com/r/ultralytics/"><img alt="Ultralytics Reddit" src="https://img.shields.io/reddit/subreddit-subscribers/ultralytics?style=flat&logo=reddit&logoColor=white&label=Reddit&color=blue"></a>
+    <br>
+    <a href="https://console.paperspace.com/github/ultralytics/ultralytics"><img src="https://assets.paperspace.io/img/gradient-badge.svg" alt="Run Ultralytics on Gradient"></a>
+    <a href="https://colab.research.google.com/github/ultralytics/ultralytics/blob/main/examples/tutorial.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open Ultralytics In Colab"></a>
+    <a href="https://www.kaggle.com/models/ultralytics/yolo26"><img src="https://kaggle.com/static/images/open-in-kaggle.svg" alt="Open Ultralytics In Kaggle"></a>
+    <a href="https://mybinder.org/v2/gh/ultralytics/ultralytics/HEAD?labpath=examples%2Ftutorial.ipynb"><img src="https://mybinder.org/badge_logo.svg" alt="Open Ultralytics In Binder"></a>
+</div>
+</div>
+<br>
 
 <div align="center">
-<h5>🎉 Accepted by CVPR 2026</h5>
+  <a href="https://trendshift.io/repositories/1556?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-1556" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/1556" alt="ultralytics%2Fultralytics | Trendshift" width="250" height="55"/></a>
+</div>
+<br>
+
+[Ultralytics](https://www.ultralytics.com/) creates cutting-edge, state-of-the-art (SOTA) [YOLO models](https://www.ultralytics.com/yolo) built on years of foundational research in computer vision and AI. Constantly updated for performance and flexibility, our models are **fast**, **accurate**, and **easy to use**. They excel at [object detection](https://docs.ultralytics.com/tasks/detect), [tracking](https://docs.ultralytics.com/modes/track), [instance segmentation](https://docs.ultralytics.com/tasks/segment), [semantic segmentation](https://docs.ultralytics.com/tasks/semantic), [image classification](https://docs.ultralytics.com/tasks/classify), and [pose estimation](https://docs.ultralytics.com/tasks/pose) tasks.
+
+Find detailed documentation in the [Ultralytics Docs](https://docs.ultralytics.com/). Get support via [GitHub Issues](https://github.com/ultralytics/ultralytics/issues/new/choose). Join discussions on [Discord](https://discord.com/invite/ultralytics), [Reddit](https://www.reddit.com/r/ultralytics/), and the [Ultralytics Community Forums](https://community.ultralytics.com/)!
+
+Request an Enterprise License for commercial use at [Ultralytics Licensing](https://www.ultralytics.com/license).
+
+<a href="https://platform.ultralytics.com/ultralytics/yolo26" target="_blank">
+  <img width="100%" src="https://raw.githubusercontent.com/ultralytics/assets/refs/heads/main/yolo/performance-comparison.png" alt="YOLO26 performance plots">
+</a>
+
+<div align="center">
+  <a href="https://github.com/ultralytics"><img src="https://github.com/ultralytics/assets/raw/main/social/logo-social-github.png" width="2%" alt="Ultralytics GitHub"></a>
+  <img src="https://github.com/ultralytics/assets/raw/main/social/logo-transparent.png" width="2%" alt="space">
+  <a href="https://www.linkedin.com/company/ultralytics/"><img src="https://github.com/ultralytics/assets/raw/main/social/logo-social-linkedin.png" width="2%" alt="Ultralytics LinkedIn"></a>
+  <img src="https://github.com/ultralytics/assets/raw/main/social/logo-transparent.png" width="2%" alt="space">
+  <a href="https://twitter.com/ultralytics"><img src="https://github.com/ultralytics/assets/raw/main/social/logo-social-twitter.png" width="2%" alt="Ultralytics Twitter"></a>
+  <img src="https://github.com/ultralytics/assets/raw/main/social/logo-transparent.png" width="2%" alt="space">
+  <a href="https://www.youtube.com/ultralytics?sub_confirmation=1"><img src="https://github.com/ultralytics/assets/raw/main/social/logo-social-youtube.png" width="2%" alt="Ultralytics YouTube"></a>
+  <img src="https://github.com/ultralytics/assets/raw/main/social/logo-transparent.png" width="2%" alt="space">
+  <a href="https://www.tiktok.com/@ultralytics"><img src="https://github.com/ultralytics/assets/raw/main/social/logo-social-tiktok.png" width="2%" alt="Ultralytics TikTok"></a>
+  <img src="https://github.com/ultralytics/assets/raw/main/social/logo-transparent.png" width="2%" alt="space">
+  <a href="https://ultralytics.com/bilibili"><img src="https://github.com/ultralytics/assets/raw/main/social/logo-social-bilibili.png" width="2%" alt="Ultralytics BiliBili"></a>
+  <img src="https://github.com/ultralytics/assets/raw/main/social/logo-transparent.png" width="2%" alt="space">
+  <a href="https://discord.com/invite/ultralytics"><img src="https://github.com/ultralytics/assets/raw/main/social/logo-social-discord.png" width="2%" alt="Ultralytics Discord"></a>
 </div>
 
----
+## 📄 Documentation
 
-<img
-  width="224"
-  alt="YOLO-Master Mascot"
-  src="https://github.com/user-attachments/assets/bbf751ea-af27-465d-a8a9-7822db343638"
-  align="left"
-/>
-
-`YOLO-Master` is a YOLO-style framework tailored for **Real-Time Object Detection (RTOD)**. It marks the first deep integration of **Mixture-of-Experts (MoE)** into the YOLO architecture for general datasets. By leveraging **Efficient Sparse MoE (ES-MoE)** and lightweight **Dynamic Routing**, the framework achieves **instance-conditional adaptive computation**. This "compute-on-demand" paradigm allows the model to allocate FLOPs based on scene complexity, reaching a superior Pareto frontier between high precision and ultra-low latency.
-
-**Key Highlights:**
-- **Methodological Innovation (ES-MoE + Dynamic Routing)**: Utilizes dynamic routing networks to guide expert specialization during training and activates only the most relevant experts during inference, significantly reducing redundant computation while boosting detection performance.
-- **Performance Validated (Accuracy × Latency)**: On MS COCO, YOLO-Master-N achieves **42.4% AP @ 1.62ms latency**, outperforming YOLOv13-N with a **+0.8% mAP gain while being 17.8% faster**.
-- **Compute-on-Demand Intuition**: Transitions from "static dense computation" to "input-adaptive compute allocation," yielding more pronounced gains in dense or challenging scenarios.
-- **Out-of-the-Box Pipeline**: Provides a complete end-to-end workflow including installation, validation, training, inference, and deployment (ONNX, TensorRT, etc.).
-- **Continuous Engineering Evolution**: Includes advanced utilities such as MoE pruning and diagnostic tools (`diagnose_model` / `prune_moe_model`), CW-NMS, and Sparse SAHI inference modes.
-
-<br clear="left" />
-
----
-
-## 💡 A Humble Beginning (Introduction)
-
-> **"Exploring the frontiers of Dynamic Intelligence in YOLO."**
-
-This work represents our passionate exploration into the evolution of Real-Time Object Detection (RTOD). To the best of our knowledge, **YOLO-Master is the first work to deeply integrate Mixture-of-Experts (MoE) with the YOLO architecture on general-purpose datasets.**
-
-Most existing YOLO models rely on static, dense computation—allocating the same computational budget to a simple sky background as they do to a complex, crowded intersection. We believe detection models should be more "adaptive", much like the human visual system. While this initial exploration may be not perfect, it demonstrates the significant potential of **Efficient Sparse MoE (ES-MoE)** in balancing high precision with ultra-low latency. We are committed to continuous iteration and optimization to refine this approach further.
-
-Looking forward, we draw inspiration from the transformative advancements in LLMs and VLMs. We are committed to refining this approach and extending these insights to fundamental vision tasks, with the ultimate goal of tackling more ambitious frontiers like Open-Vocabulary Detection and Open-Set Segmentation.
-
-<details>
-  <summary>
-  <font size="+1"><b>Abstract</b></font>
-  </summary>
-Existing Real-Time Object Detection (RTOD) methods commonly adopt YOLO-like architectures for their favorable trade-off between accuracy and speed. However, these models rely on static dense computation that applies uniform processing to all inputs, misallocating representational capacity and computational resources such as over-allocating on trivial scenes while under-serving complex ones. This mismatch results in both computational redundancy and suboptimal detection performance.
-
-To overcome this limitation, we propose YOLO-Master, a novel YOLO-like framework that introduces instance-conditional adaptive computation for RTOD. This is achieved through an Efficient Sparse Mixture-of-Experts (ES-MoE) block that dynamically allocates computational resources to each input according to its scene complexity. At its core, a lightweight dynamic routing network guides expert specialization during training through a diversity enhancing objective, encouraging complementary expertise among experts. Additionally, the routing network adaptively learns to activate only the most relevant experts, thereby improving detection performance while minimizing computational overhead during inference.
-
-Comprehensive experiments on five large-scale benchmarks demonstrate the superiority of YOLO-Master. On MS COCO, our model achieves 42.4\% AP with 1.62ms latency, outperforming YOLOv13-N by +0.8\% mAP and 17.8\% faster inference. Notably, the gains are most pronounced on challenging dense scenes, while the model preserves efficiency on typical inputs and maintains real-time inference speed. Code: [Tencent/YOLO-Master](https://github.com/Tencent/YOLO-Master)
-</details>
-
----
-
-## 🎨 Architecture
-
-<div align="center">
-  <img width="90%" alt="YOLO-Master Architecture" src="https://github.com/user-attachments/assets/6caa1065-af77-4f77-8faf-7551c013dacd" />
-  <p><i>YOLO-Master introduces ES-MoE blocks to achieve "compute-on-demand" via dynamic routing.</i></p>
-</div>
-
-### 📚 In-Depth Documentation
-For a deep dive into the design philosophy of MoE modules, detailed routing mechanisms, and optimization guides for deployment on various hardware (GPU/CPU/NPU), please refer to our Wiki:
-👉 **[Wiki: MoE Modules Explained](wiki/MoE_Modules_Explanation_EN.md)**
-
-
-## 📖 Table of Contents
-
-- [A Humble Beginning](#-a-humble-beginning-introduction)
-- [Architecture](#-architecture)
-- [Updates](#-updates-latest-first)
-- [New Features (v2026.02)](#-new-features-v202602)
-  - [Mixture of Experts (MoE)](#1%EF%B8%8F⃣-mixture-of-experts-moe-support)
-  - [LoRA Fine-Tuning](#2%EF%B8%8F⃣-lora-support---parameter-efficient-fine-tuning)
-  - [Sparse SAHI](#3%EF%B8%8F⃣-sparse-sahi-mode)
-  - [Cluster-Weighted NMS](#4%EF%B8%8F⃣-cluster-weighted-nms-cw-nms)
-  - [Mixture-of-Attention (MoA)](#5%EF%B8%8F⃣-mixture-of-attention-%28moa%29-support)
-  - [Mixture-of-Transformers (MoT)](#6%EF%B8%8F⃣-mixture-of-transformers-%28mot%29-support)
-  - [Agent Skill System](#7%EF%B8%8F⃣-agent-skill-system)
-- [Main Results](#-main-results)
-  - [Detection](#detection)
-  - [Segmentation](#segmentation)
-  - [Classification](#classification)
-- [Model Zoo](#-model-zoo--benchmarks)
-- [Detection Examples](#-detection-examples)
-- [Supported Tasks](#-supported-tasks)
-- [Quick Start](#-quick-start)
-  - [Installation](#installation)
-  - [Validation](#validation)
-  - [Training](#training)
-  - [Inference](#inference)
-  - [Export](#export)
-  - [Gradio Demo](#gradio-demo)
-- [Community & Contributing](#-community--contributing)
-- [License](#-license)
-- [Acknowledgements](#-acknowledgements)
-- [Citation](#-citation)
-
-
-
-## 🚀 Updates (Latest First)
-
-- **2026-06-29**: 🤖✅ **Agent Skill System Validation Complete** — Full end-to-end validation of `yolo-master-agent` Skill with 50/50 test cases passing across 8 suites (quick / fast-smoke / cli-smoke / dry-run / contract / deep-smoke / extended / all). Fixed `AttributeError` from missing `end2end` field in `default.yaml`. Verified complete training → validation → inference pipeline with MPS auto-selection and workers=0 auto-completion. Skill runners: `yolo.train`, `yolo.val`, `yolo.predict`, `yolo.benchmark`, `yolo.export`, `yolo.lora.diagnose`, `yolo.eval.peft_compare`, `yolo.multimodal.infer`, `yolo.system.doctor`.
-- **2026-06-29**: 🦏🏆 **Selected for Tencent Rhino Bird Open Source Program 2026** — YOLO-Master has been officially selected for the [Tencent Rhino Bird Open Source Program](https://opensource.tencent.com/summer-of-code/) (Summer of Code 2026). This program aims to cultivate outstanding open-source talents and promote the prosperity and development of the open-source community. YOLO-Master will receive continuous support from the Tencent Open Source Fund, including mentorship, resource allocation, and community promotion, to further advance the integration of dynamic intelligence and MoE architecture in real-time object detection.
-- **2026-06-28**: 🔀 **MoA + MoT Integration** — Mixture-of-Attention (MoA) and Mixture-of-Transformers (MoT) modules merged into main with regression tests. **MoA**: lightweight router assigns tokens to attention heads with different receptive fields (Local / Regional / Global). **MoT**: content-aware router assigns tokens to distinct Transformer experts (LocalConvTransformer / WindowTransformer / DeformableTransformer) with soft Top-K blending and optional load-balancing aux loss. New model configs added under `ultralytics/cfg/models/master/v0_1/`.
-- **2026-06-25**: 🧠 **MoA Module Introduced** — Mixture-of-Attention (MoA) for CNN-native multi-scale attention fusion. 1×1 conv router assigns soft probabilities to Local (depthwise-3×3), Regional (pooled-stride=2), and Global (linear-attention) heads. Zero seq-dim reshape, Flash-Attention compatible. Supports `C2fMoA` wrapper and `NeckMoAFusion` cross-scale FPN/PAN fusion.
-- **2026-06-25**: 🔄 **MoT Module Introduced** — Mixture-of-Transformers (MoT) routing module. Three complete Transformer expert architectures with soft Top-K blending, static-graph trace stability for ONNX/TorchScript, and optional z-loss style load-balancing aux loss.
-- **2026-05-12**: 🤖 **Agent Skill System Introduced** — `yolo-master-agent` Skill Bundle with `SKILL.md`, autotrain validation suite (50+ cases), multimodal evaluation, async evaluation, MPS auto-selection, dry-run/contract/smoke tiered validation, and VLM/LLM cooperative inference (OpenAI / DashScope compatible).
-- **2026/02/21**: 🎉🎉 **Our paper has been accepted by CVPR 2026!** Thank you to all the contributors and community members for your support!
-- **2026/02/13**: 🧨🚀add LoRA support for model training and release [v2026.02 version](https://github.com/Tencent/YOLO-Master/releases/tag/YOLO-Master-v26.02).[Happy New Year!]
-- **2026/01/16**: [feature] Add pruning and analysis tools for MoE models.
-  > 1. diagnose_model: Visualize expert utilization and routing behavior to identify redundant experts.
-  > 2. prune_moe_model: Physically excise redundant experts and reconstruct routers for efficient inference without retraining.
-- **2026/01/16**: Repo [isLinXu/YOLO-Master](https://github.com/isLinXu/YOLO-Master) transferred to [Tencent](https://github.com/Tencent/YOLO-Master).
-- **2026/01/14**: [ncnn-YOLO-Master-android](https://github.com/mpj1234/ncnn-YOLO-Master-android) support deploy YOLO-Master. Thanks to them!
-- **2026/01/09**: [feature] Add Cluster-Weighted NMS (CW-NMS) to trade mAP vs speed.
-  > cluster: False # (bool) cluster NMS (MoE optimized)
-- **2026/01/07**: [TensorRT-YOLO](https://github.com/laugh12321/TensorRT-YOLO) accelerates YOLO-Master. Thanks to them!
-- **2026/01/07**: Add MoE loss explicitly into training.
-  > Epoch    GPU_mem   box_loss   cls_loss   dfl_loss   **moe_loss**  Instances  Size
-- **2026/01/04**: Split MoE script into modules
-  > Split MoE script into separate modules (routers, experts)
-- **2026/01/03**: [feature] Added Sparse SAHI Inference Mode: Introduced a content-adaptive sparse slicing mechanism guided by a global Objectness Mask, significantly accelerating small object detection in high-resolution images while optimizing GPU memory efficiency.
-- **2025/12/31**: Released the demo [YOLO-Master-WebUI-Demo](https://huggingface.co/spaces/gatilin/YOLO-Master-WebUI-Demo).
-- **2025/12/31**: Released YOLO-Master v0.1 with code, pre-trained weights, and documentation.
-- **2025/12/30**: arXiv paper published.
-
-
-## 🔥 New Features (v2026.02)
-
-### 1️⃣ Mixture of Experts (MoE) Support
-
-YOLO-Master introduces the first deep integration of Mixture-of-Experts into the YOLO architecture, enabling instance-conditional adaptive computation.
-
-<div align="center">
-  <img width="90%" alt="MoE Architecture" src="https://github.com/user-attachments/assets/5c51a886-e81d-43a4-bf4d-d37991e35cd2" />
-  <img width="90%" alt="MoE Module Details" src="https://github.com/user-attachments/assets/0c2d2689-72c2-47fb-97c6-002fefa99c73" />
-</div>
-
-**Core Components:**
-
-| Component | Description | Implementation |
-|:----------|:-----------|:--------------|
-| **MoE Loss (MoELoss)** | Load balancing loss + Z-Loss for stable training | `ultralytics/nn/modules/moe/loss.py` |
-| **MoE Pruning (MoEPruner)** | Auto-prune low-utilization experts (20-30% speedup) | `ultralytics/nn/modules/moe/pruning.py` |
-| **Modular Architecture** | Decoupled routers, experts, and gating mechanisms | `ultralytics/nn/modules/moe/` |
-
-**Usage:**
-
-```python
-from ultralytics import YOLO
-
-# Load MoE configuration
-model = YOLO("ultralytics/cfg/models/master/v0_1/det/yolo-master-n.yaml")
-
-# Training with MoE
-results = model.train(
-    data="coco8.yaml",
-    epochs=100,
-    imgsz=640,
-    batch=16,
-    moe_num_experts=8,      # Number of experts
-    moe_top_k=2,            # Experts activated per token
-    moe_balance_loss=0.01,  # Load balancing loss weight
-)
-
-# Expert utilization analysis & pruning
-model.prune_experts(threshold=0.15)
-```
-
----
-
-### 2️⃣ LoRA Support - Parameter-Efficient Fine-Tuning
-
-Architecture-agnostic LoRA adaptation with **zero architectural overhead** — enabled purely through configuration, no model surgery required.
-
-<div align="center">
-  <img width="90%" alt="LoRA Training Comparison" src="https://github.com/user-attachments/assets/98c6cada-ddc7-4723-877d-59d16ee0fdb2" />
-  <p><i>LoRA vs Full SFT vs DoRA vs LoHa: Training curves comparison on YOLOv11-s (COCO val2017, 300 epochs)</i></p>
-</div>
-
-**Key Advantages:**
-- 🎯 Using ~10% trainable parameters to achieve **95-98%** of full fine-tuning performance
-- ⚡ **40-60%** training speedup with **70%** memory reduction
-- 📦 Ultra-compact adapters (e.g., YOLO11x: 14.1 MB adapter vs 114.6 MB full model)
-
-**Supported Models:**
-
-| Model Family | Architecture Type | LoRA Integration | Changes Required |
-|:------------|:-----------------|:----------------|:----------------|
-| YOLOv3 / v5 / v6 | CNN | Configuration-only | None ✅ |
-| YOLOv8 / v9 / v10 | CNN | Configuration-only | None ✅ |
-| YOLO11 / YOLO12 | CNN / Hybrid | Configuration-only | None ✅ |
-| RT-DETR | Transformer-based | Configuration-only | None ✅ |
-| YOLO-World | Multi-modal | Configuration-only | None ✅ |
-| YOLO-Master | MoE | Configuration-only | None ✅ |
-
-**Usage:**
-
-```python
-from ultralytics import YOLO
-
-model = YOLO("yolo11s.pt")
-
-# LoRA training (one-click activation)
-results = model.train(
-    data="coco8.yaml",
-    epochs=300,
-    imgsz=640,
-    batch=32,
-    lora_r=16,                # rank=16, best cost-effectiveness
-    lora_alpha=32,            # alpha = 2×r
-    lora_dropout=0.1,
-    lora_gradient_checkpointing=True,
-)
-
-# Save only LoRA adapters (~4.1MB for YOLO11s) to a directory
-model.save_lora_only("yolo11s_lora_r16")
-```
-
-<details>
-<summary><b>📊 GPU Memory & Storage Benchmarks (Click to expand)</b></summary>
-
-**YOLO11 Series (LoRA rank=8):**
-
-| Model | Base Params (M) | LoRA Params | Base Size (MB) | Adapter Size (MB) | Param Ratio (%) |
-|:------|:---------------|:-----------|:--------------|:-----------------|:---------------|
-| YOLO11n | 2.6 | 527,536 | 5.6 | 2.1 | 20.29% |
-| YOLO11s | 9.4 | 1,016,240 | 19.3 | 4.1 | 10.81% |
-| YOLO11m | 20.1 | 1,639,856 | 40.7 | 6.6 | 8.16% |
-| YOLO11l | 25.3 | 2,350,512 | 51.4 | 9.4 | 9.29% |
-| YOLO11x | 56.9 | 3,525,552 | 114.6 | 14.1 | 6.20% |
-
-**YOLO12 Series (LoRA rank=8):**
-
-| Model | Base Params (M) | LoRA Params | Base Size (MB) | Adapter Size (MB) | Param Ratio (%) |
-|:------|:---------------|:-----------|:--------------|:-----------------|:---------------|
-| YOLO12n | 2.6 | 632,752 | 5.6 | 2.3 | 24.34% |
-| YOLO12s | 9.3 | 1,077,680 | 19.0 | 4.3 | 11.59% |
-| YOLO12m | 20.2 | 1,684,912 | 40.9 | 6.8 | 8.34% |
-| YOLO12l | 26.4 | 2,442,160 | 53.7 | 9.8 | 9.25% |
-| YOLO12x | 59.1 | 3,662,768 | 119.3 | 14.7 | 6.20% |
-
-**Practical Deployment Significance (YOLO11-X):**
-- 🚀 **Cloud**: Save ~87.7% storage by deploying 14.1 MB adapter instead of 114.6 MB full model
-- 📱 **Edge**: 1 base model + N lightweight adapters for multi-scenario switching
-- 🔄 **Version Control**: 14.1 MB adapters are far easier to manage via Git
-- 💡 **Multi-Task**: 10 tasks require only 255.6 MB (1×base + 10×adapters) vs 1,146 MB traditional
-
-</details>
-
----
-
-#### 🚀 Downstream Scenario Low-Rank Adaptation (LoRA) Matrix Test Report
-
-To verify the performance and resource consumption of the `YOLO-Master LoRA` framework across different downstream tasks, we conducted a cross-Rank matrix benchmark on the **RTX 5070 Ti** hardware platform using two typical scenarios (lightweight vs. extreme complexity).
-
-| Evaluation Scenario (Dataset) | LoRA Rank | Trainable Params Ratio * | Total Training Time (Minutes) | Peak VRAM | mAP50 | mAP50-95 |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Brain Tumor** *(Sparse, Small Dataset)* | 4 | ~0.45% | 6.80 min | **1.01 GB** | **0.5232** | **0.3863** |
-| **Brain Tumor** *(Sparse, Small Dataset)* | 8 | ~0.89% | 6.58 min | 1.03 GB | 0.5133 | 0.3692 |
-| **Brain Tumor** *(Sparse, Small Dataset)* | 16 | ~1.76% | 6.89 min | 1.08 GB | 0.4989 | 0.3744 |
-| 📊 **VisDrone** *(Dense, Extreme Scenario)* | 4 | ~0.45% | 14.45 min | 7.92 GB | 0.1312 | 0.0679 |
-| 📊 **VisDrone** *(Dense, Extreme Scenario)* | 8 | ~0.89% | 14.06 min | 7.95 GB | 0.1476 | 0.0781 |
-| 📊 **VisDrone** *(Dense, Extreme Scenario)* | 16 | ~1.76% | 15.45 min | **8.01 GB** | **0.1646** | **0.0872** |
-
-> \* *Note: The trainable parameter ratio is a theoretical estimate relative to the backbone's total parameters. Since Ultralytics automatically resets the gradient graph and triggers weight fusion after the training lifecycle ends, the runtime dynamic statistics remain silent.*
-
-** Selection Suggestions & Pitfalls to Avoid:**
-
-1. **Lightweight/Simple Scenarios (e.g., Brain Tumor)**: **Rank = 4** is recommended. For datasets with single-feature profiles, lower Ranks provide better regularization and effectively mitigate overfitting. 
-   *  *Pitfall:* Medical images (MRI/CT) are physically single-channel (grayscale), whereas YOLO defaults to 3-channel (RGB) inputs. Please ensure channel alignment in your data pipeline or use customized `ch=1` convolution configurations.
-2. **Dense/Complex Scenarios (e.g., VisDrone)**: **Rank >= 16** is recommended. Complex backgrounds and high-density tiny objects require larger parameter capacities for representation. Increasing the Rank significantly improves mAP50 by **+25.4%** (with <0.1 GB VRAM overhead).
-   *  *Pitfall:* Aerial imagery suffers from extreme scale variations. It is strictly advised to enable the built-in **Sparse SAHI (Sparse Inference)** or set `rect: true` during training. Furthermore, include both the Backbone's dimensionality reduction layers and MoE Experts' MLPs in `lora_target_modules` to provide sufficient degrees of freedom for spatial local features.
-
-### 3️⃣ Sparse SAHI Mode
-
-**Sparse Slicing Aided Hyper-Inference** — a revolutionary optimization for ultra-large image (4K/8K) detection, achieving **3-5x speedup** by intelligently skipping blank regions.
-
-<div align="center">
-  <img width="90%" alt="Sparse SAHI Pipeline" src="https://github.com/user-attachments/assets/f86a1f41-7538-4168-b4b4-112dafcd80d5" />
-  <p><i>Sparse SAHI pipeline: Objectness Mask → Adaptive Slicing → High-Resolution Inference → CW-NMS Merging</i></p>
-</div>
-
-<div align="center">
-  <img width="45%" alt="Skip Ratio Analysis" src="https://github.com/user-attachments/assets/0aece4ee-f693-40bd-8164-2c7bcd954fd5" />
-  <img width="45%" alt="Sparse SAHI Real-world Example" src="https://github.com/user-attachments/assets/7d41de53-7e58-472a-a6ad-15830b8744c6" />
-  <p><i>Left: Skip ratio analysis across different scenes. Right: Real-world detection example.</i></p>
-</div>
-
-**How it works:**
-1. 🗺️ Low-resolution full-image inference generates an objectness heatmap
-2. ✂️ Adaptive slicing skips regions with objectness < 0.15
-3. 🎯 High-resolution inference only on regions of interest
-4. 🔗 Multi-slice results merged via CW-NMS
-
-**Usage:**
-
-```python
-from ultralytics import YOLO
-
-model = YOLO("yolov8n.pt")
-
-results = model.predict(
-    source="large_aerial_image.jpg",
-    sparse_sahi=True,
-    slice_size=640,
-    overlap_ratio=0.2,
-    objectness_threshold=0.15,
-)
-```
-
----
-
-### 4️⃣ Cluster-Weighted NMS (CW-NMS)
-
-Cluster-based detection box fusion algorithm using **Gaussian-weighted averaging** instead of hard suppression, significantly improving localization accuracy.
-
-<div align="center">
-  <img width="90%" alt="CW-NMS Performance Comparison" src="https://github.com/user-attachments/assets/93d9252c-506a-4cf4-a0f1-ff864e0d721b" />
-  <p><i>CW-NMS vs Traditional NMS vs Soft-NMS: Performance comparison on dense scenes</i></p>
-</div>
-
-| Method | Strategy | Pros | Cons |
-|:-------|:---------|:-----|:-----|
-| Traditional NMS | Direct discard | Fast | May lose accurate localization |
-| Soft-NMS | Confidence decay | Preserves candidates | Parameter-sensitive |
-| **CW-NMS** | **Gaussian-weighted fusion** | **High accuracy, robust** | Slight computational increase |
-
-```python
-from ultralytics import YOLO
-
-model = YOLO("yolov8n.pt")
-results = model.predict(
-    source="dense_objects.jpg",
-    cluster=True,     # Enable CW-NMS
-    sigma=0.1,        # Gaussian weight σ
-)
-```
-
----
-
-5️⃣ **Mixture-of-Attention (MoA) Support**
-
-YOLO-Master introduces **Mixture-of-Attention (MoA)**, a CNN-native multi-scale attention fusion mechanism. A lightweight 1×1 conv router assigns soft probabilities to each spatial token across three attention head groups with different receptive fields: **Local** (depthwise-3×3), **Regional** (pooled-stride=2), and **Global** (linear-attention). Zero sequence-dimension reshape, fully Flash-Attention compatible.
-
-**Key Features:**
-- 🧠 **Multi-scale attention fusion**: Local detail + Regional context + Global semantics in one block
-- ⚡ **CNN-native**: `[B,C,H,W] → [B,C,H,W]`, no seq-dim reshape, compatible with all YOLO backbones
-- 🔗 **Flexible integration**: `C2fMoA` wrapper for direct C2f/C3k2 replacement; `NeckMoAFusion` for cross-scale FPN/PAN fusion
-
-**Usage:**
-```python
-from ultralytics import YOLO
-
-# Load MoA configuration
-model = YOLO("ultralytics/cfg/models/master/v0_1/det/yolo-master-n.yaml")
-
-# Training with MoA
-results = model.train(
-    data="coco8.yaml",
-    epochs=100,
-    imgsz=640,
-    batch=16,
-)
-```
-
-6️⃣ **Mixture-of-Transformers (MoT) Support**
-
-YOLO-Master introduces **Mixture-of-Transformers (MoT)**, a content-aware routing module that distributes tokens to specialized Transformer experts.
-
-**Three Expert Architectures:**
-- 🏠 **LocalConvTransformer**: Depth-wise convolutions for texture and edge detection
-- 🪟 **WindowTransformer**: Swin-style window partitioning for medium-scale objects
-- 🌀 **DeformableTransformer**: Sparse deformable sampling for irregular and occluded objects
-
-**Key Features:**
-- 🧭 **Soft Top-K Routing**: Static-graph computes all experts, blends outputs via Top-K mask weights — ONNX/TorchScript trace stable
-- ⚖️ **Optional Load-Balancing**: z-loss style auxiliary loss for stable expert utilization
-- 📦 **Out-of-the-Box**: Compatible with existing YOLO-Master training and export pipelines
-
-**Usage:**
-```python
-from ultralytics import YOLO
-
-# Load MoT configuration
-model = YOLO("ultralytics/cfg/models/master/v0_1/det/yolo-master-n.yaml")
-
-# Training with MoT
-results = model.train(
-    data="coco8.yaml",
-    epochs=100,
-    imgsz=640,
-    batch=16,
-)
-```
-
-7️⃣ **Agent Skill System**
-
-YOLO-Master introduces the **yolo-master-agent** Skill Bundle, enabling AI agents to orchestrate training, validation, inference, and evaluation through a structured Skill interface.
-
-**Key Features:**
-- 🤖 **9 Skill Runners**: `yolo.train`, `yolo.val`, `yolo.predict`, `yolo.benchmark`, `yolo.export`, `yolo.lora.diagnose`, `yolo.eval.peft_compare`, `yolo.multimodal.infer`, `yolo.system.doctor`
-- ✅ **50+ Test Cases**: 8 validation suites (quick / fast-smoke / cli-smoke / dry-run / contract / deep-smoke / extended / all)
-- 🧠 **Multimodal Inference**: YOLO detection + VLM/LLM cooperative reasoning, supporting OpenAI / DashScope compatible endpoints
-- 🔧 **Auto-Device**: MPS/CPU/CUDA auto-selection, workers=0 auto-completion, safe defaults
-- 📊 **Structured Output**: JSON manifest with training metrics, resource usage, error classification, and next-action recommendations
-
-**Usage:**
-```python
-# Via Python API
-from ultralytics import YOLO
-model = YOLO("yolo11n.pt")
-results = model.train(data="coco8.yaml", epochs=1, imgsz=640)
-
-# Via Skill CLI
-python agent/scripts/run_yolo_master_skill.py \
-    --json '{"skill":"yolo.train","inputs":{"model":"yolo11n.pt","data":"coco8.yaml"},"params":{"epochs":1,"imgsz":640}}'
-```
-
----
-
-## 📊 Main Results
-### Detection
-<div align="center">
-  <img width="450" alt="Radar chart comparing YOLO models on various datasets" src="https://github.com/user-attachments/assets/743fa632-659b-43b1-accf-f865c8b66754"/>
-</div>
-
-
-<div align="center">
-  <p><b>Table 1. Comparison with state-of-the-art Nano-scale detectors across five benchmarks.</b></p>
-  <table style="border-collapse:collapse; width:100%; font-family:sans-serif; text-align:center; border-top:2px solid #000; border-bottom:2px solid #000; font-size:0.9em;">
-    <thead>
-      <tr style="border-bottom:1px solid #ddd;">
-        <th style="padding:8px; border-right:1px solid #ddd;">Dataset</th>
-        <th colspan="2" style="border-right:1px solid #ddd;">COCO</th>
-        <th colspan="2" style="border-right:1px solid #ddd;">PASCAL VOC</th>
-        <th colspan="2" style="border-right:1px solid #ddd;">VisDrone</th>
-        <th colspan="2" style="border-right:1px solid #ddd;">KITTI</th>
-        <th colspan="2" style="border-right:1px solid #ddd;">SKU-110K</th>
-        <th>Efficiency</th>
-      </tr>
-      <tr style="border-bottom:1px solid #000;">
-        <th style="padding:8px; border-right:1px solid #ddd;">Method</th>
-        <th>mAP<br>(%)</th>
-        <th style="border-right:1px solid #ddd;">mAP<sub>50</sub><br>(%)</th>
-        <th>mAP<br>(%)</th>
-        <th style="border-right:1px solid #ddd;">mAP<sub>50</sub><br>(%)</th>
-        <th>mAP<br>(%)</th>
-        <th style="border-right:1px solid #ddd;">mAP<sub>50</sub><br>(%)</th>
-        <th>mAP<br>(%)</th>
-        <th style="border-right:1px solid #ddd;">mAP<sub>50</sub><br>(%)</th>
-        <th>mAP<br>(%)</th>
-        <th style="border-right:1px solid #ddd;">mAP<sub>50</sub><br>(%)</th>
-        <th>Latency<br>(ms)</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr>
-        <td style="padding:6px; text-align:left; border-right:1px solid #ddd;">YOLOv10</td>
-        <td>38.5</td><td style="border-right:1px solid #ddd;">53.8</td>
-        <td>60.6</td><td style="border-right:1px solid #ddd;">80.3</td>
-        <td>18.7</td><td style="border-right:1px solid #ddd;">32.4</td>
-        <td>66.0</td><td style="border-right:1px solid #ddd;">88.3</td>
-        <td>57.4</td><td style="border-right:1px solid #ddd;">90.0</td>
-        <td>1.84</td>
-      </tr>
-      <tr>
-        <td style="padding:6px; text-align:left; border-right:1px solid #ddd;">YOLOv11-N</td>
-        <td>39.4</td><td style="border-right:1px solid #ddd;">55.3</td>
-        <td>61.0</td><td style="border-right:1px solid #ddd;">81.2</td>
-        <td>18.5</td><td style="border-right:1px solid #ddd;">32.2</td>
-        <td>67.8</td><td style="border-right:1px solid #ddd;">89.8</td>
-        <td>57.4</td><td style="border-right:1px solid #ddd;">90.0</td>
-        <td>1.50</td>
-      </tr>
-      <tr>
-        <td style="padding:6px; text-align:left; border-right:1px solid #ddd;">YOLOv12-N</td>
-        <td>40.6</td><td style="border-right:1px solid #ddd;">56.7</td>
-        <td>60.7</td><td style="border-right:1px solid #ddd;">80.8</td>
-        <td>18.3</td><td style="border-right:1px solid #ddd;">31.7</td>
-        <td>67.6</td><td style="border-right:1px solid #ddd;">89.3</td>
-        <td>57.4</td><td style="border-right:1px solid #ddd;">90.0</td>
-        <td>1.64</td>
-      </tr>
-      <tr style="border-bottom:1px solid #000;">
-        <td style="padding:6px; text-align:left; border-right:1px solid #ddd;">YOLOv13-N</td>
-        <td>41.6</td><td style="border-right:1px solid #ddd;">57.8</td>
-        <td>60.7</td><td style="border-right:1px solid #ddd;">80.3</td>
-        <td>17.5</td><td style="border-right:1px solid #ddd;">30.6</td>
-        <td>67.7</td><td style="border-right:1px solid #ddd;">90.6</td>
-        <td>57.5</td><td style="border-right:1px solid #ddd;">90.3</td>
-        <td>1.97</td>
-      </tr>
-      <tr style="background-color:#f9f9f9;">
-        <td style="padding:8px; text-align:left; border-right:1px solid #ddd;"><b>YOLO-Master-N</b></td>
-        <td><b>42.4</b></td><td style="border-right:1px solid #ddd;"><b>59.2</b></td>
-        <td><b>62.1</b></td><td style="border-right:1px solid #ddd;"><b>81.9</b></td>
-        <td><b>19.6</b></td><td style="border-right:1px solid #ddd;"><b>33.7</b></td>
-        <td><b>69.2</b></td><td style="border-right:1px solid #ddd;"><b>91.3</b></td>
-        <td><b>58.2</b></td><td style="border-right:1px solid #ddd;"><b>90.6</b></td>
-        <td><b>1.62</b></td>
-      </tr>
-    </tbody>
-  </table>
-</div>
-
-### Segmentation
-
-| **Model**             | **Size** | **mAPbox (%)** | **mAPmask (%)** | **Gain (mAPmask)** |
-| --------------------- | -------- | -------------- | --------------- | ------------------ |
-| YOLOv11-seg-N         | 640      | 38.9           | 32.0            | -                  |
-| YOLOv12-seg-N         | 640      | 39.9           | 32.8            | Baseline           |
-| **YOLO-Master-seg-N** | **640**  | **42.9**       | **35.6**        | **+2.8%** 🚀        |
-
-### Classification
-
-| **Model**             | **Dataset**  | **Input Size** | **Top-1 Acc (%)** | **Top-5 Acc (%)** | **Comparison**    |
-| --------------------- | ------------ | -------------- | ----------------- | ----------------- | ----------------- |
-| YOLOv11-cls-N         | ImageNet     | 224            | 70.0              | 89.4              | Baseline          |
-| YOLOv12-cls-N         | ImageNet     | 224            | 71.7              | 90.5              | +1.7% Top-1       |
-| **YOLO-Master-cls-N** | **ImageNet** | **224**        | **76.6**          | **93.4**          | **+4.9% Top-1** 🔥 |
-
-## 📦 Model Zoo & Benchmarks
-
-<div align="center">
-  <img width="45%" alt="Model Performance 1" src="https://github.com/user-attachments/assets/9bd46c20-f4e3-4680-ad59-fcbab4b870f5" />
-  <img width="45%" alt="Model Performance 2" src="https://github.com/user-attachments/assets/6f1b13c2-651f-4579-8a34-833c4753322a" />
-</div>
-<div align="center">
-  <img width="45%" alt="Model Performance 3" src="https://github.com/user-attachments/assets/b6680e38-b206-438f-b693-4c7f858fb8b7" />
-  <img width="45%" alt="Model Performance 4" src="https://github.com/user-attachments/assets/9f17ac3e-f839-4950-8661-76a5d4714443" />
-</div>
-
-> Pretrained `.pt` weights are synced from the [YOLO-Master-v26.02 release](https://github.com/Tencent/YOLO-Master/releases/tag/YOLO-Master-v26.02).
-
-[esomoe-n-weights]: https://github.com/Tencent/YOLO-Master/releases/download/YOLO-Master-v26.02/YOLO-Master-EsMoE-N.pt
-[esomoe-s-weights]: https://github.com/Tencent/YOLO-Master/releases/download/YOLO-Master-v26.02/YOLO-Master-EsMoE-S.pt
-[esomoe-m-weights]: https://github.com/Tencent/YOLO-Master/releases/download/YOLO-Master-v26.02/YOLO-Master-EsMoE-M.pt
-[v01-n-weights]: https://github.com/Tencent/YOLO-Master/releases/download/YOLO-Master-v26.02/YOLO-Master-v0.1-N.pt
-[v01-s-weights]: https://github.com/Tencent/YOLO-Master/releases/download/YOLO-Master-v26.02/YOLO-Master-v0.1-S.pt
-[v01-m-weights]: https://github.com/Tencent/YOLO-Master/releases/download/YOLO-Master-v26.02/YOLO-Master-v0.1-M.pt
-[v01-l-weights]: https://github.com/Tencent/YOLO-Master/releases/download/YOLO-Master-v26.02/YOLO-Master-v0.1-L.pt
-
-### YOLO-Master-EsMoE Series
-
-| Model | Weights | Params(M) | GFLOPs(G) | Box(P) | R | mAP50 | mAP50-95 | Speed (4090 TRT) FPS |
-|:------|:--------|:---------|:---------|:------|:--|:------|:---------|:--------------------|
-| YOLO-Master-EsMoE-N | [Weights][esomoe-n-weights] | 2.68 | 8.7 | 0.684 | 0.536 | 0.587 | 0.427 | 640.18 |
-| YOLO-Master-EsMoE-S | [Weights][esomoe-s-weights] | 9.69 | 29.1 | 0.699 | 0.603 | 0.603 | 0.489 | 423.87 |
-| YOLO-Master-EsMoE-M | [Weights][esomoe-m-weights] | 34.88 | 97.4 | 0.737 | 0.640 | 0.697 | 0.530 | 243.79 |
-| YOLO-Master-EsMoE-L | - | 🔥training | TBD | TBD | TBD | TBD | TBD | TBD |
-| YOLO-Master-EsMoE-X | - | 🔥training | TBD | TBD | TBD | TBD | TBD | TBD |
-
-### YOLO-Master-v0.1 Series
-
-| Model | Weights | Params(M) | GFLOPs(G) | Box(P) | R | mAP50 | mAP50-95 | Speed (4090 TRT) FPS |
-|:------|:--------|:---------|:---------|:------|:--|:------|:---------|:--------------------|
-| YOLO-Master-v0.1-N | [Weights][v01-n-weights] | 7.54 | 10.1 | 0.684 | 0.542 | 0.592 | 0.429 | 528.84 |
-| YOLO-Master-v0.1-S | [Weights][v01-s-weights] | 29.15 | 36.0 | 0.724 | 0.607 | 0.662 | 0.489 | 345.24 |
-| YOLO-Master-v0.1-M | [Weights][v01-m-weights] | 52.17 | 116.7 | 0.729 | 0.641 | 0.696 | 0.528 | 170.72 |
-| YOLO-Master-v0.1-L | [Weights][v01-l-weights] | 58.41 | 138.1 | 0.739 | 0.646 | 0.705 | 0.539 | 149.86 |
-| YOLO-Master-v0.1-X | - | 🔥training | TBD | TBD | TBD | TBD | TBD | TBD |
-
-## 🖼️ Detection Examples
-
-<div align="center">
-  <img width="1416" height="856" alt="Detection Examples" src="https://github.com/user-attachments/assets/0e1fbe4a-34e7-489e-b936-6d121ede5cf6" /> </div>
-<table border="0"> <tr> <td align="center" style="font-weight: bold; background-color: #f6f8fa;"> <b>Detection</b> </td> <td width="45%"> <img src="https://github.com/user-attachments/assets/db350acd-1d91-4be6-96b2-6bdf8aac57e8" alt="Detection 1" style="width:100%; display:block; border-radius:4px;"> </td> <td width="45%"> <img src="https://github.com/user-attachments/assets/b6c80dbd-120e-428b-8d26-ea2b38a40b47" alt="Detection 2" style="width:100%; display:block; border-radius:4px;"> </td> </tr> <tr> <td align="center" style="font-weight: bold; background-color: #f6f8fa;"> <b>Segmentation</b> </td> <td width="45%"> <img src="https://github.com/user-attachments/assets/edb05e3c-cd83-41db-89f8-8ef09fc22798" alt="Segmentation 1" style="width:100%; display:block; border-radius:4px;"> </td> <td width="45%"> <img src="https://github.com/user-attachments/assets/ea138674-d7c7-48fb-b272-3ec211d161bf" alt="Segmentation 2" style="width:100%; display:block; border-radius:4px;"> </td> </tr> </table>
-
-
-
-## 🧩 Supported Tasks
-
-YOLO-Master builds upon the robust Ultralytics framework, inheriting support for various computer vision tasks. While our research primarily focuses on Real-Time Object Detection, the codebase is capable of supporting:
-
-| Task | Status | Description |
-|:-----|:------:|:------------|
-| **Object Detection** | ✅ | Real-time object detection with ES-MoE acceleration. |
-| **Instance Segmentation** | ✅ | Experimental support (inherited from Ultralytics). |
-| **Pose Estimation** | 🚧 | Experimental support (inherited from Ultralytics). |
-| **OBB Detection** | 🚧 | Experimental support (inherited from Ultralytics). |
-| **Classification** | ✅ | Image classification support. |
-
-## ⚙️ Quick Start
-
-### Installation
+See below for quickstart installation and usage examples. For comprehensive guidance on training, validation, prediction, and deployment, refer to our full [Ultralytics Docs](https://docs.ultralytics.com/).
 
 <details open>
-<summary><strong>Install via pip (Recommended)</strong></summary>
+<summary>Install</summary>
+
+Install the `ultralytics` package, including all [requirements](https://github.com/ultralytics/ultralytics/blob/main/pyproject.toml), in a [**Python>=3.8**](https://www.python.org/) environment with [**PyTorch>=1.8**](https://pytorch.org/get-started/locally/).
+
+[![PyPI - Version](https://img.shields.io/pypi/v/ultralytics?logo=pypi&logoColor=white)](https://pypi.org/project/ultralytics/) [![Ultralytics Downloads](https://static.pepy.tech/badge/ultralytics)](https://clickpy.clickhouse.com/dashboard/ultralytics) [![PyPI - Python Version](https://img.shields.io/pypi/pyversions/ultralytics?logo=python&logoColor=gold)](https://pypi.org/project/ultralytics/)
 
 ```bash
-# 1. Create and activate a new environment
-conda create -n yolo_master python=3.11 -y
-conda activate yolo_master
-
-# 2. Clone the repository
-git clone https://github.com/Tencent/YOLO-Master
-cd YOLO-Master
-
-# 3. Install dependencies
-pip install -r requirements.txt
-pip install -e .
-
-# 4. Optional: Install FlashAttention for faster training (CUDA required)
-pip install flash_attn
+pip install ultralytics
 ```
+
+For alternative installation methods, including [Conda](https://anaconda.org/conda-forge/ultralytics), [Docker](https://hub.docker.com/r/ultralytics/ultralytics), and building from source via Git, please consult the [Quickstart Guide](https://docs.ultralytics.com/quickstart).
+
+[![Conda Version](https://img.shields.io/conda/vn/conda-forge/ultralytics?logo=condaforge)](https://anaconda.org/conda-forge/ultralytics) [![Docker Image Version](https://img.shields.io/docker/v/ultralytics/ultralytics?sort=semver&logo=docker)](https://hub.docker.com/r/ultralytics/ultralytics) [![Ultralytics Docker Pulls](https://img.shields.io/docker/pulls/ultralytics/ultralytics?logo=docker)](https://hub.docker.com/r/ultralytics/ultralytics)
+
 </details>
 
-### Validation
+<details open>
+<summary>Usage</summary>
 
-Validate the model accuracy on the COCO dataset.
+### CLI
 
-```python
-from ultralytics import YOLO
+You can use Ultralytics YOLO directly from the Command Line Interface (CLI) with the `yolo` command:
 
-# Load the pretrained model
-model = YOLO("yolo_master_n.pt") 
-
-# Run validation
-metrics = model.val(data="coco.yaml", save_json=True)
-print(metrics.box.map)  # map50-95
+```bash
+# Predict using a pretrained YOLO model (e.g., YOLO26n) on an image
+yolo predict model=yolo26n.pt source='https://ultralytics.com/images/bus.jpg'
 ```
 
-### Training
+The `yolo` command supports various tasks and modes, accepting additional arguments like `imgsz=640`. Explore the YOLO [CLI Docs](https://docs.ultralytics.com/usage/cli) for more examples.
 
-Train a new model on your custom dataset or COCO.
+### Python
+
+Ultralytics YOLO can also be integrated directly into your Python projects. It accepts the same [configuration arguments](https://docs.ultralytics.com/usage/cfg) as the CLI:
 
 ```python
 from ultralytics import YOLO
 
-# Load a model
-model = YOLO('cfg/models/master/v0/det/yolo-master-n.yaml')  # build a new model from YAML
+# Load a pretrained YOLO26n model
+model = YOLO("yolo26n.pt")
 
-# Train the model
-results = model.train(
-    data='coco.yaml',
-    epochs=600, 
-    batch=256, 
-    imgsz=640,
-    device="0,1,2,3", # Use multiple GPUs
-    scale=0.5, 
-    mosaic=1.0,
-    mixup=0.0, 
-    copy_paste=0.1
+# Train the model on the COCO8 dataset for 100 epochs
+train_results = model.train(
+    data="coco8.yaml",  # Path to dataset configuration file
+    epochs=100,  # Number of training epochs
+    imgsz=640,  # Image size for training
+    device="cpu",  # Device to run on (e.g., 'cpu', 0, [0,1,2,3])
 )
+
+# Evaluate the model's performance on the validation set
+metrics = model.val()
+
+# Perform object detection on an image
+results = model("path/to/image.jpg")  # Predict on an image
+results[0].show()  # Display results
+
+# Export the model to ONNX format for deployment
+path = model.export(format="onnx")  # Returns the path to the exported model
 ```
 
-### Inference
+Discover more examples in the YOLO [Python Docs](https://docs.ultralytics.com/usage/python).
 
-Run inference on images or videos.
+</details>
 
-**Python:**
-```python
-from ultralytics import YOLO
+## ✨ Models
 
-model = YOLO("yolo_master_n.pt")
-results = model("path/to/image.jpg")
-results[0].show()
-```
+Ultralytics supports a wide range of YOLO models, from early versions like [YOLOv3](https://docs.ultralytics.com/models/yolov3) to the latest [YOLO26](https://docs.ultralytics.com/models/yolo26). The tables below showcase YOLO26 models pretrained on [COCO](https://docs.ultralytics.com/datasets/detect/coco) for [Detection](https://docs.ultralytics.com/tasks/detect), [Segmentation](https://docs.ultralytics.com/tasks/segment), and [Pose Estimation](https://docs.ultralytics.com/tasks/pose). [Semantic Segmentation](https://docs.ultralytics.com/tasks/semantic) models are pretrained on [Cityscapes](https://docs.ultralytics.com/datasets/semantic/cityscapes), and [Classification](https://docs.ultralytics.com/tasks/classify) models are pretrained on [ImageNet](https://docs.ultralytics.com/datasets/classify/imagenet). [Tracking](https://docs.ultralytics.com/modes/track) mode is compatible with Detection, Segmentation, and Pose models. All [Models](https://docs.ultralytics.com/models) download automatically from the latest Ultralytics [release](https://github.com/ultralytics/assets/releases) on first use.
 
-**CLI:**
-```bash
-yolo predict model=yolo_master_n.pt source='path/to/image.jpg' show=True
-```
+<a href="https://docs.ultralytics.com/tasks" target="_blank">
+    <img width="100%" src="https://raw.githubusercontent.com/ultralytics/assets/main/docs/ultralytics-yolov8-tasks-banner.avif" alt="Ultralytics YOLO supported tasks">
+</a>
+<br>
+<br>
 
-### Export
+<details open><summary>Detection (COCO)</summary>
 
-Export the model to other formats for deployment (TensorRT, ONNX, etc.).
+Explore the [Detection Docs](https://docs.ultralytics.com/tasks/detect) for usage examples. These models are trained on the [COCO dataset](https://cocodataset.org/), featuring 80 object classes.
 
-```python
-from ultralytics import YOLO
+| Model                                                                                | size<br><sup>(pixels)</sup> | mAP<sup>val<br>50-95</sup> | mAP<sup>val<br>50-95(e2e)</sup> | Speed<br><sup>CPU ONNX<br>(ms)</sup> | Speed<br><sup>T4 TensorRT10<br>(ms)</sup> | params<br><sup>(M)</sup> | FLOPs<br><sup>(B)</sup> |
+| ------------------------------------------------------------------------------------ | --------------------------- | -------------------------- | ------------------------------- | ------------------------------------ | ----------------------------------------- | ------------------------ | ----------------------- |
+| [YOLO26n](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26n.pt) | 640                         | 40.9                       | 40.1                            | 38.9 ± 0.7                           | 1.7 ± 0.0                                 | 2.4                      | 5.4                     |
+| [YOLO26s](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26s.pt) | 640                         | 48.6                       | 47.8                            | 87.2 ± 0.9                           | 2.5 ± 0.0                                 | 9.5                      | 20.7                    |
+| [YOLO26m](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26m.pt) | 640                         | 53.1                       | 52.5                            | 220.0 ± 1.4                          | 4.7 ± 0.1                                 | 20.4                     | 68.2                    |
+| [YOLO26l](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26l.pt) | 640                         | 55.0                       | 54.4                            | 286.2 ± 2.0                          | 6.2 ± 0.2                                 | 24.8                     | 86.4                    |
+| [YOLO26x](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26x.pt) | 640                         | 57.5                       | 56.9                            | 525.8 ± 4.0                          | 11.8 ± 0.2                                | 55.7                     | 193.9                   |
 
-model = YOLO("yolo_master_n.pt")
-model.export(format="engine", half=True)  # Export to TensorRT
-# formats: onnx, openvino, engine, coreml, saved_model, pb, tflite, edgetpu, tfjs
-```
+- **mAP<sup>val</sup>** values refer to single-model single-scale performance on the [COCO val2017](https://cocodataset.org/) dataset. See [YOLO Performance Metrics](https://docs.ultralytics.com/guides/yolo-performance-metrics) for details. <br>Reproduce with `yolo val detect data=coco.yaml device=0`
+- **Speed** metrics are averaged over COCO val images using an [Amazon EC2 P4d](https://aws.amazon.com/ec2/instance-types/p4/) instance. CPU speeds measured with [ONNX](https://onnx.ai/) export. GPU speeds measured with [TensorRT](https://developer.nvidia.com/tensorrt) export. <br>Reproduce with `yolo val detect data=coco.yaml batch=1 device=0|cpu`
 
-### Gradio Demo
+</details>
 
-Launch a local web interface to test the model interactively. This application provides a user-friendly Gradio dashboard for model inference, supporting automatic model scanning, task switching (Detection, Segmentation, Classification), and real-time visualization.
+<details><summary>Segmentation (COCO)</summary>
 
-```bash
-python app.py
-# Open http://127.0.0.1:7860 in your browser
-```
+Refer to the [Segmentation Docs](https://docs.ultralytics.com/tasks/segment) for usage examples. These models are trained on [COCO-Seg](https://docs.ultralytics.com/datasets/segment/coco), including 80 classes.
 
-## 🤝 Community & Contributing
+| Model                                                                                        | size<br><sup>(pixels)</sup> | mAP<sup>box<br>50-95(e2e)</sup> | mAP<sup>mask<br>50-95(e2e)</sup> | Speed<br><sup>CPU ONNX<br>(ms)</sup> | Speed<br><sup>T4 TensorRT10<br>(ms)</sup> | params<br><sup>(M)</sup> | FLOPs<br><sup>(B)</sup> |
+| -------------------------------------------------------------------------------------------- | --------------------------- | ------------------------------- | -------------------------------- | ------------------------------------ | ----------------------------------------- | ------------------------ | ----------------------- |
+| [YOLO26n-seg](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26n-seg.pt) | 640                         | 39.6                            | 33.9                             | 53.3 ± 0.5                           | 2.1 ± 0.0                                 | 2.7                      | 9.1                     |
+| [YOLO26s-seg](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26s-seg.pt) | 640                         | 47.3                            | 40.0                             | 118.4 ± 0.9                          | 3.3 ± 0.0                                 | 10.4                     | 34.2                    |
+| [YOLO26m-seg](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26m-seg.pt) | 640                         | 52.5                            | 44.1                             | 328.2 ± 2.4                          | 6.7 ± 0.1                                 | 23.6                     | 121.5                   |
+| [YOLO26l-seg](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26l-seg.pt) | 640                         | 54.4                            | 45.5                             | 387.0 ± 3.7                          | 8.0 ± 0.1                                 | 28.0                     | 139.8                   |
+| [YOLO26x-seg](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26x-seg.pt) | 640                         | 56.5                            | 47.0                             | 787.0 ± 6.8                          | 16.4 ± 0.1                                | 62.8                     | 313.5                   |
 
-We welcome contributions! Please check out our [Contribution Guidelines](CONTRIBUTING.md) for details on how to get involved.
+- **mAP<sup>val</sup>** values are for single-model single-scale on the [COCO val2017](https://cocodataset.org/) dataset. See [YOLO Performance Metrics](https://docs.ultralytics.com/guides/yolo-performance-metrics) for details. <br>Reproduce with `yolo val segment data=coco.yaml device=0`
+- **Speed** metrics are averaged over COCO val images using an [Amazon EC2 P4d](https://aws.amazon.com/ec2/instance-types/p4/) instance. CPU speeds measured with [ONNX](https://onnx.ai/) export. GPU speeds measured with [TensorRT](https://developer.nvidia.com/tensorrt) export. <br>Reproduce with `yolo val segment data=coco.yaml batch=1 device=0|cpu`
 
-- **Issues**: Report bugs or request features [here](https://github.com/Tencent/YOLO-Master/issues).
-- **Pull Requests**: Submit your improvements.
+</details>
 
-## 📄 License
+<details><summary>Semantic Segmentation (Cityscapes)</summary>
 
-This project is licensed under the [GNU Affero General Public License v3.0 (AGPL-3.0)](LICENSE).
+See the [Semantic Segmentation Docs](https://docs.ultralytics.com/tasks/semantic) for usage examples. These models are trained on [Cityscapes](https://docs.ultralytics.com/datasets/semantic/cityscapes), including 19 classes.
 
-## 🙏 Acknowledgements
+| Model                                                                                        | size<br><sup>(pixels)</sup> | mIoU<sup>val</sup> | Speed<br><sup>RTX3090 PyTorch<br>(ms)</sup> | params<br><sup>(M)</sup> | FLOPs<br><sup>(B)</sup> |
+| -------------------------------------------------------------------------------------------- | --------------------------- | ------------------ | ------------------------------------------- | ------------------------ | ----------------------- |
+| [YOLO26n-sem](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26n-sem.pt) | 1024 &times; 2048           | 78.3               | 4.4 ± 0.0                                   | 1.6                      | 22.7                    |
+| [YOLO26s-sem](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26s-sem.pt) | 1024 &times; 2048           | 80.8               | 8.4 ± 0.0                                   | 6.5                      | 88.8                    |
+| [YOLO26m-sem](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26m-sem.pt) | 1024 &times; 2048           | 82.0               | 19.9 ± 0.1                                  | 14.3                     | 304.5                   |
+| [YOLO26l-sem](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26l-sem.pt) | 1024 &times; 2048           | 82.9               | 26.5 ± 0.1                                  | 17.9                     | 384.7                   |
+| [YOLO26x-sem](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26x-sem.pt) | 1024 &times; 2048           | 83.6               | 48.9 ± 0.2                                  | 40.2                     | 861.7                   |
 
-This work builds upon the excellent [Ultralytics](https://github.com/ultralytics/ultralytics) framework. Huge thanks to the community for contributions, deployments, and tutorials!
+- **mIoU<sup>val</sup>** values are for single-model single-scale on the [Cityscapes](https://www.cityscapes-dataset.com/) validation set. <br>Reproduce with `yolo semantic val data=cityscapes.yaml device=0 imgsz=2048`
+- **Speed** metrics are averaged over Cityscapes validation images using an RTX3090 instance. <br>Reproduce with `yolo semantic val data=cityscapes.yaml batch=1 device=0|cpu imgsz=2048`
 
-## 📝 Citation
+</details>
 
-If you use YOLO-Master in your research, please cite our paper:
+<details><summary>Classification (ImageNet)</summary>
 
-```bibtex
-@inproceedings{lin2026yolomaster,
-  title={{YOLO-Master}: MOE-Accelerated with Specialized Transformers for Enhanced Real-time Detection},
-  author={Lin, Xu and Peng, Jinlong and Gan, Zhenye and Zhu, Jiawen and Liu, Jun},
-  booktitle={Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
-  year={2026}
-}
-```
+Consult the [Classification Docs](https://docs.ultralytics.com/tasks/classify) for usage examples. These models are trained on [ImageNet](https://docs.ultralytics.com/datasets/classify/imagenet), covering 1000 classes.
 
-⭐ **If you find this work useful, please star the repository!**
+| Model                                                                                        | size<br><sup>(pixels)</sup> | acc<br><sup>top1</sup> | acc<br><sup>top5</sup> | Speed<br><sup>CPU ONNX<br>(ms)</sup> | Speed<br><sup>T4 TensorRT10<br>(ms)</sup> | params<br><sup>(M)</sup> | FLOPs<br><sup>(B) at 224</sup> |
+| -------------------------------------------------------------------------------------------- | --------------------------- | ---------------------- | ---------------------- | ------------------------------------ | ----------------------------------------- | ------------------------ | ------------------------------ |
+| [YOLO26n-cls](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26n-cls.pt) | 224                         | 71.4                   | 90.1                   | 5.0 ± 0.3                            | 1.1 ± 0.0                                 | 2.8                      | 0.5                            |
+| [YOLO26s-cls](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26s-cls.pt) | 224                         | 76.0                   | 92.9                   | 7.9 ± 0.2                            | 1.3 ± 0.0                                 | 6.7                      | 1.6                            |
+| [YOLO26m-cls](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26m-cls.pt) | 224                         | 78.1                   | 94.2                   | 17.2 ± 0.4                           | 2.0 ± 0.0                                 | 11.6                     | 4.9                            |
+| [YOLO26l-cls](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26l-cls.pt) | 224                         | 79.0                   | 94.6                   | 23.2 ± 0.3                           | 2.8 ± 0.0                                 | 14.1                     | 6.2                            |
+| [YOLO26x-cls](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26x-cls.pt) | 224                         | 79.9                   | 95.0                   | 41.4 ± 0.9                           | 3.8 ± 0.0                                 | 29.6                     | 13.6                           |
+
+- **acc** values represent model accuracy on the [ImageNet](https://www.image-net.org/) dataset validation set. <br>Reproduce with `yolo val classify data=path/to/ImageNet device=0`
+- **Speed** metrics are averaged over ImageNet val images using an [Amazon EC2 P4d](https://aws.amazon.com/ec2/instance-types/p4/) instance. CPU speeds measured with [ONNX](https://onnx.ai/) export. GPU speeds measured with [TensorRT](https://developer.nvidia.com/tensorrt) export. <br>Reproduce with `yolo val classify data=path/to/ImageNet batch=1 device=0|cpu`
+
+</details>
+
+<details><summary>Pose (COCO)</summary>
+
+See the [Pose Estimation Docs](https://docs.ultralytics.com/tasks/pose) for usage examples. These models are trained on [COCO-Pose](https://docs.ultralytics.com/datasets/pose/coco), focusing on the 'person' class.
+
+| Model                                                                                          | size<br><sup>(pixels)</sup> | mAP<sup>pose<br>50-95(e2e)</sup> | mAP<sup>pose<br>50(e2e)</sup> | Speed<br><sup>CPU ONNX<br>(ms)</sup> | Speed<br><sup>T4 TensorRT10<br>(ms)</sup> | params<br><sup>(M)</sup> | FLOPs<br><sup>(B)</sup> |
+| ---------------------------------------------------------------------------------------------- | --------------------------- | -------------------------------- | ----------------------------- | ------------------------------------ | ----------------------------------------- | ------------------------ | ----------------------- |
+| [YOLO26n-pose](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26n-pose.pt) | 640                         | 57.2                             | 83.3                          | 40.3 ± 0.5                           | 1.8 ± 0.0                                 | 2.9                      | 7.5                     |
+| [YOLO26s-pose](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26s-pose.pt) | 640                         | 63.0                             | 86.6                          | 85.3 ± 0.9                           | 2.7 ± 0.0                                 | 10.4                     | 23.9                    |
+| [YOLO26m-pose](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26m-pose.pt) | 640                         | 68.8                             | 89.6                          | 218.0 ± 1.5                          | 5.0 ± 0.1                                 | 21.5                     | 73.1                    |
+| [YOLO26l-pose](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26l-pose.pt) | 640                         | 70.4                             | 90.5                          | 275.4 ± 2.4                          | 6.5 ± 0.1                                 | 25.9                     | 91.3                    |
+| [YOLO26x-pose](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26x-pose.pt) | 640                         | 71.6                             | 91.6                          | 565.4 ± 3.0                          | 12.2 ± 0.2                                | 57.6                     | 201.7                   |
+
+- **mAP<sup>val</sup>** values are for single-model single-scale on the [COCO Keypoints val2017](https://docs.ultralytics.com/datasets/pose/coco) dataset. See [YOLO Performance Metrics](https://docs.ultralytics.com/guides/yolo-performance-metrics) for details. <br>Reproduce with `yolo val pose data=coco-pose.yaml device=0`
+- **Speed** metrics are averaged over COCO val images using an [Amazon EC2 P4d](https://aws.amazon.com/ec2/instance-types/p4/) instance. CPU speeds measured with [ONNX](https://onnx.ai/) export. GPU speeds measured with [TensorRT](https://developer.nvidia.com/tensorrt) export. <br>Reproduce with `yolo val pose data=coco-pose.yaml batch=1 device=0|cpu`
+
+</details>
+
+<details><summary>Oriented Bounding Boxes (DOTAv1)</summary>
+
+Check the [OBB Docs](https://docs.ultralytics.com/tasks/obb) for usage examples. These models are trained on [DOTAv1](https://docs.ultralytics.com/datasets/obb/dota-v2#dota-v10), including 15 classes.
+
+| Model                                                                                        | size<br><sup>(pixels)</sup> | mAP<sup>test<br>50-95(e2e)</sup> | mAP<sup>test<br>50(e2e)</sup> | Speed<br><sup>CPU ONNX<br>(ms)</sup> | Speed<br><sup>T4 TensorRT10<br>(ms)</sup> | params<br><sup>(M)</sup> | FLOPs<br><sup>(B)</sup> |
+| -------------------------------------------------------------------------------------------- | --------------------------- | -------------------------------- | ----------------------------- | ------------------------------------ | ----------------------------------------- | ------------------------ | ----------------------- |
+| [YOLO26n-obb](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26n-obb.pt) | 1024                        | 52.4                             | 78.9                          | 97.7 ± 0.9                           | 2.8 ± 0.0                                 | 2.5                      | 14.0                    |
+| [YOLO26s-obb](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26s-obb.pt) | 1024                        | 54.8                             | 80.9                          | 218.0 ± 1.4                          | 4.9 ± 0.1                                 | 9.8                      | 55.1                    |
+| [YOLO26m-obb](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26m-obb.pt) | 1024                        | 55.3                             | 81.0                          | 579.2 ± 3.8                          | 10.2 ± 0.3                                | 21.2                     | 183.3                   |
+| [YOLO26l-obb](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26l-obb.pt) | 1024                        | 56.2                             | 81.6                          | 735.6 ± 3.1                          | 13.0 ± 0.2                                | 25.6                     | 230.0                   |
+| [YOLO26x-obb](https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26x-obb.pt) | 1024                        | 56.7                             | 81.7                          | 1485.7 ± 11.5                        | 30.5 ± 0.9                                | 57.6                     | 516.5                   |
+
+- **mAP<sup>test</sup>** values are for single-model multiscale performance on the [DOTAv1 test set](https://captain-whu.github.io/DOTA/dataset.html). <br>Reproduce by `yolo val obb data=DOTAv1.yaml device=0 split=test` and submit merged results to the [DOTA evaluation server](https://captain-whu.github.io/DOTA/evaluation.html).
+- **Speed** metrics are averaged over [DOTAv1 val images](https://docs.ultralytics.com/datasets/obb/dota-v2#dota-v10) using an [Amazon EC2 P4d](https://aws.amazon.com/ec2/instance-types/p4/) instance. CPU speeds measured with [ONNX](https://onnx.ai/) export. GPU speeds measured with [TensorRT](https://developer.nvidia.com/tensorrt) export. <br>Reproduce by `yolo val obb data=DOTAv1.yaml batch=1 device=0|cpu`
+
+</details>
+
+## 🧩 Integrations
+
+Our key integrations with leading AI platforms extend the functionality of Ultralytics' offerings, enhancing tasks like dataset labeling, training, visualization, and model management. Discover how Ultralytics, in collaboration with partners like [Weights & Biases](https://docs.ultralytics.com/integrations/weights-biases), [Comet ML](https://docs.ultralytics.com/integrations/comet), [Roboflow](https://docs.ultralytics.com/integrations/roboflow), and [Intel OpenVINO](https://docs.ultralytics.com/integrations/openvino), can optimize your AI workflow. Explore more at [Ultralytics Integrations](https://docs.ultralytics.com/integrations).
+
+<a href="https://platform.ultralytics.com" target="_blank">
+    <img width="100%" src="https://github.com/ultralytics/assets/raw/main/yolov8/banner-integrations.png" alt="Ultralytics active learning integrations">
+</a>
+
+## 🤝 Contribute
+
+We thrive on community collaboration! Ultralytics YOLO wouldn't be the SOTA framework it is without contributions from developers like you. Please see our [Contributing Guide](https://docs.ultralytics.com/help/contributing) to get started. We also welcome your feedback—share your experience by completing our [Survey](https://www.ultralytics.com/survey?utm_source=github&utm_medium=social&utm_campaign=Survey). A huge **Thank You** 🙏 to everyone who contributes!
+
+<!-- SVG image from https://opencollective.com/ultralytics/contributors.svg?width=1280 -->
+
+[![Ultralytics open-source contributors](https://raw.githubusercontent.com/ultralytics/assets/main/im/image-contributors.png)](https://github.com/ultralytics/ultralytics/graphs/contributors)
+
+We look forward to your contributions to help make the Ultralytics ecosystem even better!
+
+## 📜 License
+
+Ultralytics offers two licensing options to suit different needs:
+
+- **AGPL-3.0 License**: This [OSI-approved](https://opensource.org/license/agpl-3.0) open-source license is perfect for students, researchers, and enthusiasts. It encourages open collaboration and knowledge sharing. See the [LICENSE](https://github.com/ultralytics/ultralytics/blob/main/LICENSE) file for full details.
+- **Ultralytics Enterprise License**: For development and production use, this license enables seamless integration of Ultralytics software and AI models into business products and services, including internal tools, automated workflows, and production deployments, bypassing the open-source requirements of AGPL-3.0. To get started, please contact us via [Ultralytics Licensing](https://www.ultralytics.com/license).
+
+## 📞 Contact
+
+For bug reports and feature requests related to Ultralytics software, please visit [GitHub Issues](https://github.com/ultralytics/ultralytics/issues). For questions, discussions, and community support, join our active communities on [Discord](https://discord.com/invite/ultralytics), [Reddit](https://www.reddit.com/r/ultralytics/), and the [Ultralytics Community Forums](https://community.ultralytics.com/). We're here to help with all things Ultralytics!
+
+<br>
+<div align="center">
+  <a href="https://github.com/ultralytics"><img src="https://github.com/ultralytics/assets/raw/main/social/logo-social-github.png" width="3%" alt="Ultralytics GitHub"></a>
+  <img src="https://github.com/ultralytics/assets/raw/main/social/logo-transparent.png" width="3%" alt="space">
+  <a href="https://www.linkedin.com/company/ultralytics/"><img src="https://github.com/ultralytics/assets/raw/main/social/logo-social-linkedin.png" width="3%" alt="Ultralytics LinkedIn"></a>
+  <img src="https://github.com/ultralytics/assets/raw/main/social/logo-transparent.png" width="3%" alt="space">
+  <a href="https://twitter.com/ultralytics"><img src="https://github.com/ultralytics/assets/raw/main/social/logo-social-twitter.png" width="3%" alt="Ultralytics Twitter"></a>
+  <img src="https://github.com/ultralytics/assets/raw/main/social/logo-transparent.png" width="3%" alt="space">
+  <a href="https://www.youtube.com/ultralytics?sub_confirmation=1"><img src="https://github.com/ultralytics/assets/raw/main/social/logo-social-youtube.png" width="3%" alt="Ultralytics YouTube"></a>
+  <img src="https://github.com/ultralytics/assets/raw/main/social/logo-transparent.png" width="3%" alt="space">
+  <a href="https://www.tiktok.com/@ultralytics"><img src="https://github.com/ultralytics/assets/raw/main/social/logo-social-tiktok.png" width="3%" alt="Ultralytics TikTok"></a>
+  <img src="https://github.com/ultralytics/assets/raw/main/social/logo-transparent.png" width="3%" alt="space">
+  <a href="https://ultralytics.com/bilibili"><img src="https://github.com/ultralytics/assets/raw/main/social/logo-social-bilibili.png" width="3%" alt="Ultralytics BiliBili"></a>
+  <img src="https://github.com/ultralytics/assets/raw/main/social/logo-transparent.png" width="3%" alt="space">
+  <a href="https://discord.com/invite/ultralytics"><img src="https://github.com/ultralytics/assets/raw/main/social/logo-social-discord.png" width="3%" alt="Ultralytics Discord"></a>
+</div>

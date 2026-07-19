@@ -26,7 +26,7 @@ class LinearRouter(nn.Module):
         hidden = hidden_dim or max(in_channels // 4, 1)
         self.fc = nn.Sequential(
             nn.Linear(in_channels, hidden),
-            nn.ReLU(inplace=True),
+            nn.ReLU(inplace=False),
             nn.Linear(hidden, num_experts),
         )
         # Initialize router logits to small values for near-uniform start
@@ -60,7 +60,7 @@ class SpatialRouter(nn.Module):
         self.num_experts = num_experts
         hidden = hidden_dim or max(in_channels // 4, 1)
         self.conv = nn.Conv2d(in_channels, hidden, kernel_size=1, bias=True)
-        self.act = nn.ReLU(inplace=True)
+        self.act = nn.ReLU(inplace=False)
         self.proj = nn.Conv2d(hidden, num_experts, kernel_size=1, bias=True)
         nn.init.normal_(self.proj.weight, std=0.01)
         nn.init.zeros_(self.proj.bias)

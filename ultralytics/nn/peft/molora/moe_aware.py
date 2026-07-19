@@ -24,6 +24,7 @@ from .layer import MoLoRALayer, MoLoRAExpert
 from .router import build_router
 from .loss import MoLoRALoss
 from .utils import _molora_scales
+from ultralytics.nn.modules.routing_protocol import publish_aux_loss
 
 
 # ---------------------------------------------------------------------------
@@ -119,7 +120,8 @@ class PerExpertRankAllocator:
                 ranks[sorted_idx[i]] += 1
 
         # Sanity check
-        assert sum(ranks) == self.total_budget, f"Rank sum {sum(ranks)} != budget {self.total_budget}"
+        if sum(ranks) != self.total_budget:
+            raise RuntimeError(f"Rank sum {sum(ranks)} != budget {self.total_budget}")
         return ranks
 
 
@@ -362,6 +364,8 @@ class MoLoRAMoEAwareLayer(MoLoRALayer):
         )
 
         self._last_routing_stats: Optional[Dict[str, Any]] = None
+        self._last_aux_loss: torch.Tensor = torch.zeros((), requires_grad=False)
+        self.last_routing_snapshot: dict = {}
 
     # ------------------------------------------------------------------
     # Forward override with calibration
@@ -405,11 +409,15 @@ class MoLoRAMoEAwareLayer(MoLoRALayer):
 
         adapted = self._compute_sparse_experts(x, top_k_weights, top_k_indices, base_out)
 
-        aux_loss = self.loss_fn(
-            router_probs=router_probs,
-            router_logits=router_logits,
-            expert_indices=top_k_indices,
-            expert_outputs=None,
+        aux_loss = (
+            self.loss_fn(
+                router_probs=router_probs,
+                router_logits=router_logits,
+                expert_indices=top_k_indices,
+                expert_outputs=None,
+            )
+            if self.training
+            else base_out.new_zeros(())
         )
 
         if self.share_moe_registry and self.training:
@@ -418,6 +426,9 @@ class MoLoRAMoEAwareLayer(MoLoRALayer):
                 _registry_set(self, aux_loss)
             except Exception:
                 pass
+
+        self._last_aux_loss = aux_loss
+        publish_aux_loss(self, aux_loss, kind="molora", training=self.training)
 
         # Enhanced diagnostics for MoE-aware mode
         self._last_routing_stats = {
@@ -439,35 +450,8 @@ class MoLoRAMoEAwareLayer(MoLoRALayer):
         return f"{base}, moe_aware=True, {calib}, {per_rank}"
 
     def __getattr__(self, name: str):
-        """Proxy unknown attributes to the wrapped base layer.
-
-        When a subclass defines ``__getattr__``, PyTorch's C-level ``tp_getattro``
-        skips the default ``_modules`` / ``_buffers`` / ``_parameters`` lookup.
-        We must manually replicate ``nn.Module``'s default behaviour before
-        proxying to ``base_layer``.
-        """
-        # 1. Replicate nn.Module's default __getattr__ behaviour
-        _parameters = self.__dict__.get('_parameters')
-        if _parameters is not None and name in _parameters:
-            return _parameters[name]
-
-        _buffers = self.__dict__.get('_buffers')
-        if _buffers is not None and name in _buffers:
-            return _buffers[name]
-
-        _modules = self.__dict__.get('_modules')
-        if _modules is not None and name in _modules:
-            return _modules[name]
-
-        # 2. Guard against recursion if base_layer itself is missing
-        if name == 'base_layer':
-            raise AttributeError(name)
-
-        # 3. Proxy to base_layer
-        if _modules is not None and 'base_layer' in _modules:
-            return getattr(_modules['base_layer'], name)
-
-        raise AttributeError(name)
+        """Reuse the hardened MoLoRALayer proxy for PyTorch internals and geometry."""
+        return MoLoRALayer.__getattr__(self, name)
 
 
 # ---------------------------------------------------------------------------

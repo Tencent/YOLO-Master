@@ -14,12 +14,13 @@ Usage:
 from __future__ import annotations
 
 import logging
-from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import torch
+
+from ultralytics.utils.patches import torch_load
 
 from .utils import is_core_moe_block
 
@@ -53,7 +54,7 @@ class WeightVerifyReport:
     def summary(self) -> str:
         """Return a human-readable summary."""
         lines = [
-            f"MoE Weight Verification Report",
+            "MoE Weight Verification Report",
             f"  Total keys: {self.total_keys}",
             f"  Matched: {self.matched_keys}/{self.total_keys}",
             f"  MoE keys checked: {self.moe_keys_checked}",
@@ -83,7 +84,7 @@ def _load_checkpoint(path: str | Path) -> dict[str, Any]:
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"Checkpoint not found: {path}")
-    ckpt = torch.load(str(path), map_location="cpu", weights_only=False)
+    ckpt = torch_load(str(path), map_location="cpu", weights_only=False)
     if isinstance(ckpt, dict) and "model" in ckpt:
         model = ckpt["model"]
         if hasattr(model, "state_dict"):
@@ -228,7 +229,7 @@ def safe_load_with_verify(
     Returns:
         WeightVerifyReport.
     """
-    ckpt = torch.load(str(checkpoint), map_location="cpu", weights_only=False)
+    ckpt = torch_load(str(checkpoint), map_location="cpu", weights_only=False)
     ckpt_model = ckpt.get("model", ckpt) if isinstance(ckpt, dict) else ckpt
     ckpt_sd = ckpt_model.state_dict() if hasattr(ckpt_model, "state_dict") else ckpt_model
 

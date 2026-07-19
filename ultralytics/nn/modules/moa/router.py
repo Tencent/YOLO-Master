@@ -7,7 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from ultralytics.nn.modules._numeric import all_reduce_mean, fp_clamp_floor
 from ultralytics.nn.modules.moa._constants import DEFAULT_MIN_TEMPERATURE, DEFAULT_TEMPERATURE_ANNEAL_FACTOR, ROUTER_ENTROPY_FLOOR, ROUTER_LOGIT_LIMIT, ROUTER_Z_LOSS_LIMIT
-from ultralytics.nn.modules.moe.utils import get_safe_groups as _safe_groups
+from ultralytics.nn.modules.utils import get_safe_groups as _safe_groups
 
 _all_reduce_mean = all_reduce_mean
 _fp_min = fp_clamp_floor
@@ -27,7 +27,7 @@ class _MoARouter(nn.Module):
         self.router = nn.Sequential(
             nn.Conv2d(dim, hidden, 1, bias=False),
             nn.GroupNorm(_safe_groups(hidden, 4), hidden),
-            nn.SiLU(inplace=True),
+            nn.SiLU(inplace=False),
             nn.Conv2d(hidden, num_groups, 1, bias=True),
         )
         # init: near-uniform routing
@@ -46,19 +46,23 @@ class _MoARouter(nn.Module):
             return probs, logits
         return probs
 
-def _moa_router_aux_loss(weights: torch.Tensor, logits: torch.Tensor, coeff: float) -> torch.Tensor:
+def _moa_router_aux_loss(
+    weights: torch.Tensor,
+    logits: torch.Tensor,
+    coeff: float,
+    *,
+    reduce_ddp: bool = False,
+) -> torch.Tensor:
     """GShard-scale MoA regularization with exact DDP global-value/local-gradient semantics.
 
-    Uses moe.loss.all_reduce_mean (which handles NCCL CPU-tensor safety) for the
+    Uses the shared numerical all-reduce helper (including NCCL CPU-tensor safety) for the
     cross-rank synchronization of detached statistics, so this function never crashes
     when router outputs land on CPU under a NCCL-backed DDP group.
     """
-    from ultralytics.nn.modules.moe.loss import should_reduce_ddp
-
     num_groups = weights.shape[1]
     local_sum = weights.float().sum(dim=(0, 2, 3))
     local_count = weights.new_tensor(float(weights.shape[0] * weights.shape[2] * weights.shape[3])).float()
-    if should_reduce_ddp():
+    if reduce_ddp:
         global_sum = _all_reduce_mean(local_sum.detach().clone())
         global_count = _all_reduce_mean(local_count.detach().clone())
         # DDP averages parameter gradients by world size. Scale the local Jacobian

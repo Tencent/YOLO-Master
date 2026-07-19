@@ -8,42 +8,45 @@ Verifies that all mixture-routing modules expose the same interface:
 
 Also tests the protocol utilities: is_routed_module(), collect_routed_children().
 """
+
 import torch
 import torch.nn as nn
 import pytest
 
 # Force MoE snapshot recording on every forward by patching the module-level
 # constant BEFORE any ES_MOE forward runs (env var won't work post-import).
-from ultralytics.nn.modules.moe import _helpers as _moe_helpers
-_moe_helpers.MOE_SNAPSHOT_INTERVAL = 1
-
-from ultralytics.nn.modules.moe.protocol import (
-    is_routed_module,
-    collect_routed_children,
-    RoutedModule,
-)
-from ultralytics.nn.modules.moe.modules import ES_MOE
+from ultralytics.nn.modules.moe import _common as _moe_common
 from ultralytics.nn.modules.moa.moa import MoABlock, C2fMoA
+from ultralytics.nn.modules.moe.modules import ES_MOE
+from ultralytics.nn.modules.moe.protocol import collect_routed_children, is_routed_module
 from ultralytics.nn.modules.mot.mot import MoTBlock, C2fMoT
 from ultralytics.nn.peft.molora.layer import MoLoRALayer
+
+_moe_common.MOE_SNAPSHOT_INTERVAL = 1
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────
 
+
 def _make_moe():
     return ES_MOE(in_channels=32, out_channels=32, num_experts=4, top_k=2)
+
 
 def _make_moa():
     return MoABlock(64, num_heads=6)
 
+
 def _make_c2fmoa():
     return C2fMoA(64, 64, n=1, num_heads=6)
+
 
 def _make_mot():
     return MoTBlock(64, num_heads=4, top_k=2)
 
+
 def _make_c2fmot():
     return C2fMoT(64, 64, n=1, num_heads=4, top_k=2)
+
 
 def _make_molora():
     return MoLoRALayer(nn.Conv2d(64, 64, 3, padding=1), r=4, alpha=8, num_experts=4, top_k=2)
@@ -51,53 +54,66 @@ def _make_molora():
 
 # ── Protocol compliance tests ───────────────────────────────────────────
 
+
 class TestRoutedModuleProtocol:
     """Verify all mixture module types satisfy RoutedModule protocol."""
 
-    @pytest.mark.parametrize("factory,name,exp_E,exp_K", [
-        (_make_moe,     "ES_MOE",       4, 2),
-        (_make_moa,     "MoABlock",     3, 3),
-        (_make_c2fmoa,  "C2fMoA",       3, 3),
-        (_make_mot,     "MoTBlock",     3, 2),
-        (_make_c2fmot,  "C2fMoT",       3, 2),
-        (_make_molora,  "MoLoRALayer",  4, 2),
-    ])
+    @pytest.mark.parametrize(
+        "factory,name,exp_E,exp_K",
+        [
+            (_make_moe, "ES_MOE", 4, 2),
+            (_make_moa, "MoABlock", 3, 3),
+            (_make_c2fmoa, "C2fMoA", 3, 3),
+            (_make_mot, "MoTBlock", 3, 2),
+            (_make_c2fmot, "C2fMoT", 3, 2),
+            (_make_molora, "MoLoRALayer", 4, 2),
+        ],
+    )
     def test_is_routed_module(self, factory, name, exp_E, exp_K):
         m = factory()
         assert is_routed_module(m), f"{name} does not satisfy RoutedModule"
 
-    @pytest.mark.parametrize("factory,name,exp_E", [
-        (_make_moe,     "ES_MOE",       4),
-        (_make_moa,     "MoABlock",     3),
-        (_make_c2fmoa,  "C2fMoA",       3),
-        (_make_mot,     "MoTBlock",     3),
-        (_make_c2fmot,  "C2fMoT",       3),
-        (_make_molora,  "MoLoRALayer",  4),
-    ])
+    @pytest.mark.parametrize(
+        "factory,name,exp_E",
+        [
+            (_make_moe, "ES_MOE", 4),
+            (_make_moa, "MoABlock", 3),
+            (_make_c2fmoa, "C2fMoA", 3),
+            (_make_mot, "MoTBlock", 3),
+            (_make_c2fmot, "C2fMoT", 3),
+            (_make_molora, "MoLoRALayer", 4),
+        ],
+    )
     def test_num_experts(self, factory, name, exp_E):
         m = factory()
         assert m.num_experts == exp_E, f"{name}.num_experts = {m.num_experts}, expected {exp_E}"
 
-    @pytest.mark.parametrize("factory,name,exp_K", [
-        (_make_moe,     "ES_MOE",       2),
-        (_make_moa,     "MoABlock",     3),
-        (_make_c2fmoa,  "C2fMoA",       3),
-        (_make_mot,     "MoTBlock",     2),
-        (_make_c2fmot,  "C2fMoT",       2),
-        (_make_molora,  "MoLoRALayer",  2),
-    ])
+    @pytest.mark.parametrize(
+        "factory,name,exp_K",
+        [
+            (_make_moe, "ES_MOE", 2),
+            (_make_moa, "MoABlock", 3),
+            (_make_c2fmoa, "C2fMoA", 3),
+            (_make_mot, "MoTBlock", 2),
+            (_make_c2fmot, "C2fMoT", 2),
+            (_make_molora, "MoLoRALayer", 2),
+        ],
+    )
     def test_top_k(self, factory, name, exp_K):
         m = factory()
         assert m.top_k == exp_K, f"{name}.top_k = {m.top_k}, expected {exp_K}"
 
-    @pytest.mark.parametrize("factory,name", [
-        (_make_moe,     "ES_MOE"),
-        (_make_moa,     "MoABlock"),
-        (_make_c2fmoa,  "C2fMoA"),
-        (_make_mot,     "MoTBlock"),
-        (_make_c2fmot,  "C2fMoT"),
-        (_make_molora,  "MoLoRALayer"),
-    ])
+    @pytest.mark.parametrize(
+        "factory,name",
+        [
+            (_make_moe, "ES_MOE"),
+            (_make_moa, "MoABlock"),
+            (_make_c2fmoa, "C2fMoA"),
+            (_make_mot, "MoTBlock"),
+            (_make_c2fmot, "C2fMoT"),
+            (_make_molora, "MoLoRALayer"),
+        ],
+    )
     def test_aux_loss_is_tensor(self, factory, name):
         m = factory()
         m.train()
@@ -106,14 +122,17 @@ class TestRoutedModuleProtocol:
         al = m.aux_loss
         assert isinstance(al, torch.Tensor), f"{name}.aux_loss is {type(al)}, expected Tensor"
 
-    @pytest.mark.parametrize("factory,name", [
-        (_make_moe,     "ES_MOE"),
-        (_make_moa,     "MoABlock"),
-        (_make_c2fmoa,  "C2fMoA"),
-        (_make_mot,     "MoTBlock"),
-        (_make_c2fmot,  "C2fMoT"),
-        (_make_molora,  "MoLoRALayer"),
-    ])
+    @pytest.mark.parametrize(
+        "factory,name",
+        [
+            (_make_moe, "ES_MOE"),
+            (_make_moa, "MoABlock"),
+            (_make_c2fmoa, "C2fMoA"),
+            (_make_mot, "MoTBlock"),
+            (_make_c2fmot, "C2fMoT"),
+            (_make_molora, "MoLoRALayer"),
+        ],
+    )
     def test_routing_snapshot_populated(self, factory, name):
         m = factory()
         m.train()
@@ -124,12 +143,15 @@ class TestRoutedModuleProtocol:
         assert len(snap) > 0, f"{name}.last_routing_snapshot is empty after forward"
         assert "expert_usage" in snap, f"{name} snapshot missing 'expert_usage'"
 
-    @pytest.mark.parametrize("factory,name,exp_E", [
-        (_make_moe,     "ES_MOE",       4),
-        (_make_moa,     "MoABlock",     3),
-        (_make_mot,     "MoTBlock",     3),
-        (_make_molora,  "MoLoRALayer",  4),
-    ])
+    @pytest.mark.parametrize(
+        "factory,name,exp_E",
+        [
+            (_make_moe, "ES_MOE", 4),
+            (_make_moa, "MoABlock", 3),
+            (_make_mot, "MoTBlock", 3),
+            (_make_molora, "MoLoRALayer", 4),
+        ],
+    )
     def test_expert_usage_shape(self, factory, name, exp_E):
         m = factory()
         m.train()
@@ -140,6 +162,7 @@ class TestRoutedModuleProtocol:
 
 
 # ── Protocol utility tests ──────────────────────────────────────────────
+
 
 class TestProtocolUtils:
     """Test is_routed_module() and collect_routed_children()."""
@@ -176,13 +199,17 @@ class TestProtocolUtils:
 
 # ── Eval-mode aux_loss tests ────────────────────────────────────────────
 
+
 class TestEvalModeAuxLoss:
     """aux_loss should be zero in eval mode (no gradient)."""
 
-    @pytest.mark.parametrize("factory,name", [
-        (_make_moa,    "MoABlock"),
-        (_make_mot,    "MoTBlock"),
-    ])
+    @pytest.mark.parametrize(
+        "factory,name",
+        [
+            (_make_moa, "MoABlock"),
+            (_make_mot, "MoTBlock"),
+        ],
+    )
     def test_eval_aux_loss_zero(self, factory, name):
         """MoA/MoT zero aux_loss in eval mode (no balance regularizer needed)."""
         m = factory()
@@ -193,8 +220,7 @@ class TestEvalModeAuxLoss:
         al = m.aux_loss
         assert isinstance(al, torch.Tensor)
         # In eval mode, aux loss should be zero or near-zero
-        assert float(al) == pytest.approx(0.0, abs=1e-6), \
-            f"{name} eval aux_loss = {float(al)}, expected ~0"
+        assert float(al) == pytest.approx(0.0, abs=1e-6), f"{name} eval aux_loss = {float(al)}, expected ~0"
 
     def test_molora_eval_aux_loss_nonzero_ok(self):
         """MoLoRA computes aux_loss even in eval (loss_fn is unconditional).
@@ -214,6 +240,7 @@ class TestEvalModeAuxLoss:
 
 
 # ── MoLoRA-specific edge case tests ─────────────────────────────────────
+
 
 class TestMoLoRAEdgeCases:
     """Additional MoLoRA edge cases for robustness."""
@@ -235,6 +262,7 @@ class TestMoLoRAEdgeCases:
         is still alive, so we detach the routing state first.
         """
         import copy
+
         layer = _make_molora()
         layer.train()
         x = torch.randn(2, 64, 8, 8)

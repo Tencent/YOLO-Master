@@ -3,13 +3,12 @@
 Train a model on a dataset.
 
 Usage:
-    $ yolo mode=train model=yolo11n.pt data=coco8.yaml imgsz=640 epochs=100 batch=16
+    $ yolo mode=train model=yolo26n.pt data=coco8.yaml imgsz=640 epochs=100 batch=16
 """
 
 from __future__ import annotations
 
 import gc
-import io
 import math
 import os
 import subprocess
@@ -17,7 +16,8 @@ import time
 import warnings
 from contextlib import nullcontext
 from copy import copy, deepcopy
-from datetime import datetime, timedelta
+from datetime import timedelta
+from functools import partial
 from pathlib import Path
 
 import numpy as np
@@ -25,13 +25,21 @@ import torch
 from torch import distributed as dist
 from torch import nn, optim
 
-from ultralytics import __version__
-from ultralytics.cfg import get_cfg, get_save_dir
-from ultralytics.data.utils import check_cls_dataset, check_det_dataset
+from ultralytics.cfg import _YOLO_CLI_COMMAND, get_cfg, get_save_dir
+from ultralytics.engine.extensions import (
+    AdapterRuntimeController,
+    MixtureRuntimeController,
+    TrainingRecoveryController,
+    update_args_with_lora_runtime_metadata,
+    validate_adapter_configuration,
+)
+from ultralytics.data.utils import check_cls_dataset, check_det_dataset, convert_ndjson_to_yolo_if_needed
+from ultralytics.nn.distill_model import DistillationModel
+from ultralytics.nn.mixture_loss import has_routed_modules
 from ultralytics.nn.tasks import load_checkpoint
+from ultralytics.optim import MuSGD
 from ultralytics.utils import (
     DEFAULT_CFG,
-    GIT,
     LOCAL_RANK,
     LOGGER,
     RANK,
@@ -43,39 +51,32 @@ from ultralytics.utils import (
     emojis,
 )
 from ultralytics.utils.autobatch import check_train_batch_size
-from ultralytics.utils.lora import (
-    LoraTrainingStrategy,
-    _is_adapter_param,
-    _unfreeze_detection_head,
-    apply_lora,
-    get_lora_training_stats,
-    load_lora_compatible_state_dict,
-    resolve_adalora_total_step,
-    discover_adapter_backend,
-    save_adapters,
-    save_lora_adapters,
-)
 from ultralytics.utils.checks import check_amp, check_file, check_imgsz, check_model_file_from_stem, print_args
-from ultralytics.utils.dist import collect_ddp_error_logs, ddp_cleanup, generate_ddp_command
+from ultralytics.utils.dist import collect_ddp_error_logs, ddp_cleanup, ddp_launch_env, generate_ddp_command
 from ultralytics.utils.files import get_latest_run
 from ultralytics.utils.plotting import plot_results
-from ultralytics.utils.loss import _get_mixture_loss_ema
-from ultralytics.nn.modules.moe.config import apply_mixture_config, resolve_mixture_config
 from ultralytics.utils.torch_utils import (
     TORCH_2_4,
     EarlyStopping,
     ModelEMA,
     attempt_compile,
     autocast,
-    convert_optimizer_state_dict_to_fp16,
     init_seeds,
     one_cycle,
+    parse_device,
     select_device,
     strip_optimizer,
     torch_distributed_zero_first,
     unset_deterministic,
     unwrap_model,
 )
+
+__all__ = [
+    "BaseTrainer",
+    "MultiTrainer",
+    "update_args_with_lora_runtime_metadata",
+    "validate_adapter_configuration",
+]
 
 
 def _distributed_env() -> tuple[int, int, int] | None:
@@ -113,62 +114,6 @@ def _validate_cuda_ddp_device(device: torch.device, env: tuple[int, int, int] | 
         )
 
 
-def save_trainer_args_yaml(save_dir: Path, args) -> None:
-    """Persist trainer arguments to args.yaml, serializing complex augmentation objects safely."""
-    args_dict = vars(args).copy()
-    if args_dict.get("augmentations") is not None:
-        args_dict["augmentations"] = [repr(t) for t in args_dict["augmentations"]]
-    YAML.save(save_dir / "args.yaml", args_dict)
-
-
-def _hierarchical_hook(storage, key, module, inputs, output):
-    """Module-level forward hook for hierarchical distillation feature caching.
-    
-    Uses a plain function (not a closure) to ensure hooks are picklable when
-    saving model checkpoints. Bound via functools.partial in trainer.
-    """
-    storage[key] = output
-
-
-def update_args_with_lora_runtime_metadata(args, model) -> None:
-    """Copy runtime LoRA metadata from the adapted model onto trainer args."""
-    base_model = getattr(model, "module", model)
-    metadata = getattr(base_model, "lora_runtime_metadata", {}) or {}
-    if not metadata:
-        return
-
-    if "requested_backend" in metadata:
-        args.requested_lora_backend = metadata["requested_backend"]
-    if "effective_backend" in metadata:
-        args.effective_lora_backend = metadata["effective_backend"]
-    if "requested_variant" in metadata:
-        args.requested_lora_variant = metadata["requested_variant"]
-    if "effective_variant" in metadata:
-        args.effective_lora_variant = metadata["effective_variant"]
-    if "peft_type" in metadata:
-        args.effective_lora_type = metadata["peft_type"]
-    if "requested_init_lora_weights" in metadata:
-        args.requested_lora_init_lora_weights = metadata["requested_init_lora_weights"]
-    if "effective_init_lora_weights" in metadata:
-        args.effective_lora_init_lora_weights = metadata["effective_init_lora_weights"]
-    if metadata.get("safety_profile"):
-        args.lora_safety_profile = metadata["safety_profile"]
-    if metadata.get("safety_overrides"):
-        args.lora_safety_overrides = metadata["safety_overrides"]
-    if metadata.get("target_audit"):
-        args.lora_target_audit = metadata["target_audit"]
-    if metadata.get("planner_decision"):
-        args.planner_decision = metadata["planner_decision"]["status"]
-        args.planner_predicted_delta = metadata["planner_decision"]["predicted_delta"]
-        args.planner_recommended_variant = metadata["planner_decision"]["recommended_variant"]
-        args.planner_recommended_rank = metadata["planner_decision"]["recommended_rank"]
-        args.planner_refusal_reason = metadata["planner_decision"]["refusal_reason"]
-        if metadata["planner_decision"]["status"] == "ADAPT":
-            args.lora_planner_adapted = True
-        elif metadata["planner_decision"]["status"] == "REFUSE":
-            args.lora_planner_refused = True
-
-
 class BaseTrainer:
     """A base class for creating trainers.
 
@@ -190,16 +135,16 @@ class BaseTrainer:
         start_epoch (int): Starting epoch for training.
         device (torch.device): Device to use for training.
         amp (bool): Flag to enable AMP (Automatic Mixed Precision).
-        scaler (amp.GradScaler): Gradient scaler for AMP.
-        data (str): Path to data.
-        ema (nn.Module): EMA (Exponential Moving Average) of the model.
+        scaler (torch.amp.GradScaler): Gradient scaler for AMP.
+        data (dict): Dataset dictionary containing paths and metadata.
+        ema (ModelEMA): EMA (Exponential Moving Average) of the model.
         resume (bool): Resume training from a checkpoint.
-        lf (nn.Module): Loss function.
+        lf (callable): Learning rate scheduling function.
         scheduler (torch.optim.lr_scheduler._LRScheduler): Learning rate scheduler.
         best_fitness (float): The best fitness value achieved.
         fitness (float): Current fitness value.
-        loss (float): Current loss value.
-        tloss (float): Total loss value.
+        loss (torch.Tensor): Current loss value.
+        tloss (torch.Tensor): Running mean of loss items.
         loss_names (list): List of loss names.
         csv (Path): Path to results CSV file.
         metrics (dict): Dictionary of metrics.
@@ -207,7 +152,7 @@ class BaseTrainer:
 
     Methods:
         train: Execute the training process.
-        validate: Run validation on the test set.
+        validate: Run validation on the val set.
         save_model: Save model training checkpoints.
         get_dataset: Get train and validation datasets.
         setup_model: Load, create, or download model.
@@ -219,22 +164,21 @@ class BaseTrainer:
         >>> trainer.train()
     """
 
-    def __init__(self, cfg=DEFAULT_CFG, overrides=None, _callbacks=None):
+    def __init__(self, cfg=DEFAULT_CFG, overrides=None, _callbacks: dict | None = None):
         """Initialize the BaseTrainer class.
 
         Args:
-            cfg (str, optional): Path to a configuration file.
+            cfg (str | dict | SimpleNamespace, optional): Path to a configuration file or configuration object.
             overrides (dict, optional): Configuration overrides.
-            _callbacks (list, optional): List of callback functions.
+            _callbacks (dict, optional): Dictionary of callback functions.
         """
         self.hub_session = overrides.pop("session", None)  # HUB
         self.args = get_cfg(cfg, overrides)
         self.check_resume(overrides)
+        self.args.device = parse_device(self.args.device)  # canonical string, resolves '-1' auto-selection once
         self.device = select_device(self.args.device)
         self._dist_env = _distributed_env()
         _validate_cuda_ddp_device(self.device, self._dist_env)
-        # Update "-1" devices so post-training val does not repeat search
-        self.args.device = os.getenv("CUDA_VISIBLE_DEVICES") if self.device.type == "cuda" else str(self.device)
         self.validator = None
         self.metrics = None
         self.plots = {}
@@ -247,9 +191,14 @@ class BaseTrainer:
         if RANK in {-1, 0}:
             self.wdir.mkdir(parents=True, exist_ok=True)  # make dir
             self.args.save_dir = str(self.save_dir)
-            save_trainer_args_yaml(self.save_dir, self.args)
+            # Save run args, serializing augmentations as reprs for resume compatibility
+            args_dict = vars(self.args).copy()
+            if args_dict.get("augmentations") is not None:
+                # Serialize Albumentations transforms as their repr strings for checkpoint compatibility
+                args_dict["augmentations"] = [repr(t) for t in args_dict["augmentations"]]
+            YAML.save(self.save_dir / "args.yaml", args_dict)  # save run args
         self.last, self.best = self.wdir / "last.pt", self.wdir / "best.pt"  # checkpoint paths
-        self.healthy = self.wdir / "last_healthy.pt"  # finite state used only for automatic recovery
+        self.healthy = self.wdir / "last_healthy.pt"
         self.save_period = self.args.save_period
 
         self.batch_size = self.args.batch
@@ -262,8 +211,23 @@ class BaseTrainer:
         if self.device.type in {"cpu", "mps"}:
             self.args.workers = 0  # faster CPU training as time dominated by inference, not dataloading
 
+        # Callbacks - initialize early so on_pretrain_routine_start can capture original args.data
+        self.callbacks = _callbacks or callbacks.get_default_callbacks()
+
+        if self.device.type in {"cpu", "mps"}:
+            world_size = 0
+        else:  # i.e. device='0', '0,1,2,3', 'npu:0', or '' auto-selecting a single GPU
+            world_size = len(self.args.device.split(",")) if self.args.device else 1
+
+        self.ddp = world_size > 1 and "LOCAL_RANK" not in os.environ
+        self.world_size = world_size
+        # Run on_pretrain_routine_start before get_dataset() to capture original args.data (e.g., ul:// URIs)
+        if RANK in {-1, 0} and not self.ddp:
+            callbacks.add_integration_callbacks(self)
+            self.run_callbacks("on_pretrain_routine_start")
+
         # Model and Dataset
-        self.model = check_model_file_from_stem(self.args.model)  # add suffix, i.e. yolo11n -> yolo11n.pt
+        self.model = check_model_file_from_stem(self.args.model)  # add suffix, i.e. yolo26n -> yolo26n.pt
         with torch_distributed_zero_first(LOCAL_RANK):  # avoid auto-downloading dataset multiple times
             self.data = self.get_dataset()
 
@@ -284,36 +248,9 @@ class BaseTrainer:
             self.csv.unlink()
         self.plot_idx = [0, 1, 2]
         self.nan_recovery_attempts = 0
-        self._loss_nonfinite = False
-        self._gradient_nonfinite = False
-        self._nonfinite_diagnostic = None
-
-        # Callbacks
-        self.callbacks = _callbacks or callbacks.get_default_callbacks()
-
-        if isinstance(self.args.device, str) and len(self.args.device):  # i.e. device='0' or device='0,1,2,3'
-            world_size = len(self.args.device.split(","))
-        elif isinstance(self.args.device, (tuple, list)):  # i.e. device=[0, 1, 2, 3] (multi-GPU from CLI is list)
-            world_size = len(self.args.device)
-        elif self.args.device in {"cpu", "mps"}:  # i.e. device='cpu' or 'mps'
-            world_size = 0
-        elif torch.cuda.is_available():  # i.e. device=None or device='' or device=number
-            world_size = 1  # default to device 0
-        else:  # i.e. device=None or device=''
-            world_size = 0
-
-        if world_size > 1 and self.device.type != "cuda":
-            raise RuntimeError(
-                f"Multi-device training requires CUDA, but resolved device is {self.device}. "
-                "Use a single CPU/MPS device or run DDP only with CUDA devices."
-            )
-        self.ddp = world_size > 1 and "LOCAL_RANK" not in os.environ
-        self.world_size = world_size
-        # Run subprocess if DDP training, else train normally
-        if RANK in {-1, 0} and not self.ddp:
-            callbacks.add_integration_callbacks(self)
-            # Start console logging immediately at trainer initialization
-            self.run_callbacks("on_pretrain_routine_start")
+        self.adapter_controller = AdapterRuntimeController(self)
+        self.mixture_controller = MixtureRuntimeController(self)
+        self.recovery_controller = TrainingRecoveryController(self)
 
     def add_callback(self, event: str, callback):
         """Append the given callback to the event's callback list."""
@@ -329,7 +266,7 @@ class BaseTrainer:
             callback(self)
 
     def train(self):
-        """Allow device='', device=None on Multi-GPU systems to default to device=0."""
+        """Execute the training process, using DDP subprocess for multi-GPU or direct training for single-GPU."""
         # Run subprocess if DDP training, else train normally
         if self.ddp:
             # Argument checks
@@ -343,11 +280,11 @@ class BaseTrainer:
                 )
 
             # Command
-            cmd, file = generate_ddp_command(self)
+            cmd, file = None, None
             try:
+                cmd, file = generate_ddp_command(self)
                 LOGGER.info(f"{colorstr('DDP:')} debug command {' '.join(cmd)}")
-                # Inherit stdout/stderr so torchrun's Root Cause and worker traceback remain visible.
-                subprocess.run(cmd, check=True)
+                subprocess.run(cmd, check=True, env=ddp_launch_env())
             except subprocess.CalledProcessError as e:
                 worker_errors = collect_ddp_error_logs(getattr(self, "ddp_log_dir", ""))
                 if worker_errors:
@@ -358,13 +295,13 @@ class BaseTrainer:
                 )
                 raise
             finally:
-                ddp_cleanup(self, str(file))
+                if file is not None:
+                    ddp_cleanup(self, str(file))
 
         else:
             try:
                 self._do_train()
             finally:
-                # Resource cleanup only: never add a barrier on an exception path.
                 if dist.is_available() and dist.is_initialized():
                     dist.destroy_process_group()
 
@@ -378,88 +315,19 @@ class BaseTrainer:
 
     def _setup_ddp(self):
         """Initialize and set the DistributedDataParallel parameters for training."""
-        env = _distributed_env()
-        _validate_cuda_ddp_device(torch.device("cuda", LOCAL_RANK), env)
-        if env is None:
-            raise RuntimeError("DDP setup requires torchrun RANK/LOCAL_RANK/WORLD_SIZE variables.")
-        if not dist.is_nccl_available():
-            raise RuntimeError("CUDA DDP requires an NCCL-enabled PyTorch build; refusing an implicit gloo fallback.")
-        torch.cuda.set_device(LOCAL_RANK)
-        self.device = torch.device("cuda", LOCAL_RANK)
-        os.environ.setdefault("TORCH_NCCL_BLOCKING_WAIT", "1")
-        timeout_seconds = int(os.getenv("YOLO_DDP_TIMEOUT", "600"))
-        if timeout_seconds <= 0:
-            raise RuntimeError(f"YOLO_DDP_TIMEOUT must be positive, got {timeout_seconds}.")
+        index = int(self.args.device.split(",")[LOCAL_RANK])  # world_size > 1 guarantees a multi-device string
+        torch.cuda.set_device(index)
+        self.device = torch.device("cuda", index)
+        os.environ["TORCH_NCCL_BLOCKING_WAIT"] = "1"  # set to enforce timeout
         dist.init_process_group(
-            backend="nccl",
-            timeout=timedelta(seconds=timeout_seconds),
+            backend="nccl" if dist.is_nccl_available() else "gloo",
+            timeout=timedelta(seconds=10800),  # 3 hours
             rank=RANK,
             world_size=self.world_size,
         )
 
-    def _disable_gradient_checkpointing_for_ddp_moe_lora(self):
-        """Disable GC for LoRA+MoE DDP to avoid 'marked as ready twice'.
-
-        PyTorch DDP docs: gradient checkpointing is unsupported with
-        ``find_unused_parameters=True`` when unused parameters exist. MoE sparse
-        routing leaves expert (and sometimes control-path LoRA) params unused
-        each step, so keep find_unused=True and turn GC off instead.
-        """
-        disabled = False
-        roots = [self.model]
-        if hasattr(self.model, "model"):
-            roots.append(self.model.model)
-            if hasattr(self.model.model, "model"):
-                roots.append(self.model.model.model)
-        dense_moe_modules = 0
-        for root in roots:
-            if getattr(root, "use_gradient_checkpointing", False):
-                root.use_gradient_checkpointing = False
-                disabled = True
-            for module in root.modules():
-                # Sparse expert dispatch changes the parameter-use set per batch.
-                # Force dense dispatch so DDP does not fire ready hooks twice.
-                if hasattr(module, "expert_projections") and hasattr(module, "ddp_safe_dense"):
-                    module.ddp_safe_dense = True
-                    dense_moe_modules += 1
-        # Freeze leftover LoRA adapters on MoE control paths from older configs
-        # that incorrectly targeted complexity_estimator / se_gate.
-        frozen = 0
-        for name, param in self.model.named_parameters():
-            lname = name.lower()
-            if "lora_" not in lname:
-                continue
-            if "complexity_estimator" in lname or "se_gate" in lname:
-                if param.requires_grad:
-                    param.requires_grad_(False)
-                    frozen += 1
-        if disabled or frozen or dense_moe_modules:
-            LOGGER.warning(
-                "[MoE+DDP] Enabled dense expert dispatch and disabled gradient checkpointing"
-                + (f"; froze {frozen} control-path LoRA params" if frozen else "")
-                + " to keep the DDP parameter-use graph stable."
-            )
-
-    def _setup_train(self):
-        """Build dataloaders and optimizer on correct rank process."""
-        ckpt = self.setup_model()
-        self.model = self.model.to(self.device)
-        self.set_model_attributes()
-
-        # Check imgsz
-        gs = max(int(self.model.stride.max() if hasattr(self.model, "stride") else 32), 32)  # grid size (max stride)
-        self.args.imgsz = check_imgsz(self.args.imgsz, stride=gs, floor=gs, max_dim=1)
-        self.stride = gs  # for multiscale training
-
-        # Batch size
-        if self.batch_size < 1 and RANK == -1:  # single-GPU only, estimate best batch size
-            self.args.batch = self.batch_size = self.auto_batch()
-
-        # Dataloaders. DDP treats the configured batch as global.
-        if self.world_size > 1 and self.batch_size % self.world_size:
-            raise ValueError(
-                f"Global batch size {self.batch_size} must be divisible by DDP world size {self.world_size}."
-            )
+    def _build_train_pipeline(self):
+        """Build dataloaders, optimizer, and scheduler for current batch size."""
         batch_size = self.batch_size // max(self.world_size, 1)
         self.train_loader = self.get_dataloader(
             self.data["train"], batch_size=batch_size, rank=LOCAL_RANK, mode="train"
@@ -467,164 +335,42 @@ class BaseTrainer:
         # Note: When training DOTA dataset, double batch size could get OOM on images with >2000 objects.
         self.test_loader = self.get_dataloader(
             self.data.get("val") or self.data.get("test"),
-            batch_size=batch_size if self.args.task == "obb" else batch_size * 2,
+            batch_size=batch_size if self.args.task in {"obb", "semantic"} else batch_size * 2,
             rank=LOCAL_RANK,
             mode="val",
         )
-        self.validator = self.get_validator()
-        if RANK in {-1, 0}:
-            metric_keys = self.validator.metrics.keys + self.label_loss_items(prefix="val")
-            self.metrics = dict(zip(metric_keys, [0] * len(metric_keys)))
-            if self.args.plots:
-                self.plot_training_labels()
-
-        # Optimizer
         self.accumulate = max(round(self.args.nbs / self.batch_size), 1)  # accumulate loss before optimizing
         weight_decay = self.args.weight_decay * self.batch_size * self.accumulate / self.args.nbs  # scale weight_decay
         iterations = math.ceil(len(self.train_loader.dataset) / max(self.batch_size, self.args.nbs)) * self.epochs
-
-        resolved_lora_total_step = resolve_adalora_total_step(
-            getattr(self.args, "lora_type", "lora"),
-            getattr(self.args, "lora_total_step", None),
-            iterations,
+        self.adapter_controller.prepare_optimizer(iterations)
+        self.optimizer = self.build_optimizer(
+            model=self.model,
+            name=self.args.optimizer,
+            lr=self.args.lr0,
+            momentum=self.args.momentum,
+            decay=weight_decay,
+            iterations=iterations,
         )
-        if str(getattr(self.args, "lora_type", "lora")).lower() == "adalora":
-            self.args.lora_total_step = resolved_lora_total_step
-            LOGGER.info(f"[LoRA] AdaLoRA total_step resolved to {resolved_lora_total_step}.")
-            if RANK in {-1, 0}:
-                save_trainer_args_yaml(self.save_dir, self.args)
+        self.adapter_controller.configure_optimizer(self.optimizer)
+        self._setup_scheduler()
 
-        self.model = apply_lora(self.model, self.args)
-        update_args_with_lora_runtime_metadata(self.args, self.model)
-
-        if RANK in {-1, 0}:
-            save_trainer_args_yaml(self.save_dir, self.args)
-
-        # MoLoRA initialization (optional: if molora_num_experts > 0)
-        if getattr(self.args, 'molora_num_experts', 0) > 0:
-            from ultralytics.nn.peft.molora import get_peft_molora_model, MoLoRAConfig
-            molora_cfg = MoLoRAConfig.from_args(self.args)
-            self.model = get_peft_molora_model(self.model, molora_cfg)
-            LOGGER.info(
-                f"[MoLoRA] Initialized: num_experts={molora_cfg.num_experts}, "
-                f"top_k={molora_cfg.top_k}, router_type={molora_cfg.router_type}, "
-                f"r={molora_cfg.r}, alpha={molora_cfg.alpha}"
-            )
-            if RANK in {-1, 0}:
-                save_trainer_args_yaml(self.save_dir, self.args)
-
+    def _setup_train(self):
+        """Configure model, optimizer, dataloaders, and training utilities before the training loop."""
+        ckpt = self.setup_model()
+        self.model = self.model.to(self.device)
         self.set_model_attributes()
-        self._detect_moa_mot_modules()
+        self.adapter_controller.setup()
+        self.mixture_controller.setup()
+        has_mixture_loss = has_routed_modules(unwrap_model(self.model))
 
-        # MoE Routing Collapse Detector (initialize if model has MoE layers)
-        from ultralytics.nn.modules.moe.utils import is_core_moe_block, model_has_core_moe
-
-        has_moe = model_has_core_moe(self.model)
-        # Persist the detection result so the train loop can gate MoE-only
-        # logic (warmup schedule, gain schedule, collapse detector) and avoid
-        # printing MoE messages on plain (non-MoE) models.
-        self._has_moe = has_moe
-        if has_moe:
-            from ultralytics.nn.modules.moe.analysis import RoutingCollapseDetector
-            collapse_thr = getattr(self.args, 'moe_collapse_threshold', 0.8)
-            self._moe_collapse_detector = RoutingCollapseDetector(collapse_threshold=collapse_thr)
-            LOGGER.info(f"[MoE] Routing collapse detector initialized (threshold={collapse_thr})")
-
-            # ── MapSaturationScheduler injection (mAP-driven balance annealing) ──
-            if getattr(self.args, 'moe_map_saturation_enabled', False):
-                from ultralytics.nn.modules.moe.scheduler import MapSaturationScheduler, MapSaturationSchedulerConfig
-                moe_map_sat_config = MapSaturationSchedulerConfig(
-                    enabled=True,
-                    window_size=getattr(self.args, 'moe_map_saturation_window_size', 5),
-                    saturation_threshold=getattr(self.args, 'moe_map_saturation_threshold', 0.001),
-                    decay_factor=getattr(self.args, 'moe_map_saturation_decay_factor', 0.8),
-                    min_scale=getattr(self.args, 'moe_map_saturation_min_scale', 0.1),
-                )
-                for m in self.model.modules():
-                    if not is_core_moe_block(m):
-                        continue
-                    if hasattr(m, 'balance_loss_coeff'):
-                        m.map_saturation_scheduler = MapSaturationScheduler(moe_map_sat_config)
-                    if hasattr(m, 'moe_loss_fn') and hasattr(m.moe_loss_fn, 'balance_loss_coeff'):
-                        m.moe_loss_fn.map_saturation_scheduler = MapSaturationScheduler(moe_map_sat_config)
-                LOGGER.info(
-                    f"[MoE] MapSaturationScheduler injected: window={moe_map_sat_config.window_size}, "
-                    f"threshold={moe_map_sat_config.saturation_threshold}, "
-                    f"decay={moe_map_sat_config.decay_factor}, min_scale={moe_map_sat_config.min_scale}"
-                )
-
-        # Canonical final pass: resolve YAML/module annotations before legacy
-        # trainer compatibility code can leave stale values behind.
-        self._resolve_mixture_runtime_config()
-
-        # Few-shot mode: load teacher model for knowledge distillation
-        if getattr(self.args, 'lora_few_shot_mode', False):
-            teacher_path = getattr(self.args, 'lora_few_shot_teacher', None)
-            if teacher_path:
-                try:
-                    from ultralytics import YOLO
-                    self.teacher_model = YOLO(teacher_path).model.to(self.device)
-                    self.teacher_model.eval()
-                    for p in self.teacher_model.parameters():
-                        p.requires_grad = False
-                    LOGGER.info(f"[LoRA] 🎓 Teacher model loaded from {teacher_path}")
-                except Exception as e:
-                    LOGGER.warning(f"[LoRA] Failed to load teacher model: {e}")
-                    self.teacher_model = None
-            else:
-                LOGGER.info("[LoRA] Few-shot mode without teacher — using DropConnect + adaptive rank only")
-            
-            # v3: Initialize EMA teacher for progressive self-distillation
-            if getattr(self.args, 'lora_few_shot_use_ema_teacher', False):
-                try:
-                    from copy import deepcopy
-                    self.teacher_ema = deepcopy(self.model if self.teacher_model is None else self.teacher_model)
-                    self.teacher_ema.eval()
-                    for p in self.teacher_ema.parameters():
-                        p.requires_grad = False
-                    self.teacher_ema_decay = getattr(self.args, 'lora_few_shot_ema_decay', 0.999)
-                    LOGGER.info(f"[LoRA] 📊 EMA teacher initialized (decay={self.teacher_ema_decay})")
-                except Exception as e:
-                    LOGGER.warning(f"[LoRA] Failed to initialize EMA teacher: {e}")
-                    self.teacher_ema = None
-            else:
-                self.teacher_ema = None
-            
-            # v3: Initialize hierarchical distillation hook cache
-            if getattr(self.args, 'lora_few_shot_hierarchical_distill', False):
-                self._init_hierarchical_distill_cache()
-
-        # Compile model
+        # Compile model (knowledge distillation runs the wrapped model eagerly and relies on
+        # find_unused_parameters under DDP for the frozen teacher, so disable compilation when distilling)
+        if self.args.distill_model is not None and self.args.compile:
+            LOGGER.warning("'compile' is not supported with knowledge distillation and will be disabled.")
+            self.args.compile = False
         self.model = attempt_compile(self.model, device=self.device, mode=self.args.compile)
-        lora_model = unwrap_model(self.model)
 
-        # Freeze layers
-        freeze_list = (
-            self.args.freeze
-            if isinstance(self.args.freeze, list)
-            else range(self.args.freeze)
-            if isinstance(self.args.freeze, int)
-            else []
-        )
-        # Do not freeze .dfl in adapter mode (random init when class mismatch)
-        is_lora = getattr(lora_model, "lora_enabled", False)
-        always_freeze_names = [] if is_lora else [".dfl"]
-        freeze_layer_names = [f"model.{x}." for x in freeze_list] + always_freeze_names
-        self.freeze_layer_names = freeze_layer_names
-        for k, v in self.model.named_parameters():
-            if any(x in k for x in freeze_layer_names):
-                LOGGER.info(f"Freezing layer '{k}'")
-                v.requires_grad = False
-            elif not v.requires_grad and v.dtype.is_floating_point and not is_lora:
-                LOGGER.warning(
-                    f"setting 'requires_grad=True' for frozen layer '{k}'. "
-                    "See ultralytics.engine.trainer for customization of frozen layers."
-                )
-                v.requires_grad = True
-
-        # Unfreeze detection head in adapter mode (PEFT freezes all by default)
-        if is_lora:
-            _unfreeze_detection_head(self.model)
+        self._freeze_model_parameters()
 
         # Check AMP
         self.amp = torch.tensor(self.args.amp).to(self.device)  # True or False
@@ -634,156 +380,146 @@ class BaseTrainer:
             callbacks.default_callbacks = callbacks_backup  # restore callbacks
         if RANK > -1 and self.world_size > 1:  # DDP
             amp_flag = self.amp.to(dtype=torch.int32)
-            dist.broadcast(amp_flag, src=0)
+            dist.broadcast(amp_flag, src=0)  # broadcast from rank 0 to all other ranks
             self.amp = bool(amp_flag.item())
         else:
             self.amp = bool(self.amp)
         self.scaler = (
             torch.amp.GradScaler("cuda", enabled=self.amp) if TORCH_2_4 else torch.cuda.amp.GradScaler(enabled=self.amp)
         )
-        if self.world_size > 1:
-            if any(isinstance(m, nn.modules.batchnorm._BatchNorm) for m in self.model.modules()) and RANK in {-1, 0}:
-                LOGGER.warning(
-                    "DDP uses broadcast_buffers=False: BatchNorm running statistics are rank-local. "
-                    "EMA/rank0 validation follows rank0 statistics; use an explicitly tested SyncBatchNorm setup if global BN is required."
-                )
-            # Sparse MoE dispatch and gradient checkpointing can both trigger
-            # duplicate DDP ready hooks. Disable checkpointing for every MoE DDP
-            # run, not only LoRA runs.
-            has_moe = getattr(self, "_has_moe", False)
-            if has_moe:
-                self._disable_gradient_checkpointing_for_ddp_moe_lora()
+        # Check imgsz
+        gs = max(int(self.model.stride.max() if hasattr(self.model, "stride") else 32), 32)  # grid size (max stride)
+        self.args.imgsz = check_imgsz(self.args.imgsz, stride=gs, floor=gs, max_dim=1)
+        self.stride = gs  # for multiscale training
 
-            # MoE expert modules are selected dynamically, so unused-parameter
-            # detection is required. Keep it enabled, but avoid reentrant
-            # checkpointed backward graphs that make DDP mark a parameter twice.
+        # resume training would directly load DistillationModel so check here
+        if self.args.distill_model is not None and not isinstance(unwrap_model(self.model), DistillationModel):
+            self.model = DistillationModel(student_model=self.model, teacher_model=self.args.distill_model)
+        if self.world_size > 1:
+            # static_graph=True permits params used >1 time per forward (e.g. flow_model in
+            # o2m+o2o pose loss branches) under torch.compile.
             self.model = nn.parallel.DistributedDataParallel(
                 self.model,
-                device_ids=[LOCAL_RANK] if self.device.type == "cuda" else None,
-                output_device=LOCAL_RANK if self.device.type == "cuda" else None,
-                find_unused_parameters=True,
-                # Lazy MoE diagnostics can be CPU tensors; NCCL cannot broadcast them.
-                # BatchNorm running stats are rank-local; use SyncBatchNorm for global stats.
+                device_ids=[self.device.index],
+                static_graph=bool(self.args.compile and not has_mixture_loss),
                 broadcast_buffers=False,
-                # HybridAdaptiveGateMoE still mixes fused and sparse expert
-                # backends in v0.6, so the used-parameter set can change across
-                # iterations even after the DDP-safe dense fallbacks below.
-                static_graph=False,
+                find_unused_parameters=bool(has_mixture_loss or not self.args.compile),
             )
 
+        # Batch size
+        if self.batch_size < 1 and RANK == -1:  # single-GPU only, estimate best batch size
+            self.args.batch = self.batch_size = self.auto_batch()
+        if self.world_size > 1 and self.batch_size % self.world_size:
+            raise ValueError(f"batch={self.batch_size} must be divisible by world_size={self.world_size}")
+        if self.batch_size // max(self.world_size, 1) == 1 and self.args.imgsz < 2 * gs:
+            raise ValueError(
+                f"batch=1 training at imgsz={self.args.imgsz} gives BatchNorm a single value per channel; "
+                f"increase batch or use imgsz >= {2 * gs}"
+            )
+
+        self._build_train_pipeline()
+        self.validator = self.get_validator()
+        if has_mixture_loss:
+            self.loss_names = (*self.loss_names, "mixture_aux_loss")
+        if self.args.distill_model is not None and "dis_loss" not in self.loss_names:
+            self.loss_names += ("dis_loss",)
         self.ema = ModelEMA(self.model)
-        self.optimizer = self.build_optimizer(
-            model=self.model,
-            name=self.args.optimizer,
-            lr=self.args.lr0,
-            momentum=self.args.momentum,
-            decay=weight_decay,
-            iterations=iterations,
-        )
-        # Scheduler
-        self._setup_scheduler()
+        self.set_class_weights()  # compute class weights after dataloader is ready
+        if RANK in {-1, 0}:
+            metric_keys = self.validator.metrics.keys + self.label_loss_items(prefix="val")
+            self.metrics = dict(zip(metric_keys, [0] * len(metric_keys)))
+            if self.args.plots:
+                self.plot_training_labels()
+
         self.stopper, self.stop = EarlyStopping(patience=self.args.patience), False
-        
-        # ── LoRA Training Strategy Engine ──
-        self.lora_strategy = None
-        if is_lora:
-            has_lora = getattr(unwrap_model(self.model), 'lora_enabled', False)
-            if has_lora:
-                self.lora_strategy = LoraTrainingStrategy(
-                    model=self.model,
-                    config=getattr(self.model, 'lora_config', None),
-                    epochs=self.epochs,
-                )
-                # Strategy 1: Layer-wise LR decay (apply to optimizer)
-                lora_layer_decay = getattr(self.args, 'lora_layer_decay', 0.0)
-                if lora_layer_decay > 0:
-                    n_before = len(self.optimizer.param_groups)
-                    self.lora_strategy.apply_layer_decay_to_optimizer(
-                        self.optimizer, decay_rate=lora_layer_decay
-                    )
-                    n_after = len(self.optimizer.param_groups)
-                    # If apply_layer_decay_to_optimizer added new param groups (LoRA
-                    # params split by depth), we must rebuild the LR scheduler so that
-                    # its internal lr_lambdas list matches the new group count.
-                    # Otherwise `scheduler.step()` will raise ValueError in zip(strict=True).
-                    if n_after != n_before:
-                        self._setup_scheduler()
-                
-                # Strategy 2: Alpha warmup preparation
-                lora_alpha_warmup = getattr(self.args, 'lora_alpha_warmup', 0)
-                if lora_alpha_warmup > 0:
-                    if any(hasattr(m, "lora_A") for m in self.model.modules()):
-                        self.lora_strategy.prepare_alpha_warmup()
-                    else:
-                        LOGGER.info("[LoRA] Alpha warmup skipped: active adapter type has no LoRA alpha layers.")
-                        lora_alpha_warmup = 0
-                        self.args.lora_alpha_warmup = 0
-                
-                # Strategy 4: Dynamic dropout scheduling params
-                self.lora_dropout_end = getattr(self.args, 'lora_dropout_end', 0.15)
-                self.lora_dropout_start_ratio = getattr(self.args, 'lora_dropout_start_ratio', 0.3)
-                
-                # Strategy 3: Orthogonal regularization weight
-                self.lora_ortho_weight = getattr(self.args, 'lora_ortho_weight', 0.0)
-                self.lora_ortho_frequency = getattr(self.args, 'lora_ortho_frequency', 10)
-                self.lora_ortho_batch_counter = 0  # Batch counter for orthogonal loss computation
-                
-                LOGGER.info(
-                    f"[LoRA] 🎯 Training Strategy Engine initialized | "
-                    f"layer_decay={lora_layer_decay}, "
-                    f"alpha_warmup={lora_alpha_warmup}ep, "
-                    f"ortho_weight={self.lora_ortho_weight}, "
-                    f"ortho_freq={self.lora_ortho_frequency}, "
-                    f"dropout_schedule=[0→{self.lora_dropout_end}]"
-                )
-        
         self.resume_training(ckpt)
         self.scheduler.last_epoch = self.start_epoch - 1  # do not move
         self._bootstrap_healthy_checkpoint()
         self.run_callbacks("on_pretrain_routine_end")
 
-    def _detect_moa_mot_modules(self):
-        """Cache whether the model contains MoA/MoT modules that need temperature annealing."""
-        try:
-            from ultralytics.nn.modules.moa import C2fMoA
-            from ultralytics.nn.modules.mot import C2fMoT
-        except Exception:
-            self._has_moa_mot = False
-            return
-
-        model = unwrap_model(self.model)
-        self._has_moa_mot = any(isinstance(m, (C2fMoA, C2fMoT)) for m in model.modules())
-        if self._has_moa_mot and RANK in {-1, 0}:
-            factor = getattr(self.args, "moa_mot_temperature_factor", 0.97)
-            min_temp = getattr(self.args, "moa_mot_min_temperature", 0.3)
-            LOGGER.info(f"[MoA/MoT] Router temperature annealing enabled (factor={factor}, min_temp={min_temp}).")
-
-    def _resolve_mixture_runtime_config(self):
-        """Resolve and apply all mixture runtime settings once per train setup."""
-        model = unwrap_model(self.model)
-        self.mixture_config = resolve_mixture_config(self.args, model)
-        applied = apply_mixture_config(model, self.mixture_config)
-        if RANK in {-1, 0} and self.mixture_config.audit:
-            LOGGER.info(
-                f"[Mixture] Runtime config resolved for {len(self.mixture_config.audit)} modules; "
-                f"applied={applied}. Audit is available on `model.mixture_config_audit`."
+    def _freeze_model_parameters(self) -> None:
+        """Apply explicit layer freezing without re-enabling adapter base parameters."""
+        freeze_list = (
+            self.args.freeze
+            if isinstance(self.args.freeze, list)
+            else range(self.args.freeze)
+            if isinstance(self.args.freeze, int)
+            else []
+        )
+        adapter_active = self.adapter_controller.active
+        always_freeze_names = [] if adapter_active else [".dfl"]  # adapters may need a freshly initialized head
+        freeze_layer_names = [f"model.{x}." for x in freeze_list] + always_freeze_names
+        if isinstance(unwrap_model(self.model), DistillationModel):
+            freeze_layer_names.append("teacher_model.")
+        self.freeze_layer_names = freeze_layer_names
+        for name, parameter in self.model.named_parameters():
+            if any(layer_name in name for layer_name in freeze_layer_names):
+                LOGGER.info(f"Freezing layer '{name}'")
+                parameter.requires_grad = False
+            elif not parameter.requires_grad and parameter.dtype.is_floating_point and not adapter_active:
+                LOGGER.warning(
+                    f"setting 'requires_grad=True' for frozen layer '{name}'. "
+                    "See ultralytics.engine.trainer for customization of frozen layers."
+                )
+                parameter.requires_grad = True
+        if not any(parameter.requires_grad for parameter in self.model.parameters()):
+            raise RuntimeError(
+                f"'freeze={self.args.freeze}' froze the entire model with no trainable parameters left. "
+                f"Reduce 'freeze' or pass a list of specific layer indices."
             )
 
-    def _anneal_moa_mot_temperature(self):
-        """Anneal MoA/MoT router temperatures once after each completed training epoch."""
-        if not getattr(self, "_has_moa_mot", False):
-            return
-        from ultralytics.nn.modules.moa import anneal_moa_temperature
-        from ultralytics.nn.modules.mot import anneal_mot_temperature
+    def _detect_moa_mot_modules(self):
+        """Compatibility wrapper for routed module discovery."""
+        controller = getattr(self, "mixture_controller", None)
+        if controller is None:
+            controller = self.mixture_controller = MixtureRuntimeController(self)
+        return controller.detect_modules()
 
-        factor = float(getattr(self.args, "moa_mot_temperature_factor", 0.97))
-        min_temp = float(getattr(self.args, "moa_mot_min_temperature", 0.3))
-        model = unwrap_model(self.model)
-        anneal_moa_temperature(model, factor=factor, min_temp=min_temp)
-        anneal_mot_temperature(model, factor=factor, min_temp=min_temp)
+    def _resolve_mixture_runtime_config(self):
+        """Compatibility wrapper for canonical mixture configuration."""
+        controller = getattr(self, "mixture_controller", None)
+        if controller is None:
+            controller = self.mixture_controller = MixtureRuntimeController(self)
+        return controller.resolve_config()
+
+    def _anneal_moa_mot_temperature(self):
+        """Compatibility wrapper for mixture temperature scheduling."""
+        controller = getattr(self, "mixture_controller", None)
+        if controller is None:
+            controller = self.mixture_controller = MixtureRuntimeController(self)
+        return controller.anneal_temperature()
+
+    def _disable_gradient_checkpointing_for_ddp_moe_lora(self):
+        """Compatibility wrapper for DDP routed-module safety."""
+        controller = getattr(self, "mixture_controller", None)
+        if controller is None:
+            controller = self.mixture_controller = MixtureRuntimeController(self)
+        return controller.prepare_ddp()
+
+    def _finalize_moe_map_saturation_epoch(self, *, recovered: bool, validated: bool):
+        """Compatibility wrapper for validation-driven MoE balance scheduling."""
+        controller = getattr(self, "mixture_controller", None)
+        if controller is None:
+            controller = self.mixture_controller = MixtureRuntimeController(self)
+        return controller.finalize_epoch(recovered=recovered, validated=validated)
+
+    def _compute_distillation_loss(self, student_preds, teacher_preds, adaptive_temp=False):
+        return self.adapter_controller.compute_distillation_loss(student_preds, teacher_preds, adaptive_temp)
+
+    def _compute_response_distillation_loss(self, student_preds, teacher_preds):
+        return self.adapter_controller.compute_response_distillation_loss(student_preds, teacher_preds)
+
+    def _compute_prediction_entropy(self, preds):
+        return self.adapter_controller.compute_prediction_entropy(preds)
+
+    def _init_hierarchical_distill_cache(self):
+        return self.adapter_controller.init_hierarchical_distill_cache()
+
+    def _compute_hierarchical_distillation_loss(self, images, layer_indices):
+        return self.adapter_controller.compute_hierarchical_distillation_loss(images, layer_indices)
 
     def _do_train(self):
-        """Train the model with the specified world size."""
+        """Perform the full training loop including setup, epoch iteration, validation, and final evaluation."""
         if self.world_size > 1:
             self._setup_ddp()
         self._setup_train()
@@ -806,94 +542,15 @@ class BaseTrainer:
             self.plot_idx.extend([base_idx, base_idx + 1, base_idx + 2])
         epoch = self.start_epoch
         self.optimizer.zero_grad()  # zero any resumed gradients to ensure stability on train start
+        self._oom_retries = 0  # OOM auto-reduce counter for first epoch
         while True:
             self.epoch = epoch
+            self.mixture_controller.begin_epoch(epoch)
+            self.adapter_controller.begin_epoch(epoch)
             self.run_callbacks("on_train_epoch_start")
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")  # suppress 'Detected lr_scheduler.step() before optimizer.step()'
                 self.scheduler.step()
-
-            # MoE Strategy: Freeze experts for initial epochs while router learns balanced routing
-            # Key fix: only freeze expert WEIGHTS, not shared_expert/routing — and use shorter warmup
-            #
-            # P0 FIX: gate the entire MoE warmup / gain-schedule / collapse-detection
-            # block behind `self._has_moe` (set during _setup_train). Previously this
-            # block ran unconditionally — it would still scan named_parameters() for
-            # 'experts' on every iteration on a plain (non-MoE) YOLO model and
-            # unconditionally print '[MoE] Unfreezing expert weights ...' at
-            # epoch == warmup, even though there were no expert weights at all.
-            if getattr(self, "_has_moe", False):
-                from ultralytics.nn.modules.moe.utils import iter_core_moe_expert_params
-
-                moe_warmup_epochs = getattr(self.args, 'moe_expert_warmup_epochs', 3)
-                expert_params = list(iter_core_moe_expert_params(self.model))
-                if expert_params:
-                    if epoch < moe_warmup_epochs:
-                        for p in expert_params:
-                            p.requires_grad = False
-                    elif epoch == moe_warmup_epochs:
-                        LOGGER.info(f"[MoE] Unfreezing expert weights after {moe_warmup_epochs}-epoch router warmup...")
-                        for p in expert_params:
-                            p.requires_grad = True
-
-                # MoE Gain Schedule (fixed: was cosine 0.3→0.05, too aggressive decay)
-                # New: warmup → plateau → gentle decay. Prevents late-training routing collapse.
-                if hasattr(self.args, 'moe'):
-                    initial_moe = getattr(self.args, 'moe', 0.3)
-                    progress = epoch / self.epochs
-                    if progress < 0.1:
-                        # Phase 1: warmup — ramp from 0.5x to 1x initial gain
-                        moe_gain = initial_moe * (0.5 + 0.5 * (progress / 0.1))
-                    elif progress < 0.7:
-                        # Phase 2: plateau — full gain to maintain balanced routing
-                        moe_gain = initial_moe
-                    else:
-                        # Phase 3: gentle linear decay to 0.3x — avoid sudden collapse
-                        decay_progress = (progress - 0.7) / 0.3
-                        moe_gain = initial_moe * (1.0 - 0.7 * decay_progress)
-                    self.args.moe = moe_gain
-                    # Also update model args/hyp if needed (propagate to loss)
-                    if hasattr(self.model, 'args') and isinstance(self.model.args, dict):
-                        self.model.args['moe'] = moe_gain
-                    elif hasattr(self.model, 'args') and hasattr(self.model.args, 'moe'):
-                        self.model.args.moe = moe_gain
-
-                # MoE Routing Collapse Detection (every 5 epochs after warmup)
-                if epoch > 0 and epoch % 5 == 0 and hasattr(self, '_moe_collapse_detector'):
-                    diag = self._moe_collapse_detector.diagnose(self.model)
-                    collapsed_layers = [n for n, d in diag.items() if d['collapsed']]
-                    if collapsed_layers:
-                        collapse_thr = getattr(self.args, 'moe_collapse_threshold', 0.8)
-                        LOGGER.warning(
-                            f"[MoE] ⚠️ Routing collapse detected at epoch {epoch}: "
-                            f"layers {collapsed_layers} have max_usage > {collapse_thr}. "
-                            f"Auto-increasing noise_std for recovery..."
-                        )
-                        applied = self._moe_collapse_detector.apply_recovery(self.model, diag)
-                        if applied > 0:
-                            LOGGER.info(f"[MoE] Applied {applied} recovery actions.")
-                        # Also boost balance_loss if not already high
-                        if hasattr(self.args, 'moe_balance_loss'):
-                            old_bl = self.args.moe_balance_loss
-                            self.args.moe_balance_loss = min(old_bl * 2.0, 2.0)
-                        LOGGER.info(f"[MoE] balance_loss boosted: {old_bl:.4f} → {self.args.moe_balance_loss:.4f}")
-
-            # ── LoRA Training Strategies (per-epoch) ──
-            if self.lora_strategy is not None:
-                # Strategy 2: Alpha warmup (gradually ramp up scaling)
-                alpha_warmup_ep = getattr(self.args, 'lora_alpha_warmup', 0)
-                if alpha_warmup_ep > 0 and epoch < alpha_warmup_ep:
-                    scale = self.lora_strategy.step_alpha_warmup(epoch, warmup_epochs=alpha_warmup_ep)
-                    LOGGER.debug(f"[LoRA] Alpha warmup: epoch={epoch}, scale={scale:.4f}")
-                elif alpha_warmup_ep > 0 and epoch == alpha_warmup_ep:
-                    self.lora_strategy.finalize_alpha_warmup()
-                
-                # Strategy 4: Dynamic dropout schedule
-                self.lora_strategy.update_dropout_schedule(
-                    self.model, epoch=epoch, epochs_total=self.epochs,
-                    end_dropout=self.lora_dropout_end,
-                    schedule_start_ratio=self.lora_dropout_start_ratio,
-                )
 
             self._model_train()
             if RANK != -1:
@@ -904,21 +561,6 @@ class BaseTrainer:
                 self._close_dataloader_mosaic()
                 self.train_loader.reset()
 
-            # ── Few-Shot LoRA: Update scheduled DropConnect progress ──
-            if getattr(self.args, 'lora_few_shot_mode', False):
-                progress = epoch / max(self.epochs - 1, 1)
-                from ultralytics.utils.lora import FewShotLoRAConv
-                updated = 0
-                for module in self.model.modules():
-                    if isinstance(module, FewShotLoRAConv):
-                        # No direct attribute setting needed; progress is computed on-the-fly in forward
-                        # But we can log the scheduled rate for monitoring
-                        updated += 1
-                if updated > 0 and epoch % 5 == 0 and RANK in {-1, 0}:
-                    sample = next(m for m in self.model.modules() if isinstance(m, FewShotLoRAConv))
-                    scheduled_rate = sample.get_scheduled_dropconnect_rate(progress)
-                    LOGGER.info(f"[LoRA] 📉 Scheduled DropConnect rate: {scheduled_rate:.3f} (progress={progress:.2f})")
-
             if RANK in {-1, 0}:
                 LOGGER.info(self.progress_string())
                 pbar = TQDM(enumerate(self.train_loader), total=nb)
@@ -927,174 +569,73 @@ class BaseTrainer:
                 self.run_callbacks("on_train_batch_start")
                 # Warmup
                 ni = i + nb * epoch
-                self.ni = ni
                 if ni <= nw:
                     xi = [0, nw]  # x interp
                     self.accumulate = max(1, int(np.interp(ni, xi, [1, self.args.nbs / self.batch_size]).round()))
-                    for j, x in enumerate(self.optimizer.param_groups):
+                    for x in self.optimizer.param_groups:
                         # Bias lr falls from 0.1 to lr0, all other lrs rise from 0.0 to lr0
-                        x["lr"] = np.interp(
-                            ni, xi, [self.args.warmup_bias_lr if j == 0 else 0.0, x["initial_lr"] * self.lf(epoch)]
+                        x["lr"] = float(
+                            np.interp(
+                                ni,
+                                xi,
+                                [
+                                    self.args.warmup_bias_lr if x.get("param_group") == "bias" else 0.0,
+                                    x["initial_lr"] * self.lf(epoch),
+                                ],
+                            )
                         )
                         if "momentum" in x:
-                            x["momentum"] = np.interp(ni, xi, [self.args.warmup_momentum, self.args.momentum])
+                            x["momentum"] = float(np.interp(ni, xi, [self.args.warmup_momentum, self.args.momentum]))
 
                 should_step = ni - last_opt_step >= self.accumulate or i == nb - 1
                 sync_context = self.model.no_sync() if RANK != -1 and not should_step else nullcontext()
-                sync_context.__enter__()
-                # Forward
-                with autocast(self.amp):
-                    batch = self.preprocess_batch(batch)
-                    if self.args.compile:
-                        # Decouple inference and loss calculations for improved compile performance
-                        preds = self.model(batch["img"])
-                        loss, self.loss_items = unwrap_model(self.model).loss(batch, preds)
-                    else:
-                        loss, self.loss_items = self.model(batch)
-                    
-                    # ── LoRA Orthogonal Regularization (Strategy 3) ──
-                    # Optimized: compute every N batches instead of every batch.
-                    # P1 FIX: cast ortho_loss to the main `loss` dtype before
-                    # adding so AMP runs with bf16/fp16 do not crash on the
-                    # `+` between fp32 ortho and the lower-precision detection
-                    # loss tensor.
-                    if self.lora_strategy is not None and self.lora_ortho_weight > 0:
-                        self.lora_ortho_batch_counter += 1
-                        if self.lora_ortho_batch_counter % self.lora_ortho_frequency == 0:
-                            ortho_loss = LoraTrainingStrategy.compute_orthogonal_loss(
-                                self.model, weight=self.lora_ortho_weight
-                            )
-                            if ortho_loss.dtype != loss.dtype:
-                                ortho_loss = ortho_loss.to(loss.dtype)
-                            loss = loss + ortho_loss
-                    
-                    # ── Few-Shot LoRA: Knowledge Distillation Loss ──
-                    if getattr(self.args, 'lora_few_shot_mode', False) and hasattr(self, 'teacher_model') and self.teacher_model is not None:
-                        # v3: Dynamic distillation weight scheduling
-                        progress = epoch / max(self.epochs - 1, 1)
-                        distill_schedule = getattr(self.args, 'lora_few_shot_distill_schedule', 'constant')
-                        distill_max = getattr(self.args, 'lora_few_shot_distill_weight_max', 1.0)
-                        distill_min = getattr(self.args, 'lora_few_shot_distill_weight_min', 0.1)
-                        
-                        if distill_schedule == 'constant':
-                            distill_weight = distill_max
-                        elif distill_schedule == 'linear':
-                            distill_weight = distill_max - (distill_max - distill_min) * progress
-                        elif distill_schedule == 'cosine':
-                            distill_weight = distill_min + (distill_max - distill_min) * 0.5 * (1 + math.cos(math.pi * progress))
-                        elif distill_schedule == 'exponential':
-                            distill_weight = distill_min + (distill_max - distill_min) * math.exp(-5 * progress)
-                        else:
-                            distill_weight = distill_max
-                        distill_weight = max(distill_min, min(distill_max, distill_weight))
-                        
-                        hierarchical_distill = getattr(self.args, 'lora_few_shot_hierarchical_distill', False)
-                        distill_layers = getattr(self.args, 'lora_few_shot_distill_layers', None)
-                        adaptive_temp = getattr(self.args, 'lora_few_shot_adaptive_temperature', False)
-                        use_ema = getattr(self.args, 'lora_few_shot_use_ema_teacher', False)
-                        response_distill = getattr(self.args, 'lora_few_shot_response_distill', False)
-                        response_weight = getattr(self.args, 'lora_few_shot_response_distill_weight', 0.3)
-                        
-                        # v3: Select teacher source (static or EMA)
-                        teacher_source = self.teacher_ema if (use_ema and hasattr(self, 'teacher_ema') and self.teacher_ema is not None) else self.teacher_model
-                        
-                        student_preds = self.model(batch["img"])
-                        with torch.no_grad():
-                            teacher_preds = teacher_source(batch["img"])
-                        
-                        # Compute distillation loss
-                        distill_loss = self._compute_distillation_loss(student_preds, teacher_preds, adaptive_temp=adaptive_temp)
-                        
-                        # v3: Response distillation (detection head alignment)
-                        if response_distill:
-                            resp_loss = self._compute_response_distillation_loss(student_preds, teacher_preds)
-                            distill_loss = distill_loss + response_weight * resp_loss
-                        
-                        # Hierarchical distillation: intermediate layer alignment
-                        if hierarchical_distill and distill_layers:
-                            layer_loss = self._compute_hierarchical_distillation_loss(
-                                batch["img"], distill_layers
-                            )
-                            distill_loss = distill_loss + 0.3 * layer_loss
-                        
-                        loss = loss + distill_weight * distill_loss
-                    
-                    # ── Few-Shot LoRA: Variational Rank KL Regularization ──
-                    if getattr(self.args, 'lora_few_shot_mode', False) and getattr(self.args, 'lora_few_shot_variational_rank', False):
-                        from ultralytics.utils.lora import FewShotLoRAConv
-                        kl_loss = 0.0
-                        num_modules = 0
-                        budget = getattr(self.args, 'lora_few_shot_rank_budget', 0.5)
-                        for module in self.model.modules():
-                            if isinstance(module, FewShotLoRAConv) and module.variational_rank:
-                                # KL divergence between Gumbel-Softmax and target Bernoulli(budget)
-                                # Encourage sparsity while maintaining budget
-                                probs = torch.sigmoid(module.rank_logits)
-                                # KL(q||p) where p = Bernoulli(budget), q = Bernoulli(probs)
-                                p = budget
-                                kl = probs * torch.log((probs + 1e-8) / (p + 1e-8)) + (1 - probs) * torch.log((1 - probs + 1e-8) / (1 - p + 1e-8))
-                                kl_loss += kl.mean()
-                                num_modules += 1
-                        if num_modules > 0:
-                            loss = loss + 0.01 * (kl_loss / num_modules)
-                    
-                    self.loss = loss.sum()
-                    if RANK != -1:
-                        self.loss *= self.world_size
-                    self.tloss = self.loss_items if self.tloss is None else (self.tloss * i + self.loss_items) / (i + 1)
-
-                loss_nonfinite = not bool(torch.isfinite(self.loss.detach()).all().item())
-                if loss_nonfinite:
-                    self._record_nonfinite_diagnostic("loss", epoch=epoch, step=ni, loss_items=self.loss_items)
-                global_loss_nonfinite = self._sync_nonfinite_flag(loss_nonfinite)
-                if global_loss_nonfinite:
-                    self._loss_nonfinite = True
-                    try:
-                        recovery_loss = torch.nan_to_num(self.loss, nan=0.0, posinf=0.0, neginf=0.0) * 0.0
-                        self.scaler.scale(recovery_loss).backward()
-                    finally:
-                        sync_context.__exit__(None, None, None)
-                    self.optimizer.zero_grad()
-                    break
-
-                # Backward. Always unwind no_sync if forward/backward raises.
                 try:
-                    self.scaler.scale(self.loss).backward()
-                finally:
-                    sync_context.__exit__(None, None, None)
-
-                # LoRA collapse early detection:
-                # warn when loss stays zero/NaN for many consecutive iterations
-                # (typical symptom when adapter injection destabilizes attention or deformable transformer paths).
-                if self.lora_strategy is not None and RANK in {-1, 0}:
-                    loss_val = float(self.loss.detach().item()) if self.loss is not None else 0.0
-                    if not (loss_val == loss_val) or loss_val == 0.0:  # NaN or all-zero
-                        self._lora_zero_loss_streak = getattr(self, "_lora_zero_loss_streak", 0) + 1
-                        if self._lora_zero_loss_streak == 10:
-                            LOGGER.warning(
-                                f"[LoRA] Detected {self._lora_zero_loss_streak} consecutive "
-                                f"zero/NaN losses — gradients may have collapsed. "
-                                f"Suggestion: reduce lora_lr_mult, exclude attn.{{qkv,proj,pe}} "
-                                f"from target_modules, enable lora_alpha_warmup >= 3, retry "
-                                f"with lora_use_dora=False, or compare an amp=False debug run."
+                    with sync_context:
+                        with autocast(self.amp):
+                            batch = self.preprocess_batch(batch)
+                            if self.args.compile:
+                                # Decouple inference and loss calculations for improved compile performance
+                                preds = self.model(batch["img"])
+                                loss, self.loss_items = unwrap_model(self.model).loss(batch, preds)
+                            else:
+                                loss, self.loss_items = self.model(batch)
+                            loss = self.adapter_controller.augment_loss(loss)
+                            loss = self.adapter_controller.augment_few_shot_loss(loss, batch["img"], epoch)
+                            self.loss = loss.sum()
+                            if RANK != -1:
+                                self.loss *= self.world_size
+                            self.tloss = (
+                                self.loss_items if self.tloss is None else (self.tloss * i + self.loss_items) / (i + 1)
                             )
-                    else:
-                        self._lora_zero_loss_streak = 0
-                
-                # ── Few-Shot LoRA: Update gradient importance after backward ──
-                if getattr(self.args, 'lora_few_shot_mode', False) and getattr(self.args, 'lora_few_shot_gradient_importance_weighted', False):
-                    from ultralytics.utils.lora import FewShotLoRAConv
-                    for module in self.model.modules():
-                        if isinstance(module, FewShotLoRAConv) and module.gradient_importance_weighted:
-                            module._update_importance()
-                
+
+                        self.scaler.scale(self.loss).backward()
+                except RuntimeError as e:
+                    is_oom = "out of memory" in str(e).lower()  # torch.cuda.OutOfMemoryError requires torch>=1.13
+                    if not is_oom and not any(
+                        s in str(e) for s in ("CUDNN_STATUS_INTERNAL_ERROR", "unable to find an engine")
+                    ):
+                        raise
+                    if epoch > self.start_epoch or self._oom_retries >= 3 or RANK != -1:
+                        raise  # only auto-reduce during first epoch on single GPU, max 3 retries
+                    self._oom_retries += 1
+                    old_batch = self.batch_size
+                    self.args.batch = self.batch_size = max(self.batch_size // 2, 1)
+                    LOGGER.warning(
+                        f"{'CUDA out of memory' if is_oom else 'CUDA backend memory error'} with batch={old_batch}. "
+                        f"Reducing to batch={self.batch_size} and retrying ({self._oom_retries}/3)."
+                    )
+                    batch = loss = preds = None
+                    self.loss = self.loss_items = self.tloss = None
+                    self._clear_memory()
+                    self._build_train_pipeline()  # rebuild dataloaders, optimizer, scheduler
+                    self.scheduler.last_epoch = self.start_epoch - 1
+                    nb = len(self.train_loader)
+                    nw = max(round(self.args.warmup_epochs * nb), 100) if self.args.warmup_epochs > 0 else -1
+                    last_opt_step = -1
+                    self.optimizer.zero_grad()
+                    break  # restart epoch loop with reduced batch size
                 if should_step:
-                    step_succeeded = self.optimizer_step()
-                    if not step_succeeded:
-                        # A skipped optimizer step invalidates the epoch boundary. Stop immediately:
-                        # do not run more batches, epoch callbacks, EMA validation, or checkpointing
-                        # against a partially applied epoch. Recovery below restores and retries it.
-                        break
+                    self.optimizer_step()
                     last_opt_step = ni
 
                     # Timed stopping
@@ -1116,7 +657,7 @@ class BaseTrainer:
                             f"{epoch + 1}/{self.epochs}",
                             f"{self._get_memory():.3g}G",  # (GB) GPU memory util
                             *(self.tloss if loss_length > 1 else torch.unsqueeze(self.tloss, 0)),  # losses
-                            batch["cls"].shape[0],  # batch size, i.e. 8
+                            batch.get("cls", batch["img"]).shape[0],  # no. of instances
                             batch["img"].shape[-1],  # imgsz, i.e 640
                         )
                     )
@@ -1125,49 +666,19 @@ class BaseTrainer:
                         self.plot_training_samples(batch, ni)
 
                 self.run_callbacks("on_train_batch_end")
+                if self.stop:
+                    break  # allow external stop (e.g. platform cancellation) between batches
+            else:
+                # for/else: this block runs only when the for loop completes without break (no OOM retry)
+                self._oom_retries = 0  # reset OOM counter after successful first epoch
 
-            # Reject the partial epoch at the first detected gradient overflow. Recovery
-            # owns the retry and must happen before any accepted-epoch side effects.
-            if self._loss_nonfinite or self._gradient_nonfinite:
-                if not self._handle_nan_recovery(epoch):
-                    raise RuntimeError("Loss or gradient NaN/Inf was detected but recovery was not triggered.")
-                continue
+            if self._oom_retries and not self.stop:
+                continue  # OOM recovery broke the for loop, restart with reduced batch size
+
+            if hasattr(unwrap_model(self.model).criterion, "update"):
+                unwrap_model(self.model).criterion.update()
 
             self.lr = {f"lr/pg{ir}": x["lr"] for ir, x in enumerate(self.optimizer.param_groups)}  # for loggers
-            self._anneal_moa_mot_temperature()
-
-            # ── LoRA Training Stats (per-epoch logging) ──
-            if self.lora_strategy is not None and RANK in {-1, 0} and (epoch % 5 == 0 or epoch == self.epochs - 1):
-                lora_stats = get_lora_training_stats(self.model)
-                if lora_stats['lora_modules'] > 0:
-                    LOGGER.info(
-                        f"[LoRA] 📊 Epoch {epoch+1} stats: "
-                        f"modules={lora_stats['lora_modules']}, "
-                        f"eff_rank={lora_stats['effective_rank_avg']:.2%}, "
-                        f"|A|_F={lora_stats['norm_A_frobenius']:.4f}, "
-                        f"|B|_F={lora_stats['norm_B_frobenius']:.4f}"
-                    )
-            
-            # ── Few-Shot LoRA Stats ──
-            if getattr(self.args, 'lora_few_shot_mode', False) and RANK in {-1, 0} and (epoch % 5 == 0 or epoch == self.epochs - 1):
-                from ultralytics.utils.lora import FewShotLoRAConv
-                num_fewshot = 0
-                total_active_rank = 0
-                for module in self.model.modules():
-                    if isinstance(module, FewShotLoRAConv):
-                        num_fewshot += 1
-                        if hasattr(module, 'rank_mask'):
-                            active = (module.rank_mask > 0.1).float().mean().item()
-                            total_active_rank += active
-                        elif module.variational_rank and hasattr(module, 'rank_logits'):
-                            active = (torch.sigmoid(module.rank_logits) > 0.5).float().mean().item()
-                            total_active_rank += active
-                if num_fewshot > 0:
-                    avg_active = total_active_rank / num_fewshot
-                    LOGGER.info(
-                        f"[LoRA] 🎯 FewShot stats: modules={num_fewshot}, "
-                        f"avg_active_rank={avg_active:.2%}"
-                    )
 
             self.run_callbacks("on_train_epoch_end")
             if RANK in {-1, 0}:
@@ -1175,26 +686,21 @@ class BaseTrainer:
 
             # Validation
             final_epoch = epoch + 1 >= self.epochs
-            validated = False
-            recovered = False
-            if self.args.val or final_epoch or self.stopper.possible_stop or self.stop:
-                recovered = self._recover_before_validation(epoch)
-                if not recovered:
-                    self._clear_memory(threshold=0.5)  # prevent VRAM spike
-                    self.metrics, self.fitness = self.validate()
-                    validated = self.fitness is not None and math.isfinite(float(self.fitness))
+            validated = self.args.val or final_epoch or self.stopper.possible_stop or self.stop
+            if validated:
+                self._clear_memory(None if self.device.type == "mps" else 0.5)  # prevent VRAM spike
+                if self._recover_before_validation(epoch):
+                    self._finalize_moe_map_saturation_epoch(recovered=True, validated=True)
+                    continue
+                self.metrics, self.fitness = self.validate()
 
             # NaN recovery
-            if not recovered:
-                recovered = self._handle_nan_recovery(epoch)
-            self._finalize_moe_map_saturation_epoch(recovered=recovered, validated=validated)
-            if recovered:
+            if self._handle_nan_recovery(epoch):
+                self._finalize_moe_map_saturation_epoch(recovered=True, validated=validated)
                 continue
+            self._finalize_moe_map_saturation_epoch(recovered=False, validated=validated)
 
             self.nan_recovery_attempts = 0
-            if RANK in {-1, 0} and not (self.args.save or final_epoch):
-                # Keep recovery available even when normal checkpoint saving is disabled.
-                self.save_model(healthy_only=True)
             if RANK in {-1, 0}:
                 self.save_metrics(metrics={**self.label_loss_items(self.tloss), **self.metrics, **self.lr})
                 self.stop |= self.stopper(epoch + 1, self.fitness) or final_epoch
@@ -1202,8 +708,7 @@ class BaseTrainer:
                     self.stop |= (time.time() - self.train_time_start) > (self.args.time * 3600)
 
                 # Save model
-                if self.args.save or final_epoch:
-                    self.save_model()
+                if (self.args.save or final_epoch) and self.save_model():
                     self.run_callbacks("on_model_save")
 
             # Scheduler
@@ -1217,7 +722,8 @@ class BaseTrainer:
                 self.scheduler.last_epoch = self.epoch  # do not move
                 self.stop |= epoch >= self.epochs  # stop if exceeded epochs
             self.run_callbacks("on_fit_epoch_end")
-            self._clear_memory(0.5)  # clear if memory utilization > 50%
+            # clear if memory utilization > 50%; always clear on MPS due to leak https://github.com/ultralytics/ultralytics/issues/22621
+            self._clear_memory(None if self.device.type == "mps" else 0.5)
 
             # Early Stopping
             if RANK != -1:  # if DDP training
@@ -1237,39 +743,22 @@ class BaseTrainer:
                 self.plot_metrics()
             self.run_callbacks("on_train_end")
         self._clear_memory()
+        for loader in (self.train_loader, self.test_loader):
+            if hasattr(loader, "close"):
+                loader.close()  # shut down persistent dataloader workers so none survive to interpreter exit
         unset_deterministic()
         self.run_callbacks("teardown")
 
-    def _finalize_moe_map_saturation_epoch(self, *, recovered: bool, validated: bool) -> None:
-        """Update mAP-driven MoE scheduling only for validated, accepted epochs."""
-        if recovered or not validated or self.fitness is None or not math.isfinite(float(self.fitness)):
-            return
-        if not getattr(self, "_has_moe", False) or not getattr(self.args, "moe_map_saturation_enabled", False):
-            return
-
-        from ultralytics.nn.modules.moe.utils import is_core_moe_block
-
-        for module in self.model.modules():
-            if not is_core_moe_block(module):
-                continue
-            scheduler = getattr(module, "map_saturation_scheduler", None)
-            if scheduler is None:
-                continue
-            scheduler.update(self.fitness)
-            if RANK in {-1, 0} and scheduler.last_state is not None:
-                LOGGER.debug(
-                    f"[MoE] MapSaturationScheduler updated: scale={scheduler.last_state.saturation_scale:.4f}, "
-                    f"plateau={scheduler.last_state.plateau_detected}"
-                )
-
-    def auto_batch(self, max_num_obj=0):
+    def auto_batch(self, max_num_obj=0, dataset_size=0):
         """Calculate optimal batch size based on model and device memory constraints."""
+        max_imgsz = int(self.args.imgsz * (1 + self.args.multi_scale))  # need not be stride-aligned
         return check_train_batch_size(
             model=self.model,
-            imgsz=self.args.imgsz,
+            imgsz=max_imgsz,
             amp=self.amp,
             batch=self.batch_size,
             max_num_obj=max_num_obj,
+            dataset_size=dataset_size,
         )  # returns batch size
 
     def _get_memory(self, fraction=False):
@@ -1316,275 +805,19 @@ class BaseTrainer:
             if any(filter(lambda f: f in n, self.freeze_layer_names)) and isinstance(m, nn.BatchNorm2d):
                 m.eval()
 
-    #region debug-point pre-validate-nonfinite
-    def _collect_prevalidation_nonfinite_flags(self):
-        """Collect non-finite model-state flags before validation begins."""
-        model_nonfinite = self.model is not None and not self._state_is_finite(unwrap_model(self.model))
-        ema_model = getattr(self.ema, "ema", None) if self.ema else None
-        ema_nonfinite = ema_model is not None and not self._state_is_finite(unwrap_model(ema_model))
-        local_flags = torch.tensor(
-            [int(model_nonfinite), int(ema_nonfinite)],
-            dtype=torch.int32,
-            device=self.device
-            if RANK != -1 and dist.is_initialized() and dist.get_backend() == "nccl"
-            else torch.device("cpu"),
-        )
-        if RANK != -1 and dist.is_initialized():
-            dist.all_reduce(local_flags, op=dist.ReduceOp.MAX)
-        flags = {
-            "model_nonfinite": bool(local_flags[0].item()),
-            "ema_nonfinite": bool(local_flags[1].item()),
-        }
-        if any(flags.values()):
-            LOGGER.warning(
-                "[debug-point pre-validate-nonfinite] "
-                f"model_nonfinite={flags['model_nonfinite']}, ema_nonfinite={flags['ema_nonfinite']}, "
-                f"gradient_nonfinite={bool(getattr(self, '_gradient_nonfinite', False))}"
-            )
-        return flags
-
-    def _recover_before_validation(self, epoch):
-        """Attempt recovery before validation if model or EMA already contains non-finite values."""
-        flags = self._collect_prevalidation_nonfinite_flags()
-        if not any(flags.values()):
-            return False
-        # Mark validation fitness as non-finite so the existing recovery path
-        # restores the last healthy checkpoint before EMA validation can run.
-        self.fitness = float("nan")
-        return self._handle_nan_recovery(epoch)
-    #endregion debug-point pre-validate-nonfinite
-
-    @staticmethod
-    def _state_is_finite(value):
-        """Return whether every floating tensor nested in a checkpoint state is finite."""
-        if isinstance(value, torch.Tensor):
-            return not value.is_floating_point() and not value.is_complex() or bool(torch.isfinite(value).all().item())
-        if isinstance(value, nn.Module):
-            return all(BaseTrainer._state_is_finite(v) for v in value.state_dict().values())
-        if isinstance(value, dict):
-            return all(BaseTrainer._state_is_finite(v) for v in value.values())
-        if isinstance(value, (list, tuple)):
-            return all(BaseTrainer._state_is_finite(v) for v in value)
-        return True
-
-    def _serialize_checkpoint(self):
-        """Serialize the complete resume state once for normal and recovery checkpoints."""
-        model = unwrap_model(self.model)
-        ema_model = unwrap_model(self.ema.ema) if self.ema else None
-        _get_mixture_loss_ema(model)
-        if ema_model is not None:
-            _get_mixture_loss_ema(ema_model)
-        buffer = io.BytesIO()
-        torch.save(
-            {
-                # Bootstrap checkpoints are created before the training loop sets
-                # ``self.epoch``; use the resumed epoch boundary in that case.
-                "epoch": getattr(self, "epoch", self.start_epoch - 1),
-                "best_fitness": self.best_fitness,
-                "model": deepcopy(unwrap_model(self.model)).half(),
-                "ema": deepcopy(unwrap_model(self.ema.ema)).half(),
-                "updates": self.ema.updates,
-                "optimizer": convert_optimizer_state_dict_to_fp16(deepcopy(self.optimizer.state_dict())),
-                "scaler": self.scaler.state_dict(),
-                "train_args": vars(self.args),
-                "train_metrics": {**self.metrics, **{"fitness": self.fitness}},
-                "train_results": self.read_results_csv(),
-                "date": datetime.now().isoformat(),
-                "version": __version__,
-                "git": {"root": str(GIT.root), "branch": GIT.branch, "commit": GIT.commit, "origin": GIT.origin},
-                "license": "AGPL-3.0 (https://ultralytics.com/license)",
-                "docs": "https://docs.ultralytics.com",
-            },
-            buffer,
-        )
-        return buffer.getvalue()
-
-    @staticmethod
-    def _check_mox_aux_finite(model):
-        """Check MoE aux-loss registry entries for non-finite values.
-
-        The aux-loss registry is not part of any module's ``state_dict()``, so the
-        standard ``_state_is_finite`` check won't catch Inf/NaN stored there during
-        fp16 AMP training (e.g. router logits that overflow).  This method scans
-        the global WeakKeyDictionary and returns False if any entry is non-finite.
-        """
-        # Import lazily to avoid circular deps on import path
-        from ultralytics.nn.modules.moe._common import MOE_LOSS_REGISTRY as moe_reg
-
-        try:
-            for module_ref, entry in moe_reg.items():
-                if isinstance(entry, dict):
-                    for v in entry.values():
-                        if isinstance(v, torch.Tensor) and v.is_floating_point() and not torch.isfinite(v).all().item():
-                            return False
-                elif isinstance(entry, torch.Tensor) and entry.is_floating_point() and not torch.isfinite(entry).all().item():
-                    return False
-        except RuntimeError:  # WeakKeyDictionary may raise on iteration if entries gc'd
-            pass
-        return True
-
-    def _checkpoint_forward_smoke(self, checkpoint):
-        """Run a small FP32 inference pass and reject checkpoints with non-finite activations."""
-        model = checkpoint.get("ema") or checkpoint.get("model")
-        if not isinstance(model, nn.Module):
-            return False, "checkpoint has no loadable model or EMA module"
-        try:
-            model = model.float().cpu().eval()
-            yaml = getattr(model, "yaml", {}) or {}
-            channels = int(yaml.get("channels", 3))
-            stride = getattr(model, "stride", torch.tensor([32.0]))
-            stride = max(1, int(torch.as_tensor(stride).max().item()))
-            configured_imgsz = getattr(getattr(self, "args", None), "imgsz", 64)
-            if isinstance(configured_imgsz, (list, tuple)):
-                configured_imgsz = max(configured_imgsz)
-            imgsz = max(32, min(int(configured_imgsz), 64))
-            imgsz = math.ceil(imgsz / stride) * stride
-
-            first_parameter = next(model.parameters(), None)
-            if not yaml and first_parameter is not None and first_parameter.ndim == 2:
-                sample = torch.zeros(1, first_parameter.shape[1], dtype=torch.float32)
-            else:
-                sample = torch.zeros(1, channels, imgsz, imgsz, dtype=torch.float32)
-            samples = (sample, torch.linspace(-1.0, 1.0, sample.numel(), dtype=torch.float32).reshape_as(sample))
-            with torch.inference_mode():
-                for index, smoke_input in enumerate(samples):
-                    output = model(smoke_input)
-                    if not self._state_is_finite(output):
-                        return False, f"forward smoke sample {index} produced non-finite output"
-        except Exception as exc:
-            return False, f"forward smoke failed: {type(exc).__name__}: {exc}"
-        return True, ""
-
-    def _validate_checkpoint_artifact(self, path):
-        """Verify that a checkpoint is readable, finite, and executable before validation."""
-        path = Path(path)
-        try:
-            checkpoint = torch.load(path, map_location="cpu", weights_only=False)
-        except (OSError, RuntimeError, ValueError, EOFError) as exc:
-            return False, f"unreadable checkpoint: {type(exc).__name__}: {exc}"
-        if not isinstance(checkpoint, dict) or not self._state_is_finite(checkpoint):
-            return False, "checkpoint contains missing or non-finite state"
-        return self._checkpoint_forward_smoke(checkpoint)
-
-    def _select_final_eval_checkpoints(self):
-        """Select healthy final-evaluation artifacts on rank 0 and share the ordered decision."""
-        decision = None
-        if RANK in {-1, 0}:
-            candidates, rejected = [], []
-            for path in (self.best, self.healthy):
-                path = Path(path)
-                if not path.exists() or path in candidates:
-                    continue
-                healthy, reason = self._validate_checkpoint_artifact(path)
-                if healthy:
-                    candidates.append(path)
-                else:
-                    rejected.append(f"{path.name}: {reason}")
-            decision = ([str(path) for path in candidates], rejected)
-        if RANK != -1 and dist.is_initialized():
-            shared = [decision]
-            dist.broadcast_object_list(shared, src=0)
-            decision = shared[0]
-        paths, rejected = decision or ([], ["rank 0 did not provide a checkpoint decision"])
-        return [Path(path) for path in paths], rejected
-
-    @staticmethod
-    def _reset_non_checkpoint_moe_runtime_state():
-        """Clear per-process MoE auxiliary state omitted from recovery checkpoints."""
-        from ultralytics.nn.modules.moe._common import MOE_LOSS_REGISTRY, _MOE_LOSS_REGISTRY_LOCK
-        from ultralytics.nn.modules.routing_protocol import reset_routing_runtime_state
-
-        with _MOE_LOSS_REGISTRY_LOCK:
-            MOE_LOSS_REGISTRY.clear()
-        reset_routing_runtime_state()
-
-    def _save_healthy_checkpoint(self, serialized_ckpt):
-        """Atomically replace the recovery checkpoint only with a finite complete state.
-
-        P1-10 fix: use OS-level atomic rename (os.replace) instead of Path.replace() to
-        prevent partial reads when multiple DDP ranks attempt concurrent writes. The write
-        is restricted to rank 0; other ranks simply broadcast the success flag so all ranks
-        agree on checkpoint availability.
-        """
-        checkpoint = torch.load(io.BytesIO(serialized_ckpt), map_location="cpu", weights_only=False)
-        if not self._state_is_finite(checkpoint):
-            LOGGER.warning("Skipping nonfinite recovery checkpoint state.")
-            return False
-        forward_healthy, reason = self._checkpoint_forward_smoke(checkpoint)
-        if not forward_healthy:
-            LOGGER.warning(f"Skipping recovery checkpoint that failed inference health check: {reason}")
-            return False
-        # Cross-module: also verify MoX aux_loss registries are finite (P0-2 cross-module fix)
-        try:
-            if hasattr(self, "model") and self.model is not None:
-                if not self._check_mox_aux_finite(self.model):
-                    LOGGER.warning("MoX auxiliary-loss registry contains non-finite values; skipping checkpoint.")
-                    return False
-        except Exception:
-            # Best-effort: don't block checkpointing on aux_loss scan failures
-            pass
-
-        tmp = self.healthy.with_suffix(".tmp")
-        tmp.write_bytes(serialized_ckpt)
-        # P1-10 fix: use atomic os.replace for DDP-safe checkpoint writing
-        try:
-            import os as _os
-            _os.replace(str(tmp), str(self.healthy))
-        except OSError as exc:
-            LOGGER.warning(f"Atomic checkpoint replace failed ({exc}); falling back to Path.replace")
-            tmp.replace(self.healthy)
-        return True
-
-    def _bootstrap_healthy_checkpoint(self):
-        """Create and globally acknowledge a finite pre-step recovery point."""
-        bootstrap_ok = True
-        if RANK in {-1, 0}:
-            try:
-                self.wdir.mkdir(parents=True, exist_ok=True)
-                bootstrap_ok = all(
-                    self._state_is_finite(state)
-                    for state in (unwrap_model(self.model), self.optimizer.state_dict(), self.scaler.state_dict())
-                ) and self._save_healthy_checkpoint(self._serialize_checkpoint())
-            except (OSError, RuntimeError, ValueError) as exc:
-                LOGGER.warning(f"Initial healthy checkpoint creation failed: {exc}")
-                bootstrap_ok = False
-        if RANK != -1:
-            status = torch.tensor(
-                int(bootstrap_ok),
-                dtype=torch.int32,
-                device=self.device if dist.get_backend() == "nccl" else torch.device("cpu"),
-            )
-            dist.broadcast(status, src=0)
-            bootstrap_ok = bool(status.item())
-        if not bootstrap_ok:
-            raise RuntimeError("Initial training state is nonfinite; refusing to start without a healthy recovery checkpoint.")
-
-    def save_model(self, healthy_only=False):
-        """Save a normal checkpoint and atomically refresh the finite recovery checkpoint."""
+    def save_model(self):
+        """Save normal checkpoints only after the recovery health gate succeeds."""
         serialized_ckpt = self._serialize_checkpoint()
         self.wdir.mkdir(parents=True, exist_ok=True)
         if not self._save_healthy_checkpoint(serialized_ckpt):
             self._checkpoint_health_failed = True
-            LOGGER.warning("Checkpoint health gate failed; preserving the previous last.pt and best.pt files.")
             return False
         self._checkpoint_health_failed = False
-        if healthy_only:
-            return True
         self.last.write_bytes(serialized_ckpt)
         if self.best_fitness == self.fitness:
             self.best.write_bytes(serialized_ckpt)
-
-        lora_model = unwrap_model(self.model)
-        adapter_backend = discover_adapter_backend(lora_model)
-        if adapter_backend is not None and getattr(self.args, "lora_save_adapters", True):
-            adapter_dir = self.wdir / (getattr(self.args, "lora_adapter_dir", "lora_adapter") + f"_epoch{self.epoch}")
-            if self.best_fitness == self.fitness:
-                best_adapter_dir = self.wdir / (getattr(self.args, "lora_adapter_dir", "lora_adapter") + "_best")
-                save_adapters(lora_model, best_adapter_dir)
-            if self.save_period > 0 and self.epoch % self.save_period == 0:
-                save_adapters(lora_model, adapter_dir)
-        if self.save_period > 0 and self.epoch % self.save_period == 0:
-            (self.wdir / f"epoch{self.epoch}.pt").write_bytes(serialized_ckpt)
+        if (self.save_period > 0) and (self.epoch % self.save_period == 0):
+            (self.wdir / f"epoch{self.epoch}.pt").write_bytes(serialized_ckpt)  # save epoch, i.e. 'epoch3.pt'
         return True
 
     def get_dataset(self):
@@ -1594,22 +827,17 @@ class BaseTrainer:
             (dict): A dictionary containing the training/validation/test dataset and category names.
         """
         try:
+            self.args.data = convert_ndjson_to_yolo_if_needed(self.args.data)
+
+            # Task-specific dataset checking
             if self.args.task == "classify":
                 data = check_cls_dataset(self.args.data)
-            elif str(self.args.data).rsplit(".", 1)[-1] == "ndjson":
-                # Convert NDJSON to YOLO format
-                import asyncio
-
-                from ultralytics.data.converter import convert_ndjson_to_yolo
-
-                yaml_path = asyncio.run(convert_ndjson_to_yolo(self.args.data))
-                self.args.data = str(yaml_path)
-                data = check_det_dataset(self.args.data)
             elif str(self.args.data).rsplit(".", 1)[-1] in {"yaml", "yml"} or self.args.task in {
                 "detect",
                 "segment",
                 "pose",
                 "obb",
+                "semantic",
             }:
                 data = check_det_dataset(self.args.data)
                 if "yaml_file" in data:
@@ -1626,7 +854,7 @@ class BaseTrainer:
         """Load, create, or download model for any task.
 
         Returns:
-            (dict): Optional checkpoint to resume training from.
+            (dict | None): Checkpoint to resume training from, or None if no checkpoint is loaded.
         """
         if isinstance(self.model, torch.nn.Module):  # if model is loaded beforehand. No setup needed
             return
@@ -1636,551 +864,167 @@ class BaseTrainer:
         if str(self.model).endswith(".pt"):
             weights, ckpt = load_checkpoint(self.model)
             cfg = weights.yaml
-        elif isinstance(self.args.pretrained, (str, Path)):
+        if isinstance(self.args.pretrained, (str, Path)):
             weights, _ = load_checkpoint(self.args.pretrained)
-        self.model = self.get_model(cfg=cfg, weights=weights, verbose=RANK == -1)  # calls Model(cfg, weights)
+        elif self.args.pretrained is False and not self.resume:
+            weights = None
+
+        # rebuild DistillationModel from resuming checkpoint
+        if isinstance(weights, DistillationModel):
+            if RANK in {-1, 0}:
+                LOGGER.info("Resuming training DistillationModel from checkpoint weights")
+            student_model = self.get_model(cfg=cfg, weights=weights.student_model, verbose=RANK in {-1, 0})
+            student_model.args = self.args
+            # teacher is stripped from the checkpoint to save memory/disk; rebuild it from the distill_model path
+            teacher_model = weights.teacher_model if weights.teacher_model is not None else self.args.distill_model
+            model = DistillationModel(student_model=student_model, teacher_model=teacher_model)
+            if getattr(weights, "projector", None) is not None:
+                model.projector.load_state_dict(weights.projector.state_dict())  # restore the trained projector
+            model.criterion = None
+            self.model = model
+        else:
+            self.model = self.get_model(cfg=cfg, weights=weights, verbose=RANK in {-1, 0})  # calls Model(cfg, weights)
         return ckpt
 
-    def _record_nonfinite_diagnostic(self, component, *, epoch, step, loss_items=None, parameter=None):
-        """Keep the first local non-finite event without introducing DDP collectives."""
-        if getattr(self, "_nonfinite_diagnostic", None) is not None:
-            return
-        stats = None
-        if isinstance(loss_items, torch.Tensor):
-            values = loss_items.detach().float().reshape(-1)
-            stats = [float(value) for value in values[:16].cpu()]
-        model = unwrap_model(self.model)
-        aux = getattr(model, "_mixture_aux_nonfinite", {})
-        self._nonfinite_diagnostic = {
-            "component": component,
-            "rank": RANK,
-            "epoch": int(epoch),
-            "step": int(step),
-            "loss_items": stats,
-            "aux_nonfinite": dict(aux),
-            "parameter": parameter,
-            "scaler_scale": float(self.scaler.get_scale()),
-        }
-        LOGGER.warning(f"[NaN diagnostic] {self._nonfinite_diagnostic}")
-
-    def _sync_nonfinite_flag(self, local_nonfinite):
-        """Return a DDP-wide nonfinite decision so every rank follows the same control flow."""
-        if RANK == -1 or not dist.is_initialized():
-            return bool(local_nonfinite)
-        device = self.device if dist.get_backend() == "nccl" else torch.device("cpu")
-        flag = torch.tensor(int(local_nonfinite), dtype=torch.int32, device=device)
-        dist.all_reduce(flag, op=dist.ReduceOp.MAX)
-        return bool(flag.item())
-
     def optimizer_step(self):
-        """Perform one optimizer step and return whether it committed finite gradients."""
+        """Perform a single step of the training optimizer with gradient clipping and EMA update."""
         self.scaler.unscale_(self.optimizer)  # unscale gradients
-        bad_parameter = next(
-            (name for name, p in self.model.named_parameters()
-             if p.grad is not None and not bool(torch.isfinite(p.grad).all().item())),
-            None,
+        local_nonfinite = any(
+            parameter.grad is not None and not bool(torch.isfinite(parameter.grad).all().item())
+            for parameter in self.model.parameters()
         )
-        local_gradient_nonfinite = bad_parameter is not None
-        if local_gradient_nonfinite:
-            self._record_nonfinite_diagnostic(
-                "gradient", epoch=getattr(self, "epoch", -1), step=getattr(self, "ni", -1), parameter=bad_parameter
-            )
-        global_gradient_nonfinite = self._sync_nonfinite_flag(local_gradient_nonfinite)
-        self._gradient_nonfinite = getattr(self, "_gradient_nonfinite", False) or global_gradient_nonfinite
-        if global_gradient_nonfinite:
-            # No rank may update once any peer reports bad gradients. Updating
-            # only the finite ranks would immediately diverge model and optimizer state.
-            if self.scaler.is_enabled():
-                self.scaler.update()
+        if self._sync_nonfinite_flag(local_nonfinite):
+            self._gradient_nonfinite = True
             self.optimizer.zero_grad()
+            self.scaler.update()
             return False
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=10.0)
         self.scaler.step(self.optimizer)
         self.scaler.update()
+        controller = getattr(self, "adapter_controller", None)
+        if controller is not None:
+            controller.after_optimizer_step()
         self.optimizer.zero_grad()
         if self.ema:
-            #region debug-point skip-ema-nonfinite
-            base_model = unwrap_model(self.model)
-            if self._state_is_finite(base_model):
-                self.ema.update(self.model)
-            elif not getattr(self, "_warned_skip_ema_nonfinite", False):
-                LOGGER.warning("[debug-point skip-ema-nonfinite] Skipping EMA update because model state is nonfinite.")
-                self._warned_skip_ema_nonfinite = True
-            #endregion debug-point skip-ema-nonfinite
-
-        # v3: Update EMA teacher for progressive self-distillation
-        if getattr(self.args, 'lora_few_shot_mode', False) and hasattr(self, 'teacher_ema') and self.teacher_ema is not None:
-            ema_decay = getattr(self, 'teacher_ema_decay', 0.999)
-            with torch.no_grad():
-                for ema_p, stu_p in zip(self.teacher_ema.parameters(), self.model.parameters()):
-                    if ema_p.shape == stu_p.shape:
-                        ema_p.data.mul_(ema_decay).add_(stu_p.data, alpha=1.0 - ema_decay)
+            self.ema.update(self.model)
         return True
 
     def preprocess_batch(self, batch):
-        """Allow custom preprocessing model inputs and ground truths depending on task type."""
+        """Allow custom preprocessing of model inputs and ground truths depending on task type."""
         return batch
 
-    def _compute_distillation_loss(self, student_preds, teacher_preds, adaptive_temp=False):
-        """Compute knowledge distillation loss between student and teacher predictions.
-        
-        Args:
-            student_preds: Student model predictions
-            teacher_preds: Teacher model predictions
-            adaptive_temp: Whether to use task-adaptive temperature
-        """
-        # Handle list/tuple formats (YOLO multi-scale predictions)
-        if isinstance(student_preds, (list, tuple)):
-            student_preds = student_preds[0] if len(student_preds) > 0 else student_preds
-        if isinstance(teacher_preds, (list, tuple)):
-            teacher_preds = teacher_preds[0] if len(teacher_preds) > 0 else teacher_preds
-        
-        # Ensure we have tensors
-        if not isinstance(student_preds, torch.Tensor) or not isinstance(teacher_preds, torch.Tensor):
-            return torch.tensor(0.0, device=next(self.model.parameters()).device)
-        
-        # Adaptive temperature: based on teacher prediction entropy
-        if adaptive_temp:
-            with torch.no_grad():
-                teacher_entropy = self._compute_prediction_entropy(teacher_preds)
-                # High entropy (uncertain) -> high temperature; Low entropy (certain) -> low temperature
-                temperature = torch.clamp(2.0 + teacher_entropy * 4.0, 1.0, 8.0)
-        else:
-            temperature = 4.0
-        
-        # Handle different spatial dimensions / formats
-        # YOLO predictions can be [B, C, H, W] or [B, N, C] (flattened)
-        if student_preds.dim() == 3 and teacher_preds.dim() == 3:
-            # Both are [B, N, C] format — match sequence length
-            if student_preds.shape[1] != teacher_preds.shape[1]:
-                min_len = min(student_preds.shape[1], teacher_preds.shape[1])
-                student_preds = student_preds[:, :min_len, :]
-                teacher_preds = teacher_preds[:, :min_len, :]
-            # MSE on flattened predictions
-            return torch.nn.functional.mse_loss(student_preds, teacher_preds)
-        
-        if student_preds.dim() == 4 and teacher_preds.dim() == 4:
-            # Both are [B, C, H, W] format
-            if student_preds.shape != teacher_preds.shape:
-                teacher_preds = torch.nn.functional.interpolate(
-                    teacher_preds, size=student_preds.shape[2:], mode='bilinear', align_corners=False
-                )
-            # Temperature-scaled KL divergence on spatial features
-            if adaptive_temp and isinstance(temperature, torch.Tensor):
-                # Use average temperature for batch
-                t = temperature.mean().item()
-            else:
-                t = temperature
-            student_soft = torch.nn.functional.log_softmax(student_preds / t, dim=1)
-            teacher_soft = torch.nn.functional.softmax(teacher_preds / t, dim=1)
-            return torch.nn.functional.kl_div(
-                student_soft, teacher_soft, reduction='batchmean', log_target=False
-            ) * (t ** 2)
-        
-        # Fallback: MSE on whatever we can match
-        if student_preds.shape != teacher_preds.shape:
-            min_len = min(student_preds.numel(), teacher_preds.numel())
-            return torch.nn.functional.mse_loss(
-                student_preds.flatten()[:min_len], teacher_preds.flatten()[:min_len]
-            )
-        return torch.nn.functional.mse_loss(student_preds, teacher_preds)
-
-    def _compute_response_distillation_loss(self, student_preds, teacher_preds):
-        """v3: Compute response distillation loss on detection head outputs.
-        
-        For YOLO detection models, predictions are typically tuples/lists containing
-        cls_logits and bbox predictions. This loss aligns the final detection outputs
-        between student and teacher, providing task-specific distillation.
-        
-        Args:
-            student_preds: Student model predictions (can be list/tuple of tensors)
-            teacher_preds: Teacher model predictions (can be list/tuple of tensors)
-            
-        Returns:
-            torch.Tensor: Response distillation loss
-        """
-        device = next(self.model.parameters()).device
-        
-        # Handle various prediction formats
-        if isinstance(student_preds, (list, tuple)):
-            # YOLO typically returns [pred_train, pred_val] or list of scale outputs
-            student_preds = [p for p in student_preds if isinstance(p, torch.Tensor)]
-        else:
-            student_preds = [student_preds] if isinstance(student_preds, torch.Tensor) else []
-        
-        if isinstance(teacher_preds, (list, tuple)):
-            teacher_preds = [p for p in teacher_preds if isinstance(p, torch.Tensor)]
-        else:
-            teacher_preds = [teacher_preds] if isinstance(teacher_preds, torch.Tensor) else []
-        
-        if not student_preds or not teacher_preds:
-            return torch.tensor(0.0, device=device)
-        
-        total_loss = 0.0
-        valid_pairs = 0
-        
-        # Pair up predictions by matching shapes
-        for s_pred in student_preds:
-            for t_pred in teacher_preds:
-                if s_pred.shape != t_pred.shape:
-                    continue
-                
-                # Detect format: [B, N, C] flattened predictions vs [B, C, H, W] feature maps
-                if s_pred.dim() == 3 and t_pred.dim() == 3:
-                    # Flattened predictions: split into cls (last 80 dims) and bbox (first 4 dims)
-                    # YOLO format: [x, y, w, h, obj, cls0, cls1, ...]
-                    if s_pred.shape[-1] >= 84:  # 4 bbox + 1 obj + 80 classes (COCO)
-                        # Bbox regression: first 4 channels
-                        s_bbox = s_pred[..., :4]
-                        t_bbox = t_pred[..., :4]
-                        bbox_loss = torch.nn.functional.l1_loss(s_bbox, t_bbox)
-                        
-                        # Classification: remaining channels (skip obj for simplicity)
-                        s_cls = s_pred[..., 5:]
-                        t_cls = t_pred[..., 5:]
-                        if s_cls.numel() > 0 and t_cls.numel() > 0:
-                            # Temperature-scaled KL for classification
-                            T = 4.0
-                            s_soft = torch.nn.functional.log_softmax(s_cls / T, dim=-1)
-                            t_soft = torch.nn.functional.softmax(t_cls / T, dim=-1)
-                            cls_loss = torch.nn.functional.kl_div(
-                                s_soft, t_soft, reduction='batchmean', log_target=False
-                            ) * (T ** 2)
-                        else:
-                            cls_loss = torch.tensor(0.0, device=device)
-                        
-                        total_loss += (bbox_loss + cls_loss)
-                        valid_pairs += 1
-                    else:
-                        # Generic 3D: MSE
-                        total_loss += torch.nn.functional.mse_loss(s_pred, t_pred)
-                        valid_pairs += 1
-                
-                elif s_pred.dim() == 4 and t_pred.dim() == 4:
-                    # Feature map format: spatial distillation
-                    total_loss += torch.nn.functional.mse_loss(s_pred, t_pred)
-                    valid_pairs += 1
-        
-        if valid_pairs > 0:
-            return total_loss / valid_pairs
-        return torch.tensor(0.0, device=device)
-
-    def _compute_prediction_entropy(self, preds):
-        """Compute normalized prediction entropy for adaptive temperature."""
-        if isinstance(preds, (list, tuple)):
-            preds = preds[0] if len(preds) > 0 else preds
-        if not isinstance(preds, torch.Tensor):
-            return torch.tensor(1.0)
-        if preds.dim() == 4:
-            # [B, C, H, W] -> compute entropy over channels
-            probs = torch.nn.functional.softmax(preds, dim=1)
-            entropy = -(probs * torch.log(probs + 1e-8)).sum(dim=1).mean(dim=(1, 2))
-            # Normalize to [0, 1]
-            max_entropy = math.log(probs.shape[1])
-            return (entropy / max_entropy).mean()
-        return torch.tensor(1.0)
-
-    def _init_hierarchical_distill_cache(self):
-        """v3: Initialize persistent hook cache for hierarchical distillation.
-        
-        Registers forward hooks once at training start and reuses them across batches,
-        eliminating per-batch hook registration/removal overhead.
-        
-        Uses a module-level hook function (not a nested closure) to allow pickling
-        during model checkpoint saving.
-        """
-        from ultralytics.utils.torch_utils import unwrap_model
-        distill_layers = getattr(self.args, 'lora_few_shot_distill_layers', None)
-        if not distill_layers:
-            self._hierarchical_cache = None
-            return
-        
-        student_model = unwrap_model(self.model)
-        teacher_model = getattr(self, 'teacher_model', None)
-        
-        # Use shared dicts attached to the trainer (not nested closures) to keep hooks picklable
-        self._hierarchical_cache = {
-            'student_features': {},
-            'teacher_features': {},
-            'student_hooks': [],
-            'teacher_hooks': [],
-            'layer_indices': list(distill_layers),
-        }
-        
-        # Register hooks using module-level function + functools.partial (picklable)
-        from functools import partial
-        for idx in distill_layers:
-            if idx < len(student_model.model):
-                hook_fn = partial(_hierarchical_hook, self._hierarchical_cache['student_features'], idx)
-                h = student_model.model[idx].register_forward_hook(hook_fn)
-                self._hierarchical_cache['student_hooks'].append(h)
-            if teacher_model is not None and idx < len(teacher_model.model):
-                hook_fn = partial(_hierarchical_hook, self._hierarchical_cache['teacher_features'], idx)
-                h = teacher_model.model[idx].register_forward_hook(hook_fn)
-                self._hierarchical_cache['teacher_hooks'].append(h)
-        
-        LOGGER.info(f"[LoRA] 📌 Hierarchical distillation hook cache initialized "
-                    f"({len(self._hierarchical_cache['student_hooks'])} student + "
-                    f"{len(self._hierarchical_cache['teacher_hooks'])} teacher hooks)")
-
-    def _compute_hierarchical_distillation_loss(self, images, layer_indices):
-        """v3: Compute hierarchical distillation loss using cached hooks.
-        
-        Uses pre-registered hooks from _init_hierarchical_distill_cache,
-        avoiding per-batch hook registration overhead.
-        """
-        if not layer_indices:
-            return torch.tensor(0.0, device=images.device)
-        
-        # v3: Use cached hooks if available
-        if getattr(self, '_hierarchical_cache', None) is not None:
-            from ultralytics.utils.torch_utils import unwrap_model
-            cache = self._hierarchical_cache
-            # Clear previous features
-            cache['student_features'].clear()
-            cache['teacher_features'].clear()
-            
-            student_model = unwrap_model(self.model)
-            teacher_model = self.teacher_model
-            
-            # Forward pass to populate cached features
-            with torch.no_grad():
-                _ = student_model(images)
-                if teacher_model is not None:
-                    _ = teacher_model(images)
-            
-            total_loss = 0.0
-            valid_layers = 0
-            for idx in layer_indices:
-                s_feat = cache['student_features'].get(idx)
-                t_feat = cache['teacher_features'].get(idx)
-                if s_feat is None or t_feat is None:
-                    continue
-                
-                if s_feat.shape != t_feat.shape:
-                    if s_feat.dim() == 4 and t_feat.dim() == 4:
-                        t_feat = torch.nn.functional.interpolate(
-                            t_feat, size=s_feat.shape[2:], mode='bilinear', align_corners=False
-                        )
-                    else:
-                        continue
-                
-                s_attention = torch.abs(s_feat).sum(dim=1, keepdim=True)
-                t_attention = torch.abs(t_feat).sum(dim=1, keepdim=True)
-                s_attention = s_attention / (s_attention.norm(2, dim=(2,3), keepdim=True) + 1e-8)
-                t_attention = t_attention / (t_attention.norm(2, dim=(2,3), keepdim=True) + 1e-8)
-                total_loss += torch.nn.functional.mse_loss(s_attention, t_attention)
-                valid_layers += 1
-            
-            if valid_layers > 0:
-                return total_loss / valid_layers
-            return torch.tensor(0.0, device=images.device)
-        
-        # Fallback to original implementation if cache not available
-        student_features = {}
-        teacher_features = {}
-        
-        def make_hook(storage, key):
-            def hook(module, input, output):
-                storage[key] = output.detach() if not torch.is_grad_enabled() else output
-            return hook
-        
-        student_model = unwrap_model(self.model)
-        teacher_model = self.teacher_model
-        
-        hooks = []
-        try:
-            for idx in layer_indices:
-                if idx < len(student_model.model):
-                    hooks.append(student_model.model[idx].register_forward_hook(
-                        make_hook(student_features, idx)
-                    ))
-                if teacher_model is not None and idx < len(teacher_model.model):
-                    hooks.append(teacher_model.model[idx].register_forward_hook(
-                        make_hook(teacher_features, idx)
-                    ))
-            
-            with torch.no_grad():
-                _ = student_model(images)
-                if teacher_model is not None:
-                    _ = teacher_model(images)
-            
-            total_loss = 0.0
-            valid_layers = 0
-            for idx in layer_indices:
-                if idx in student_features and idx in teacher_features:
-                    s_feat = student_features[idx]
-                    t_feat = teacher_features[idx]
-                    if s_feat.shape != t_feat.shape:
-                        if s_feat.dim() == 4 and t_feat.dim() == 4:
-                            t_feat = torch.nn.functional.interpolate(
-                                t_feat, size=s_feat.shape[2:], mode='bilinear', align_corners=False
-                            )
-                        else:
-                            continue
-                    s_attention = torch.abs(s_feat).sum(dim=1, keepdim=True)
-                    t_attention = torch.abs(t_feat).sum(dim=1, keepdim=True)
-                    s_attention = s_attention / (s_attention.norm(2, dim=(2,3), keepdim=True) + 1e-8)
-                    t_attention = t_attention / (t_attention.norm(2, dim=(2,3), keepdim=True) + 1e-8)
-                    total_loss += torch.nn.functional.mse_loss(s_attention, t_attention)
-                    valid_layers += 1
-            
-            if valid_layers > 0:
-                return total_loss / valid_layers
-            return torch.tensor(0.0, device=images.device)
-        finally:
-            for hook in hooks:
-                hook.remove()
-        """Compute hierarchical distillation loss at intermediate layers.
-        
-        Extracts features at specified layer indices from both student and teacher
-        and computes attention transfer loss.
-        
-        Args:
-            images: Input batch images
-            layer_indices: List of layer indices to extract features from
-        
-        Returns:
-            torch.Tensor: Hierarchical distillation loss
-        """
-        if not layer_indices:
-            return torch.tensor(0.0, device=images.device)
-        
-        # Register forward hooks to extract intermediate features
-        student_features = {}
-        teacher_features = {}
-        
-        def make_hook(storage, key):
-            def hook(module, input, output):
-                storage[key] = output.detach() if not torch.is_grad_enabled() else output
-            return hook
-        
-        # Get student model (unwrap DDP if needed)
-        student_model = unwrap_model(self.model)
-        teacher_model = self.teacher_model
-        
-        hooks = []
-        try:
-            # Register hooks on student layers
-            for idx in layer_indices:
-                if idx < len(student_model.model):
-                    hooks.append(student_model.model[idx].register_forward_hook(
-                        make_hook(student_features, idx)
-                    ))
-                if idx < len(teacher_model.model):
-                    hooks.append(teacher_model.model[idx].register_forward_hook(
-                        make_hook(teacher_features, idx)
-                    ))
-            
-            # Forward pass to extract features
-            with torch.no_grad():
-                _ = student_model(images)
-                _ = teacher_model(images)
-            
-            # Compute attention transfer loss for each layer pair
-            total_loss = 0.0
-            valid_layers = 0
-            for idx in layer_indices:
-                if idx in student_features and idx in teacher_features:
-                    s_feat = student_features[idx]
-                    t_feat = teacher_features[idx]
-                    
-                    # Ensure same shape
-                    if s_feat.shape != t_feat.shape:
-                        if s_feat.dim() == 4 and t_feat.dim() == 4:
-                            t_feat = torch.nn.functional.interpolate(
-                                t_feat, size=s_feat.shape[2:], mode='bilinear', align_corners=False
-                            )
-                        else:
-                            continue
-                    
-                    # Attention transfer: convert features to attention maps
-                    # Sum over channels, normalize
-                    s_attention = torch.abs(s_feat).sum(dim=1, keepdim=True)
-                    t_attention = torch.abs(t_feat).sum(dim=1, keepdim=True)
-                    
-                    # Normalize
-                    s_attention = s_attention / (s_attention.norm(2, dim=(2,3), keepdim=True) + 1e-8)
-                    t_attention = t_attention / (t_attention.norm(2, dim=(2,3), keepdim=True) + 1e-8)
-                    
-                    # MSE loss on attention maps
-                    layer_loss = torch.nn.functional.mse_loss(s_attention, t_attention)
-                    total_loss += layer_loss
-                    valid_layers += 1
-            
-            if valid_layers > 0:
-                return total_loss / valid_layers
-            return torch.tensor(0.0, device=images.device)
-        finally:
-            # Clean up hooks
-            for hook in hooks:
-                hook.remove()
-
-    def _sync_ema_buffers_for_validation(self):
-        """Sync validation state without sending CPU diagnostics to NCCL."""
-        if not self.ema or self.world_size <= 1 or not dist.is_initialized():
-            return
-        backend, skipped = dist.get_backend(), []
-        for module_name, module in self.ema.ema.named_modules():
-            for name, buffer in module.named_buffers(recurse=False):
-                full_name = f"{module_name}.{name}" if module_name else name
-                persistent = name not in module._non_persistent_buffers_set
-                if backend == "nccl" and buffer.device.type != "cuda":
-                    if persistent:
-                        # Move persistent diagnostic buffers (e.g. _mixture_loss_ema_buf)
-                        # to the EMA model's CUDA device so NCCL broadcast can proceed.
-                        # Directly replace the registered buffer to ensure the module
-                        # sees the new device placement.
-                        try:
-                            cuda_buf = buffer.to(self.device, non_blocking=True).detach()
-                            module._buffers[name] = cuda_buf
-                            buffer = cuda_buf  # update local reference for broadcast
-                        except RuntimeError:
-                            skipped.append(full_name)
-                            continue
-                    else:
-                        skipped.append(full_name)
-                        continue
-                dist.broadcast(buffer, src=0)
-        if skipped and not getattr(self, "_warned_ema_cpu_diagnostics", False):
-            LOGGER.warning(f"Skipping {len(skipped)} non-persistent CPU EMA diagnostic buffer(s) for NCCL validation.")
-            self._warned_ema_cpu_diagnostics = True
-
     def validate(self):
-        """Run validation on val set using self.validator."""
-        # Sync CUDA across all ranks before any DDP collective in validation.
-        # This flushes any corrupted/incomplete operations and catches dead ranks
-        # early (via RuntimeError) rather than letting them cause a 600s NCCL timeout.
-        if RANK != -1 and torch.cuda.is_available() and dist.is_initialized():
-            try:
-                torch.cuda.synchronize(RANK)
-                dist.barrier()
-            except RuntimeError as e:
-                LOGGER.warning(f"CUDA/distribution sync before validation failed: {e}")
-                return None, None  # skip validation — rank is likely dead
+        """Run validation on val set using self.validator.
 
+        Returns:
+            (tuple): A tuple containing:
+                - metrics (dict | None): Dictionary of validation metrics, or None if validation was skipped.
+                - fitness (float | None): Fitness score for the validation, or None if validation was skipped.
+        """
         self._sync_ema_buffers_for_validation()
         ema_model = getattr(getattr(self, "ema", None), "ema", None)
         if ema_model is not None and not self._state_is_finite(unwrap_model(ema_model)):
-            LOGGER.warning("Skipping validation because EMA state is non-finite.")
             self._ema_nonfinite = True
             return {}, float("nan")
         self._ema_nonfinite = False
         try:
             metrics = self.validator(self)
-        except Exception as e:
+        except Exception as exc:
             from ultralytics.utils.errors import MoERouterError
 
-            if isinstance(e, MoERouterError):
-                LOGGER.warning(f"Validation failed with nonfinite router input: {e}")
+            if isinstance(exc, MoERouterError):
                 return {}, float("nan")
             raise
         if metrics is None:
             return None, None
         fitness = metrics.pop("fitness", -self.loss.detach().cpu().numpy())  # use loss as fitness measure if not found
-        if not self.best_fitness or self.best_fitness < fitness:
+        if self.best_fitness is None or self.best_fitness < fitness:
             self.best_fitness = fitness
         return metrics, fitness
+
+    def _recovery_controller(self):
+        """Return the recovery controller, including compatibility for lightweight test trainers."""
+        controller = getattr(self, "recovery_controller", None)
+        if controller is None:
+            controller = self.recovery_controller = TrainingRecoveryController(self)
+        return controller
+
+    @staticmethod
+    def _state_is_finite(value):
+        return TrainingRecoveryController.state_is_finite(value)
+
+    def _sync_nonfinite_flag(self, local_nonfinite):
+        return self._recovery_controller().sync_nonfinite_flag(local_nonfinite)
+
+    def _sync_ema_buffers_for_validation(self):
+        return self._recovery_controller().sync_ema_buffers()
+
+    def _serialize_checkpoint(self):
+        return self._recovery_controller().serialize_checkpoint()
+
+    def _checkpoint_forward_smoke(self, checkpoint):
+        return self._recovery_controller().checkpoint_forward_smoke(checkpoint)
+
+    def _validate_checkpoint_artifact(self, path):
+        return self._recovery_controller().validate_artifact(path)
+
+    def _select_final_eval_checkpoints(self):
+        return self._recovery_controller().select_final_eval_checkpoints()
+
+    def _reset_non_checkpoint_moe_runtime_state(self):
+        return self._recovery_controller().reset_runtime(getattr(self, "model", None))
+
+    def _save_healthy_checkpoint(self, serialized_ckpt):
+        if not self._check_mox_aux_finite(getattr(self, "model", None)):
+            return False
+        return self._recovery_controller().save_healthy(serialized_ckpt)
+
+    def _bootstrap_healthy_checkpoint(self):
+        return self._recovery_controller().bootstrap()
+
+    @staticmethod
+    def _check_mox_aux_finite(model=None):
+        """Compatibility check for legacy routed auxiliary registries."""
+        return TrainingRecoveryController.aux_state_is_finite()
+
+    def _collect_prevalidation_nonfinite_flags(self):
+        """Collect model and EMA non-finite flags across initialized ranks."""
+        model_nonfinite = getattr(self, "model", None) is not None and not self._state_is_finite(
+            unwrap_model(self.model)
+        )
+        ema = getattr(getattr(self, "ema", None), "ema", None)
+        ema_nonfinite = ema is not None and not self._state_is_finite(unwrap_model(ema))
+        return {
+            "model_nonfinite": self._sync_nonfinite_flag(model_nonfinite),
+            "ema_nonfinite": self._sync_nonfinite_flag(ema_nonfinite),
+        }
+
+    def _recover_before_validation(self, epoch):
+        """Recover before validation if the online or EMA model is already non-finite."""
+        flags = self._collect_prevalidation_nonfinite_flags()
+        if flags["ema_nonfinite"]:
+            self._recovery_controller().resync_nonfinite_ema()
+            flags = self._collect_prevalidation_nonfinite_flags()
+        if not any(flags.values()):
+            return False
+        self.fitness = float("nan")
+        recovered = self._handle_nan_recovery(epoch)
+        if recovered:
+            # The live graph is finite again. Validate and checkpoint the restored state
+            # instead of replaying an epoch that may repeat a deterministic callback fault.
+            return False
+        return any(self._collect_prevalidation_nonfinite_flags().values())
+
+    def _record_nonfinite_diagnostic(self, component, *, epoch, step, loss_items=None, parameter=None):
+        """Record the first local non-finite event for recovery diagnostics."""
+        if getattr(self, "_nonfinite_diagnostic", None) is None:
+            self._nonfinite_diagnostic = {
+                "component": component,
+                "epoch": epoch,
+                "step": step,
+                "loss_items": None if loss_items is None else str(loss_items),
+                "parameter": parameter,
+            }
 
     def get_model(self, cfg=None, weights=None, verbose=True):
         """Get model and raise NotImplementedError for loading cfg files."""
@@ -2199,16 +1043,20 @@ class BaseTrainer:
         raise NotImplementedError("build_dataset function not implemented in trainer")
 
     def label_loss_items(self, loss_items=None, prefix="train"):
-        """Return a loss dict with labeled training loss items tensor.
+        """Return a loss dict with labeled training loss items, or a list of loss names if loss_items is None.
 
         Notes:
-            This is not needed for classification but necessary for segmentation & detection
+            This is not needed for classification but necessary for segmentation & detection.
         """
         return {"loss": loss_items} if loss_items is not None else ["loss"]
 
     def set_model_attributes(self):
         """Set or update model parameters before training."""
         self.model.names = self.data["names"]
+
+    def set_class_weights(self):
+        """Compute and set class weights for handling class imbalance. Override in subclasses."""
+        pass
 
     def build_targets(self, preds, targets):
         """Build target tensors for training YOLO model."""
@@ -2247,7 +1095,7 @@ class BaseTrainer:
         self.plots[path] = {"data": data, "timestamp": time.time()}
 
     def final_eval(self):
-        """Perform final evaluation and validation for object detection YOLO model."""
+        """Perform final evaluation and validation for the YOLO model."""
         with torch_distributed_zero_first(LOCAL_RANK):  # strip only on GPU 0; other GPUs should wait
             if RANK in {-1, 0}:
                 ckpt = strip_optimizer(self.last) if self.last.exists() else {}
@@ -2256,15 +1104,17 @@ class BaseTrainer:
                     strip_optimizer(self.best, updates={"train_results": ckpt.get("train_results")})
         candidates, rejected = self._select_final_eval_checkpoints()
         if not candidates:
-            detail = "; ".join(rejected) or "no checkpoint files exist"
-            raise RuntimeError(f"No healthy checkpoint is available for final evaluation: {detail}")
-
+            raise RuntimeError(
+                "No healthy checkpoint is available for final evaluation: " + ("; ".join(rejected) or "none exist")
+            )
         self.validator.args.plots = self.args.plots
-        self.validator.args.compile = False  # disable final val compile as too slow
+        self.validator.args.compile = False
+        self.validator.args.half = False
         router_failures = []
         from ultralytics.utils.errors import MoERouterError
 
         for model in candidates:
+            self._reset_non_checkpoint_moe_runtime_state()
             LOGGER.info(f"\nValidating {model}...")
             try:
                 self.metrics = self.validator(model=model)
@@ -2273,9 +1123,9 @@ class BaseTrainer:
                 return
             except MoERouterError as exc:
                 router_failures.append(f"{model.name}: {exc}")
-                LOGGER.warning(f"Final validation rejected {model.name}; trying recovery checkpoint: {exc}")
-        detail = "; ".join((*rejected, *router_failures))
-        raise RuntimeError(f"No healthy checkpoint is available for final evaluation: {detail}")
+        raise RuntimeError(
+            "No healthy checkpoint is available for final evaluation: " + "; ".join((*rejected, *router_failures))
+        )
 
     def check_resume(self, overrides):
         """Check if resume checkpoint exists and update arguments accordingly."""
@@ -2284,8 +1134,6 @@ class BaseTrainer:
             try:
                 exists = isinstance(resume, (str, Path)) and Path(resume).exists()
                 last = Path(check_file(resume) if exists else get_latest_run())
-
-                # Check that resume data YAML exists, otherwise strip to force re-download of dataset
                 ckpt_args = load_checkpoint(last)[0].args
                 if not isinstance(ckpt_args["data"], dict) and not Path(ckpt_args["data"]).exists():
                     ckpt_args["data"] = self.args.data
@@ -2297,7 +1145,6 @@ class BaseTrainer:
                     "imgsz",
                     "batch",
                     "device",
-                    "epochs",
                     "close_mosaic",
                     "augmentations",
                     "save_period",
@@ -2308,6 +1155,8 @@ class BaseTrainer:
                     "freeze",
                     "val",
                     "plots",
+                    "distill_model",
+                    "save_dir",
                 ):  # allow arg updates to reduce memory or update device on resume
                     if k in overrides:
                         setattr(self.args, k, overrides[k])
@@ -2329,169 +1178,58 @@ class BaseTrainer:
                 ) from e
         self.resume = resume
 
-    def _restore_lora_resume_model(self, ckpt):
-        """Restore LoRA-aware model weights from a resume checkpoint before optimizer state loading.
-
-        CRITICAL: Only adapter parameters are restored from the EMA checkpoint.
-        Base model weights are NEVER touched because EMA averages may contain
-        stale or corrupted base weights from earlier failed runs.  The pre-trained
-        backbone must remain pristine.
-        """
-        if not ckpt or not ckpt.get("ema"):
-            return
-        target = unwrap_model(self.model)
-        if not getattr(target, "lora_enabled", False):
-            return
-        source_state = ckpt["ema"].float().state_dict()
-        load_lora_compatible_state_dict(
-            target, source_state, context="resume checkpoint EMA", adapter_only=True
-        )
-
     def _load_checkpoint_state(self, ckpt):
         """Load optimizer, scaler, EMA, and best_fitness from checkpoint."""
         if ckpt.get("optimizer") is not None:
             try:
                 self.optimizer.load_state_dict(ckpt["optimizer"])
-            except (KeyError, RuntimeError, ValueError) as e:
-                if getattr(unwrap_model(self.model), "lora_enabled", False):
-                    LOGGER.warning(
-                        "[LoRA] Optimizer state is incompatible with the current adapter layout; "
-                        f"starting with a freshly initialized optimizer. Original error: {e}"
-                    )
-                else:
+            except (KeyError, RuntimeError, ValueError):
+                if not getattr(unwrap_model(self.model), "lora_enabled", False):
                     raise
+                LOGGER.warning("[LoRA] Resume optimizer state is incompatible; using the initialized optimizer.")
         if ckpt.get("scaler") is not None:
             self.scaler.load_state_dict(ckpt["scaler"])
         if self.ema and ckpt.get("ema"):
+            from ultralytics.nn.mixture_loss import _get_mixture_loss_ema
+
             _get_mixture_loss_ema(unwrap_model(self.model))
             self.ema = ModelEMA(self.model)  # validation with EMA creates inference tensors that can't be updated
-            ema_state = ckpt["ema"].float().state_dict()
             ema_target = unwrap_model(self.ema.ema)
-            _get_mixture_loss_ema(ema_target)
+            ema_state = ckpt["ema"].float().state_dict()
             if getattr(ema_target, "lora_enabled", False):
-                # Only restore adapter weights into EMA; base weights are copied
-                # from the freshly loaded pre-trained model above.
+                from ultralytics.utils.lora import load_lora_compatible_state_dict
+
                 load_lora_compatible_state_dict(
-                    ema_target, ema_state, context="resume checkpoint EMA model", adapter_only=True
+                    ema_target, ema_state, context="resume checkpoint EMA", adapter_only=True
                 )
             else:
-                # Checkpoints created before lazy persistent buffers existed remain
-                # valid: retain the freshly initialized defaults for missing buffers.
-                missing, unexpected = self.ema.ema.load_state_dict(ema_state, strict=False)
-                if missing or unexpected:
-                    LOGGER.warning(
-                        "[checkpoint restore] EMA state_dict compatibility: "
-                        f"missing={missing}, unexpected={unexpected}"
-                    )
+                ema_target.load_state_dict(ema_state, strict=False)
             self.ema.updates = ckpt["updates"]
-        self.best_fitness = ckpt.get("best_fitness", 0.0)
+        self.best_fitness = ckpt.get("best_fitness")
+
+    def _restore_lora_resume_model(self, ckpt):
+        """Restore adapter-only online weights before optimizer state is loaded."""
+        if not ckpt or not ckpt.get("ema") or not getattr(unwrap_model(self.model), "lora_enabled", False):
+            return
+        from ultralytics.utils.lora import load_lora_compatible_state_dict
+
+        load_lora_compatible_state_dict(
+            unwrap_model(self.model),
+            ckpt["ema"].float().state_dict(),
+            context="resume checkpoint EMA",
+            adapter_only=True,
+        )
 
     def _handle_nan_recovery(self, epoch):
-        """Recover only from globally confirmed nonfinite training state, never from zero fitness."""
-        loss_nonfinite = bool(getattr(self, "_loss_nonfinite", False)) or (
-            self.loss is not None and not bool(torch.isfinite(self.loss.detach()).all().item())
-        )
-        fitness_nonfinite = self.fitness is not None and not bool(np.isfinite(self.fitness))
-        gradient_nonfinite = bool(getattr(self, "_gradient_nonfinite", False))
-        ema_nonfinite = bool(getattr(self, "_ema_nonfinite", False))
-        local_flags = torch.tensor(
-            [int(loss_nonfinite), int(fitness_nonfinite), int(gradient_nonfinite), int(ema_nonfinite)], dtype=torch.int32,
-            device=self.device if RANK != -1 and dist.get_backend() == "nccl" else torch.device("cpu"),
-        )
-        if RANK != -1:
-            dist.all_reduce(local_flags, op=dist.ReduceOp.MAX)
-        flags = [bool(x) for x in local_flags.cpu().tolist()]
-        if not any(flags):
-            return False
-        reason = ", ".join(
-            name
-            for name, active in zip(("Loss NaN/Inf", "Fitness NaN/Inf", "Gradient NaN/Inf", "EMA NaN/Inf"), flags)
-            if active
-        )
-        diagnostic = getattr(self, "_nonfinite_diagnostic", None)
-        if diagnostic is not None:
-            LOGGER.warning(f"[NaN diagnostic] first local event before recovery: {diagnostic}")
-
-        healthy = getattr(self, "healthy", None)
-        if healthy is None:
-            healthy = getattr(self, "last", None)
-        payload = None
-        if RANK in {-1, 0} and healthy.exists():
-            try:
-                candidate = torch.load(healthy, map_location="cpu", weights_only=False)
-                if self._state_is_finite(candidate):
-                    payload = healthy.read_bytes()
-            except (OSError, RuntimeError, ValueError, EOFError) as exc:
-                LOGGER.warning(f"Recovery checkpoint {healthy} is unreadable: {exc}")
-        if RANK != -1:
-            decision = [payload]
-            dist.broadcast_object_list(decision, src=0)
-            payload = decision[0]
-        if payload is None:
-            raise RuntimeError(f"Global nonfinite training state detected ({reason}) without a healthy recovery checkpoint.")
-
-        self.nan_recovery_attempts += 1
-        if self.nan_recovery_attempts > 3:
-            raise RuntimeError(f"Training failed: NaN persisted for {self.nan_recovery_attempts} epochs")
-        LOGGER.warning(f"{reason} detected (attempt {self.nan_recovery_attempts}/3), recovering from {healthy.name}...")
-        self._model_train()
-        amp_recovery = bool(getattr(self, "amp", False)) and (flags[0] or flags[2])
-        # Preserve reduced scale after gradient overflow. A non-finite loss has
-        # no reliable found_inf record, so back off deterministically as well.
-        recovery_scaler_state = None
-        if (gradient_nonfinite or loss_nonfinite) and not amp_recovery:
-            scaler = getattr(self, "scaler", None)
-            if scaler is not None:
-                if loss_nonfinite and not gradient_nonfinite:
-                    current_scale = scaler.get_scale()
-                    scaler.update(new_scale=max(current_scale * 0.5, 1.0))
-                recovery_scaler_state = deepcopy(scaler.state_dict())
-        ckpt = torch.load(io.BytesIO(payload), map_location="cpu", weights_only=False)
-        model_snapshot = ckpt.get("model")
-        if model_snapshot is None:
-            raise RuntimeError(
-                "Healthy checkpoint lacks online model state; refusing to restore EMA weights with optimizer state."
-            )
-        model_state = model_snapshot.float().state_dict()
-        target = unwrap_model(self.model)
-        _get_mixture_loss_ema(target)
-        if getattr(target, "lora_enabled", False):
-            load_lora_compatible_state_dict(target, model_state, context="NaN recovery checkpoint model", adapter_only=True)
-        else:
-            missing, unexpected = target.load_state_dict(model_state, strict=False)
-            if missing or unexpected:
-                LOGGER.warning(
-                    f"[NaN recovery] model state_dict compatibility: missing={missing}, unexpected={unexpected}"
-                )
-        self._load_checkpoint_state(ckpt)
-        optimizer = getattr(self, "optimizer", None)
-        if optimizer is not None:
-            optimizer.zero_grad()
-        self._reset_non_checkpoint_moe_runtime_state()
-        if amp_recovery:
-            self.amp = False
-            self.scaler = (
-                torch.amp.GradScaler("cuda", enabled=False)
-                if TORCH_2_4
-                else torch.cuda.amp.GradScaler(enabled=False)
-            )
-            LOGGER.warning("[NaN recovery] Disabling AMP globally and retrying from the healthy checkpoint in FP32.")
-        elif recovery_scaler_state is not None:
-            self.scaler.load_state_dict(recovery_scaler_state)
-        self._loss_nonfinite = False
-        self._gradient_nonfinite = False
-        self._ema_nonfinite = False
-        self._nonfinite_diagnostic = None
-        del ckpt, model_state
-        self.scheduler.last_epoch = epoch - 1
-        return True
+        """Recover globally confirmed non-finite state from a healthy online checkpoint."""
+        return self._recovery_controller().recover(epoch)
 
     def resume_training(self, ckpt):
-        """Resume YOLO training from given epoch and best fitness."""
+        """Resume YOLO training from a given checkpoint."""
         if ckpt is None or not self.resume:
             return
         start_epoch = ckpt.get("epoch", -1) + 1
-        assert start_epoch > 0, (
+        assert 0 < start_epoch < self.epochs, (
             f"{self.args.model} training to {self.epochs} epochs is finished, nothing to resume.\n"
             f"Start a new training without resuming, i.e. 'yolo train model={self.args.model}'"
         )
@@ -2503,6 +1241,11 @@ class BaseTrainer:
             self.epochs += ckpt["epoch"]  # finetune additional epochs
         self._restore_lora_resume_model(ckpt)
         self._load_checkpoint_state(ckpt)
+        if getattr(unwrap_model(self.model), "end2end", False):
+            # initialize loss and resume o2o and o2m args
+            unwrap_model(self.model).criterion = unwrap_model(self.model).init_criterion()
+            unwrap_model(self.model).criterion.updates = start_epoch - 1
+            unwrap_model(self.model).criterion.update()
         self.start_epoch = start_epoch
         if start_epoch > (self.epochs - self.args.close_mosaic):
             self._close_dataloader_mosaic()
@@ -2530,12 +1273,12 @@ class BaseTrainer:
         Returns:
             (torch.optim.Optimizer): The constructed optimizer.
         """
-        # LoRA-aware parameter group separation
-        lora_lr_mult = getattr(self.args, "lora_lr_mult", 1.0)
-        has_lora_param = any(_is_adapter_param(n) for n, _ in model.named_parameters())
-        
-        g = [], [], [], [], []  # 5 groups: [base_wt, bn_wt, bias, router, lora]
+        g = [{}, {}, {}, {}, {}, {}]  # decay, normalization, bias, Muon, router, adapter groups
         bn = tuple(v for k, v in nn.__dict__.items() if "Norm" in k)  # normalization layers, i.e. BatchNorm2d()
+        from ultralytics.utils.lora.api import _is_adapter_param
+
+        router_lr_scale = float(getattr(self.args, "moe_router_lr_scale", 0.5) or 0.5)
+        adapter_lr_mult = float(getattr(self.args, "lora_lr_mult", 1.0) or 1.0)
         if name == "auto":
             LOGGER.info(
                 f"{colorstr('optimizer:')} 'optimizer=auto' found, "
@@ -2544,62 +1287,244 @@ class BaseTrainer:
             )
             nc = self.data.get("nc", 10)  # number of classes
             lr_fit = round(0.002 * 5 / (4 + nc), 6)  # lr0 fit equation to 6 decimal places
-            name, lr, momentum = ("SGD", 0.01, 0.9) if iterations > 10000 else ("AdamW", lr_fit, 0.9)
+            name, lr, momentum = ("MuSGD", 0.01, 0.9) if iterations > 10000 else ("AdamW", lr_fit, 0.9)
             self.args.warmup_bias_lr = 0.0  # no higher than 0.01 for Adam
 
-        for module_name, module in model.named_modules():
+        use_muon = name == "MuSGD"
+        for module_name, module in unwrap_model(model).named_modules():
             for param_name, param in module.named_parameters(recurse=False):
                 fullname = f"{module_name}.{param_name}" if module_name else param_name
-                if "routing" in fullname or "router" in fullname:  # MoE Router parameters
-                    g[3].append(param)
-                elif _is_adapter_param(fullname):  # Adapter params (LoRA/LoHa/LoKr/OFT/BOFT/IA3/HRA) -> separate group
-                    g[4].append(param)
+                if _is_adapter_param(fullname):
+                    g[5][fullname] = param
+                elif "routing" in fullname.lower() or "router" in fullname.lower():
+                    g[4][fullname] = param
+                elif param.ndim >= 2 and use_muon:
+                    g[3][fullname] = param  # muon params
                 elif "bias" in fullname:  # bias (no decay)
-                    g[2].append(param)
+                    g[2][fullname] = param
                 elif isinstance(module, bn) or "logit_scale" in fullname:  # weight (no decay)
                     # ContrastiveHead and BNContrastiveHead included here with 'logit_scale'
-                    g[1].append(param)
+                    g[1][fullname] = param
                 else:  # weight (with decay)
-                    g[0].append(param)
+                    g[0][fullname] = param
+        num_params = [len(g[0]), len(g[1]), len(g[2]), len(g[4]), len(g[5])]  # parameters by policy
+        if use_muon:
+            router_index, adapter_index = 4, 5
+        else:
+            g = [g[0].values(), g[1].values(), g[2].values(), g[4].values(), g[5].values()]
+            router_index, adapter_index = 3, 4
 
-        optimizers = {"Adam", "Adamax", "AdamW", "NAdam", "RAdam", "RMSProp", "SGD", "auto"}
-        name = {x.lower(): x for x in optimizers}.get(name.lower())
+        optimizers = {"Adam", "Adamax", "AdamW", "NAdam", "RAdam", "RMSProp", "SGD", "MuSGD", "auto"}
+        name = {x.lower(): x for x in optimizers}.get(str(name).lower(), str(name))
         if name in {"Adam", "Adamax", "AdamW", "NAdam", "RAdam"}:
-            optimizer = getattr(optim, name, optim.Adam)(g[2], lr=lr, betas=(momentum, 0.999), weight_decay=0.0)
+            optim_args = dict(lr=lr, betas=(momentum, 0.999), weight_decay=0.0)
         elif name == "RMSProp":
-            optimizer = optim.RMSprop(g[2], lr=lr, momentum=momentum)
-        elif name == "SGD":
-            optimizer = optim.SGD(g[2], lr=lr, momentum=momentum, nesterov=True)
+            optim_args = dict(lr=lr, momentum=momentum)
+        elif name == "SGD" or name == "MuSGD":
+            optim_args = dict(lr=lr, momentum=momentum, nesterov=True)
         else:
             raise NotImplementedError(
                 f"Optimizer '{name}' not found in list of available optimizers {optimizers}. "
-                "Request support for addition optimizers at https://github.com/ultralytics/ultralytics."
+                "Request support for additional optimizers at https://github.com/ultralytics/ultralytics."
             )
 
-        optimizer.add_param_group({"params": g[0], "weight_decay": decay, "initial_lr": lr})  # add g0 with weight_decay
-        optimizer.add_param_group({"params": g[1], "weight_decay": 0.0, "initial_lr": lr})  # add g1 (BatchNorm2d weights)
-        # MoE Router: 0.5x LR (was 0.1x, too small to correct routing collapse)
-        moe_router_lr_scale = getattr(self.args, 'moe_router_lr_scale', 0.5)
-        router_lr = lr * moe_router_lr_scale
-        optimizer.add_param_group({"params": g[3], "weight_decay": decay, "lr": router_lr, "initial_lr": router_lr})  # add g3 (MoE Router)
-        
-        # Add LoRA parameter group with configurable LR multiplier
-        lora_log = ""
-        if g[4]:
-            lora_lr = lr * lora_lr_mult
-            optimizer.add_param_group({
-                "params": g[4],
-                "weight_decay": 0.0,
-                "lr": lora_lr,
-                "initial_lr": lora_lr,
-            })
-            lora_log = f", {len(g[4])} LoRA(lr={lora_lr:.6f}, mult={lora_lr_mult})"
-        elif has_lora_param and lora_lr_mult != 1.0:
-            lora_log = " [WARN] lora_lr_mult set but no LoRA params found"
-            
+        g[2] = {"params": g[2], **optim_args, "param_group": "bias"}
+        g[0] = {"params": g[0], **optim_args, "weight_decay": decay, "param_group": "weight"}
+        g[1] = {"params": g[1], **optim_args, "weight_decay": 0.0, "param_group": "bn"}
+        g[router_index] = {
+            "params": g[router_index],
+            **optim_args,
+            "lr": lr * router_lr_scale,
+            "weight_decay": decay,
+            "param_group": "router",
+        }
+        g[adapter_index] = {
+            "params": g[adapter_index],
+            **optim_args,
+            "lr": lr * adapter_lr_mult,
+            "weight_decay": 0.0,
+            "param_group": "adapter",
+        }
+        muon, sgd = (0.2, 1.0)
+        if use_muon:
+            num_params[0] = len(g[3])  # update number of params
+            g[3] = {"params": g[3], **optim_args, "weight_decay": decay, "use_muon": True, "param_group": "muon"}
+            import re
+
+            # higher lr for certain parameters in MuSGD when finetuning
+            # proto.semseg is the checkpoint parameter name for YOLO26 semantic auxiliary heads.
+            pattern = re.compile(r"(?=.*23)(?=.*cv3)|proto\.semseg|SemanticSegment")
+            g_ = []  # new param groups
+            for x in g:
+                p = x.pop("params")
+                p1 = [v for k, v in p.items() if pattern.search(k)]
+                p2 = [v for k, v in p.items() if not pattern.search(k)]
+                g_.extend([{"params": p1, **x, "lr": x.get("lr", lr) * 3}, {"params": p2, **x}])
+            g = g_
+        optimizer = getattr(optim, name, partial(MuSGD, muon=muon, sgd=sgd))(params=g)
+
         LOGGER.info(
             f"{colorstr('optimizer:')} {type(optimizer).__name__}(lr={lr}, momentum={momentum}) with parameter groups "
-            f"{len(g[1])} bn(decay=0), {len(g[0])} wt(decay={decay}), {len(g[2])} bias(decay=0), "
-            f"{len(g[3])} router(lr={moe_router_lr_scale:g}x){lora_log}"
+            f"{num_params[1]} weight(decay=0.0), {num_params[0]} weight(decay={decay}), "
+            f"{num_params[2]} bias(decay=0.0), {num_params[3]} router(lr={router_lr_scale:g}x), "
+            f"{num_params[4]} adapter(lr={adapter_lr_mult:g}x)"
         )
         return optimizer
+
+
+class MultiTrainer:
+    """Fine-tune a single base model across a collection of datasets and aggregate per-dataset results.
+
+    Used automatically by Model.train() when `data` is a list or tuple, allowing one base model to be benchmarked across
+    many datasets (such as the RF100 collection) in a single call. The datasets are fine-tuned in series and the same
+    base weights seed each run, so every run starts from an identical model. All output is grouped under one sweep
+    directory (e.g. runs/detect/multitrain): each dataset gets its own run subdirectory, and the per-dataset and mean
+    metrics are written to multitrain_results.json (for post-processing) alongside a multitrain_results.png bar
+    chart. The base model object is left unchanged; each dataset's fine-tuned weights live in its own run directory.
+
+    Attributes:
+        trainer (type[BaseTrainer] | None): Task trainer class for Python runs, or None for CLI subprocess runs.
+        args (dict): Training arguments shared across datasets; its `data` key holds the dataset collection.
+        model (torch.nn.Module): Base model whose weights seed each per-dataset fine-tune.
+        callbacks (dict | None): Callbacks forwarded to each per-dataset trainer.
+        trainers (list[SimpleNamespace]): Completed per-dataset run records.
+        metrics (dict): Mapping of each run name (e.g. coco8, coco8-2) to its training-metrics dict from the checkpoint.
+        save_dir (Path | None): Sweep directory holding the per-dataset runs and the results JSON/plot.
+
+    Examples:
+        Fine-tune one base model across several datasets and read back per-run metrics:
+        >>> from ultralytics import YOLO
+        >>> model = YOLO("yolo26n.pt")
+        >>> results = model.train(data=["coco8.yaml", "african-wildlife.yaml"], epochs=10)
+        >>> results["coco8"]["fitness"]  # final fitness on the coco8 run
+    """
+
+    def __init__(self, trainer, args, model, _callbacks: dict | None = None):
+        """Initialize MultiTrainer with a task trainer class, shared training arguments, and the base model.
+
+        Args:
+            trainer (type[BaseTrainer] | None): Task trainer class to run once per dataset. None uses CLI subprocesses.
+            args (dict): Training arguments; the `data` key holds the list/tuple of datasets to fine-tune on.
+            model (torch.nn.Module): Base model whose weights seed each per-dataset fine-tune.
+            _callbacks (dict, optional): Callback functions forwarded to each per-dataset trainer.
+        """
+        self.trainer = trainer
+        self.args = args
+        self.model = model
+        self.callbacks = _callbacks
+        self.trainers = []
+        self.metrics = {}
+        self.save_dir = None
+
+    def train(self):
+        """Fine-tune the base model on each dataset in series and return a {dataset: metrics} mapping."""
+        from types import SimpleNamespace
+
+        from ultralytics.utils.patches import torch_load, torch_save
+
+        datasets = self.args["data"]
+        # Group every per-dataset run and the summary plot under one sweep directory, e.g. runs/detect/multitrain
+        sweep = SimpleNamespace(
+            project=self.args.get("project"),
+            task=self.args.get("task"),
+            mode="train",
+            exist_ok=self.args.get("exist_ok", False),
+        )
+        self.save_dir = get_save_dir(sweep, name="multitrain")
+        self.save_dir.mkdir(parents=True, exist_ok=True)
+        base_model = self.save_dir / "multitrain_base.pt" if self.trainer is None else None
+        if base_model:
+            torch_save(
+                {"model": deepcopy(self.model).half(), "train_args": getattr(self.model, "args", {})}, base_model
+            )
+        try:
+            for i, data in enumerate(datasets):
+                LOGGER.info(
+                    f"\n{colorstr('blue', 'bold', f'MultiTrainer {i + 1}/{len(datasets)}:')} fine-tuning on {data}"
+                )
+                name = Path(str(data)).stem
+                run_name = name
+                try:
+                    overrides = {
+                        **self.args,
+                        "data": data,
+                        "project": str(self.save_dir),  # nest per-dataset runs inside the sweep directory
+                        "name": name,
+                        "resume": False,
+                        "session": None,
+                    }
+                    run = SimpleNamespace(
+                        project=overrides["project"],
+                        name=overrides["name"],
+                        task=overrides.get("task"),
+                        mode="train",
+                        exist_ok=overrides.get("exist_ok", False),
+                        save_dir=None,
+                    )
+                    save_dir = get_save_dir(run)
+                    save_dir.mkdir(parents=True, exist_ok=True)
+                    run_name = save_dir.name
+                    overrides["save_dir"] = str(save_dir)
+                    if self.trainer is None:
+                        overrides["model"] = str(base_model)
+                        overrides["pretrained"] = True
+                        subprocess.run(
+                            [
+                                *_YOLO_CLI_COMMAND,
+                                "train",
+                                *(f"{k}={v}" for k, v in overrides.items() if k != "session"),
+                            ],
+                            check=True,
+                        )
+                    else:
+                        trainer = self.trainer(overrides=overrides, _callbacks=self.callbacks)
+                        trainer.model = trainer.get_model(weights=self.model, cfg=self.model.yaml)
+                        trainer.train()
+                    best, last = save_dir / "weights" / "best.pt", save_dir / "weights" / "last.pt"
+                    ckpt = best if best.exists() else last
+                    metrics = None
+                    if self.trainer is not None:
+                        metrics = getattr(getattr(trainer, "validator", None), "metrics", None)
+                        if metrics is not None:
+                            metrics = metrics.results_dict
+                    self.metrics[run_name] = metrics or (torch_load(ckpt)["train_metrics"] if ckpt.exists() else None)
+                    self.trainers.append(SimpleNamespace(save_dir=save_dir, best=best, last=last))
+                except Exception as e:  # one bad dataset should not abort the whole sweep
+                    LOGGER.error(f"MultiTrainer: fine-tuning on {data} failed, skipping: {e}")
+                    self.metrics[run_name] = None
+        finally:
+            if base_model:
+                base_model.unlink(missing_ok=True)
+        if RANK in {-1, 0} and self.trainers:
+            self.save_dir.mkdir(parents=True, exist_ok=True)
+            self.save_results()  # JSON of per-dataset + mean metrics for programmatic post-processing
+            if self.args.get("plots", True):
+                self.plot_results()
+        return self.metrics
+
+    def save_results(self):
+        """Write per-dataset and mean metrics to multitrain_results.json for programmatic post-processing."""
+        import json
+
+        results = {run: ({k: float(v) for k, v in m.items()} if m else None) for run, m in self.metrics.items()}
+        valid = [m for m in results.values() if m]
+        keys = {k for m in valid for k in m}
+        mean = {k: sum(m[k] for m in valid if k in m) / sum(k in m for m in valid) for k in keys}
+        file = self.save_dir / "multitrain_results.json"
+        with open(file, "w", encoding="utf-8") as f:
+            json.dump({"results": results, "mean": mean}, f, indent=2)
+        LOGGER.info(f"MultiTrainer results saved to {colorstr('bold', file)}")
+        return file
+
+    def plot_results(self):
+        """Save a cross-dataset bar chart of the per-dataset metric with the mean across all datasets."""
+        from ultralytics.cfg import TASK2METRIC
+        from ultralytics.utils.plotting import plot_multitrain_results
+
+        key = TASK2METRIC.get(self.args.get("task"))
+        scores = {run: float(m.get(key, m.get("fitness", 0.0))) for run, m in self.metrics.items() if m}
+        if not scores:
+            return None
+        fname = plot_multitrain_results(scores, key=key or "fitness", save_dir=self.save_dir)
+        LOGGER.info(f"MultiTrainer results saved to {colorstr('bold', fname)}")
+        return fname

@@ -31,25 +31,24 @@ class DetectionValidator(BaseValidator):
         metrics (DetMetrics): Object detection metrics calculator.
         iouv (torch.Tensor): IoU thresholds for mAP calculation.
         niou (int): Number of IoU thresholds.
-        lb (list[Any]): List for storing ground truth labels for hybrid saving.
         jdict (list[dict[str, Any]]): List for storing JSON detection results.
         stats (dict[str, list[torch.Tensor]]): Dictionary for storing statistics during validation.
 
     Examples:
         >>> from ultralytics.models.yolo.detect import DetectionValidator
-        >>> args = dict(model="yolo11n.pt", data="coco8.yaml")
+        >>> args = dict(model="yolo26n.pt", data="coco8.yaml")
         >>> validator = DetectionValidator(args=args)
         >>> validator()
     """
 
-    def __init__(self, dataloader=None, save_dir=None, args=None, _callbacks=None) -> None:
+    def __init__(self, dataloader=None, save_dir=None, args=None, _callbacks: dict | None = None) -> None:
         """Initialize detection validator with necessary variables and settings.
 
         Args:
             dataloader (torch.utils.data.DataLoader, optional): DataLoader to use for validation.
             save_dir (Path, optional): Directory to save results.
             args (dict[str, Any], optional): Arguments for the validator.
-            _callbacks (list[Any], optional): List of callback functions.
+            _callbacks (dict, optional): Dictionary of callback functions.
         """
         super().__init__(dataloader, save_dir, args, _callbacks)
         self.is_coco = False
@@ -72,7 +71,7 @@ class DetectionValidator(BaseValidator):
         for k, v in batch.items():
             if isinstance(v, torch.Tensor):
                 batch[k] = v.to(self.device, non_blocking=self.device.type == "cuda")
-        batch["img"] = (batch["img"].half() if self.args.half else batch["img"].float()) / 255
+        batch["img"] = (batch["img"].half() if self.args.quantize == 16 else batch["img"].float()) / 255
         return batch
 
     def init_metrics(self, model: torch.nn.Module) -> None:
@@ -96,6 +95,8 @@ class DetectionValidator(BaseValidator):
         self.seen = 0
         self.jdict = []
         self.metrics.names = model.names
+        self.metrics.clear_stats()
+        self.metrics.clear_image_metrics()
         self.confusion_matrix = ConfusionMatrix(names=model.names, save_matches=self.args.plots and self.args.visualize)
 
     def get_desc(self) -> str:
@@ -122,10 +123,6 @@ class DetectionValidator(BaseValidator):
             max_det=self.args.max_det,
             end2end=self.end2end,
             rotated=self.args.task == "obb",
-            weighted=getattr(self.args, "weighted", False),
-            cluster=getattr(self.args, "cluster", False),
-            sigma=getattr(self.args, "sigma", 0.1),
-            iou_type=getattr(self.args, "iou_type", "iou"),
         )
         return [{"bboxes": x[:, :4], "conf": x[:, 4], "cls": x[:, 5], "extra": x[:, 6:]} for x in outputs]
 
@@ -133,7 +130,7 @@ class DetectionValidator(BaseValidator):
         """Prepare a batch of images and annotations for validation.
 
         Args:
-            si (int): Batch index.
+            si (int): Sample index within the batch.
             batch (dict[str, Any]): Batch data containing images and annotations.
 
         Returns:
@@ -190,13 +187,20 @@ class DetectionValidator(BaseValidator):
                     "target_img": np.unique(cls),
                     "conf": np.zeros(0) if no_pred else predn["conf"].cpu().numpy(),
                     "pred_cls": np.zeros(0) if no_pred else predn["cls"].cpu().numpy(),
+                    "im_name": Path(pbatch["im_file"]).name,
                 }
             )
             # Evaluate
             if self.args.plots:
                 self.confusion_matrix.process_batch(predn, pbatch, conf=self.args.conf)
                 if self.args.visualize:
-                    self.confusion_matrix.plot_matches(batch["img"][si], pbatch["im_file"], self.save_dir)
+                    self.confusion_matrix.plot_matches(
+                        batch["img"][si],
+                        pbatch["im_file"],
+                        self.save_dir,
+                        self.args.show_labels,
+                        self.args.show_conf,
+                    )
 
             if no_pred:
                 continue
@@ -223,48 +227,58 @@ class DetectionValidator(BaseValidator):
         self.metrics.confusion_matrix = self.confusion_matrix
         self.metrics.save_dir = self.save_dir
 
-    def gather_stats(self) -> None:
-        """Collect validation statistics with collectives entered identically by every DDP rank.
+    def _gather_image_metrics(self, metric) -> None:
+        """Gather per-image metrics from all GPUs for a single metric object."""
+        if RANK == 0:
+            gathered_image_metrics = [None] * dist.get_world_size()
+            dist.gather_object(metric.image_metrics, gathered_image_metrics, dst=0)
+            metric.clear_image_metrics()
+            for image_metrics in gathered_image_metrics:
+                if image_metrics:
+                    metric.image_metrics.update(image_metrics)
+        elif RANK > 0:
+            dist.gather_object(metric.image_metrics, None, dst=0)
+            metric.clear_image_metrics()
 
-        Includes a 120-second fault-tolerance timeout around NCCL collectives so that if one
-        or more ranks are dead (from accumulated CUDA corruption), the surviving ranks don't
-        hang for the full 600s NCCL watchdog timeout — they fall back gracefully instead.
-        """
+    def gather_stats(self) -> None:
+        """Gather validation statistics with identical collectives on every DDP rank."""
         if not (dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1):
             return
 
         world_size, rank = dist.get_world_size(), dist.get_rank()
         gathered_stats, gathered_jdict = [None] * world_size, [None] * world_size
-        # all_gather_object has no destination-only branch: every rank issues the same two collectives in this order.
-        try:
-            dist.all_gather_object(gathered_stats, self.metrics.stats)
-            dist.all_gather_object(gathered_jdict, self.jdict)
-        except (RuntimeError, dist.DistBackendError, TimeoutError) as exc:
-            # One or more ranks are dead/hung from accumulated CUDA/NCCL corruption.
-            # Fall back to using only this rank's own stats instead of hanging indefinitely.
-            if rank == 0:
-                LOGGER.warning(
-                    f"NCCL gather_stats failed (rank {rank}/{world_size}): {exc}. "
-                    "Falling back to local-only metrics — validation results may be incomplete."
-                )
-            # If we were the last surviving rank, make sure our local stats are usable.
-            if rank == 0 and len(gathered_stats) == 0:
-                # No data gathered — leave self.metrics as-is (local only).
-                pass
-            # Clear jdict on all ranks to avoid inconsistent state
-            self.jdict = []
+        dist.all_gather_object(gathered_stats, self.metrics.stats)
+        dist.all_gather_object(gathered_jdict, self.jdict)
+
+        metric = getattr(self.metrics, "box", None)
+        gathered_image_metrics = None
+        if metric is not None and hasattr(metric, "image_metrics"):
+            gathered_image_metrics = [None] * world_size
+            dist.all_gather_object(gathered_image_metrics, metric.image_metrics)
+            metric.clear_image_metrics()
 
         if rank == 0:
             merged_stats = {key: [] for key in self.metrics.stats}
             for stats_dict in gathered_stats:
-                for key in merged_stats:
-                    merged_stats[key].extend(stats_dict[key])
+                if stats_dict:
+                    for key in merged_stats:
+                        merged_stats[key].extend(stats_dict[key])
             self.metrics.stats = merged_stats
-            self.jdict = [item for rank_jdict in gathered_jdict for item in rank_jdict]
+            self.jdict = [item for rank_jdict in gathered_jdict if rank_jdict for item in rank_jdict]
+            if gathered_image_metrics is not None:
+                for image_metrics in gathered_image_metrics:
+                    if image_metrics:
+                        metric.image_metrics.update(image_metrics)
             self.seen = len(self.dataloader.dataset)  # total image count from dataset
         else:
             self.jdict = []
             self.metrics.clear_stats()
+
+        if getattr(getattr(self, "args", None), "plots", False):
+            matrix = torch.as_tensor(self.confusion_matrix.matrix, device=self.device)
+            dist.reduce(matrix, dst=0, op=dist.ReduceOp.SUM)
+            if rank == 0:
+                self.confusion_matrix.matrix = matrix.cpu().numpy()
 
     def get_stats(self) -> dict[str, Any]:
         """Calculate and return metrics statistics.
@@ -284,7 +298,7 @@ class DetectionValidator(BaseValidator):
             LOGGER.warning(f"no labels found in {self.args.task} set, cannot compute metrics without labels")
 
         # Print results per class
-        if self.args.verbose and not self.training and self.nc > 1 and len(self.metrics.stats):
+        if self.args.verbose and not self.training and self.nc > 1:
             for i, c in enumerate(self.metrics.ap_class_index):
                 LOGGER.info(
                     pf
@@ -370,16 +384,16 @@ class DetectionValidator(BaseValidator):
             batch (dict[str, Any]): Batch containing images and annotations.
             preds (list[dict[str, torch.Tensor]]): List of predictions from the model.
             ni (int): Batch index.
-            max_det (Optional[int]): Maximum number of detections to plot.
+            max_det (int | None): Maximum number of detections to plot.
         """
-        # TODO: optimize this
+        if not preds:
+            return
         for i, pred in enumerate(preds):
             pred["batch_idx"] = torch.ones_like(pred["conf"]) * i  # add batch index to predictions
         keys = preds[0].keys()
         max_det = max_det or self.args.max_det
         batched_preds = {k: torch.cat([x[k][:max_det] for x in preds], dim=0) for k in keys}
-        # TODO: fix this
-        batched_preds["bboxes"][:, :4] = ops.xyxy2xywh(batched_preds["bboxes"][:, :4])  # convert to xywh format
+        batched_preds["bboxes"] = ops.xyxy2xywh(batched_preds["bboxes"])  # convert to xywh format
         plot_images(
             images=batch["img"],
             labels=batched_preds,
@@ -519,6 +533,12 @@ class DetectionValidator(BaseValidator):
                     # update mAP50-95 and mAP50
                     stats[f"metrics/mAP50({suffix[i][0]})"] = val.stats_as_dict["AP_50"]
                     stats[f"metrics/mAP50-95({suffix[i][0]})"] = val.stats_as_dict["AP_all"]
+                    # record mAP for small, medium, large objects as well
+                    stats["metrics/mAP_small(B)"] = val.stats_as_dict["AP_small"]
+                    stats["metrics/mAP_medium(B)"] = val.stats_as_dict["AP_medium"]
+                    stats["metrics/mAP_large(B)"] = val.stats_as_dict["AP_large"]
+                    # update fitness
+                    stats["fitness"] = 0.9 * val.stats_as_dict["AP_all"] + 0.1 * val.stats_as_dict["AP_50"]
 
                     if self.is_lvis:
                         stats[f"metrics/APr({suffix[i][0]})"] = val.stats_as_dict["APr"]

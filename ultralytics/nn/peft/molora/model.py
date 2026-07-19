@@ -76,6 +76,7 @@ def get_peft_molora_model(
             r=cfg.r,
             include_moe=getattr(cfg, "include_moe", True),
             include_attention=getattr(cfg, "include_attention", False),
+            include_head=getattr(cfg, "include_head", False),
             only_backbone=getattr(cfg, "only_backbone", False),
             exclude_modules=getattr(cfg, "exclude_modules", None),
             allow_depthwise=getattr(cfg, "allow_depthwise", False),
@@ -87,6 +88,7 @@ def get_peft_molora_model(
         if not target_modules:
             LOGGER.warning("[MoLoRA] Auto-detection found no compatible layers. Returning model unchanged.")
             return model
+        cfg.target_modules = list(target_modules)
 
     # Wrap each target module in-place by name
     wrapped = 0
@@ -137,6 +139,11 @@ def get_peft_molora_model(
 
     # Freeze all non-MoLoRA parameters so only adapter weights are trainable
     mark_only_molora_as_trainable(model)
+    frozen_experts = list(getattr(cfg, "freeze_experts", None) or [])
+    if frozen_experts:
+        for module in model.modules():
+            if isinstance(module, MoLoRALayer):
+                module.freeze_experts(frozen_experts)
     LOGGER.info("[MoLoRA] Frozen non-MoLoRA parameters. Only adapter weights are trainable.")
 
     return model
@@ -309,20 +316,31 @@ class MoLoRAModel(nn.Module):
         total loss. The registry is automatically cleared by tasks.py
         before each training forward.
         """
-        aux_loss = torch.tensor(0.0)
+        device = next(self.model.parameters()).device
+        from ultralytics.nn.modules.routing_protocol import current_aux_step, get_aux_record
+        aux_loss = torch.zeros((), device=device)
         try:
             from ultralytics.nn.modules.moe.modules import MOE_LOSS_REGISTRY
         except Exception:
-            return aux_loss
-
-        device = next(self.model.parameters()).device
-        aux_loss = aux_loss.to(device)
-        # the `seen` set was redundant — `model.modules()` yields each
-        # module exactly once, so MoLoRALayer instances cannot be double-counted.
+            MOE_LOSS_REGISTRY = {}
         for m in self.model.modules():
             if isinstance(m, MoLoRALayer):
-                loss_t = MOE_LOSS_REGISTRY.get(m)
-                if isinstance(loss_t, torch.Tensor):
+                record = get_aux_record(m)
+                loss_t = (
+                    record.value
+                    if record is not None
+                    and record.step == current_aux_step()
+                    and record.training
+                    and isinstance(record.value, torch.Tensor)
+                    and record.value.requires_grad
+                    else None
+                )
+                # A stale local value is not a valid fallback after a runtime
+                # reset; legacy registry hooks remain the final compatibility
+                # path for old checkpoints.
+                if record is None and not isinstance(loss_t, torch.Tensor):
+                    loss_t = MOE_LOSS_REGISTRY.get(m)
+                if isinstance(loss_t, torch.Tensor) and torch.isfinite(loss_t).all():
                     aux_loss = aux_loss + loss_t.to(device)
         return aux_loss
 

@@ -5,26 +5,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributed as dist
 from typing import Optional, Dict, Union
-from ultralytics.nn.modules._numeric import all_reduce_mean, clamp_min_for_dtype
+from ultralytics.nn.modules._numeric import all_reduce_mean, clamp_min_for_dtype, should_reduce_ddp
 from .scheduler import MoEDynamicScheduler, MoEDynamicSchedulerConfig
 
 
 _dtype_clamp_min = clamp_min_for_dtype
-
-
-def should_reduce_ddp(module: Optional[nn.Module] = None) -> bool:
-    """Return True only for aligned training forwards that require global aux statistics.
-
-    Rank0-only validation/inference/export/profile run in eval mode or without gradients
-    and must never enter the training process-group collective sequence.
-    """
-    return bool(
-        (module is None or module.training)
-        and torch.is_grad_enabled()
-        and dist.is_available()
-        and dist.is_initialized()
-        and dist.get_world_size() > 1
-    )
 
 
 def gshard_balance_loss(expert_usage: torch.Tensor, num_experts: int,

@@ -47,7 +47,9 @@ def validate_export_roundtrip(
     module = module.cpu().eval()
     input_tuple = inputs if isinstance(inputs, tuple) else (inputs,)
     input_tuple = tuple(value.detach().cpu() for value in input_tuple)
-    with torch.inference_mode():
+    # Stateful heads cache anchors during the eager baseline. no_grad keeps
+    # those tensors usable by the subsequent ONNX trace, unlike inference_mode.
+    with torch.no_grad():
         eager = _tensor_outputs(module(*input_tuple))
     if not eager:
         raise RuntimeError("Export validation requires at least one tensor output.")

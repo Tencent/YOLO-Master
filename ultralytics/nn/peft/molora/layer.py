@@ -4,6 +4,9 @@ Contains:
   - MoLoRAExpert: a single LoRA expert (Conv2d or Linear low-rank pair)
   - MoLoRALayer: a wrapper that replaces a base layer with top-k sparse experts
 """
+
+from __future__ import annotations
+
 import math
 from typing import Any, Dict, List, Optional
 
@@ -28,6 +31,7 @@ from ultralytics.nn.modules.routing_protocol import (
     publish_aux_loss,
     routing_snapshot as _routing_snapshot,
 )
+from ultralytics.nn.modules.utils import robust_deepcopy
 
 
 class MoLoRAExpert(nn.Module):
@@ -230,9 +234,7 @@ class MoLoRALayer(nn.Module):
         return _export_routing_capabilities(self)
 
     def __deepcopy__(self, memo):
-        from ultralytics.nn.modules.moe._common import _robust_deepcopy
-
-        return _robust_deepcopy(self, memo)
+        return robust_deepcopy(self, memo)
 
     # ── RoutedModule protocol ───────────────────────────────────────────
 
@@ -262,7 +264,7 @@ class MoLoRALayer(nn.Module):
             "out_features", "in_features",
         )
         if name in proxy_names:
-            base_layer = self._modules.get("base_layer")
+            base_layer = self.__dict__.get("_modules", {}).get("base_layer")
             if base_layer is not None and hasattr(base_layer, name):
                 return getattr(base_layer, name)
         return super().__getattr__(name)
@@ -501,11 +503,15 @@ class MoLoRALayer(nn.Module):
         adapted = self._compute_sparse_experts(x, top_k_weights, top_k_indices, base_out)
 
         # Auxiliary loss (graph-connected to router_logits)
-        aux_loss = self.loss_fn(
-            router_probs=router_probs,
-            router_logits=router_logits,
-            expert_indices=top_k_indices,
-            expert_outputs=None,  # diversity loss disabled by default for efficiency
+        aux_loss = (
+            self.loss_fn(
+                router_probs=router_probs,
+                router_logits=router_logits,
+                expert_indices=top_k_indices,
+                expert_outputs=None,  # diversity loss disabled by default for efficiency
+            )
+            if self.training
+            else base_out.new_zeros(())
         )
 
         # Write to MOE_LOSS_REGISTRY if enabled
@@ -556,7 +562,21 @@ class MoLoRALayer(nn.Module):
         B = x.shape[0]
         K = top_k_indices.shape[1]
         expert_out = torch.zeros_like(out_template)
-        grouped = not self.training and B >= 4
+        if torch.jit.is_tracing() or torch.onnx.is_in_onnx_export():
+            assignments = F.one_hot(top_k_indices, num_classes=self.num_experts).to(top_k_weights.dtype)
+            dense_weights = (assignments * top_k_weights.unsqueeze(-1)).sum(dim=1)
+            for expert_idx, expert in enumerate(self.experts):
+                out_e = expert(x)
+                shape = (-1,) + (1,) * (out_e.dim() - 1)
+                expert_out = expert_out + out_e * dense_weights[:, expert_idx].view(shape)
+            self._last_dispatch_stats = {
+                "mode": "dense_export",
+                "expert_calls": self.num_experts,
+                "selected_samples": B,
+                "top_k": K,
+            }
+            return expert_out
+        grouped = B >= 4
         calls = 0
         for e in range(self.num_experts):
             mask = top_k_indices == e
@@ -565,20 +585,14 @@ class MoLoRALayer(nn.Module):
             if batch_idx.numel() == 0:
                 continue
             calls += 1
-            x_e = x[batch_idx] if grouped else x
+            x_e = x[batch_idx]
             out_e = self.experts[e](x_e)
-            if grouped:
-                weights = (top_k_weights[batch_idx] * mask[batch_idx].to(top_k_weights.dtype)).sum(dim=1)
-            else:
-                weights = (top_k_weights * mask.to(top_k_weights.dtype)).sum(dim=1)
+            weights = (top_k_weights[batch_idx] * mask[batch_idx].to(top_k_weights.dtype)).sum(dim=1)
             shape = (-1,) + (1,) * (out_e.dim() - 1)
-            if grouped:
-                expert_out[batch_idx] += out_e * weights.view(shape)
-            else:
-                expert_out += out_e * weights.view(shape)
+            expert_out = expert_out.index_add(0, batch_idx, out_e * weights.view(shape))
         self._last_dispatch_stats = {
             "mode": "grouped_sparse" if grouped else "dense_small_batch",
-            "expert_calls": calls if grouped else self.num_experts,
+            "expert_calls": calls,
             "selected_samples": B,
             "top_k": K,
         }
@@ -652,6 +666,18 @@ class MoLoRALayer(nn.Module):
                     _unmerge_linear_delta(self.base_layer.weight, e.lora_A, e.lora_B, e.scaling * weight)
         self.merged = False
         LOGGER.debug("[MoLoRA] Unmerged experts from base layer.")
+
+    def fuse_batchnorm(self, bn: nn.BatchNorm2d) -> None:
+        """Fold a following BatchNorm into the base conv and every expert output."""
+        if not isinstance(self.base_layer, nn.Conv2d):
+            raise TypeError("MoLoRA BatchNorm fusion requires a Conv2d base layer")
+        scale = bn.weight.div(torch.sqrt(bn.running_var + bn.eps)).detach()
+        from ultralytics.utils.torch_utils import fuse_conv_and_bn
+
+        self.base_layer = fuse_conv_and_bn(self.base_layer, bn)
+        with torch.no_grad():
+            for expert in self.experts:
+                expert.lora_B.weight.mul_(scale[:, None, None, None])
 
     # ------------------------------------------------------------------
     # Properties

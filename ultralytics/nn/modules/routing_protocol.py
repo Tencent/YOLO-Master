@@ -91,6 +91,73 @@ def reset_routing_runtime_state(model: nn.Module | None = None, *, step: int | N
     return next_step
 
 
+def anneal_mixture_temperatures(
+    model: nn.Module,
+    *,
+    factor: float = 0.97,
+    min_temp: float = 0.3,
+    families: Iterable[str] = ("moe", "moa", "mot"),
+) -> int:
+    """Anneal every enabled mixture router through one protocol-level entry point.
+
+    Router implementations historically stored temperature as either a Python
+    float or a persistent tensor, and some families nested the router under a
+    ``routing`` attribute. This helper handles both representations and filters
+    by module package, so the trainer cannot accidentally anneal unrelated model
+    temperatures. Returns the number of updated router modules.
+    """
+    if not isinstance(model, nn.Module):
+        raise TypeError(f"model must be an nn.Module, got {type(model)!r}")
+    factor = float(factor)
+    min_temp = float(min_temp)
+    if not 0.0 < factor:
+        raise ValueError(f"temperature anneal factor must be > 0, got {factor}")
+    if not 0.0 < min_temp:
+        raise ValueError(f"minimum temperature must be > 0, got {min_temp}")
+    family_tokens = tuple(str(item).lower() for item in families)
+    updated = 0
+    seen: set[int] = set()
+    for module in model.modules():
+        module_path = module.__class__.__module__.lower()
+        if not any(token in module_path for token in family_tokens):
+            continue
+        if not hasattr(module, "temperature"):
+            continue
+        module._external_temperature_schedule = True
+        temperature = getattr(module, "temperature")
+        marker = id(temperature) if isinstance(temperature, torch.Tensor) else id(module)
+        if marker in seen:
+            continue
+        seen.add(marker)
+        if isinstance(temperature, torch.Tensor):
+            with torch.no_grad():
+                temperature.fill_(max(float(temperature.detach()), min_temp) * factor)
+                temperature.clamp_(min=min_temp)
+        elif isinstance(temperature, (float, int)):
+            setattr(module, "temperature", max(float(temperature) * factor, min_temp))
+        else:
+            continue
+        updated += 1
+    return updated
+
+
+def configure_mixture_temperature_schedule(
+    model: nn.Module,
+    *,
+    external: bool = True,
+    families: Iterable[str] = ("moe", "moa", "mot"),
+) -> int:
+    """Select trainer-level scheduling and disable conflicting per-forward annealing."""
+    family_tokens = tuple(str(item).lower() for item in families)
+    configured = 0
+    for module in model.modules():
+        module_path = module.__class__.__module__.lower()
+        if any(token in module_path for token in family_tokens) and hasattr(module, "temperature"):
+            module._external_temperature_schedule = bool(external)
+            configured += 1
+    return configured
+
+
 @contextmanager
 def aux_step_scope(step: int | None = None, *, clear: bool = False):
     """Temporarily establish a canonical step for standalone forward calls."""
@@ -143,11 +210,15 @@ def get_aux_record(module: nn.Module) -> AuxLossRecord | None:
         return _RECORDS.get(module)
 
 
-def iter_aux_records(model: nn.Module) -> list[tuple[nn.Module, AuxLossRecord]]:
+def iter_aux_records(
+    model: nn.Module,
+    modules: Iterable[nn.Module] | None = None,
+) -> list[tuple[nn.Module, AuxLossRecord]]:
     """Return records in model traversal order for diagnostics and collectors."""
 
     with _RECORDS_LOCK:
-        return [(module, _RECORDS[module]) for module in model.modules() if module in _RECORDS]
+        candidates = model.modules() if modules is None else modules
+        return [(module, _RECORDS[module]) for module in candidates if module in _RECORDS]
 
 
 def export_capabilities(module: nn.Module) -> dict[str, Any]:
@@ -180,6 +251,7 @@ def collect_aux_loss(
     require_training: bool = True,
     ddp_sync: bool = False,
     return_diagnostics: bool = False,
+    modules: Iterable[nn.Module] | None = None,
 ):
     """Collect canonical losses once, rejecting stale and eval publications."""
 
@@ -200,7 +272,7 @@ def collect_aux_loss(
 
     selected: list[torch.Tensor] = []
     covered: set[int] = set()
-    for module, record in iter_aux_records(model):
+    for module, record in iter_aux_records(model, modules=modules):
         if record.kind not in kinds:
             continue
         if record.step != target_step:
@@ -248,6 +320,8 @@ __all__ = [
     "begin_aux_step",
     "clear_aux_records",
     "collect_aux_loss",
+    "anneal_mixture_temperatures",
+    "configure_mixture_temperature_schedule",
     "current_aux_step",
     "export_capabilities",
     "get_aux_record",

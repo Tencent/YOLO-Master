@@ -29,6 +29,12 @@ SUPPORTED_SUFFIXES = {".yaml", ".yml", ".pt", ".pth"}
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
+def _mps_available() -> bool:
+    """Return MPS availability without assuming the backend exists on old PyTorch."""
+    mps = getattr(torch.backends, "mps", None)
+    return bool(mps is not None and mps.is_available())
+
+
 class _UniqueKeyLoader(yaml.SafeLoader):
     """Safe YAML loader that refuses duplicate mapping keys."""
 
@@ -453,7 +459,7 @@ def resolve_device(value: str) -> torch.device:
     if normalized == "auto":
         if torch.cuda.is_available():
             return torch.device("cuda:0")
-        if torch.backends.mps.is_available():
+        if _mps_available():
             return torch.device("mps")
         return torch.device("cpu")
     if normalized.isdigit():
@@ -461,7 +467,7 @@ def resolve_device(value: str) -> torch.device:
     device = torch.device(normalized)
     if device.type == "cuda" and not torch.cuda.is_available():
         raise RuntimeError(f"CUDA device requested but CUDA is unavailable: {value}")
-    if device.type == "mps" and not torch.backends.mps.is_available():
+    if device.type == "mps" and not _mps_available():
         raise RuntimeError("MPS device requested but MPS is unavailable")
     return device
 
@@ -601,9 +607,10 @@ def collect_environment() -> dict[str, Any]:
     dirty = bool(_git_output("status", "--porcelain"))
     cuda_devices = [torch.cuda.get_device_name(index) for index in range(torch.cuda.device_count())]
     mps_device = ""
-    if torch.backends.mps.is_available() and hasattr(torch.backends.mps, "get_name"):
+    mps = getattr(torch.backends, "mps", None)
+    if _mps_available() and hasattr(mps, "get_name"):
         try:
-            mps_device = str(torch.backends.mps.get_name())
+            mps_device = str(mps.get_name())
         except RuntimeError:
             mps_device = "available"
     return {
@@ -618,7 +625,7 @@ def collect_environment() -> dict[str, Any]:
         "cuda_available": torch.cuda.is_available(),
         "cuda_version": torch.version.cuda,
         "cuda_devices": cuda_devices,
-        "mps_available": torch.backends.mps.is_available(),
+        "mps_available": _mps_available(),
         "mps_device": mps_device,
         "git_commit": commit,
         "git_dirty": dirty,

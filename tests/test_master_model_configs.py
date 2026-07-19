@@ -42,7 +42,10 @@ def test_yolo26_c3k2_shortcut_form_keeps_conv_groups_integer():
 
     assert c3k2_layers
     assert all(
-        module.groups == 1
+        isinstance(module.groups, int)
+        and not isinstance(module.groups, bool)
+        and module.in_channels % module.groups == 0
+        and module.out_channels % module.groups == 0
         for layer in c3k2_layers
         for module in layer.modules()
         if isinstance(module, torch.nn.Conv2d)
@@ -60,5 +63,5 @@ def test_yoloe_26_configs_use_prompt_aware_model_path(model_cls, config):
     """YOLOE configs must be built through their prompt-aware task models."""
     model = model_cls(str(config), ch=3, nc=80, verbose=False)
 
-    assert model.model[-1].__class__.__name__ in {"YOLOEDetect", "YOLOESegment"}
+    assert model.model[-1].__class__.__name__ in {"YOLOEDetect", "YOLOESegment", "YOLOESegment26"}
     assert tuple(model.stride.tolist()) == (8.0, 16.0, 32.0)

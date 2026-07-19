@@ -4,11 +4,25 @@ import warnings
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import weakref
 from ultralytics.nn.modules.conv import Conv
-from ultralytics.nn.modules.moe.utils import get_safe_groups as _safe_groups
+from ultralytics.nn.modules._numeric import should_reduce_ddp
+from ultralytics.nn.modules.utils import get_safe_groups as _safe_groups, robust_deepcopy
 from ultralytics.nn.modules.routing_protocol import collect_aux_loss, export_capabilities as _export_routing_capabilities, publish_aux_loss, routing_snapshot as _routing_snapshot
 from .block import MoABlock
 from .heads import _LocalAttnHead, _flash_attn, _init_conv_weights
+
+_MOA_TOPOLOGY_CACHE: weakref.WeakKeyDictionary[nn.Module, tuple[weakref.ReferenceType[nn.Module], ...]] = weakref.WeakKeyDictionary()
+
+
+def _cached_moa_topology(model: nn.Module) -> tuple[nn.Module, ...]:
+    """Cache weak module references so repeated aux collection avoids tree walks."""
+    refs = _MOA_TOPOLOGY_CACHE.get(model)
+    if refs is None:
+        refs = tuple(weakref.ref(module) for module in model.modules())
+        _MOA_TOPOLOGY_CACHE[model] = refs
+    live = tuple(module for ref in refs if (module := ref()) is not None)
+    return live
 from .router import _MoARouter, _moa_router_aux_loss
 
 class C2fMoA(nn.Module):
@@ -145,9 +159,7 @@ class C2fMoA(nn.Module):
         return _export_routing_capabilities(self)
 
     def __deepcopy__(self, memo):
-        from ultralytics.nn.modules.moe._common import _robust_deepcopy
-
-        return _robust_deepcopy(self, memo)
+        return robust_deepcopy(self, memo)
 
 class NeckMoAFusion(nn.Module):
     """Cross-scale MoA fusion for FPN/PAN neck.
@@ -214,6 +226,7 @@ class NeckMoAFusion(nn.Module):
                          if c_hi != c_out else nn.Identity())
         self.last_aux_loss: torch.Tensor = torch.zeros((), requires_grad=False)
         self.last_routing_snapshot: dict = {}
+        self._lo_interpolate_cache: dict[tuple, torch.Tensor] = {}
 
         self._init_weights()
 
@@ -226,7 +239,7 @@ class NeckMoAFusion(nn.Module):
         inner = nh * hd
 
         # Align lo-res to hi-res resolution
-        lo_up = F.interpolate(lo, size=(H, W), mode="bilinear", align_corners=False) if lo.shape[2:] != hi.shape[2:] else lo
+        lo_up = self._align_low_resolution(lo, hi, H, W)
 
         # ── Cross-attention: hi queries lo context ──────────────────────
         q = self.q_proj(hi).flatten(2).view(B, nh, hd, H * W).transpose(2, 3)
@@ -248,7 +261,9 @@ class NeckMoAFusion(nn.Module):
         # ── Router blend ─────────────────────────────────────────────────
         weights, router_logits = self.router(hi, return_logits=True)         # [B, 2, H, W]
         if self.training and self.aux_loss_coeff > 0:
-            self.last_aux_loss = _moa_router_aux_loss(weights, router_logits, self.aux_loss_coeff)
+            self.last_aux_loss = _moa_router_aux_loss(
+                weights, router_logits, self.aux_loss_coeff, reduce_ddp=should_reduce_ddp(self)
+            )
         else:
             self.last_aux_loss = hi.new_zeros(())
         publish_aux_loss(self, self.last_aux_loss, kind="moa", training=self.training)
@@ -266,16 +281,36 @@ class NeckMoAFusion(nn.Module):
                 "aux_loss": float(self.last_aux_loss.detach()),
             }
 
-        assert self_out.shape[1] == cross_out.shape[1], (
-            f"NeckMoAFusion channel mismatch before blend: "
-            f"self_out C={self_out.shape[1]} vs cross_out C={cross_out.shape[1]}"
-        )
+        if self_out.shape[1] != cross_out.shape[1]:
+            raise RuntimeError(
+                "NeckMoAFusion channel mismatch before blend: "
+                f"self_out C={self_out.shape[1]} vs cross_out C={cross_out.shape[1]}"
+            )
         out = w_cross * cross_out + w_self * self_out
 
         if self.shortcut:
             out = out + self.res_proj(hi)
 
         return out
+
+    def _align_low_resolution(self, lo: torch.Tensor, hi: torch.Tensor, height: int, width: int) -> torch.Tensor:
+        """Cache only detached eval interpolation; never retain training/export graphs."""
+        if lo.shape[2:] == (height, width):
+            return lo
+        cacheable = (
+            not self.training
+            and not torch.is_grad_enabled()
+            and not torch.jit.is_tracing()
+            and not torch.onnx.is_in_onnx_export()
+        )
+        key = (id(lo), getattr(lo, "_version", 0), tuple(lo.shape), height, width, lo.dtype, lo.device)
+        if cacheable and key in self._lo_interpolate_cache:
+            return self._lo_interpolate_cache[key]
+        aligned = F.interpolate(lo, size=(height, width), mode="bilinear", align_corners=False)
+        if cacheable:
+            self._lo_interpolate_cache.clear()
+            self._lo_interpolate_cache[key] = aligned
+        return aligned
 
     # ── RoutedModule protocol ───────────────────────────────────────────
     @property
@@ -300,9 +335,7 @@ class NeckMoAFusion(nn.Module):
         return _export_routing_capabilities(self)
 
     def __deepcopy__(self, memo):
-        from ultralytics.nn.modules.moe._common import _robust_deepcopy
-
-        return _robust_deepcopy(self, memo)
+        return robust_deepcopy(self, memo)
 
 def _aux_loss_device(model: nn.Module) -> torch.device:
     """Best-effort device lookup for zero aux-loss fallbacks."""
@@ -319,6 +352,7 @@ def collect_moa_aux_loss(model: nn.Module) -> torch.Tensor:
     in the iteration order.  This mirrors the pattern used by C2fMoA and makes the
     function robust against future nested architectures.
     """
-    return collect_aux_loss(model, include_kinds=("moa",), device=_aux_loss_device(model))
+    modules = _cached_moa_topology(model)
+    return collect_aux_loss(model, include_kinds=("moa",), device=_aux_loss_device(model), modules=modules)
 
 __all__ = ("C2fMoA", "NeckMoAFusion", "collect_moa_aux_loss")

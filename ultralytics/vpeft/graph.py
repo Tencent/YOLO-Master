@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
-from dataclasses import dataclass, field
-from typing import Dict, List, Literal, Optional, Set, Tuple, Union
+from dataclasses import dataclass
+from typing import Any, Dict, List, Literal, Optional, Set, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -50,6 +50,31 @@ _SEMANTIC_ROLE_VOCAB = {
 _EDGE_TYPES = ["sequential", "residual", "attention"]
 
 
+def _estimate_adapter_params(
+    rank: Union[int, float, torch.Tensor],
+    variant: str,
+    op_type: str,
+    c_in: int,
+    c_out: int,
+    kernel_size: Union[int, Tuple[int, int]] = 1,
+    groups: int = 1,
+):
+    """Estimate adapter parameters using the project's Conv2d LoRA layout."""
+    variant = variant.lower()
+    if isinstance(kernel_size, int):
+        kernel_size = (kernel_size, kernel_size)
+    if variant in ("lora", "dora"):
+        if op_type in ("Conv2d", "DepthwiseConv2d", "GroupConv2d"):
+            kernel_area = kernel_size[0] * kernel_size[1]
+            return rank * (c_in * kernel_area + c_out) / max(int(groups), 1)
+        return rank * (c_in + c_out)
+    if variant == "ia3":
+        return c_in
+    if variant in ("loha", "lokr"):
+        return (rank ** 2) * min(c_in, c_out)
+    return rank * (c_in + c_out)
+
+
 # ---------------------------------------------------------------------------
 # Public dataclasses
 # ---------------------------------------------------------------------------
@@ -84,6 +109,7 @@ class GraphNode:
     name: str
     module: Any  # nn.Module in new path, ModuleNode/dummy in legacy path
     attributes: NodeAttributes
+    annotations: dict[str, Any] | None = None
 
     @property
     def semantic_role(self) -> str:
@@ -93,22 +119,25 @@ class GraphNode:
 
     def params_for_rank(self, rank: int, variant: str) -> float:
         """Adapter parameter count for a given rank and variant."""
-        if variant in ("lora", "dora"):
-            if self.attributes.tau_i in (
-                _MODULE_TYPE_VOCAB["Conv2d"],
-                _MODULE_TYPE_VOCAB["DepthwiseConv2d"],
-                _MODULE_TYPE_VOCAB["GroupConv2d"],
-            ):
-                k = self.attributes.k_i
-                return float(rank * (self.attributes.c_in + self.attributes.c_out) * k)
-            else:
-                return float(rank * (self.attributes.c_in + self.attributes.c_out))
-        elif variant == "ia3":
-            return float(self.attributes.c_in)
-        elif variant in ("loha", "lokr"):
-            return float((rank ** 2) * min(self.attributes.c_in, self.attributes.c_out))
-        else:
-            return float(rank * (self.attributes.c_in + self.attributes.c_out))
+        op_type = {v: k for k, v in _MODULE_TYPE_VOCAB.items()}.get(self.attributes.tau_i, "Other")
+        kernel_size = getattr(self.module, "kernel_size", self.attributes.k_i or 1)
+        groups = getattr(self.module, "groups", 1)
+        return float(
+            _estimate_adapter_params(
+                rank,
+                variant,
+                op_type,
+                self.attributes.c_in,
+                self.attributes.c_out,
+                kernel_size,
+                groups,
+            )
+        )
+
+    @property
+    def merge_semantics(self) -> str:
+        """Return whether this node is statically mergeable or belongs to a dynamic router path."""
+        return str((self.annotations or {}).get("merge_semantics", "exact"))
 
 
 @dataclass
@@ -167,18 +196,17 @@ class ModuleNode:
 
     def params_for_rank(self, rank: int, variant: str) -> float:
         """Adapter parameter count for a given rank and variant."""
-        if variant in ("lora", "dora"):
-            if self.op_type in ("Conv2d", "DepthwiseConv2d", "GroupConv2d"):
-                k = self.kernel_size[0] * self.kernel_size[1]
-                return float(rank * (self.in_channels + self.out_channels) * k)
-            else:
-                return float(rank * (self.in_channels + self.out_channels))
-        elif variant == "ia3":
-            return float(self.in_channels)
-        elif variant in ("loha", "lokr"):
-            return float((rank ** 2) * min(self.in_channels, self.out_channels))
-        else:
-            return float(rank * (self.in_channels + self.out_channels))
+        return float(
+            _estimate_adapter_params(
+                rank,
+                variant,
+                self.op_type,
+                self.in_channels,
+                self.out_channels,
+                self.kernel_size,
+                self.groups,
+            )
+        )
 
 
 class ComputationGraph:
@@ -230,13 +258,14 @@ class ComputationGraph:
         for n in self.nodes:
             attr = n.attributes
             op_name = {v: k for k, v in _MODULE_TYPE_VOCAB.items()}.get(attr.tau_i, "Other")
+            kernel_size = getattr(n.module, "kernel_size", attr.k_i if attr.k_i > 0 else 1)
             out.append(
                 ModuleNode(
                     name=n.name,
                     op_type=op_name,
                     in_channels=attr.c_in,
                     out_channels=attr.c_out,
-                    kernel_size=attr.k_i if attr.k_i > 0 else 1,
+                    kernel_size=kernel_size,
                     groups=getattr(n.module, "groups", 1),
                 )
             )
@@ -266,18 +295,15 @@ class ComputationGraph:
         gradient flow in differentiable solvers.
         """
         m = self.modules[idx]
-        if variant in ("lora", "dora"):
-            if m.op_type in ("Conv2d", "DepthwiseConv2d", "GroupConv2d"):
-                k = m.kernel_size[0] * m.kernel_size[1]
-                val = rank * (m.in_channels + m.out_channels) * k
-            else:
-                val = rank * (m.in_channels + m.out_channels)
-        elif variant == "ia3":
-            val = m.in_channels
-        elif variant in ("loha", "lokr"):
-            val = (rank ** 2) * min(m.in_channels, m.out_channels)
-        else:
-            val = rank * (m.in_channels + m.out_channels)
+        val = _estimate_adapter_params(
+            rank,
+            variant,
+            m.op_type,
+            m.in_channels,
+            m.out_channels,
+            m.kernel_size,
+            m.groups,
+        )
         return float(val) if not isinstance(val, torch.Tensor) else val
 
     # ------------------------------------------------------------------
@@ -375,20 +401,89 @@ class ComputationGraphBuilder:
         return _SEMANTIC_ROLE_VOCAB["other"]
 
     @staticmethod
+    def _get_submodule(root: nn.Module, path: str) -> nn.Module:
+        """Resolve a dotted module path on PyTorch versions before ``get_submodule``."""
+        if hasattr(root, "get_submodule"):
+            return root.get_submodule(path)
+        module = root
+        for part in path.split("."):
+            module = getattr(module, part)
+        return module
+
+    @staticmethod
+    def _ancestors(name: str, root: nn.Module) -> list[nn.Module]:
+        """Resolve all module ancestors for structural role inference."""
+        ancestors = []
+        parts = name.split(".")
+        for depth in range(1, len(parts)):
+            try:
+                ancestors.append(ComputationGraphBuilder._get_submodule(root, ".".join(parts[:depth])))
+            except (AttributeError, KeyError):
+                break
+        return ancestors
+
+    @classmethod
+    def _structural_annotations(cls, name: str, root: nn.Module) -> dict[str, Any]:
+        """Describe YOLO26 branches and routed ancestors without relying on numeric path names."""
+        ancestors = cls._ancestors(name, root)
+        ancestor_names = [module.__class__.__name__ for module in ancestors]
+        head_classes = {
+            "Detect",
+            "Segment",
+            "Segment26",
+            "Pose",
+            "Pose26",
+            "OBB",
+            "OBB26",
+            "SemanticSegment",
+            "WorldDetect",
+            "YOLOEDetect",
+            "YOLOESegment",
+            "YOLOESegment26",
+            "RTDETRDecoder",
+            "v10Detect",
+        }
+        routed_classes = {
+            "DyMoEBlock",
+            "DyC2f",
+            "MoABlock",
+            "C2fMoA",
+            "NeckMoAFusion",
+            "MoTBlock",
+            "C2fMoT",
+            "MoLoRALayer",
+            "MoLoRAMoEAwareLayer",
+        }
+        lname = name.lower()
+        in_head = any(class_name in head_classes for class_name in ancestor_names)
+        branch = None
+        for value in ("one2one", "one2many", "proto", "cv4", "cv5", "lrpc"):
+            if value in lname:
+                branch = value
+                break
+        dynamic_routing = any(
+            class_name in routed_classes
+            or any(token in class_name.lower() for token in ("moe", "router", "expert", "molora"))
+            for class_name in ancestor_names
+        )
+        return {
+            "ancestor_classes": ancestor_names,
+            "head_family": next((name for name in reversed(ancestor_names) if name in head_classes), None),
+            "head_branch": branch,
+            "in_head": in_head,
+            "shared_backbone": not in_head,
+            "dynamic_routing": dynamic_routing,
+            "merge_semantics": "dynamic_router" if dynamic_routing else "exact",
+        }
+
+    @staticmethod
     def _get_sequential_index(name: str, root: nn.Module) -> int:
         """Return the position of this module inside its parent Sequential, or 0."""
         if "." not in name:
             return 0
         parent_name, child_name = name.rsplit(".", 1)
         try:
-            parent = root.get_submodule(parent_name) if hasattr(root, "get_submodule") else None
-            if parent is None:
-                parts = parent_name.split(".")
-                parent = root
-                for p in parts:
-                    parent = getattr(parent, p, None)
-                    if parent is None:
-                        return 0
+            parent = ComputationGraphBuilder._get_submodule(root, parent_name)
             if isinstance(parent, nn.Sequential):
                 for idx, (n, _) in enumerate(parent.named_children()):
                     if n == child_name:
@@ -452,7 +547,12 @@ class ComputationGraphBuilder:
                             break
                 except Exception:
                     pass
-            sigma_i = self._infer_semantic_role(name)
+            annotations = self._structural_annotations(name, model)
+            sigma_i = (
+                _SEMANTIC_ROLE_VOCAB["head"]
+                if annotations["in_head"]
+                else self._infer_semantic_role(name)
+            )
 
             attr = NodeAttributes(
                 tau_i=tau_i,
@@ -464,7 +564,7 @@ class ComputationGraphBuilder:
                 rho_i=rho_i,
                 sigma_i=sigma_i,
             )
-            node = GraphNode(name=name, module=module, attributes=attr)
+            node = GraphNode(name=name, module=module, attributes=attr, annotations=annotations)
             node_map[name] = len(nodes)
             nodes.append(node)
 

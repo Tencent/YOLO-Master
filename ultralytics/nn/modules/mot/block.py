@@ -3,7 +3,8 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 from typing import Optional, Tuple
-from ultralytics.nn.modules.moe.utils import get_safe_groups as _safe_groups
+from ultralytics.nn.modules._numeric import should_reduce_ddp
+from ultralytics.nn.modules.utils import get_safe_groups as _safe_groups, robust_deepcopy
 from ultralytics.nn.modules.routing_protocol import export_capabilities as _export_routing_capabilities, publish_aux_loss, routing_snapshot as _routing_snapshot
 from .experts import _DeformableTransformerExpert, _LocalConvTransformerExpert, _WindowTransformerExpert
 from .router import _MoTRouter, _mot_router_aux_loss
@@ -62,7 +63,8 @@ class MoTBlock(nn.Module):
         scene_consistency_coeff: float = 0.0,
     ):
         super().__init__()
-        assert 1 <= top_k <= self.NUM_EXPERTS
+        if not 1 <= top_k <= self.NUM_EXPERTS:
+            raise ValueError(f"top_k must be in [1, {self.NUM_EXPERTS}], got {top_k}")
         self.top_k = top_k
         self.balance_loss_coeff = balance_loss_coeff
         self.sparse_train = sparse_train
@@ -137,9 +139,7 @@ class MoTBlock(nn.Module):
         return _export_routing_capabilities(self)
 
     def __deepcopy__(self, memo):
-        from ultralytics.nn.modules.moe._common import _robust_deepcopy
-
-        return _robust_deepcopy(self, memo)
+        return robust_deepcopy(self, memo)
 
     def _init_weights(self):
         nn.init.trunc_normal_(self.out_proj.weight, std=0.02)
@@ -165,9 +165,9 @@ class MoTBlock(nn.Module):
             (not ``trace``) or set ``sparse_train=False`` and eval before export.
         """
         out = x.new_zeros(x.shape)
-        # During ONNX export always use dense blending (data-dependent control
-        # flow from nonzero/any is not trace-stable).
-        use_sparse = (not self.training or self.sparse_train) and not torch.onnx.is_in_onnx_export()
+        # Export tracing always uses dense blending because nonzero/any control flow is input-dependent.
+        exporting = torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()
+        use_sparse = (not self.training or self.sparse_train) and not exporting
         B = x.shape[0]
         if use_sparse:
             expert_calls = 0
@@ -231,6 +231,7 @@ class MoTBlock(nn.Module):
                 self.NUM_EXPERTS,
                 self.balance_loss_coeff,
                 self.router_z_loss_coeff,
+                reduce_ddp=should_reduce_ddp(self),
             )
             scene_consistency = self.router.scene_consistency_loss(weights)
             if self.scene_consistency_coeff > 0:

@@ -1,4 +1,5 @@
 """Regression coverage for non-autograd c10d all-reduce handling."""
+from contextlib import ExitStack
 from unittest.mock import patch
 
 import pytest
@@ -21,13 +22,12 @@ def test_all_reduce_mean_uses_global_value_and_local_gradient(reduce_mean):
     def remote_rank_sum(value, op=None):
         value.add_(torch.tensor([0.4, 0.6]))
 
-    with (
-        patch("torch.distributed.is_available", return_value=True),
-        patch("torch.distributed.is_initialized", return_value=True),
-        patch("torch.distributed.get_world_size", return_value=2),
-        patch("torch.distributed.get_backend", return_value="gloo"),
-        patch("torch.distributed.all_reduce", side_effect=remote_rank_sum),
-    ):
+    with ExitStack() as stack:
+        stack.enter_context(patch("torch.distributed.is_available", return_value=True))
+        stack.enter_context(patch("torch.distributed.is_initialized", return_value=True))
+        stack.enter_context(patch("torch.distributed.get_world_size", return_value=2))
+        stack.enter_context(patch("torch.distributed.get_backend", return_value="gloo"))
+        stack.enter_context(patch("torch.distributed.all_reduce", side_effect=remote_rank_sum))
         result = reduce_mean(local)
         result.sum().backward()
 
@@ -49,13 +49,12 @@ def test_moe_global_mean_uses_detached_collective_and_local_gradient():
         else:
             value.add_(2.0)
 
-    with (
-        patch("torch.distributed.is_available", return_value=True),
-        patch("torch.distributed.is_initialized", return_value=True),
-        patch("torch.distributed.get_world_size", return_value=2),
-        patch("torch.distributed.get_backend", return_value="gloo"),
-        patch("torch.distributed.all_reduce", side_effect=remote_rank_sum),
-    ):
+    with ExitStack() as stack:
+        stack.enter_context(patch("torch.distributed.is_available", return_value=True))
+        stack.enter_context(patch("torch.distributed.is_initialized", return_value=True))
+        stack.enter_context(patch("torch.distributed.get_world_size", return_value=2))
+        stack.enter_context(patch("torch.distributed.get_backend", return_value="gloo"))
+        stack.enter_context(patch("torch.distributed.all_reduce", side_effect=remote_rank_sum))
         result = MoELoss(num_experts=2)._get_global_mean(values)
         result.sum().backward()
 

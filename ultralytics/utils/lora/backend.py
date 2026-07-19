@@ -188,7 +188,7 @@ class MoLoRABackend:
             "backend": self.name,
             "variant": "molora",
             "schema_version": 1,
-            "target_modules": list(getattr(config, "target_modules", [])) if config is not None else [],
+            "target_modules": list(getattr(config, "target_modules", None) or []) if config is not None else [],
             "num_experts": getattr(config, "num_experts", None),
             "top_k": getattr(config, "top_k", None),
             "router_type": getattr(config, "router_type", None),
@@ -219,9 +219,20 @@ def save_adapters(model: nn.Module, path: str | Path) -> bool:
 
 def load_adapters(model: nn.Module, path: str | Path) -> bool:
     path = Path(path)
-    metadata_path = path / "runtime_metadata.json" if path.is_dir() else path.with_name("runtime_metadata.json")
-    payload = json.loads(metadata_path.read_text()) if metadata_path.exists() else {}
-    backend_name = payload.get("backend")
+    metadata_paths = (
+        (path / "runtime_metadata.json", path / "fallback_meta.json", path / "adapter_config.json")
+        if path.is_dir()
+        else (path.with_name("runtime_metadata.json"),)
+    )
+    payload = {}
+    for metadata_path in metadata_paths:
+        if metadata_path.exists():
+            payload = json.loads(metadata_path.read_text())
+            if payload.get("backend"):
+                break
+    backend_name = {"fallback": "lora", "peft": "lora"}.get(payload.get("backend"), payload.get("backend"))
+    if backend_name is None and (path / "molora_adapter.pt" if path.is_dir() else path).name == "molora_adapter.pt":
+        backend_name = "molora"
     backend = next((item for item in _BACKENDS if item.name == backend_name), discover_adapter_backend(model))
     if backend is None:
         raise ValueError(f"Cannot determine adapter backend for {path}")

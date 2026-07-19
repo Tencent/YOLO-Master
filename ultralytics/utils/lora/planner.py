@@ -248,8 +248,8 @@ class ArchitectureFingerprint:
 
         # Detect head-related module class names
         _HEAD_CLASS_NAMES = frozenset({
-            "Detect", "RTDETRDecoder", "Segment", "Pose", "OBB",
-            "WorldDetect", "YOLOEDetect", "v10Detect",
+            "Detect", "RTDETRDecoder", "Segment", "Segment26", "Pose", "Pose26", "OBB", "OBB26",
+            "SemanticSegment", "WorldDetect", "YOLOEDetect", "YOLOESegment", "YOLOESegment26", "v10Detect",
         })
 
         # Residual detection: modules that have forward with add/residual
@@ -516,8 +516,23 @@ class PlacementDecision:
             "refusal_reason": self.refusal_reason,
             "safety_overrides": dict(self.safety_overrides),
             "metadata": dict(self.metadata),
+            "target_modules_hint": list(self.target_modules_hint or []),
             "target_modules_hint_count": len(self.target_modules_hint or []),
         }
+
+    @classmethod
+    def from_dict(cls, payload: Dict[str, Any]) -> "PlacementDecision":
+        """Restore a planner decision from a DDP-safe plain dictionary."""
+        return cls(
+            status=payload.get("status", "ACCEPT"),
+            recommended_variant=payload.get("recommended_variant"),
+            recommended_rank=payload.get("recommended_rank"),
+            predicted_delta=payload.get("predicted_delta"),
+            target_modules_hint=list(payload.get("target_modules_hint") or []),
+            refusal_reason=payload.get("refusal_reason"),
+            safety_overrides=dict(payload.get("safety_overrides") or {}),
+            metadata=dict(payload.get("metadata") or {}),
+        )
 
 
 @dataclass
@@ -1463,6 +1478,24 @@ class PEFTPlanner:
         }
 
     def plan(self, model: nn.Module, config: Any) -> PlacementDecision:
+        """Compute the planner decision on rank 0 and broadcast it to every DDP rank."""
+        if not (torch.distributed.is_available() and torch.distributed.is_initialized()):
+            return self._plan_local(model, config)
+        rank = torch.distributed.get_rank()
+        envelope = None
+        if rank == 0:
+            try:
+                envelope = {"decision": self._plan_local(model, config).to_dict(), "error": None}
+            except Exception as exc:
+                envelope = {"decision": None, "error": f"{type(exc).__name__}: {exc}"}
+        container = [envelope]
+        torch.distributed.broadcast_object_list(container, src=0)
+        envelope = container[0]
+        if envelope.get("error"):
+            raise RuntimeError(f"Rank-0 PEFT Planner failed: {envelope['error']}")
+        return PlacementDecision.from_dict(envelope["decision"])
+
+    def _plan_local(self, model: nn.Module, config: Any) -> PlacementDecision:
         """Generate a placement decision for the given model and config.
 
         Architecture-conditioned decision flow (regression-dominant):
@@ -1875,67 +1908,7 @@ class PEFTPlanner:
                 metadata=calibration_metadata,
             )
 
-        # DDP consistency: ensure all ranks reach the same decision.
-        # Under DistributedDataParallel, each rank computes the decision
-        # independently. Floating-point differences in module scanning or
-        # regression prediction can cause divergent decisions across ranks,
-        # leading to inconsistent adapter configurations. We broadcast the
-        # decision status and key overrides from rank 0 to all ranks.
-        if torch.distributed.is_available() and torch.distributed.is_initialized():
-            decision = self._sync_decision_ddp(decision)
-
         self._save_audit(fingerprint, variant, rank, decision, targets_hint)
-        return decision
-
-    @staticmethod
-    def _sync_decision_ddp(decision: "PlacementDecision") -> "PlacementDecision":
-        """Broadcast the decision from rank 0 to all DDP ranks.
-
-        Ensures every rank applies the same ACCEPT/ADAPT/REFUSE decision
-        and the same safety_overrides. Without this, rank-0 might ACCEPT
-        while rank-1 ADAPTs, causing gradient mismatch crashes in DDP.
-
-        Args:
-            decision: The locally-computed decision.
-
-        Returns:
-            The rank-0 decision on all ranks (if DDP is initialized).
-        """
-        import torch.distributed as dist
-        if not (dist.is_available() and dist.is_initialized()):
-            return decision
-
-        # Pack decision into a simple dict for broadcasting via dist.broadcast_object_list
-        rank = dist.get_rank()
-        payload = {
-            "status": decision.status,
-            "recommended_variant": decision.recommended_variant,
-            "recommended_rank": decision.recommended_rank,
-            "predicted_delta": decision.predicted_delta,
-            "refusal_reason": decision.refusal_reason,
-            "safety_overrides": decision.safety_overrides,
-            "metadata": decision.metadata,
-            "target_modules_hint_count": len(decision.target_modules_hint or []),
-        }
-        container = [payload]
-        dist.broadcast_object_list(container, src=0)
-        synced = container[0]
-
-        if rank != 0:
-            LOGGER.info(
-                "[Planner] DDP sync: rank %d received decision '%s' from rank 0",
-                rank, synced["status"],
-            )
-            return PlacementDecision(
-                status=synced["status"],
-                recommended_variant=synced["recommended_variant"],
-                recommended_rank=synced["recommended_rank"],
-                predicted_delta=synced["predicted_delta"],
-                refusal_reason=synced["refusal_reason"],
-                safety_overrides=synced["safety_overrides"],
-                metadata=synced["metadata"],
-                target_modules_hint=decision.target_modules_hint,  # keep local targets
-            )
         return decision
 
     def _save_audit(
@@ -2046,6 +2019,10 @@ class PEFTPlanner:
         targets: List[str] = []
         include_text = fingerprint.phi_text > 0.05
 
+        from ultralytics.vpeft.graph import ComputationGraphBuilder
+
+        graph = ComputationGraphBuilder().build(inner_model)
+        annotations = {node.name: node.annotations or {} for node in graph.nodes}
         for name, module in inner_model.named_modules():
             if not name:
                 continue
@@ -2056,6 +2033,11 @@ class PEFTPlanner:
                 continue
 
             lname = name.lower()
+            structural = annotations.get(name, {})
+            if structural.get("in_head") and not bool(getattr(config, "include_head", False)):
+                continue
+            if structural.get("dynamic_routing") and not bool(getattr(config, "include_moe", True)):
+                continue
 
             # YOLOv5 Focus layer: the Focus module uses a pixel-shuffle-like
             # operation followed by a Conv2d. The Focus conv has a 4× larger
@@ -2117,7 +2099,8 @@ class PEFTPlanner:
             filtered = []
             for name in targets:
                 lname = name.lower()
-                if only_backbone and any(
+                structural = annotations.get(name, {})
+                if only_backbone and (structural.get("in_head") or any(
                     p in lname
                     for p in (
                         "head",
@@ -2130,10 +2113,11 @@ class PEFTPlanner:
                         "seg",
                         "pose",
                     )
-                ):
+                )):
                     continue
-                if not include_head and any(
-                    p in lname for p in ("head", "detect", "score_head", "bbox_head")
+                if not include_head and (
+                    structural.get("in_head")
+                    or any(p in lname for p in ("head", "detect", "score_head", "bbox_head"))
                 ):
                     continue
                 if any(ex in name for ex in exclude_modules):

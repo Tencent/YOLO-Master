@@ -249,4 +249,3 @@ def test_map_saturation_scheduler_disabled_passthrough_in_loss():
     out = loss_fn(probs, logits, indices, return_dict=True)
     # disabled -> passthrough, balance coeff should remain 2.0
     assert out["map_saturation_schedule"] is None or out["map_saturation_schedule"]["saturation_scale"] == 1.0
-

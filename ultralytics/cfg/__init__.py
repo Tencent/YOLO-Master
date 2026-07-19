@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import os
 import shutil
 import subprocess
 import sys
@@ -21,7 +22,6 @@ from ultralytics.utils import (
     LOGGER,
     RANK,
     ROOT,
-    RUNS_DIR,
     SETTINGS,
     SETTINGS_FILE,
     STR_OR_PATH,
@@ -48,25 +48,38 @@ SOLUTION_MAP = {
     "analytics": "Analytics",
     "inference": "Inference",
     "trackzone": "TrackZone",
+    "region": "RegionCounter",
+    "security": "SecurityAlarm",
+    "parking": "ParkingManagement",
     "help": None,
 }
 
 # Define valid tasks and modes
 MODES = frozenset({"train", "val", "predict", "export", "track", "benchmark"})
-TASKS = frozenset({"detect", "segment", "classify", "pose", "obb"})
+TASKS = frozenset({"detect", "segment", "classify", "pose", "obb", "semantic"})
 TASK2DATA = {
     "detect": "coco8.yaml",
     "segment": "coco8-seg.yaml",
     "classify": "imagenet10",
     "pose": "coco8-pose.yaml",
     "obb": "dota8.yaml",
+    "semantic": "cityscapes8.yaml",
+}
+TASK2CALIBRATIONDATA = {
+    "detect": "coco128.yaml",
+    "segment": "coco128-seg.yaml",
+    "classify": "imagenet100",
+    "pose": "coco8-pose.yaml",
+    "obb": "dota128.yaml",
+    "semantic": "cityscapes8.yaml",
 }
 TASK2MODEL = {
-    "detect": "yolo11n.pt",
-    "segment": "yolo11n-seg.pt",
-    "classify": "yolo11n-cls.pt",
-    "pose": "yolo11n-pose.pt",
-    "obb": "yolo11n-obb.pt",
+    "detect": "yolo26n.pt",
+    "segment": "yolo26n-seg.pt",
+    "classify": "yolo26n-cls.pt",
+    "pose": "yolo26n-pose.pt",
+    "obb": "yolo26n-obb.pt",
+    "semantic": "yolo26n-sem.pt",
 }
 TASK2METRIC = {
     "detect": "metrics/mAP50-95(B)",
@@ -74,9 +87,11 @@ TASK2METRIC = {
     "classify": "metrics/accuracy_top1",
     "pose": "metrics/mAP50-95(P)",
     "obb": "metrics/mAP50-95(B)",
+    "semantic": "metrics/mIoU",
 }
 
 ARGV = sys.argv or ["", ""]  # sometimes sys.argv = []
+_YOLO_CLI_COMMAND = [sys.executable, "-m", "ultralytics.cfg.__init__"]
 SOLUTIONS_HELP_MSG = f"""
     Arguments received: {["yolo", *ARGV[1:]]!s}. Ultralytics 'yolo solutions' usage overview:
 
@@ -90,13 +105,13 @@ SOLUTIONS_HELP_MSG = f"""
         yolo solutions count source="path/to/video.mp4" region="[(20, 400), (1080, 400), (1080, 360), (20, 360)]"
 
     2. Call heatmap solution
-        yolo solutions heatmap colormap=cv2.COLORMAP_PARULA model=yolo11n.pt
+        yolo solutions heatmap colormap=cv2.COLORMAP_PARULA model=yolo26n.pt
 
     3. Call queue management solution
-        yolo solutions queue region="[(20, 400), (1080, 400), (1080, 360), (20, 360)]" model=yolo11n.pt
+        yolo solutions queue region="[(20, 400), (1080, 400), (1080, 360), (20, 360)]" model=yolo26n.pt
 
     4. Call workout monitoring solution for push-ups
-        yolo solutions workout model=yolo11n-pose.pt kpts=[6, 8, 10]
+        yolo solutions workout model=yolo26n-pose.pt kpts=[6, 8, 10]
 
     5. Generate analytical graphs
         yolo solutions analytics analytics_type="pie"
@@ -104,7 +119,16 @@ SOLUTIONS_HELP_MSG = f"""
     6. Track objects within specific zones
         yolo solutions trackzone source="path/to/video.mp4" region="[(150, 150), (1130, 150), (1130, 570), (150, 570)]"
 
-    7. Streamlit real-time webcam inference GUI
+    7. Count objects inside specific regions
+        yolo solutions region source="path/to/video.mp4" region="[(20, 400), (1080, 400), (1080, 360), (20, 360)]"
+
+    8. Run security alarm monitoring (email alerts require Python API)
+        yolo solutions security source="path/to/video.mp4"
+
+    9. Monitor parking occupancy (create JSON annotations first via Python ParkingPtsSelection)
+        yolo solutions parking source="path/to/video.mp4" json_file="bounding_boxes.json"
+
+    10. Streamlit real-time webcam inference GUI
         yolo streamlit-predict
     """
 CLI_HELP_MSG = f"""
@@ -118,16 +142,16 @@ CLI_HELP_MSG = f"""
                     See all ARGS at https://docs.ultralytics.com/usage/cfg or with 'yolo cfg'
 
     1. Train a detection model for 10 epochs with an initial learning_rate of 0.01
-        yolo train data=coco8.yaml model=yolo11n.pt epochs=10 lr0=0.01
+        yolo train data=coco8.yaml model=yolo26n.pt epochs=10 lr0=0.01
 
     2. Predict a YouTube video using a pretrained segmentation model at image size 320:
-        yolo predict model=yolo11n-seg.pt source='https://youtu.be/LNwODJXcvt4' imgsz=320
+        yolo predict model=yolo26n-seg.pt source='https://youtu.be/LNwODJXcvt4' imgsz=320
 
     3. Validate a pretrained detection model at batch-size 1 and image size 640:
-        yolo val model=yolo11n.pt data=coco8.yaml batch=1 imgsz=640
+        yolo val model=yolo26n.pt data=coco8.yaml batch=1 imgsz=640
 
-    4. Export a YOLO11n classification model to ONNX format at image size 224 by 128 (no TASK required)
-        yolo export model=yolo11n-cls.pt format=onnx imgsz=224,128
+    4. Export a YOLO26n classification model to ONNX format at image size 224 by 128 (no TASK required)
+        yolo export model=yolo26n-cls.pt format=onnx imgsz=224,128
 
     5. Ultralytics solutions usage
         yolo solutions count or any of {list(SOLUTION_MAP.keys())[1:-1]} source="path/to/video.mp4"
@@ -147,26 +171,102 @@ CLI_HELP_MSG = f"""
     GitHub: https://github.com/ultralytics/ultralytics
     """
 
+# Quantization aliases: maps any accepted `quantize` value to its canonical form. The common case is the integer
+# bit-width 8 (INT8) / 16 (FP16) / 32 (FP32); the verbose w<weights>a<activations> strings are accepted too and
+# collapse to the same ints, except the mixed-precision schemes that have no bit-width shorthand: 'w8a16' (INT8
+# weights + FP16 activations) and 'w8a32' (INT8 weights + FP32 activations, i.e. LiteRT dynamic/weight-only INT8).
+QUANTIZE_ALIASES = {
+    "8": 8,
+    "16": 16,
+    "32": 32,
+    "int8": 8,
+    "fp16": 16,
+    "fp32": 32,
+    "w8a8": 8,
+    "w16a16": 16,
+    "w32a32": 32,
+    "w8a16": "w8a16",
+    "w8a32": "w8a32",
+}
+QUANTIZE_DOCS_URL = "https://docs.ultralytics.com/modes/export/#quantization-options"
+QUANTIZE_VALID_VALUES = "8, 16, 32, 'int8', 'fp16', 'fp32', 'w8a8', 'w16a16', 'w8a16', or 'w8a32'"
+
 # Define keys for arg type checks
+MIXTURE_FLOAT_KEYS = frozenset(
+    {
+        "lora_auto_r_ratio",
+        "lora_beta1",
+        "lora_beta2",
+        "lora_dropout",
+        "lora_dropout_end",
+        "lora_dropout_start_ratio",
+        "lora_few_shot_distill_weight",
+        "lora_few_shot_distill_weight_max",
+        "lora_few_shot_distill_weight_min",
+        "lora_few_shot_dropconnect",
+        "lora_few_shot_dropconnect_max",
+        "lora_few_shot_dropconnect_min",
+        "lora_few_shot_ema_decay",
+        "lora_few_shot_rank_budget",
+        "lora_few_shot_response_distill_weight",
+        "lora_layer_decay",
+        "lora_lr_mult",
+        "lora_oft_eps",
+        "lora_orth_reg_weight",
+        "lora_ortho_weight",
+        "mixture_aux_budget",
+        "moa_aux_gain",
+        "moa_aux_loss_coeff",
+        "moa_mot_min_temperature",
+        "moa_mot_temperature_factor",
+        "moa_temperature",
+        "moe",
+        "moe_aux_gain",
+        "moe_balance_loss",
+        "moe_collapse_threshold",
+        "moe_map_saturation_decay_factor",
+        "moe_map_saturation_min_scale",
+        "moe_map_saturation_threshold",
+        "moe_noise_std",
+        "moe_router_lr_scale",
+        "moe_router_z_loss",
+        "moe_temperature",
+        "moe_weight_threshold",
+        "molora_balance_loss",
+        "molora_capacity_factor",
+        "molora_diversity_loss",
+        "molora_expert_dropout",
+        "molora_router_z_loss",
+        "mot_aux_gain",
+        "mot_balance_loss",
+        "mot_router_z_loss",
+        "mot_scene_consistency",
+        "mot_temperature",
+        "objectness_threshold",
+        "overlap_ratio",
+        "sigma",
+    }
+)
 CFG_FLOAT_KEYS = frozenset(
     {  # integer or float arguments, i.e. x=2 and x=2.0
         "warmup_epochs",
         "box",
         "cls",
         "dfl",
+        "dis",
         "degrees",
         "shear",
         "time",
         "workspace",
         "batch",
-        "sigma",
     }
-)
+) | MIXTURE_FLOAT_KEYS
 CFG_FRACTION_KEYS = frozenset(
-    {  # fractional float arguments with 0.0<=values<=1.0
+    {  # fractional floats use [0.0, 1.0], except dataset fraction uses (0.0, 1.0]
         "dropout",
         "lr0",
         "lrf",
+        "cls_pw",
         "momentum",
         "weight_decay",
         "warmup_momentum",
@@ -175,7 +275,6 @@ CFG_FRACTION_KEYS = frozenset(
         "hsv_s",
         "hsv_v",
         "translate",
-        "scale",
         "perspective",
         "flipud",
         "fliplr",
@@ -187,6 +286,37 @@ CFG_FRACTION_KEYS = frozenset(
         "conf",
         "iou",
         "fraction",
+        "multi_scale",
+    }
+)
+MIXTURE_INT_KEYS = frozenset(
+    {
+        "lora_alpha",
+        "lora_alpha_warmup",
+        "lora_boft_block_num",
+        "lora_boft_block_size",
+        "lora_boft_n_butterfly_factor",
+        "lora_delta_t",
+        "lora_init_r",
+        "lora_min_channels",
+        "lora_oft_block_size",
+        "lora_ortho_frequency",
+        "lora_r",
+        "lora_target_r",
+        "lora_tfinal",
+        "lora_tinit",
+        "lora_total_step",
+        "moa_local_window_size",
+        "moe_expert_warmup_epochs",
+        "moe_map_saturation_window_size",
+        "moe_num_experts",
+        "moe_top_k",
+        "molora_alpha",
+        "molora_num_experts",
+        "molora_r",
+        "molora_top_k",
+        "molora_warmup_steps",
+        "slice_size",
     }
 )
 CFG_INT_KEYS = frozenset(
@@ -203,6 +333,54 @@ CFG_INT_KEYS = frozenset(
         "nbs",
         "save_period",
     }
+) | MIXTURE_INT_KEYS
+CFG_INT_MIN = {  # minimum valid values for integer arguments used as divisors, sizes or seeds
+    "nbs": 1,
+    "max_det": 1,
+    "mask_ratio": 1,
+    "vid_stride": 1,
+    "seed": 0,
+}
+MIXTURE_BOOL_KEYS = frozenset(
+    {
+        "cluster",
+        "lora_allow_depthwise",
+        "lora_allow_rtdetr_dora",
+        "lora_few_shot_adaptive_rank",
+        "lora_few_shot_adaptive_temperature",
+        "lora_few_shot_curriculum_sampling",
+        "lora_few_shot_gradient_importance_weighted",
+        "lora_few_shot_hierarchical_distill",
+        "lora_few_shot_hook_cache",
+        "lora_few_shot_layerwise_rank",
+        "lora_few_shot_mode",
+        "lora_few_shot_response_distill",
+        "lora_few_shot_use_ema_teacher",
+        "lora_few_shot_variational_rank",
+        "lora_freeze_bn",
+        "lora_gradient_checkpointing",
+        "lora_hra_apply_gs",
+        "lora_include_attention",
+        "lora_include_head",
+        "lora_include_moe",
+        "lora_oft_block_share",
+        "lora_oft_coft",
+        "lora_only_3x3",
+        "lora_only_backbone",
+        "lora_planner_enabled",
+        "lora_save_adapters",
+        "lora_skip_stem",
+        "lora_use_dora",
+        "lora_use_rslora",
+        "moe_map_saturation_enabled",
+        "molora_share_moe_registry",
+        "molora_use_rslora",
+        "mot_scene_aware_router",
+        "mot_sparse_train",
+        "sparse_sahi",
+        "sparse_sahi_fallback",
+        "weighted",
+    }
 )
 CFG_BOOL_KEYS = frozenset(
     {  # boolean-only arguments
@@ -216,7 +394,6 @@ CFG_BOOL_KEYS = frozenset(
         "overlap_mask",
         "val",
         "save_json",
-        "half",
         "dnn",
         "plots",
         "show",
@@ -233,14 +410,49 @@ CFG_BOOL_KEYS = frozenset(
         "show_boxes",
         "keras",
         "optimize",
-        "int8",
         "dynamic",
         "simplify",
         "nms",
         "profile",
-        "multi_scale",
-        "weighted",
-        "cluster",
+        "end2end",
+        "cls_remap",
+    }
+) | MIXTURE_BOOL_KEYS
+MIXTURE_STR_KEYS = frozenset(
+    {
+        "iou_type",
+        "lora_adapter_dir",
+        "lora_backend",
+        "lora_bias",
+        "lora_few_shot_distill_schedule",
+        "lora_few_shot_dropconnect_schedule",
+        "lora_quantization",
+        "lora_type",
+        "lora_variant",
+        "molora_expert_init",
+        "molora_router_type",
+    }
+)
+CFG_STR_KEYS = frozenset({"optimizer", "split", "copy_paste_mode", "auto_augment"}) | MIXTURE_STR_KEYS
+LORA_RUNTIME_METADATA_KEYS = frozenset(
+    {
+        "effective_lora_backend",
+        "effective_lora_init_lora_weights",
+        "effective_lora_type",
+        "effective_lora_variant",
+        "lora_planner_adapted",
+        "lora_planner_refused",
+        "lora_safety_overrides",
+        "lora_safety_profile",
+        "lora_target_audit",
+        "planner_decision",
+        "planner_predicted_delta",
+        "planner_recommended_rank",
+        "planner_recommended_variant",
+        "planner_refusal_reason",
+        "requested_lora_backend",
+        "requested_lora_init_lora_weights",
+        "requested_lora_variant",
     }
 )
 
@@ -295,7 +507,7 @@ def get_cfg(
     Examples:
         >>> from ultralytics.cfg import get_cfg
         >>> config = get_cfg()  # Load default configuration
-        >>> config_with_overrides = get_cfg("path/to/config.yaml", overrides={"epochs": 50, "batch_size": 16})
+        >>> config_with_overrides = get_cfg("path/to/config.yaml", overrides={"epochs": 50, "batch": 16})
 
     Notes:
         - If both `cfg` and `overrides` are provided, the values in `overrides` will take precedence.
@@ -308,8 +520,6 @@ def get_cfg(
     # Merge overrides
     if overrides:
         overrides = cfg2dict(overrides)
-        if "save_dir" not in cfg:
-            overrides.pop("save_dir", None)  # special override keys to ignore
         check_dict_alignment(cfg, overrides)
         cfg = {**cfg, **overrides}  # merge cfg and overrides dicts (prefer overrides)
 
@@ -343,19 +553,22 @@ def check_cfg(cfg: dict, hard: bool = True) -> None:
         >>> config = {
         ...     "epochs": 50,  # valid integer
         ...     "lr0": 0.01,  # valid float
-        ...     "momentum": 1.2,  # invalid float (out of 0.0-1.0 range)
+        ...     "momentum": 0.937,  # valid float
         ...     "save": "true",  # invalid bool
         ... }
         >>> check_cfg(config, hard=False)
         >>> print(config)
-        {'epochs': 50, 'lr0': 0.01, 'momentum': 1.2, 'save': False}  # corrected 'save' key
+        {'epochs': 50, 'lr0': 0.01, 'momentum': 0.937, 'save': True}
 
     Notes:
         - The function modifies the input dictionary in-place.
         - None values are ignored as they may be from optional arguments.
-        - Fraction keys are checked to be within the range [0.0, 1.0].
+        - Fraction keys use [0.0, 1.0], except dataset fraction, which uses (0.0, 1.0].
     """
+    typed_keys = CFG_FLOAT_KEYS | CFG_FRACTION_KEYS | CFG_INT_KEYS | CFG_BOOL_KEYS | CFG_STR_KEYS | {"scale", "compile"}
     for k, v in cfg.items():
+        if v is None and DEFAULT_CFG_DICT.get(k) is not None and k in typed_keys and k != "auto_augment":
+            raise TypeError(f"'{k}=None' is invalid. '{k}' must not be None.")
         if v is not None:  # None values may be from optional args
             if k in CFG_FLOAT_KEYS and not isinstance(v, FLOAT_OR_INT):
                 if hard:
@@ -364,8 +577,17 @@ def check_cfg(cfg: dict, hard: bool = True) -> None:
                         f"Valid '{k}' types are int (i.e. '{k}=0') or float (i.e. '{k}=0.5')"
                     )
                 cfg[k] = float(v)
-            elif k in CFG_FRACTION_KEYS:
-                if not isinstance(v, FLOAT_OR_INT):
+            elif k == "scale":
+                if isinstance(v, (list, tuple)):
+                    if len(v) != 2 or not all(isinstance(x, (int, float)) for x in v):
+                        if hard:
+                            raise TypeError(
+                                f"'{k}={v}' is of invalid type {type(v).__name__}. "
+                                f"Valid '{k}' types are int, float, or a tuple/list of two floats (i.e. '{k}=(0.5, 2.0)')"
+                            )
+                        continue
+                    continue
+                elif not isinstance(v, FLOAT_OR_INT):
                     if hard:
                         raise TypeError(
                             f"'{k}={v}' is of invalid type {type(v).__name__}. "
@@ -374,12 +596,31 @@ def check_cfg(cfg: dict, hard: bool = True) -> None:
                     cfg[k] = v = float(v)
                 if not (0.0 <= v <= 1.0):
                     raise ValueError(f"'{k}={v}' is an invalid value. Valid '{k}' values are between 0.0 and 1.0.")
-            elif k in CFG_INT_KEYS and not isinstance(v, int):
+            elif k in CFG_FRACTION_KEYS:
+                if not isinstance(v, FLOAT_OR_INT):
+                    if hard:
+                        raise TypeError(
+                            f"'{k}={v}' is of invalid type {type(v).__name__}. "
+                            f"Valid '{k}' types are int (i.e. '{k}=0') or float (i.e. '{k}=0.5')"
+                        )
+                    cfg[k] = v = float(v)
+                if not (0.0 <= v <= 1.0) or (k == "fraction" and v == 0.0):
+                    raise ValueError(f"'{k}={v}' is invalid. Use (0.0, 1.0] for fraction; [0.0, 1.0] otherwise.")
+            elif k in CFG_INT_KEYS:
+                if not isinstance(v, int):
+                    if hard:
+                        raise TypeError(
+                            f"'{k}={v}' is of invalid type {type(v).__name__}. '{k}' must be an int (i.e. '{k}=8')"
+                        )
+                    cfg[k] = v = int(v)
+                if k in CFG_INT_MIN and v < CFG_INT_MIN[k]:
+                    raise ValueError(f"'{k}={v}' is an invalid value. '{k}' must be >= {CFG_INT_MIN[k]}.")
+            elif k == "lora_init_lora_weights" and not isinstance(v, (bool, str)):
                 if hard:
                     raise TypeError(
-                        f"'{k}={v}' is of invalid type {type(v).__name__}. '{k}' must be an int (i.e. '{k}=8')"
+                        f"'{k}={v}' is of invalid type {type(v).__name__}. '{k}' must be a bool or str."
                     )
-                cfg[k] = int(v)
+                cfg[k] = bool(v)
             elif k in CFG_BOOL_KEYS and not isinstance(v, bool):
                 if hard:
                     raise TypeError(
@@ -387,6 +628,27 @@ def check_cfg(cfg: dict, hard: bool = True) -> None:
                         f"'{k}' must be a bool (i.e. '{k}=True' or '{k}=False')"
                     )
                 cfg[k] = bool(v)
+            elif k in CFG_STR_KEYS and not isinstance(v, str):
+                if hard:
+                    raise TypeError(f"'{k}={v}' is of invalid type {type(v).__name__}. '{k}' must be a str.")
+                cfg[k] = str(v)
+            elif k == "compile" and not isinstance(v, (bool, str)):  # False=off, True="default", or a mode string
+                if hard:
+                    raise TypeError(
+                        f"'{k}={v}' is of invalid type {type(v).__name__}. "
+                        f"'{k}' must be a bool or str (i.e. '{k}=True' or '{k}=max-autotune')"
+                    )
+                cfg[k] = bool(v)
+            elif k == "quantize":  # canonicalize 8/16/32 or w-notation to a scheme (unset stays None for FP32)
+                scheme = QUANTIZE_ALIASES.get(str(v).lower())
+                if scheme is None:
+                    if hard:
+                        raise ValueError(
+                            f"'{k}={v}' is invalid. Valid '{k}' values are {QUANTIZE_VALID_VALUES}. "
+                            f"See {QUANTIZE_DOCS_URL}"
+                        )
+                else:
+                    cfg[k] = scheme
 
 
 def get_save_dir(args: SimpleNamespace, name: str | None = None) -> Path:
@@ -406,14 +668,20 @@ def get_save_dir(args: SimpleNamespace, name: str | None = None) -> Path:
         >>> args = SimpleNamespace(project="my_project", task="detect", mode="train", exist_ok=True)
         >>> save_dir = get_save_dir(args)
         >>> print(save_dir)
-        my_project/detect/train
+        runs/detect/my_project/train
     """
     if getattr(args, "save_dir", None):
         save_dir = args.save_dir
     else:
         from ultralytics.utils.files import increment_path
 
-        project = args.project or (ROOT.parent / "tests/tmp/runs" if TESTS_RUNNING else RUNS_DIR) / args.task
+        project = args.project or ""
+        if not Path(project).is_absolute():
+            base = ROOT.parent / "tests/tmp/runs" if TESTS_RUNNING else Path(SETTINGS["runs_dir"])
+            worker = os.environ.get("PYTEST_XDIST_WORKER")
+            if worker and TESTS_RUNNING:  # isolate parallel pytest-xdist workers
+                base = base / worker
+            project = base / args.task / project
         name = name or args.name or f"{args.mode}"
         save_dir = increment_path(Path(project) / name, exist_ok=args.exist_ok if RANK in {-1, 0} else True)
 
@@ -432,8 +700,7 @@ def _handle_deprecation(custom: dict) -> dict:
     Examples:
         >>> custom_config = {"boxes": True, "hide_labels": "False", "line_thickness": 2}
         >>> _handle_deprecation(custom_config)
-        >>> print(custom_config)
-        {'show_boxes': True, 'show_labels': True, 'line_width': 2}
+        {'show_boxes': True, 'show_labels': False, 'line_width': 2}
 
     Notes:
         This function modifies the input dictionary in-place, replacing deprecated keys with their current
@@ -447,6 +714,17 @@ def _handle_deprecation(custom: dict) -> dict:
         "line_thickness": ("line_width", lambda v: v),
     }
     removed_keys = {"label_smoothing", "save_hybrid", "crop_fraction"}
+
+    # Forward the deprecated precision flags onto the unified `quantize` scheme (int8 wins over half). The value is read
+    # as a bool so quoted/string 'False' disables it while a bare CLI flag (empty string) enables it; an explicit false
+    # flag maps to None to clear any inherited quantize. An explicit `quantize=` always wins over the legacy flags.
+    int8 = custom.pop("int8", None)
+    half = custom.pop("half", None)
+    if (int8 is not None or half is not None) and "quantize" not in custom:
+        int8_on = int8 is not None and str(int8).strip().lower() not in {"none", "false", "0"}
+        half_on = half is not None and str(half).strip().lower() not in {"none", "false", "0"}
+        custom["quantize"] = 8 if int8_on else 16 if half_on else None  # False/0 clears precision back to FP32
+        deprecation_warn("int8" if int8 is not None else "half", "quantize")
 
     for old_key, (new_key, transform) in deprecated_mappings.items():
         if old_key not in custom:
@@ -476,14 +754,14 @@ def check_dict_alignment(
         allowed_custom_keys (set | None): Optional set of additional keys that are allowed in the custom dictionary.
 
     Raises:
-        SystemExit: If mismatched keys are found between the custom and base dictionaries.
+        SyntaxError: If mismatched keys are found between the custom and base dictionaries.
 
     Examples:
-        >>> base_cfg = {"epochs": 50, "lr0": 0.01, "batch_size": 16}
-        >>> custom_cfg = {"epoch": 100, "lr": 0.02, "batch_size": 32}
+        >>> base_cfg = {"epochs": 50, "lr0": 0.01, "batch": 16}
+        >>> custom_cfg = {"epoch": 100, "lr": 0.02, "batch": 32}
         >>> try:
         ...     check_dict_alignment(base_cfg, custom_cfg)
-        ... except SystemExit:
+        ... except SyntaxError:
         ...     print("Mismatched keys found")
 
     Notes:
@@ -495,7 +773,7 @@ def check_dict_alignment(
     base_keys, custom_keys = (frozenset(x.keys()) for x in (base, custom))
     # Allow 'augmentations' as a valid custom parameter for custom Albumentations transforms
     if allowed_custom_keys is None:
-        allowed_custom_keys = {"augmentations"}
+        allowed_custom_keys = {"augmentations", "save_dir"} | LORA_RUNTIME_METADATA_KEYS
     if mismatched := [k for k in custom_keys if k not in base_keys and k not in allowed_custom_keys]:
         from difflib import get_close_matches
 
@@ -607,7 +885,7 @@ def handle_yolo_settings(args: list[str]) -> None:
 
     Examples:
         >>> handle_yolo_settings(["reset"])  # Reset YOLO settings
-        >>> handle_yolo_settings(["default_cfg_path=yolo11n.yaml"])  # Update a specific setting
+        >>> handle_yolo_settings(["runs_dir=path/to/dir"])  # Update a specific setting
 
     Notes:
         - If no arguments are provided, the function will display the current settings.
@@ -652,13 +930,13 @@ def handle_yolo_solutions(args: list[str]) -> None:
         >>> handle_yolo_solutions(["analytics", "conf=0.25", "source=path/to/video.mp4"])
 
         Run inference with custom configuration, requires Streamlit version 1.29.0 or higher.
-        >>> handle_yolo_solutions(["inference", "model=yolo11n.pt"])
+        >>> handle_yolo_solutions(["inference", "model=yolo26n.pt"])
 
     Notes:
         - Arguments can be provided in the format 'key=value' or as boolean flags
         - Available solutions are defined in SOLUTION_MAP with their respective classes and methods
         - If an invalid solution is provided, defaults to 'count' solution
-        - Output videos are saved in 'runs/solution/{solution_name}' directory
+        - Output videos are saved in 'runs/solutions/exp' directory
         - For 'analytics' solution, frame numbers are tracked for generating analytical graphs
         - Video processing can be interrupted by pressing 'q'
         - Processes video frames sequentially and saves output in .avi format
@@ -710,7 +988,7 @@ def handle_yolo_solutions(args: list[str]) -> None:
                 str(ROOT / "solutions/streamlit_inference.py"),
                 "--server.headless",
                 "true",
-                overrides.pop("model", "yolo11n.pt"),
+                overrides.pop("model", "yolo26n.pt"),
             ]
         )
     else:
@@ -718,7 +996,7 @@ def handle_yolo_solutions(args: list[str]) -> None:
 
         from ultralytics import solutions
 
-        solution = getattr(solutions, SOLUTION_MAP[solution_name])(is_cli=True, **overrides)  # class i.e ObjectCounter
+        solution = getattr(solutions, SOLUTION_MAP[solution_name])(is_cli=True, **overrides)  # class i.e. ObjectCounter
 
         cap = cv2.VideoCapture(solution.CFG["source"])  # read the video file
         if solution_name != "crop":
@@ -726,10 +1004,10 @@ def handle_yolo_solutions(args: list[str]) -> None:
             w, h, fps = (
                 int(cap.get(x)) for x in (cv2.CAP_PROP_FRAME_WIDTH, cv2.CAP_PROP_FRAME_HEIGHT, cv2.CAP_PROP_FPS)
             )
-            if solution_name == "analytics":  # analytical graphs follow fixed shape for output i.e w=1920, h=1080
+            if solution_name == "analytics":  # analytical graphs follow fixed shape for output i.e w=1280, h=720
                 w, h = 1280, 720
-            save_dir = get_save_dir(SimpleNamespace(project="runs/solutions", name="exp", exist_ok=False))
-            save_dir.mkdir(parents=True)  # create the output directory i.e. runs/solutions/exp
+            save_dir = get_save_dir(SimpleNamespace(task="solutions", name="exp", exist_ok=False, project=None))
+            save_dir.mkdir(parents=True, exist_ok=True)  # create the output directory i.e. runs/solutions/exp
             vw = cv2.VideoWriter(str(save_dir / f"{solution_name}.avi"), cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
 
         try:  # Process video frames
@@ -761,9 +1039,9 @@ def parse_key_value_pair(pair: str = "key=value") -> tuple:
         AssertionError: If the value is missing or empty.
 
     Examples:
-        >>> key, value = parse_key_value_pair("model=yolo11n.pt")
+        >>> key, value = parse_key_value_pair("model=yolo26n.pt")
         >>> print(f"Key: {key}, Value: {value}")
-        Key: model, Value: yolo11n.pt
+        Key: model, Value: yolo26n.pt
 
         >>> key, value = parse_key_value_pair("epochs=100")
         >>> print(f"Key: {key}, Value: {value}")
@@ -821,6 +1099,11 @@ def smart_value(v: str) -> Any:
         try:
             return ast.literal_eval(v)
         except Exception:
+            name, _, attr = v.rpartition(".")
+            if (module := sys.modules.get(name)) and attr.isupper():
+                value = getattr(module, attr, None)
+                if isinstance(value, (int, float)):
+                    return value
             return v
 
 
@@ -835,13 +1118,13 @@ def entrypoint(debug: str = "") -> None:
 
     Examples:
         Train a detection model for 10 epochs with an initial learning_rate of 0.01:
-        >>> entrypoint("train data=coco8.yaml model=yolo11n.pt epochs=10 lr0=0.01")
+        >>> entrypoint("train data=coco8.yaml model=yolo26n.pt epochs=10 lr0=0.01")
 
         Predict a YouTube video using a pretrained segmentation model at image size 320:
-        >>> entrypoint("predict model=yolo11n-seg.pt source='https://youtu.be/LNwODJXcvt4' imgsz=320")
+        >>> entrypoint("predict model=yolo26n-seg.pt source='https://youtu.be/LNwODJXcvt4' imgsz=320")
 
         Validate a pretrained detection model at batch-size 1 and image size 640:
-        >>> entrypoint("val model=yolo11n.pt data=coco8.yaml batch=1 imgsz=640")
+        >>> entrypoint("val model=yolo26n.pt data=coco8.yaml batch=1 imgsz=640")
 
     Notes:
         - If no arguments are passed, the function will display the usage help message.
@@ -900,6 +1183,8 @@ def entrypoint(debug: str = "") -> None:
             return
         elif a in DEFAULT_CFG_DICT and isinstance(DEFAULT_CFG_DICT[a], bool):
             overrides[a] = True  # auto-True for default bool args, i.e. 'yolo show' sets show=True
+        elif a in {"half", "int8"}:
+            overrides[a] = True  # deprecated bare precision flags, forwarded to quantize by _handle_deprecation
         elif a in DEFAULT_CFG_DICT:
             raise SyntaxError(
                 f"'{colorstr('red', 'bold', a)}' is a valid YOLO argument but is missing an '=' sign "
@@ -936,7 +1221,7 @@ def entrypoint(debug: str = "") -> None:
     # Model
     model = overrides.pop("model", DEFAULT_CFG.model)
     if model is None:
-        model = "yolo11n.pt"
+        model = "yolo26n.pt"
         LOGGER.warning(f"'model' argument is missing. Using default 'model={model}'.")
     overrides["model"] = model
     stem = Path(model).stem.lower()
@@ -959,7 +1244,7 @@ def entrypoint(debug: str = "") -> None:
         if "yoloe" in stem or "world" in stem:
             cls_list = overrides.pop("classes", DEFAULT_CFG.classes)
             if cls_list is not None and isinstance(cls_list, str):
-                model.set_classes(cls_list.split(","))  # convert "person, bus" -> ['person', ' bus'].
+                model.set_classes([c.strip() for c in cls_list.split(",")])  # "person, bus" -> ['person', 'bus']
     # Task Update
     if task != model.task:
         if task:
@@ -1025,5 +1310,5 @@ def copy_default_cfg() -> None:
 
 
 if __name__ == "__main__":
-    # Example: entrypoint(debug='yolo predict model=yolo11n.pt')
+    # Example: entrypoint(debug='yolo predict model=yolo26n.pt')
     entrypoint(debug="")

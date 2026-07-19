@@ -8,9 +8,7 @@ formats:
   coreml: {supported: true, default: dense_fallback, known_error: dynamic sparse dispatch is not preserved}
   saved_model: {supported: true, default: dense_fallback, known_error: dynamic sparse dispatch is not preserved}
   pb: {supported: true, default: dense_fallback, known_error: dynamic sparse dispatch is not preserved}
-  tflite: {supported: true, default: dense_fallback, known_error: dynamic sparse dispatch is not preserved}
   edgetpu: {supported: true, default: dense_fallback, known_error: Edge TPU support requires downstream operator validation}
-  tfjs: {supported: true, default: dense_fallback, known_error: dynamic sparse dispatch is not preserved}
   paddle: {supported: true, default: dense_fallback, known_error: component roundtrip is unverified}
   mnn: {supported: true, default: dense_fallback, known_error: component roundtrip is unverified}
   ncnn: {supported: true, default: dense_fallback, known_error: component roundtrip is unverified}
@@ -18,6 +16,10 @@ formats:
   rknn: {supported: true, default: dense_fallback, known_error: hardware-specific validation is required}
   executorch: {supported: true, default: dense_fallback, known_error: component roundtrip is unverified}
   axelera: {supported: false, default: refuse, known_error: routed module export has not been validated for Axelera}
+  deepx: {supported: false, default: refuse, known_error: routed module export has not been validated for DEEPX}
+  qnn: {supported: false, default: refuse, known_error: routed module export has not been validated for Qualcomm QNN}
+  litert: {supported: true, default: dense_fallback, known_error: dynamic sparse dispatch is not preserved}
+  hailo: {supported: false, default: refuse, known_error: routed module export has not been validated for Hailo}
 modules:
   MoE:
     supported: true

@@ -1524,9 +1524,10 @@ class UltimateOptimizedMoE(nn.Module):
         current_k = self.num_experts - progress * (self.num_experts - self.top_k)
         self.current_top_k.fill_(max(self.top_k, int(current_k)))
         # Temperature
-        current_temp = self.initial_temperature * (1 - progress) + self.final_temperature * progress
-        # Clamp temperature to avoid division by zero or explosion
-        self.routing.temperature = max(current_temp, 0.1)
+        if not getattr(self.routing, "_external_temperature_schedule", False):
+            current_temp = self.initial_temperature * (1 - progress) + self.final_temperature * progress
+            # Clamp temperature to avoid division by zero or explosion
+            self.routing.temperature = max(current_temp, 0.1)
     
     def forward(self, x):
         B, C, H, W = x.shape

@@ -32,6 +32,7 @@ def normalize_export_format(fmt: str) -> str:
         "mlprogram": "coreml",
         "apple": "coreml",
         "ios": "coreml",
+        "tflite": "litert",
     }
     return aliases.get(value, value)
 
@@ -119,10 +120,13 @@ def classify_routed_module(module: nn.Module) -> str | None:
         return "MoT"
     if name in {"MoLoRALayer", "MoLoRAMoEAwareLayer"}:
         return "MoLoRA"
+    if name in {"DyMoEBlock", "DyC2f"}:
+        return "MoE"
     try:
+        from ultralytics.nn.modules.moe import EXPERIMENTAL_MOE_CLASSES, LEGACY_MOE_CLASSES, STABLE_MOE_CLASSES
         from ultralytics.nn.modules.moe.utils import is_core_moe_block
 
-        if is_core_moe_block(module):
+        if name in STABLE_MOE_CLASSES | EXPERIMENTAL_MOE_CLASSES | LEGACY_MOE_CLASSES or is_core_moe_block(module):
             return "MoE"
     except (ImportError, AttributeError):
         pass

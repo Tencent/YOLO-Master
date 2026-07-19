@@ -40,7 +40,7 @@ class MoLoRAConfig(LoRAConfig):
 
     # Continual learning / domain isolation
     domain_experts: Optional[Dict[str, List[int]]] = None
-    freeze_experts: Optional[List[int]] = None  # reserved
+    freeze_experts: Optional[List[int]] = None  # expert indices frozen after adapter construction
 
     # Registry integration
     share_moe_registry: bool = True  # write balance loss to MOE_LOSS_REGISTRY
@@ -158,6 +158,7 @@ class MoLoRAConfigBuilder(LoRAConfigBuilder):
         detect_kwargs = {
             "include_moe": kwargs.get("include_moe", True),
             "include_attention": kwargs.get("include_attention", False),
+            "include_head": kwargs.get("include_head", False),
             "only_backbone": kwargs.get("only_backbone", False),
             "exclude_modules": kwargs.get("exclude_modules"),
             "last_n": kwargs.get("last_n"),

@@ -7,11 +7,11 @@ registry, snapshot recording, robust deepcopy, and the consolidated import block
 """
 import os
 import math
-import logging
+from contextlib import nullcontext
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import copy
 import weakref
 from typing import Tuple, Dict, Optional, Union
 from .utils import FlopsUtils, get_safe_groups, BatchedExpertComputation
@@ -24,20 +24,29 @@ from .routers import (
     AdaptiveRoutingLayer, DynamicRoutingLayer, AdvancedRoutingLayer
 )
 from ultralytics.nn.modules.block import ABlock, A2C2f, C3k
-from torch.amp import autocast as _autocast
+
+try:
+    from torch.amp import autocast as _device_autocast
+except ImportError:  # torch<1.10
+    _device_autocast = None
+from torch.cuda.amp import autocast as _cuda_autocast
+
 
 def autocast(enabled=True, **kwargs):
     """Device-agnostic autocast wrapper. Falls back gracefully on non-CUDA devices."""
     if torch.cuda.is_available():
-        return _autocast('cuda', enabled=enabled, **kwargs)
-    if torch.backends.mps.is_available():
-        return _autocast('mps', enabled=enabled, **kwargs)
+        if _device_autocast is not None:
+            return _device_autocast("cuda", enabled=enabled, **kwargs)
+        return _cuda_autocast(enabled=enabled, **kwargs)
+    mps = getattr(torch.backends, "mps", None)
+    if mps is not None and mps.is_available() and _device_autocast is not None:
+        return _device_autocast("mps", enabled=enabled, **kwargs)
     # On CPU, autocast is not fully supported; disable to avoid warnings/errors
-    from contextlib import nullcontext
-    return nullcontext() if not enabled else nullcontext()
+    return nullcontext()
 from .loss import MoELoss, gshard_balance_loss, weighted_gshard_balance_loss, differentiable_balance_loss, all_reduce_mean
 from .scheduler import MoEDynamicScheduler, MoEDynamicSchedulerConfig
 from ..routing_protocol import publish_aux_loss
+from ultralytics.nn.modules.utils import robust_deepcopy as _robust_deepcopy
 
 # Global registry to store auxiliary losses for MoE modules
 # This prevents storing non-leaf tensors in the module instance, avoiding deepcopy errors.
@@ -203,56 +212,6 @@ def _record_moe_snapshot(
             snapshot["mean_topk_weight"] = weights.mean(dim=0)
 
     module.last_routing_snapshot = snapshot
-
-def _is_readonly_property(cls, name):
-    """Check if *name* is a property on *cls* (or bases) that has no setter."""
-    for base in cls.__mro__:
-        attr = base.__dict__.get(name)
-        if isinstance(attr, property) and attr.fset is None:
-            return True
-    return False
-
-
-def _robust_deepcopy(obj, memo):
-    """
-    Robust deepcopy helper that sanitizes the object's __dict__ to remove
-    any non-leaf tensors (which cause RuntimeError in deepcopy) before copying.
-    Also skips stale __dict__ entries that shadow read-only @property descriptors
-    (e.g. ``aux_loss`` from older checkpoints) to avoid AttributeError.
-    """
-    cls = obj.__class__
-    new_obj = cls.__new__(cls)
-    memo[id(obj)] = new_obj
-
-    for k, v in obj.__dict__.items():
-        # Skip stale attributes that shadow a read-only property on the class
-        if _is_readonly_property(cls, k):
-            continue
-        # Check for non-leaf tensor (has grad_fn)
-        if isinstance(v, torch.Tensor) and v.grad_fn is not None:
-            # Replace with a safe scalar zero on the same device/dtype.
-            setattr(new_obj, k, _detached_zero_like(v))
-        else:
-            try:
-                setattr(new_obj, k, copy.deepcopy(v, memo))
-            except RuntimeError as e:
-                # Fallback: if deepcopy fails on a specific attribute, try to skip or reset it
-                if "Only Tensors created explicitly" in str(e):
-                    logging.getLogger("ultralytics").warning(f"Skipped deepcopy for attribute '{k}' in {cls.__name__} due to non-leaf tensor error.")
-                    setattr(new_obj, k, _detached_zero_like(v))
-                else:
-                    raise e
-            except Exception:
-                # Best effort copy for other errors (e.g. pickling issues)
-                # If it fails, we assume it's transient state and ignore it or shallow copy
-                try:
-                    setattr(new_obj, k, v)
-                except AttributeError:
-                    # Read-only property or descriptor — skip
-                    pass
-
-    return new_obj
-
 
 # ==========================================
 # Ultra-optimized MoE module

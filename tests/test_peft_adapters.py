@@ -10,21 +10,16 @@ Tests are designed to validate:
 All tests use lightweight dummy models so they run quickly without GPU.
 """
 import copy
-import os
-import tempfile
-import types
 
 import pytest
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
-from ultralytics.utils.lora.api import PEFT_AVAILABLE, get_peft_model, PeftModel
+from ultralytics.utils.lora.api import PEFT_AVAILABLE, get_peft_model
 from ultralytics.nn.peft.molora import (
     MoLoRAConfig,
     get_peft_molora_model,
     MoLoRAModel,
-    mark_only_molora_as_trainable,
 )
 
 
@@ -461,7 +456,7 @@ class TestMultipleModules:
 
     def test_mixed_adapter_types_error(self, tiny_multi):
         """Applying incompatible adapter configs should be handled gracefully."""
-        from peft import LoraConfig, IA3Config
+        from peft import LoraConfig
 
         # Apply LoRA first
         lora_config = LoraConfig(
@@ -760,6 +755,7 @@ class TestPeftModelDeviceAndDtype:
 class TestMoEAwareIntegration:
     """Integration tests that verify MoE + PEFT interactions."""
 
+    @pytest.mark.skipif(not PEFT_AVAILABLE, reason="PEFT not installed")
     def test_molora_with_peft_lora_not_double_wrapped(self, tiny_cnn):
         """MoLoRA layers should not be double-wrapped by PEFT LoRA."""
         from peft import LoraConfig

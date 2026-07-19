@@ -3,6 +3,8 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 from ultralytics.nn.modules.conv import Conv
+from ultralytics.nn.modules._numeric import should_reduce_ddp
+from ultralytics.nn.modules.utils import robust_deepcopy
 from ultralytics.nn.modules.routing_protocol import export_capabilities as _export_routing_capabilities, publish_aux_loss, routing_snapshot as _routing_snapshot
 from .heads import _GlobalAttnHead, _LocalAttnHead, _RegionalAttnHead, _init_conv_weights
 from .router import _MoARouter, _moa_router_aux_loss
@@ -51,9 +53,10 @@ class MoABlock(nn.Module):
     ):
         super().__init__()
         self.sequential_heads = sequential_heads
-        assert num_heads % self.NUM_GROUPS == 0, (
-            f"num_heads ({num_heads}) must be divisible by NUM_GROUPS ({self.NUM_GROUPS})"
-        )
+        if num_heads <= 0 or num_heads % self.NUM_GROUPS != 0:
+            raise ValueError(
+                f"num_heads ({num_heads}) must be positive and divisible by NUM_GROUPS ({self.NUM_GROUPS})"
+            )
         self.shortcut = shortcut
         self.aux_loss_coeff = aux_loss_coeff
         head_dim = max(dim // num_heads, 16)
@@ -121,9 +124,7 @@ class MoABlock(nn.Module):
         return _export_routing_capabilities(self)
 
     def __deepcopy__(self, memo):
-        from ultralytics.nn.modules.moe._common import _robust_deepcopy
-
-        return _robust_deepcopy(self, memo)
+        return robust_deepcopy(self, memo)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, C, H, W = x.shape
@@ -131,7 +132,9 @@ class MoABlock(nn.Module):
         # ── Routing weights ──────────────────────────────────────────────
         weights, router_logits = self.router(x, return_logits=True)   # [B, 3, H, W]
         if self.training and self.aux_loss_coeff > 0:
-            self.last_aux_loss = _moa_router_aux_loss(weights, router_logits, self.aux_loss_coeff)
+            self.last_aux_loss = _moa_router_aux_loss(
+                weights, router_logits, self.aux_loss_coeff, reduce_ddp=should_reduce_ddp(self)
+            )
         else:
             self.last_aux_loss = x.new_zeros(())
         publish_aux_loss(self, self.last_aux_loss, kind="moa", training=self.training)

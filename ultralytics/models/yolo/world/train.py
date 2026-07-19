@@ -17,10 +17,9 @@ from ultralytics.utils.torch_utils import unwrap_model
 
 def on_pretrain_routine_end(trainer) -> None:
     """Set up model classes and text encoder at the end of the pretrain routine."""
-    if RANK in {-1, 0}:
-        # Set class names for evaluation
-        names = [name.split("/", 1)[0] for name in list(trainer.test_loader.dataset.data["names"].values())]
-        unwrap_model(trainer.ema.ema).set_classes(names, cache_clip_model=False)
+    # Set on all ranks: validation runs on every rank, but txt_feats/nc are not DDP buffers so they don't sync
+    names = [name.split("/", 1)[0] for name in list(trainer.test_loader.dataset.data["names"].values())]
+    unwrap_model(trainer.ema.ema).set_classes(names, cache_clip_model=False)
 
 
 class WorldTrainer(DetectionTrainer):
@@ -52,13 +51,13 @@ class WorldTrainer(DetectionTrainer):
         >>> trainer.train()
     """
 
-    def __init__(self, cfg=DEFAULT_CFG, overrides: dict[str, Any] | None = None, _callbacks=None):
+    def __init__(self, cfg=DEFAULT_CFG, overrides: dict[str, Any] | None = None, _callbacks: dict | None = None):
         """Initialize a WorldTrainer object with given arguments.
 
         Args:
             cfg (dict[str, Any]): Configuration for the trainer.
             overrides (dict[str, Any], optional): Configuration overrides.
-            _callbacks (list[Any], optional): List of callback functions.
+            _callbacks (dict, optional): Dictionary of callback functions.
         """
         if overrides is None:
             overrides = {}
@@ -128,14 +127,9 @@ class WorldTrainer(DetectionTrainer):
         for dataset in datasets:
             if not hasattr(dataset, "category_names"):
                 continue
-            # img_path can be str or list[str]; Path() only accepts str/PathLike
-            img_path = dataset.img_path
-            if isinstance(img_path, list):
-                img_path = img_path[0]
-            cache_dir = Path(img_path).parent
             text_embeddings.update(
                 self.generate_text_embeddings(
-                    list(dataset.category_names), batch, cache_dir=cache_dir
+                    list(dataset.category_names), batch, cache_dir=Path(dataset.img_path).parent
                 )
             )
         self.text_embeddings = text_embeddings

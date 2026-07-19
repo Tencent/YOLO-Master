@@ -1,0 +1,674 @@
+{
+  "environment": {
+    "cpu": true,
+    "cuda": false,
+    "mps": true,
+    "python": "3.11.8",
+    "torch": "2.9.1"
+  },
+  "export": {
+    "formats": {
+      "onnx": {
+        "native": true,
+        "status": "available"
+      },
+      "pytorch": {
+        "native": true,
+        "status": "available"
+      },
+      "torchscript": {
+        "native": true,
+        "status": "available"
+      }
+    },
+    "note": "Artifact roundtrips run in the export phase when optional dependencies are installed."
+  },
+  "models": [
+    {
+      "config": "ultralytics/cfg/models/26/yolo26.yaml",
+      "end2end": true,
+      "head_class": "Detect",
+      "model_class": "DetectionModel",
+      "name": "detect",
+      "one2many": true,
+      "one2one": true,
+      "output_count": 11,
+      "output_shapes": [
+        [
+          1,
+          84,
+          6
+        ],
+        [
+          1,
+          4,
+          84
+        ],
+        [
+          1,
+          80,
+          84
+        ],
+        [
+          1,
+          64,
+          8,
+          8
+        ],
+        [
+          1,
+          128,
+          4,
+          4
+        ],
+        [
+          1,
+          256,
+          2,
+          2
+        ],
+        [
+          1,
+          4,
+          84
+        ],
+        [
+          1,
+          80,
+          84
+        ],
+        [
+          1,
+          64,
+          8,
+          8
+        ],
+        [
+          1,
+          128,
+          4,
+          4
+        ],
+        [
+          1,
+          256,
+          2,
+          2
+        ]
+      ],
+      "outputs_finite": true,
+      "parameters": 2572280,
+      "reg_max": 1,
+      "stride": {
+        "checksum": "dff8c72ec6cc837e6db48731816588223305091f4be9f095092f3be9b12f00eb",
+        "mean": 18.66666603088379,
+        "shape": [
+          3
+        ],
+        "std": 9.977752685546875
+      }
+    },
+    {
+      "config": "ultralytics/cfg/models/26/yolo26-seg.yaml",
+      "end2end": true,
+      "head_class": "Segment26",
+      "model_class": "SegmentationModel",
+      "name": "segment",
+      "one2many": true,
+      "one2one": true,
+      "output_count": 16,
+      "output_shapes": [
+        [
+          1,
+          84,
+          38
+        ],
+        [
+          1,
+          32,
+          16,
+          16
+        ],
+        [
+          1,
+          4,
+          84
+        ],
+        [
+          1,
+          80,
+          84
+        ],
+        [
+          1,
+          64,
+          8,
+          8
+        ],
+        [
+          1,
+          128,
+          4,
+          4
+        ],
+        [
+          1,
+          256,
+          2,
+          2
+        ],
+        [
+          1,
+          32,
+          84
+        ],
+        [
+          1,
+          32,
+          16,
+          16
+        ],
+        [
+          1,
+          4,
+          84
+        ],
+        [
+          1,
+          80,
+          84
+        ],
+        [
+          1,
+          64,
+          8,
+          8
+        ],
+        [
+          1,
+          128,
+          4,
+          4
+        ],
+        [
+          1,
+          256,
+          2,
+          2
+        ],
+        [
+          1,
+          32,
+          84
+        ],
+        [
+          1,
+          32,
+          16,
+          16
+        ]
+      ],
+      "outputs_finite": true,
+      "parameters": 3126280,
+      "reg_max": 1,
+      "stride": {
+        "checksum": "dff8c72ec6cc837e6db48731816588223305091f4be9f095092f3be9b12f00eb",
+        "mean": 18.66666603088379,
+        "shape": [
+          3
+        ],
+        "std": 9.977752685546875
+      }
+    },
+    {
+      "config": "ultralytics/cfg/models/26/yolo26-sem.yaml",
+      "end2end": null,
+      "head_class": "SemanticSegment",
+      "model_class": "SemanticSegmentationModel",
+      "name": "semantic",
+      "one2many": false,
+      "one2one": false,
+      "output_count": 1,
+      "output_shapes": [
+        [
+          1,
+          19,
+          8,
+          8
+        ]
+      ],
+      "outputs_finite": true,
+      "parameters": 1632902,
+      "reg_max": null,
+      "stride": {
+        "checksum": "825ac1bb838d399fb1ba55a6247e2c8c7a0c3ec25898f3c94dbfb51fa6e73951",
+        "mean": 32.0,
+        "shape": [
+          1
+        ],
+        "std": 0.0
+      }
+    },
+    {
+      "config": "ultralytics/cfg/models/26/yolo26-pose.yaml",
+      "end2end": true,
+      "head_class": "Pose26",
+      "model_class": "PoseModel",
+      "name": "pose",
+      "one2many": true,
+      "one2one": true,
+      "output_count": 13,
+      "output_shapes": [
+        [
+          1,
+          84,
+          57
+        ],
+        [
+          1,
+          4,
+          84
+        ],
+        [
+          1,
+          1,
+          84
+        ],
+        [
+          1,
+          64,
+          8,
+          8
+        ],
+        [
+          1,
+          128,
+          4,
+          4
+        ],
+        [
+          1,
+          256,
+          2,
+          2
+        ],
+        [
+          1,
+          51,
+          84
+        ],
+        [
+          1,
+          4,
+          84
+        ],
+        [
+          1,
+          1,
+          84
+        ],
+        [
+          1,
+          64,
+          8,
+          8
+        ],
+        [
+          1,
+          128,
+          4,
+          4
+        ],
+        [
+          1,
+          256,
+          2,
+          2
+        ],
+        [
+          1,
+          51,
+          84
+        ]
+      ],
+      "outputs_finite": true,
+      "parameters": 3679464,
+      "reg_max": 1,
+      "stride": {
+        "checksum": "dff8c72ec6cc837e6db48731816588223305091f4be9f095092f3be9b12f00eb",
+        "mean": 18.66666603088379,
+        "shape": [
+          3
+        ],
+        "std": 9.977752685546875
+      }
+    },
+    {
+      "config": "ultralytics/cfg/models/26/yolo26-obb.yaml",
+      "end2end": true,
+      "head_class": "OBB26",
+      "model_class": "OBBModel",
+      "name": "obb",
+      "one2many": true,
+      "one2one": true,
+      "output_count": 13,
+      "output_shapes": [
+        [
+          1,
+          84,
+          7
+        ],
+        [
+          1,
+          4,
+          84
+        ],
+        [
+          1,
+          15,
+          84
+        ],
+        [
+          1,
+          64,
+          8,
+          8
+        ],
+        [
+          1,
+          128,
+          4,
+          4
+        ],
+        [
+          1,
+          256,
+          2,
+          2
+        ],
+        [
+          1,
+          1,
+          84
+        ],
+        [
+          1,
+          4,
+          84
+        ],
+        [
+          1,
+          15,
+          84
+        ],
+        [
+          1,
+          64,
+          8,
+          8
+        ],
+        [
+          1,
+          128,
+          4,
+          4
+        ],
+        [
+          1,
+          256,
+          2,
+          2
+        ],
+        [
+          1,
+          1,
+          84
+        ]
+      ],
+      "outputs_finite": true,
+      "parameters": 2652984,
+      "reg_max": 1,
+      "stride": {
+        "checksum": "dff8c72ec6cc837e6db48731816588223305091f4be9f095092f3be9b12f00eb",
+        "mean": 18.66666603088379,
+        "shape": [
+          3
+        ],
+        "std": 9.977752685546875
+      }
+    },
+    {
+      "config": "ultralytics/cfg/models/26/yolo26-cls.yaml",
+      "end2end": null,
+      "head_class": "Classify",
+      "model_class": "ClassificationModel",
+      "name": "classify",
+      "one2many": false,
+      "one2one": false,
+      "output_count": 2,
+      "output_shapes": [
+        [
+          1,
+          1000
+        ],
+        [
+          1,
+          1000
+        ]
+      ],
+      "outputs_finite": true,
+      "parameters": 2812104,
+      "reg_max": null,
+      "stride": {
+        "checksum": "e00e5eb9444182f352323374ef4e08ebcb784725fdd4fd612d7730540b3e0c8c",
+        "mean": 1.0,
+        "shape": [
+          1
+        ],
+        "std": 0.0
+      }
+    },
+    {
+      "config": "ultralytics/cfg/models/26/yoloe-26.yaml",
+      "end2end": true,
+      "head_class": "YOLOEDetect",
+      "model_class": "YOLOEModel",
+      "name": "yoloe",
+      "one2many": true,
+      "one2one": true,
+      "output_count": 11,
+      "output_shapes": [
+        [
+          1,
+          84,
+          6
+        ],
+        [
+          1,
+          4,
+          84
+        ],
+        [
+          1,
+          80,
+          84
+        ],
+        [
+          1,
+          64,
+          8,
+          8
+        ],
+        [
+          1,
+          128,
+          4,
+          4
+        ],
+        [
+          1,
+          256,
+          2,
+          2
+        ],
+        [
+          1,
+          4,
+          84
+        ],
+        [
+          1,
+          80,
+          84
+        ],
+        [
+          1,
+          64,
+          8,
+          8
+        ],
+        [
+          1,
+          128,
+          4,
+          4
+        ],
+        [
+          1,
+          256,
+          2,
+          2
+        ]
+      ],
+      "outputs_finite": true,
+      "parameters": 5061540,
+      "reg_max": 1,
+      "stride": {
+        "checksum": "dff8c72ec6cc837e6db48731816588223305091f4be9f095092f3be9b12f00eb",
+        "mean": 18.66666603088379,
+        "shape": [
+          3
+        ],
+        "std": 9.977752685546875
+      }
+    },
+    {
+      "config": "ultralytics/cfg/models/26/yoloe-26-seg.yaml",
+      "end2end": true,
+      "head_class": "YOLOESegment26",
+      "model_class": "YOLOESegModel",
+      "name": "yoloe-seg",
+      "one2many": true,
+      "one2one": true,
+      "output_count": 16,
+      "output_shapes": [
+        [
+          1,
+          84,
+          38
+        ],
+        [
+          1,
+          32,
+          16,
+          16
+        ],
+        [
+          1,
+          4,
+          84
+        ],
+        [
+          1,
+          80,
+          84
+        ],
+        [
+          1,
+          64,
+          8,
+          8
+        ],
+        [
+          1,
+          128,
+          4,
+          4
+        ],
+        [
+          1,
+          256,
+          2,
+          2
+        ],
+        [
+          1,
+          32,
+          84
+        ],
+        [
+          1,
+          32,
+          16,
+          16
+        ],
+        [
+          1,
+          4,
+          84
+        ],
+        [
+          1,
+          80,
+          84
+        ],
+        [
+          1,
+          64,
+          8,
+          8
+        ],
+        [
+          1,
+          128,
+          4,
+          4
+        ],
+        [
+          1,
+          256,
+          2,
+          2
+        ],
+        [
+          1,
+          32,
+          84
+        ],
+        [
+          1,
+          32,
+          16,
+          16
+        ]
+      ],
+      "outputs_finite": true,
+      "parameters": 5615540,
+      "reg_max": 1,
+      "stride": {
+        "checksum": "dff8c72ec6cc837e6db48731816588223305091f4be9f095092f3be9b12f00eb",
+        "mean": 18.66666603088379,
+        "shape": [
+          3
+        ],
+        "std": 9.977752685546875
+      }
+    }
+  ],
+  "schema_version": 1,
+  "source": {
+    "commit": "579b389c87c04b7f6a9a247730dac04922be8007",
+    "ref": "v8.4.101",
+    "seed": 260719
+  }
+}

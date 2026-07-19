@@ -2,12 +2,12 @@
 """Utility functions for Mixture-of-Experts models"""
 import torch
 import torch.nn as nn
-from typing import Iterator, Tuple, Union, List
+from typing import Iterator, Tuple, Union
 
 # Re-exported from the shared, dependency-free `nn.modules.utils` so MoA/MoT no
 # longer need to import from the MoE package (removes cross-mixture
 # compile-time dependency — MoE refactors can no longer break MoA/MoT imports).
-from ultralytics.nn.modules.utils import get_safe_groups
+from ultralytics.nn.modules.utils import get_safe_groups  # noqa: F401 - compatibility re-export
 
 # Namespace for full MoE *block* classes (excludes routers/experts/loss helpers).
 _CORE_MOE_MODULE = "ultralytics.nn.modules.moe.modules"
@@ -149,7 +149,7 @@ class BatchedExpertComputation:
         # Compute every expert for the full batch (static Python loop over
         # ``num_experts`` → traceable), then gather the Top-K selected outputs
         # and weight-sum them.  No ``if mask.any()`` / ``continue`` guards.
-        if torch.onnx.is_in_onnx_export():
+        if torch.onnx.is_in_onnx_export() or torch.jit.is_tracing():
             all_outs = torch.stack(
                 [experts[i](x) for i in range(num_experts)], dim=1
             )  # [B, E, out_C, H, W]
