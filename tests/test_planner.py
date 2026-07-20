@@ -204,7 +204,7 @@ def test_planner_ddp_nonzero_rank_uses_rank0_targets_without_local_scan():
     assert decision.target_modules_hint == ["stage1"]
 
 
-def test_planner_ddp_nonzero_rank_receives_rank0_failure():
+def test_planner_ddp_nonzero_rank_falls_back_on_rank0_failure():
     planner = PEFTPlanner()
     config = LoRAConfig(r=8, planner_enabled=True)
 
@@ -216,8 +216,12 @@ def test_planner_ddp_nonzero_rank_receives_rank0_failure():
         "torch.distributed.is_initialized", return_value=True
     ), patch("torch.distributed.get_rank", return_value=1), patch(
         "torch.distributed.broadcast_object_list", side_effect=broadcast_rank0_failure
-    ), pytest.raises(RuntimeError, match="Rank-0 PEFT Planner failed"):
-        planner.plan(_make_yolo11s_like(), config)
+    ):
+        decision = planner.plan(_make_yolo11s_like(), config)
+
+    assert decision.status == "REFUSE"
+    assert decision.safety_overrides["planner_ddp_fallback"] is True
+    assert "invalid planner state" in decision.refusal_reason
 
 
 def _make_yolo_world_like():

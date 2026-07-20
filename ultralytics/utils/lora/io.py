@@ -2,11 +2,14 @@
 import json
 import sys
 from pathlib import Path
-from typing import Union
+from typing import TYPE_CHECKING, Union
 
 import torch
 
 from ultralytics.utils import LOGGER
+
+if TYPE_CHECKING:
+    from ultralytics.nn.tasks import DetectionModel
 
 
 def _lora_pkg():
@@ -15,7 +18,7 @@ def _lora_pkg():
 
 def save_lora_adapters(model: "DetectionModel", path: Union[str, Path]) -> bool:
     """
-    Saves only the LoRA Adapter weights.
+    Save active LoRA or MoLoRA adapter weights without the frozen base model.
     
     Args:
         model: LoRADetectionModel instance.
@@ -24,6 +27,13 @@ def save_lora_adapters(model: "DetectionModel", path: Union[str, Path]) -> bool:
     # Unwrap DDP
     if hasattr(model, 'module'):
         model = model.module
+
+    if getattr(model, "molora_enabled", False) or any(
+        module.__class__.__name__ == "MoLoRALayer" for module in model.modules()
+    ):
+        from .backend import MoLoRABackend
+
+        return MoLoRABackend().save(model, path)
 
     if not getattr(model, 'lora_enabled', False):
         LOGGER.debug("[LoRA] Save skipped: LoRA not enabled.")
