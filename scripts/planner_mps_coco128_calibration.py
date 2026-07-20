@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Collect real calibration data and refit the PEFT Planner.
+"""Collect submission-grade calibration data and refit the PEFT Planner.
 
 The runner is manifest-driven and writes one atomic result record after every
 training run, so an interrupted 30+ experiment calibration can be resumed.
 Each PEFT result is compared with a Full-SFT baseline trained with the same
-model, seed, image size, epoch count, and optimizer settings.
+model, dataset, seed, image size, epoch count, and optimizer settings. The
+default matrix uses two datasets, three seeds, three PEFT variants, and paired
+planner/manual target sets so the audit can verify the review protocol.
 """
 
 from __future__ import annotations
@@ -46,6 +48,7 @@ except ImportError:
     pass
 
 import torch
+import torch.nn as nn
 
 import ultralytics
 from ultralytics import YOLO
@@ -57,6 +60,7 @@ from ultralytics.utils.lora.planner import (
     LOVOValidator,
     PEFTPlanner,
 )
+from ultralytics.utils.lora.config import LoRAConfig
 from ultralytics.utils.torch_utils import unwrap_model
 
 assert str(REPO_ROOT) in ultralytics.__file__, (
@@ -74,6 +78,10 @@ DEFAULT_MODELS = (
     "yolo26n=/Users/gatilin/PycharmProjects/YOLO-Master-optim-training-v260615/yolo26n.pt",
 )
 PAPER_DEFAULT_DATA = REPO_ROOT / "ultralytics/cfg/datasets/VOC.yaml"
+PAPER_DEFAULT_DATASETS = (
+    ("voc", PAPER_DEFAULT_DATA),
+    ("coco", REPO_ROOT / "scripts/coco2017.yaml"),
+)
 RANKS = (4, 8, 16)
 RANK_VARIANTS = ("lora", "dora", "loha")
 RANKLESS_VARIANTS = ("ia3",)
@@ -101,6 +109,9 @@ class ExperimentSpec:
     weights_sha256: str
     variant: str
     rank: int
+    dataset_name: str
+    data: str
+    placement: str
     seed: int
     epochs: int
     imgsz: int
@@ -139,32 +150,102 @@ def parse_models(values: list[str]) -> list[ModelSpec]:
     return models
 
 
+def _dataset_specs(args: argparse.Namespace) -> list[tuple[str, Path]]:
+    """Resolve named datasets while retaining ``--data`` compatibility."""
+    if args.dataset_specs:
+        return [(name, path) for name, path in args.dataset_specs]
+    if args.data is not None:
+        return [(args.data.stem.lower(), args.data)]
+    return list(PAPER_DEFAULT_DATASETS)
+
+
+def _placements(args: argparse.Namespace) -> tuple[str, ...]:
+    values = tuple(item.strip().lower() for item in args.placements.split(",") if item.strip())
+    allowed = {"planner", "manual"}
+    if not values or any(value not in allowed for value in values):
+        raise ValueError(f"--placements must be a comma-separated subset of {sorted(allowed)}")
+    return tuple(dict.fromkeys(values))
+
+
 def build_matrix(models: list[ModelSpec], args: argparse.Namespace) -> list[ExperimentSpec]:
     matrix = []
+    datasets = _dataset_specs(args)
+    seeds = tuple(args.seeds)
+    ranks = tuple(getattr(args, "ranks", RANKS))
+    placements = _placements(args)
     for model in models:
-        common = {
-            "model_name": model.name,
-            "weights": str(model.weights),
-            "weights_sha256": model.sha256,
-            "seed": args.seed,
-            "epochs": args.epochs,
-            "imgsz": args.imgsz,
-            "batch": args.batch,
-        }
-        matrix.append(ExperimentSpec(experiment_id=f"{model.name}__full", variant="full", rank=0, **common))
-        if args.smoke:
-            matrix.append(ExperimentSpec(experiment_id=f"{model.name}__lora_r4", variant="lora", rank=4, **common))
-            continue
-        for variant in RANK_VARIANTS:
-            for rank in RANKS:
-                matrix.append(
-                    ExperimentSpec(
-                        experiment_id=f"{model.name}__{variant}_r{rank}", variant=variant, rank=rank, **common
-                    )
-                )
-        for variant in RANKLESS_VARIANTS:
-            matrix.append(ExperimentSpec(experiment_id=f"{model.name}__{variant}", variant=variant, rank=1, **common))
+        for dataset_name, data_path in datasets:
+            for seed in seeds:
+                common = {
+                    "model_name": model.name,
+                    "weights": str(model.weights),
+                    "weights_sha256": model.sha256,
+                    "dataset_name": dataset_name,
+                    "data": str(data_path),
+                    "seed": seed,
+                    "epochs": args.epochs,
+                    "imgsz": args.imgsz,
+                    "batch": args.batch,
+                }
+                prefix = f"{model.name}__{dataset_name}__s{seed}"
+                matrix.append(ExperimentSpec(experiment_id=f"{prefix}__full", variant="full", rank=0, placement="full", **common))
+                if args.smoke:
+                    matrix.append(ExperimentSpec(experiment_id=f"{prefix}__lora_r4__{placements[0]}", variant="lora", rank=4, placement=placements[0], **common))
+                    continue
+                for variant in RANK_VARIANTS:
+                    for rank in ranks:
+                        for placement in placements:
+                            matrix.append(
+                                ExperimentSpec(
+                                    experiment_id=f"{prefix}__{variant}_r{rank}__{placement}",
+                                    variant=variant,
+                                    rank=rank,
+                                    placement=placement,
+                                    **common,
+                                )
+                            )
+                for variant in RANKLESS_VARIANTS:
+                    for placement in placements:
+                        matrix.append(ExperimentSpec(experiment_id=f"{prefix}__{variant}__{placement}", variant=variant, rank=1, placement=placement, **common))
     return matrix
+
+
+def validate_submission_matrix(models: list[ModelSpec], args: argparse.Namespace) -> None:
+    """Reject a non-reviewable matrix before spending GPU time on training."""
+    if args.smoke or args.fit_only:
+        return
+    datasets = _dataset_specs(args)
+    placements = _placements(args)
+    if len(datasets) < 2:
+        raise ValueError("Submission matrix requires at least two datasets (VOC and complete COCO)")
+    if len(args.seeds) < 3:
+        raise ValueError("Submission matrix requires at least three seeds")
+    if len(RANK_VARIANTS) < 3:
+        raise RuntimeError("The formal matrix must include at least three PEFT variants")
+    if len(placements) < 2:
+        raise ValueError("Submission matrix requires paired planner and manual placements")
+    if len(models) < 3:
+        raise ValueError("Submission matrix requires at least three architecture checkpoints")
+    families = {_declared_family(model.name) for model in models}
+    if len(families) < 3:
+        raise ValueError(
+            "Submission matrix requires at least three architecture families; "
+            f"inferred families are {sorted(families)}. Supply RT-DETR/YOLO-World/MoE weights explicitly."
+        )
+
+
+def _declared_family(model_name: str) -> str:
+    """Conservative family hint used before checkpoints are loaded."""
+    name = model_name.lower().replace("_", "-")
+    if "rtdetr" in name or "rt-detr" in name:
+        return "rtdetr"
+    if "world" in name or "yoloe" in name:
+        return "yolo_world"
+    if "yolo12" in name:
+        return "yolo12"
+    if "moe" in name:
+        return "yolo_master_moe"
+    return "yolo_cnn"
 
 
 def fingerprint_dict(model: torch.nn.Module) -> dict[str, float]:
@@ -214,14 +295,14 @@ def trainer_metrics(trainer: Any) -> dict[str, float]:
     return extract_metrics(metrics)
 
 
-def peft_kwargs(spec: ExperimentSpec) -> dict[str, Any]:
+def peft_kwargs(spec: ExperimentSpec, args: argparse.Namespace) -> dict[str, Any]:
     if spec.variant == "full":
         return {}
     common = {
         "lora_backend": "peft",
         "lora_planner_enabled": False,
-        "lora_dropout": 0.05,
-        "lora_use_rslora": True,
+        "lora_dropout": args.lora_dropout,
+        "lora_use_rslora": args.lora_use_rslora,
         "lora_gradient_checkpointing": False,
         "lora_alpha_warmup": 0,
         "lora_layer_decay": 0.0,
@@ -237,6 +318,25 @@ def peft_kwargs(spec: ExperimentSpec) -> dict[str, Any]:
         "lora_alpha": spec.rank * 2,
         "lora_use_dora": spec.variant == "dora",
     }
+
+
+def target_modules_for_placement(model: torch.nn.Module, placement: str) -> list[str]:
+    """Build paired target sets; placement is the only intended difference."""
+    planner = PEFTPlanner()
+    if placement == "planner":
+        targets = planner.detect_targets(model, LoRAConfig(include_head=False, include_attention=True))
+    elif placement == "manual":
+        targets = []
+        for name, module in model.named_modules():
+            if not name or not isinstance(module, (nn.Conv2d, nn.Linear)):
+                continue
+            lname = name.lower()
+            if any(token in lname for token in ("head", "detect", "dfl")):
+                continue
+            targets.append(name)
+    else:
+        raise ValueError(f"Unknown placement: {placement}")
+    return sorted(set(targets))
 
 
 def verify_adapter(spec: ExperimentSpec, signature: dict[str, Any], trainable: int, total: int) -> None:
@@ -264,7 +364,10 @@ def run_experiment(spec: ExperimentSpec, args: argparse.Namespace) -> dict[str, 
         "status": "running",
         "started_at": started,
         "device_requested": args.device,
-        "dataset": str(args.data),
+        "dataset": spec.dataset_name,
+        "dataset_path": spec.data,
+        "placement": spec.placement,
+        "target_set": spec.placement,
         "workers": args.workers,
         "optimizer": args.optimizer,
         "lr0": args.lr0,
@@ -275,6 +378,18 @@ def run_experiment(spec: ExperimentSpec, args: argparse.Namespace) -> dict[str, 
         "close_mosaic": args.close_mosaic,
         "amp": args.amp,
         "cos_lr": args.cos_lr,
+        "lora_dropout": args.lora_dropout,
+        "lora_alpha": spec.rank * 2 if spec.variant not in ("full", "ia3") else 0,
+        "lora_use_rslora": args.lora_use_rslora,
+        "lora_lr_mult": args.lora_lr_mult,
+        "lora_backend": "peft" if spec.variant != "full" else "full_sft",
+        "lora_type": spec.variant,
+        "lora_include_attention": True if spec.variant != "full" else False,
+        "lora_gradient_checkpointing": False,
+        "lora_alpha_warmup": 0,
+        "lora_layer_decay": 0.0,
+        "training_budget": args.training_budget or f"{args.epochs}e-{args.imgsz}px-{args.batch}b",
+        "deterministic": True,
         "error": None,
     }
     model = None
@@ -316,7 +431,7 @@ def run_experiment(spec: ExperimentSpec, args: argparse.Namespace) -> dict[str, 
         model.add_callback("on_fit_epoch_end", capture_epoch_metrics)
         model.add_callback("on_train_end", capture_final_metrics)
         train_args = {
-            "data": str(args.data),
+            "data": spec.data,
             "epochs": spec.epochs,
             "batch": spec.batch,
             "imgsz": spec.imgsz,
@@ -340,9 +455,22 @@ def run_experiment(spec: ExperimentSpec, args: argparse.Namespace) -> dict[str, 
             "close_mosaic": args.close_mosaic,
             "amp": args.amp,
             "cos_lr": args.cos_lr,
-            "lora_lr_mult": 1.0,
+            "lora_lr_mult": args.lora_lr_mult,
         }
-        train_args.update(peft_kwargs(spec))
+        train_args.update(peft_kwargs(spec, args))
+        if spec.variant != "full":
+            targets = target_modules_for_placement(model.model, spec.placement)
+            if not targets:
+                raise RuntimeError(f"No target modules found for placement={spec.placement}")
+            train_args.update(
+                {
+                    "lora_target_modules": targets,
+                    "lora_planner_enabled": False,
+                    "lora_use_rslora": args.lora_use_rslora,
+                    "lora_lr_mult": args.lora_lr_mult,
+                }
+            )
+            record["target_modules_requested"] = targets
         results = model.train(**train_args)
         record.update(callback_state)
         if record.get("device") != "mps":
@@ -421,7 +549,11 @@ def build_calibration_artifacts(results: list[dict[str, Any]], args: argparse.Na
             continue
         if selected_protocol and any(record.get(key) != value for key, value in selected_protocol.items()):
             continue
-        baseline = successful.get(f"{record['model_name']}__full")
+        baseline_id = (
+            f"{record['model_name']}__{record.get('dataset_name', record.get('dataset', 'dataset'))}"
+            f"__s{record['seed']}__full"
+        )
+        baseline = successful.get(baseline_id)
         if baseline is None:
             continue
         if selected_protocol and any(baseline.get(key) != value for key, value in selected_protocol.items()):
@@ -436,7 +568,7 @@ def build_calibration_artifacts(results: list[dict[str, Any]], args: argparse.Na
                 rank=max(int(record["rank"]), 1),
                 delta_mAP=metric - baseline_metric,
                 model_name=record["model_name"],
-                dataset=record.get("dataset", str(args.data)),
+                dataset=record.get("dataset", record.get("dataset_name", "")),
                 epochs=record["epochs"],
                 timestamp=record["finished_at"],
                 notes=record["experiment_id"],
@@ -484,7 +616,7 @@ def build_calibration_artifacts(results: list[dict[str, Any]], args: argparse.Na
     )
     coefficient_payload = {
         "generated_at": report["generated_at"],
-        "dataset": str(args.data),
+        "datasets": [name for name, _ in _dataset_specs(args)],
         "device": args.device,
         "coefficients": planner._coeffs,
         "feature_order": [
@@ -515,12 +647,18 @@ def build_calibration_artifacts(results: list[dict[str, Any]], args: argparse.Na
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", action="append", dest="models", help="NAME=/absolute/path.pt; repeatable")
-    parser.add_argument("--data", type=Path, default=PAPER_DEFAULT_DATA)
+    parser.add_argument("--data", type=Path, help="Single dataset override (legacy compatibility)")
+    parser.add_argument(
+        "--dataset", action="append", dest="datasets", metavar="NAME=PATH",
+        help="Named dataset; repeatable. Defaults to VOC and complete COCO2017.",
+    )
     parser.add_argument("--epochs", type=int, default=300)
     parser.add_argument("--imgsz", type=int, default=640)
     parser.add_argument("--batch", type=int, default=16)
     parser.add_argument("--workers", type=int, default=0)
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--seed", type=int, help="Single seed override (legacy compatibility)")
+    parser.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2])
+    parser.add_argument("--ranks", type=int, nargs="+", default=list(RANKS))
     parser.add_argument("--device", default="mps")
     parser.add_argument("--optimizer", default="AdamW")
     parser.add_argument("--lr0", type=float, default=0.01)
@@ -531,6 +669,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--close-mosaic", type=int, default=10)
     parser.add_argument("--amp", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--cos-lr", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--lora-dropout", type=float, default=0.05)
+    parser.add_argument("--lora-use-rslora", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--lora-lr-mult", type=float, default=1.0)
+    parser.add_argument("--training-budget", type=int, default=0, help="Recorded fixed training budget identifier")
+    parser.add_argument("--placements", default="planner,manual", help="Paired target-set conditions")
     parser.add_argument("--project", type=Path, default=REPO_ROOT / "runs/planner_mps_coco128_calibration")
     parser.add_argument("--results", type=Path)
     parser.add_argument("--lovo-output", type=Path)
@@ -563,7 +706,16 @@ def parse_args() -> argparse.Namespace:
         args.coefficients_output or args.project / "planner_coefficients_coco128_mps.json"
     ).expanduser().resolve()
     args.report_output = (args.report_output or args.project / "calibration_report.json").expanduser().resolve()
-    args.data = args.data.expanduser().resolve()
+    args.dataset_specs = []
+    for value in args.datasets or []:
+        if "=" not in value:
+            raise ValueError(f"--dataset must use NAME=PATH syntax: {value}")
+        name, raw_path = value.split("=", 1)
+        args.dataset_specs.append((name, Path(raw_path).expanduser().resolve()))
+    if args.seed is not None:
+        args.seeds = [args.seed]
+    if args.data is not None:
+        args.data = args.data.expanduser().resolve()
     args.merge_results = [path.expanduser().resolve() for path in args.merge_results]
     args.calibration_protocol = {
         "main": {"epochs": 300, "imgsz": 640, "batch": 16, "optimizer": "AdamW", "lr0": 0.01, "cos_lr": True},
@@ -609,8 +761,9 @@ def main() -> int:
     args = parse_args()
     if args.device != "mps" or not torch.backends.mps.is_available():
         raise RuntimeError("This calibration requires an available Apple MPS device; CPU fallback is not accepted")
-    if not args.data.is_file():
-        raise FileNotFoundError(args.data)
+    for dataset_name, dataset_path in _dataset_specs(args):
+        if not dataset_path.is_file():
+            raise FileNotFoundError(f"Dataset {dataset_name!r} not found: {dataset_path}")
     args.project.mkdir(parents=True, exist_ok=True)
     result_files = [args.results, *args.merge_results]
     results = []
@@ -623,6 +776,7 @@ def main() -> int:
     normalize_legacy_protocol_metadata(results)
     if not args.fit_only:
         models = parse_models(args.models or list(DEFAULT_MODELS))
+        validate_submission_matrix(models, args)
         matrix = build_matrix(models, args)
         manifest = {
             "generated_at": utc_now(),
