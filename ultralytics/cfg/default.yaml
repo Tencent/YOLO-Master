@@ -168,6 +168,12 @@ lora_use_rslora: True # (bool) Enable RS-LoRA scaling for better high-rank stabi
 lora_init_lora_weights: True # (bool|str) LoRA init mode: True/False for standard init, or "gaussian". "pissa"/"olora" require newer PEFT.
 lora_type: "lora" # (str) PEFT type: "lora", "loha", "lokr", "adalora", "ia3", "oft", "boft", "hra"
 lora_quantization: "none" # (str) Quantization type: "none", "4bit", "8bit" (Requires bitsandbytes)
+lora_sensitivity_select: false # (bool) Select targets by calibration gradient sensitivity
+lora_sensitivity_num_batches: 4 # (int) Maximum calibration batches for sensitivity scoring
+lora_sensitivity_top_ratio: 0.5 # (float) Fraction of structurally valid targets to retain
+lora_sensitivity_beta: 1.0 # (float) Reserved score smoothing coefficient
+lora_sensitivity_max_layers: null # (int) Optional cap on selected targets
+lora_sensitivity_keep_risky: false # (bool) Keep planner-risky targets when scoring
 lora_include_moe: False # (bool) Include MoE layers in auto-detection
 lora_include_attention: False # (bool) Include Attention layers in auto-detection
 lora_only_backbone: False # (bool) Only apply LoRA to backbone

@@ -140,6 +140,12 @@ class LoRAConfig:
     # None preserves legacy unlimited-target behavior when the planner is off.
     adapter_budget: Optional[int] = None
     planner_solver: str = "ao"  # ao, dco, mip; AO is deterministic/default
+    sensitivity_select: bool = False
+    sensitivity_num_batches: int = 4
+    sensitivity_top_ratio: float = 0.5
+    sensitivity_beta: float = 1.0
+    sensitivity_max_layers: Optional[int] = None
+    sensitivity_keep_risky: bool = False
 
     def __post_init__(self):
         """Performs parameter validation and type standardization."""
@@ -155,6 +161,9 @@ class LoRAConfig:
             raise ValueError("lora_r must be >= 0")
 
         self.init_lora_weights = _normalize_lora_init(self.init_lora_weights)
+        self.quantization = str(self.quantization or "none").lower()
+        if self.quantization not in {"none", "4bit", "8bit"}:
+            raise ValueError("quantization must be one of 'none', '4bit', or '8bit'")
 
         # Few-shot config validation
         if self.few_shot_mode:
@@ -283,6 +292,12 @@ class LoRAConfig:
             "planner_enabled": "lora_planner_enabled",
             "adapter_budget": "lora_adapter_budget",
             "planner_solver": "lora_planner_solver",
+            "sensitivity_select": "lora_sensitivity_select",
+            "sensitivity_num_batches": "lora_sensitivity_num_batches",
+            "sensitivity_top_ratio": "lora_sensitivity_top_ratio",
+            "sensitivity_beta": "lora_sensitivity_beta",
+            "sensitivity_max_layers": "lora_sensitivity_max_layers",
+            "sensitivity_keep_risky": "lora_sensitivity_keep_risky",
         }
 
         dataclass_fields = set(cls.__dataclass_fields__)

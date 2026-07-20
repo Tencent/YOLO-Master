@@ -643,6 +643,13 @@ def apply_lora(
     else:
         config = LoRAConfig.from_args(args, **kwargs)
 
+    if str(getattr(config, "quantization", "none")).lower() in {"4bit", "8bit"}:
+        raise RuntimeError(
+            "QLoRA (4bit/8bit) is not supported for an already-built YOLO model. "
+            "Load a bitsandbytes/Transformers-backed model before applying PEFT, "
+            "or set lora_quantization=none."
+        )
+
     # Inject the calibration data loader for gradient-sensitivity probing.
     # Stashed on the config via a private attribute so from_args (which only
     # reads known dataclass fields) does not swallow it.
@@ -929,12 +936,14 @@ def apply_lora(
     try:
         # Handle Quantization (QLoRA)
         if config.quantization in ['4bit', '8bit']:
-            try:
-                from transformers import BitsAndBytesConfig
-                LOGGER.warning("[LoRA] QLoRA (4-bit/8-bit) for YOLO Conv2d layers is experimental and depends on bitsandbytes support.")
-                pass 
-            except ImportError:
-                LOGGER.warning("[LoRA] transformers not found. BitsAndBytesConfig skipped.")
+            # Quantization is a model-loading concern. This API receives an
+            # already-built native YOLO graph, so importing a config alone
+            # would leave Conv2d weights in FP32 while claiming QLoRA.
+            raise RuntimeError(
+                "QLoRA (4bit/8bit) is not supported for an already-built YOLO model. "
+                "Load a bitsandbytes/Transformers-backed model before applying PEFT, "
+                "or set lora_quantization=none."
+            )
 
         # Create config using model.model (nn.Sequential)
         
@@ -959,6 +968,17 @@ def apply_lora(
 
         # Run auto-detect to get ALL structurally valid layers
         valid_targets = LoRAConfigBuilder.auto_detect_targets(model.model, **detect_params)
+        if getattr(config, "sensitivity_select", False) and valid_targets:
+            from .sensitivity import GradientSensitivitySelector
+            report = GradientSensitivitySelector(
+                model=model.model,
+                data_loader=getattr(config, "_sensitivity_data_loader", None),
+                num_batches=getattr(config, "sensitivity_num_batches", 4),
+                top_ratio=getattr(config, "sensitivity_top_ratio", 0.5),
+                max_layers=getattr(config, "sensitivity_max_layers", None),
+            ).select_targets(valid_targets)
+            valid_targets = report.selected_targets
+            LOGGER.info(f"[LoRA] Gradient sensitivity selected {len(valid_targets)}/{len(report.layers)} targets.")
         
         final_targets = []
         if user_targets:
