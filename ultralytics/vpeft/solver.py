@@ -76,6 +76,43 @@ def _project_discrete_solution(
     return projected_placement, projected_ranks
 
 
+def _project_budget(
+    graph: ComputationGraph,
+    placement: torch.Tensor,
+    ranks: torch.Tensor,
+    budget: int,
+    variant: str,
+    utilities: torch.Tensor,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Drop lowest utility-density nodes until the hard budget is restored."""
+    placement = placement.clone()
+    ranks = ranks.clone()
+    while True:
+        used = sum(
+            graph.estimate_params(i, int(ranks[i].item()), variant)
+            for i in range(graph.n_nodes)
+            if placement[i] > 0.5 and ranks[i] > 0
+        )
+        if used <= budget:
+            return placement, ranks
+        placed = [
+            i for i in range(graph.n_nodes)
+            if placement[i] > 0.5 and ranks[i] > 0
+        ]
+        if not placed:
+            return placement, ranks
+        drop = min(
+            placed,
+            key=lambda i: (
+                utilities[i].item() / max(graph.estimate_params(i, int(ranks[i].item()), variant), 1),
+                utilities[i].item(),
+                i,
+            ),
+        )
+        placement[drop] = 0.0
+        ranks[drop] = 0
+
+
 # ---------------------------------------------------------------------------
 # PlacementDecision
 # ---------------------------------------------------------------------------
@@ -357,6 +394,7 @@ class AlternatingOptimizationSolver(ConstraintSolver):
         # --- post-processing -----------------------------------------------
         pi, r = _project_discrete_solution(graph, pi, r, variant, constraints, self.rank_set)
         pi, r = constraints.enforce_moe_consistency(graph, pi, r, variant, self.rank_set)
+        pi, r = _project_budget(graph, pi, r, budget, variant, utilities)
         budget_used = int(constraints.get_budget_usage(graph, pi, r, variant))
         budget_remaining = max(0, budget - budget_used)
         target_modules = [
@@ -638,6 +676,9 @@ class DifferentiableOptimizationSolver(ConstraintSolver):
         pi_discrete, r_discrete = constraints.enforce_moe_consistency(
             graph, pi_discrete, r_discrete, variant_global, self.rank_set
         )
+        pi_discrete, r_discrete = _project_budget(
+            graph, pi_discrete, r_discrete, budget, variant_global, utilities
+        )
 
         # Post-process: ensure budget is respected by dropping lowest-utility placed modules
         used = int(constraints.get_budget_usage(graph, pi_discrete, r_discrete, variant_global))
@@ -783,6 +824,7 @@ class MIPRelaxationSolver(ConstraintSolver):
         r = allocator.allocate(graph, pi, budget, variant, constraints=constraints)
         pi, r = _project_discrete_solution(graph, pi, r, variant, constraints, self.rank_set)
         pi, r = constraints.enforce_moe_consistency(graph, pi, r, variant, self.rank_set)
+        pi, r = _project_budget(graph, pi, r, budget, variant, utilities)
 
         budget_used = int(constraints.get_budget_usage(graph, pi, r, variant))
         budget_remaining = max(0, budget - budget_used)
@@ -906,6 +948,7 @@ class MIPRelaxationSolver(ConstraintSolver):
         pi_vals, ranks = constraints.enforce_moe_consistency(
             graph, pi_vals, ranks, variant, self.rank_set
         )
+        pi_vals, ranks = _project_budget(graph, pi_vals, ranks, budget, variant, torch.tensor(utilities))
 
         budget_used = int(constraints.get_budget_usage(graph, pi_vals, ranks, variant))
         budget_remaining = max(0, budget - budget_used)
