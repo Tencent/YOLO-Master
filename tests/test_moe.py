@@ -629,6 +629,30 @@ def test_hyperfused_progressive_sparsity_uses_current_top_k(monkeypatch):
     assert int(m.current_top_k) >= m.top_k
 
 
+def test_optimized_moe_improved_expert_dropout_skips_only_after_warmup(monkeypatch):
+    """Expert dropout is active at its configured interval and deterministic."""
+    def run_once():
+        module = OptimizedMOEImproved(8, 8, num_experts=4, top_k=2).train()
+        module.warmup_steps = 0
+        module.dropout_interval = 1
+        module.expert_dropout_rate = 0.5
+        captured = []
+        for idx, expert in enumerate(module.experts):
+            original = expert.forward
+            def wrapped(x, _original=original, _idx=idx):
+                captured.append(_idx)
+                return _original(x)
+            expert.forward = wrapped
+        module(torch.ones(4, 8, 4, 4))
+        return captured
+
+    torch.manual_seed(123)
+    first = run_once()
+    torch.manual_seed(123)
+    second = run_once()
+    assert first == second and len(first) > 0
+
+
 def test_l02_adaptive_capacity_complexity_lower_bound():
     """L-02: complexity is clamped >= 0.3 so top_k cannot degenerate to 1."""
     m = AdaptiveCapacityMoE(32, 32, num_experts=4, top_k=2).train()

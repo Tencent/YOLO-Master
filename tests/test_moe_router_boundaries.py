@@ -232,9 +232,18 @@ def test_capacity_overflow_is_distributed_round_robin():
     router.train()
     logits = torch.zeros(12, 4)
     _, indices, info = router._process_logits(logits, noise_std=0.0, training=True)
-    overflow = indices[info["overflow_count"] * 0 :]
     assert info["overflow_count"] == 10
     assert set(indices[-10:, 0].tolist()) == {0, 1, 2, 3}
+
+
+def test_capacity_overflow_is_deterministic_across_repeated_calls():
+    from ultralytics.nn.modules.moe.routers import BaseRouter
+
+    router = BaseRouter(num_experts=4, top_k=2, capacity_factor=0.5)
+    logits = torch.zeros(12, 4)
+    first = router._process_logits(logits, noise_std=0.0, training=True)[1]
+    second = router._process_logits(logits, noise_std=0.0, training=True)[1]
+    assert torch.equal(first, second)
 
     def test_nonfinite_internal_output_raises(self, monkeypatch):
         router = DynamicRoutingLayer(IN_CHANNELS, NUM_EXPERTS, top_k=TOP_K)
