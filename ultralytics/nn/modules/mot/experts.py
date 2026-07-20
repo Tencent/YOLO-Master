@@ -206,7 +206,8 @@ class _WindowTransformerExpert(nn.Module):
     @staticmethod
     def _window_reverse(windows: torch.Tensor, win: int, H: int, W: int) -> torch.Tensor:
         """[B*nH*nW, win*win, C] → [B, H, W, C]"""
-        B = int(windows.shape[0] / (H * W / win / win))
+        windows_per_image = (H // win) * (W // win)
+        B = windows.shape[0] // windows_per_image
         C = windows.shape[2]
         x = windows.view(B, H // win, W // win, win, win, C)
         return x.permute(0, 1, 3, 2, 4, 5).contiguous().view(B, H, W, C)
@@ -349,9 +350,13 @@ class _DeformableTransformerExpert(nn.Module):
         """
         B, N, C = q.shape
         nh, np_, hd = self.num_heads, self.n_points, self.head_dim
-        # Token→coordinate mapping below assumes N == H*W with no padding.
+        # Fall back to dense attention for callers that provide non-grid tokens.
         if N != H * W:
-            raise RuntimeError(f"deformable expert expects N==H*W, got N={N}, H*W={H * W}")
+            value_proj = self.v_proj(value)
+            q_heads = q.reshape(B, N, nh, hd).transpose(1, 2)
+            value_heads = value_proj.reshape(B, value_proj.shape[1], nh, hd).transpose(1, 2)
+            dense = F.scaled_dot_product_attention(q_heads, value_heads, value_heads)
+            return self.out_proj(dense.transpose(1, 2).reshape(B, N, C))
 
         # Predict sampling offsets & attention weights from query
         offsets = self.offset_proj(q)                         # [B, N, nh*np*2]

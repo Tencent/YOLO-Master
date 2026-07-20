@@ -1,4 +1,5 @@
 from pathlib import Path
+import copy
 
 import torch
 import torch.nn as nn
@@ -53,6 +54,31 @@ def test_neck_moa_fusion_handles_non_strict_scale_ratio():
     assert module.last_aux_loss.requires_grad and torch.isfinite(module.last_aux_loss)
     (out.mean() + module.last_aux_loss).backward()
     assert _has_grad(module)
+
+
+def test_neck_moa_interpolation_cache_is_bounded_and_cleared_for_training():
+    module = NeckMoAFusion(16, 16, 16).eval()
+    hi = torch.randn(1, 16, 8, 8)
+
+    with torch.no_grad():
+        for _ in range(6):
+            module(hi, torch.randn(1, 16, 4, 4))
+    assert len(module._lo_interpolate_cache) <= 4
+
+    module.train()
+    module(hi, torch.randn(1, 16, 4, 4))
+    assert not module._lo_interpolate_cache
+
+
+def test_neck_moa_interpolation_cache_does_not_break_deepcopy():
+    module = NeckMoAFusion(16, 16, 16).eval()
+    with torch.no_grad():
+        module(torch.randn(1, 16, 8, 8), torch.randn(1, 16, 4, 4))
+
+    clone = copy.deepcopy(module)
+
+    assert isinstance(clone, NeckMoAFusion)
+    assert not clone._lo_interpolate_cache
 
 
 def test_moa_router_stays_finite_at_tiny_annealed_temperature():

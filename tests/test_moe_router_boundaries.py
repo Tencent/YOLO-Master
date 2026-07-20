@@ -18,6 +18,7 @@ from ultralytics.nn.modules.moe.routers import (
     UltraEfficientRouter,
     EfficientSpatialRouter,
     AdaptiveRoutingLayer,
+    DynamicRoutingLayer,
     LocalRoutingLayer,
     _validate_router_input,
 )
@@ -200,6 +201,29 @@ class TestLocalRoutingLayerBoundaries:
         x = torch.randn(2, IN_CHANNELS, 16)
         with pytest.raises(MoERouterError, match="4-D"):
             local_router(x)
+
+
+class TestDynamicRoutingLayerBoundaries:
+    def test_eval_hard_top_k_matches_training_mask_numerics(self):
+        router = DynamicRoutingLayer(IN_CHANNELS, NUM_EXPERTS, top_k=TOP_K)
+        x = _valid_input()
+        logits = router.routing_network(router.global_pool(x))
+
+        assert torch.allclose(router._hard_top_k(logits), router._soft_top_k(logits), atol=1e-6)
+
+    def test_invalid_top_k_raises(self):
+        with pytest.raises(ValueError, match="top_k"):
+            DynamicRoutingLayer(IN_CHANNELS, NUM_EXPERTS, top_k=0)
+
+    def test_nonfinite_internal_output_raises(self, monkeypatch):
+        router = DynamicRoutingLayer(IN_CHANNELS, NUM_EXPERTS, top_k=TOP_K)
+        monkeypatch.setattr(
+            router.routing_network,
+            "forward",
+            lambda _: torch.full((2, NUM_EXPERTS, 1, 1), float("nan")),
+        )
+        with pytest.raises(MoERouterError, match="internal output"):
+            router(_valid_input())
 
 
 # =============================================================================

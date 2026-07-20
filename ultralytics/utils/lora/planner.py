@@ -1491,8 +1491,16 @@ class PEFTPlanner:
         container = [envelope]
         torch.distributed.broadcast_object_list(container, src=0)
         envelope = container[0]
-        if envelope.get("error"):
-            raise RuntimeError(f"Rank-0 PEFT Planner failed: {envelope['error']}")
+        if not isinstance(envelope, dict) or envelope.get("error") or not envelope.get("decision"):
+            error = envelope.get("error") if isinstance(envelope, dict) else "invalid DDP planner envelope"
+            reason = f"Rank-0 PEFT Planner failed: {error}. Falling back to Full-SFT."
+            LOGGER.warning(f"[Planner] {reason}")
+            return PlacementDecision(
+                status="REFUSE",
+                refusal_reason=reason,
+                safety_overrides={"planner_refused": True, "planner_ddp_fallback": True},
+                metadata={"ddp_rank0_error": error},
+            )
         return PlacementDecision.from_dict(envelope["decision"])
 
     def _plan_local(self, model: nn.Module, config: Any) -> PlacementDecision:

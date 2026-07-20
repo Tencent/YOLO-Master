@@ -11,6 +11,7 @@ from ultralytics.utils.lora import (
     merge_adapters,
     save_adapters,
 )
+from ultralytics.utils.lora.io import save_lora_adapters
 
 
 def _model():
@@ -31,6 +32,14 @@ def test_molora_backend_discovery_and_artifact(tmp_path):
     payload = json.loads((path / "runtime_metadata.json").read_text())
     assert payload["backend"] == "molora"
     assert payload["schema_version"] == 1
+    assert (path / "molora_adapter.pt").exists()
+
+
+def test_legacy_save_lora_entrypoint_dispatches_molora(tmp_path):
+    model = _model()
+    path = tmp_path / "legacy-entrypoint"
+
+    assert save_lora_adapters(model, path)
     assert (path / "molora_adapter.pt").exists()
 
 

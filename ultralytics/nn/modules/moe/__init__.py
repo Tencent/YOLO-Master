@@ -100,6 +100,7 @@ from .config import (
 STABLE_MOE_CLASSES = frozenset({
     "UltraOptimizedMoE",
     "ES_MOE",
+    "MOE",
     "AdaptiveGateMoE",
     "OptimalHybridGateMoE",
     "UltimateOptimizedMoE",
@@ -110,7 +111,6 @@ EXPERIMENTAL_MOE_CLASSES = frozenset({
     "AdaptiveCapacityMoE",
     "OptimizedMOE",
     "OptimizedMOEImproved",
-    "MOE",
     "EfficientSpatialRouterMoE",
     "ModularRouterExpertMoE",
     "HyperSplitMoE",

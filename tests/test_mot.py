@@ -1,6 +1,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 import torch
 
 from ultralytics.engine.trainer import BaseTrainer
@@ -160,7 +161,6 @@ def test_mot_window_expert_shift_spatial_alignment():
     The shift/un-shift residual alignment is the subtle correctness point: an
     identity-ish check ensures no cyclic spatial misalignment leaks through.
     """
-
     torch.manual_seed(0)
     block = MoTBlock(32, num_heads=4, top_k=2, window_size=5, n_points=2, window_shift=True).eval()
     x = torch.randn(2, 32, 9, 11)
@@ -190,6 +190,34 @@ def test_mot_router_disables_exploration_eps_in_eval():
     nonzero_per_token = (weights > 0).sum(dim=1)
     assert torch.equal(nonzero_per_token, torch.ones_like(nonzero_per_token))
     assert indices.shape == (2, 1, 5, 5)
+
+
+def test_mot_router_warns_when_exploration_eps_is_clamped():
+    with pytest.warns(UserWarning, match="clamped"):
+        block = MoTBlock(24, num_heads=3, exploration_eps=0.3)
+
+    assert block.router.exploration_eps == 0.2
+
+
+def test_mot_scene_consistency_rejects_unsupported_expert_count():
+    from ultralytics.nn.modules.mot.router import _MoTRouter
+
+    router = _MoTRouter(8, num_experts=4, top_k=2, scene_aware=True)
+    weights = torch.full((1, 4, 1, 1), 0.25)
+    with pytest.raises(ValueError, match="exactly 3 experts"):
+        router.scene_consistency_loss(weights, torch.ones(1, 3))
+
+
+def test_mot_deformable_attention_falls_back_for_non_grid_tokens():
+    from ultralytics.nn.modules.mot.mot import _DeformableTransformerExpert
+
+    expert = _DeformableTransformerExpert(16, num_heads=4, n_points=2).eval()
+    tokens = torch.randn(2, 7, 16)
+    with torch.no_grad():
+        output = expert._deform_attn(tokens, tokens, H=2, W=3)
+
+    assert output.shape == tokens.shape
+    assert torch.isfinite(output).all()
 
 
 def test_mot_inference_sparsity_skips_inactive_experts():

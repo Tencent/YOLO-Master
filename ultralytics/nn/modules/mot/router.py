@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Optional, Tuple
+import warnings
 
 import torch
 import torch.nn as nn
@@ -85,6 +86,16 @@ class _MoTRouter(nn.Module):
         scene_hidden_dim: Optional[int] = None,
     ):
         super().__init__()
+        if num_experts < 1:
+            raise ValueError(f"num_experts must be positive, got {num_experts}")
+        if not 1 <= top_k <= num_experts:
+            raise ValueError(f"top_k must be in [1, {num_experts}], got {top_k}")
+        if not 0.0 <= exploration_eps <= 0.2:
+            warnings.warn(
+                f"exploration_eps={exploration_eps} clamped to the supported range [0.0, 0.2].",
+                stacklevel=2,
+            )
+            exploration_eps = min(max(exploration_eps, 0.0), 0.2)
         self.num_experts = num_experts
         self.top_k = top_k
         self.use_spatial = use_spatial
@@ -171,7 +182,7 @@ class _MoTRouter(nn.Module):
     ) -> torch.Tensor:
         """Align Local, Window, and Deformable probabilities with scene statistics."""
         if self.num_experts != 3:
-            return weights.new_zeros(())
+            raise ValueError("scene_consistency_loss requires exactly 3 experts (Local, Window, Deformable)")
         stats = self._last_scene_stats_for_loss if scene_stats is None else scene_stats
         if stats is None:
             return weights.new_zeros(())
@@ -237,7 +248,7 @@ class _MoTRouter(nn.Module):
             sparse_w.scatter_(1, topk_idx, topk_weights)
             weights = sparse_w
             if self.training and self.exploration_eps > 0:
-                eps = min(max(self.exploration_eps, 0.0), 0.2)
+                eps = self.exploration_eps
                 weights = weights * (1.0 - eps) + dense_weights * eps
             indices = topk_idx
         else:

@@ -1287,7 +1287,7 @@ class YOLOEModel(DetectionModel):
 
         # Cache anchors for head
         device = next(self.parameters()).device
-        self(torch.empty(1, 3, self.args["imgsz"], self.args["imgsz"]).to(device))  # warmup
+        self(torch.zeros(1, 3, self.args["imgsz"], self.args["imgsz"], device=device))  # warmup
 
         cv3 = getattr(head, "one2one_cv3", head.cv3)
         cv2 = getattr(head, "one2one_cv2", head.cv2)

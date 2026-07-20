@@ -327,6 +327,53 @@ def test_es_moe_aux_on_gshard_scale():
     assert aux >= 1.0, f"expected GShard-scale aux (>=1.0 at/above balance), got {aux}"
 
 
+def test_es_moe_statistics_are_nonpersistent_buffers():
+    module = ES_MOE(8, 8, num_experts=3, top_k=2)
+
+    assert "load_balancing_loss" in module._buffers
+    assert "expert_usage_counts" in module._buffers
+    assert "load_balancing_loss" not in module.state_dict()
+    assert "expert_usage_counts" not in module.state_dict()
+
+
+def test_es_moe_repairs_legacy_plain_stat_attributes():
+    module = ES_MOE(8, 8, num_experts=3, top_k=2).train()
+    del module._buffers["load_balancing_loss"]
+    del module._buffers["expert_usage_counts"]
+    module.load_balancing_loss = torch.tensor(0.0)
+    module.expert_usage_counts = torch.zeros(3)
+
+    module(torch.randn(2, 8, 4, 4))
+
+    assert "load_balancing_loss" in module._buffers
+    assert "expert_usage_counts" in module._buffers
+    assert torch.isfinite(module.load_balancing_loss)
+
+
+def test_es_moe_sparse_inference_supports_channel_projection():
+    module = ES_MOE(8, 12, num_experts=4, top_k=2, dynamic_threshold=0.0).eval()
+
+    with torch.no_grad():
+        output = module(torch.randn(2, 8, 5, 7))
+
+    assert output.shape == (2, 12, 5, 7)
+    assert torch.isfinite(output).all()
+
+
+def test_es_moe_caps_expert_kernel_sizes():
+    module = ES_MOE(8, 8, num_experts=16, top_k=2, max_kernel_size=15)
+    kernels = [expert.conv.depthwise.kernel_size[0] for expert in module.experts]
+
+    assert max(kernels) == 15
+    assert all(kernel % 2 == 1 for kernel in kernels)
+
+
+@pytest.mark.parametrize("kwargs", ({"top_k": 0}, {"top_k": 4}, {"dynamic_threshold": 1.1}))
+def test_es_moe_rejects_invalid_routing_configuration(kwargs):
+    with pytest.raises(ValueError):
+        ES_MOE(8, 8, num_experts=3, **kwargs)
+
+
 # ---------------------------------------------------------------------------
 # §3.5: last_conv_out_channels is layout-agnostic
 # ---------------------------------------------------------------------------

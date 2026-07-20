@@ -49,6 +49,13 @@ def test_legacy_modules_preserve_historical_class_names():
     assert all(all(hasattr(module, name) for name in names) for module, names in expected.items())
 
 
+def test_moe_alias_uses_es_moe_stability_tier():
+    from ultralytics.nn.modules.moe import is_experimental_moe, is_stable_moe
+
+    assert is_stable_moe("MOE")
+    assert not is_experimental_moe("MOE")
+
+
 def test_base_debug_switch_still_controls_canonical_ablock(monkeypatch):
     import torch
     from torch import nn

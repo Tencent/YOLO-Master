@@ -389,7 +389,8 @@ class ES_MOE(nn.Module):
     """General MoE block with a routing network and multiple expert branches."""
 
     def __init__(self, in_channels, out_channels=None, num_experts=3, reduction=8,
-                 top_k=None, use_sparse_inference=True, dynamic_threshold=0.4):
+                 top_k=None, use_sparse_inference=True, dynamic_threshold=0.4,
+                 max_kernel_size=15):
         """
         Args:
             in_channels: Input channels
@@ -399,8 +400,25 @@ class ES_MOE(nn.Module):
             top_k: Number of active experts; None means use all experts
             use_sparse_inference: Enable sparse Top-K expert computation during inference
             dynamic_threshold: Threshold for pruning low-confidence experts during inference
+            max_kernel_size: Largest odd depthwise kernel assigned to an expert
         """
         super(ES_MOE, self).__init__()
+
+        if in_channels < 1 or (out_channels is not None and out_channels < 1):
+            raise ValueError("in_channels and out_channels must be positive")
+        if num_experts < 1:
+            raise ValueError(f"num_experts must be positive, got {num_experts}")
+        if reduction < 1:
+            raise ValueError(f"reduction must be positive, got {reduction}")
+        if top_k is not None and not 1 <= top_k <= num_experts:
+            raise ValueError(f"top_k must be in [1, {num_experts}], got {top_k}")
+        if not 0.0 <= dynamic_threshold <= 1.0:
+            raise ValueError(f"dynamic_threshold must be in [0, 1], got {dynamic_threshold}")
+        if max_kernel_size < 3:
+            raise ValueError(f"max_kernel_size must be at least 3, got {max_kernel_size}")
+        max_kernel_size = int(max_kernel_size)
+        if max_kernel_size % 2 == 0:
+            max_kernel_size -= 1
 
         if out_channels is None:
             out_channels = in_channels
@@ -412,6 +430,7 @@ class ES_MOE(nn.Module):
         self.use_top_k = (top_k is not None)
         self.use_sparse_inference = use_sparse_inference
         self.dynamic_threshold = dynamic_threshold
+        self.max_kernel_size = max_kernel_size
 
         # Dynamic routing (Top-K supported)
         self.routing = DynamicRoutingLayer(in_channels, num_experts, reduction, top_k)
@@ -419,9 +438,9 @@ class ES_MOE(nn.Module):
         # Expert group (original design)
         default_kernel_sizes = [3, 5, 7]
         if num_experts <= len(default_kernel_sizes):
-            ks = default_kernel_sizes[:num_experts]
+            ks = [min(k, max_kernel_size) for k in default_kernel_sizes[:num_experts]]
         else:
-            ks = [3 + 2 * i for i in range(num_experts)]
+            ks = [min(3 + 2 * i, max_kernel_size) for i in range(num_experts)]
         self.experts = nn.ModuleList(
             [EfficientExpertGroup(in_channels, out_channels, kernel_size=k) for k in ks]
         )
@@ -432,19 +451,16 @@ class ES_MOE(nn.Module):
             nn.SiLU(inplace=True),
         )
 
-        # Load-balancing loss (original design)
-        # NOTE: these are NOT registered as nn.Module buffers to avoid DDP
-        # _sync_buffers broadcasting them across ranks (they are pure statistics
-        # and do not need gradient synchronisation).  Keeping them as plain
-        # attributes prevents "No backend type associated with device type cpu"
-        # when a buffer lands on CPU before the model is moved to CUDA.
-        self.load_balancing_loss = torch.tensor(0.0)
-        self.expert_usage_counts = torch.zeros(num_experts)
+        # Non-persistent buffers follow device moves without polluting checkpoints.
+        # The trainer disables DDP buffer broadcasts for routed models, so these
+        # rank-local diagnostics remain local statistics.
+        self.register_buffer("load_balancing_loss", torch.tensor(0.0), persistent=False)
+        self.register_buffer("expert_usage_counts", torch.zeros(num_experts), persistent=False)
         self.last_routing_snapshot = {}
         # Expose balance_loss_coeff for GiniBalanceScheduler / apply_balance_loss_coeff
         self.balance_loss_coeff = 1.0
 
-    def _ensure_compat_attrs(self):
+    def _ensure_compat_attrs(self, device=None):
         """One-time legacy checkpoint attribute repair (not per-forward)."""
         if not hasattr(self, "use_top_k"):
             self.use_top_k = False
@@ -454,9 +470,22 @@ class ES_MOE(nn.Module):
             self.num_experts = len(self.experts) if hasattr(self, "experts") else 1
         if not hasattr(self, "top_k"):
             self.top_k = self.num_experts
+        if not hasattr(self, "max_kernel_size"):
+            self.max_kernel_size = max(
+                (module.conv.depthwise.kernel_size[0] for module in self.experts if hasattr(module, "conv")),
+                default=15,
+            )
+        for name in ("load_balancing_loss", "expert_usage_counts"):
+            if name not in self._buffers:
+                default = torch.tensor(0.0) if name == "load_balancing_loss" else torch.zeros(self.num_experts)
+                legacy = getattr(self, name, default)
+                if hasattr(self, name):
+                    delattr(self, name)
+                value = legacy.detach() if isinstance(legacy, torch.Tensor) else default
+                self.register_buffer(name, value.to(device=device), persistent=False)
 
     def forward(self, x):
-        self._ensure_compat_attrs()
+        self._ensure_compat_attrs(x.device)
         # Get routing weights
         routing_weights = self.routing(x)
 
@@ -554,10 +583,10 @@ class ES_MOE(nn.Module):
         expert_importance = routing_weights_flat.mean(dim=2)
 
         # Find Top-K experts
-        topk_values, topk_indices = torch.topk(expert_importance, self.top_k, dim=1)
+        _, topk_indices = torch.topk(expert_importance, self.top_k, dim=1)
 
         # Initialize output
-        final_output = torch.zeros_like(x)
+        final_output = x.new_zeros(B, self.out_channels, H, W)
 
         # Iterate over experts (vectorized over batch)
         for expert_idx in range(self.num_experts):
@@ -596,17 +625,13 @@ class ES_MOE(nn.Module):
         load_balance_loss = gshard_balance_loss(expert_usage, self.num_experts, reduce_ddp=should_reduce_ddp(self))
 
         # Guard against NaN loss (graph-safe: keep grad_fn instead of new leaf)
-        if not torch.isfinite(load_balance_loss).all():
+        exporting = torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()
+        if not exporting and not torch.isfinite(load_balance_loss).all():
             load_balance_loss = torch.nan_to_num(load_balance_loss, nan=0.0, posinf=0.0, neginf=0.0)
-            
-        if not hasattr(self, "load_balancing_loss"):
-            self.register_buffer("load_balancing_loss", torch.tensor(0.0), persistent=False)
-        if not hasattr(self, "expert_usage_counts"):
-            self.register_buffer("expert_usage_counts", torch.zeros_like(expert_usage), persistent=False)
-        if self.load_balancing_loss.shape == torch.Size([]):
-            self.load_balancing_loss = self.load_balancing_loss.to(load_balance_loss.device).reshape(())
-        self.load_balancing_loss.copy_(load_balance_loss.detach())
-        self.expert_usage_counts.copy_(expert_usage.detach())
+
+        if not exporting:
+            self.load_balancing_loss.copy_(load_balance_loss.detach())
+            self.expert_usage_counts.copy_(expert_usage.detach())
         
         # Store in registry (training only — avoids leaving graph-detached eval
         # tensors in the global registry that the loss collector could pick up).
