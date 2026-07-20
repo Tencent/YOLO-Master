@@ -169,8 +169,21 @@ class ArchitectureFingerprint:
             if "RTDETR" in cls_name or "MultiheadAttention" in cls_name:
                 has_rtdetr = True
 
-            # YOLO-World signature: text/clip fusion
-            if any(k in lname for k in ("text_encoder", "clip", "text_fusion", "world_embed", "text_proj")):
+            # YOLO-World checkpoints use visual-language module classes rather
+            # than text/clip names in their paths (e.g. WorldModel,
+            # MaxSigmoidAttnBlock, ContrastiveHead). Inspect both class and
+            # path so real checkpoints are not misclassified as plain CNNs.
+            if (
+                cls_name in {
+                    "WorldModel",
+                    "WorldDetect",
+                    "MaxSigmoidAttnBlock",
+                    "ImagePoolingAttn",
+                    "ContrastiveHead",
+                    "BNContrastiveHead",
+                }
+                or any(k in lname for k in ("text_encoder", "clip", "text_fusion", "world_embed", "text_proj"))
+            ):
                 has_text_fusion = True
 
             # MoE signature
@@ -288,10 +301,14 @@ class ArchitectureFingerprint:
             ):
                 attn_count += 1
 
-            # Text-fusion detection — refined: use module type check first,
-            # fall back to keyword matching only for well-known patterns.
+            # Text-fusion detection — real YOLO-World modules commonly have
+            # no "text" in their path, so include their distinctive classes.
             lname = name.lower()
-            if cls_name in ("TextFusion", "WorldEmbed", "TextProj", "TextEncoder"):
+            if cls_name in (
+                "TextFusion", "WorldEmbed", "TextProj", "TextEncoder",
+                "WorldModel", "WorldDetect", "MaxSigmoidAttnBlock",
+                "ImagePoolingAttn", "ContrastiveHead", "BNContrastiveHead",
+            ):
                 text_count += 1
             elif any(k in lname for k in ("text_encoder", "clip", "text_fusion", "world_embed", "text_proj")):
                 text_count += 1
@@ -326,12 +343,15 @@ class ArchitectureFingerprint:
             total_conv = 1
 
         # --- Extended dimension computations ---
-        # phi_depth: normalise top-level block count to [0, 1].
-        # YOLO models typically have 10-25 top-level blocks; normalise by 30.
+        # phi_depth: normalise the actual top-level graph depth to [0, 1].
+        # DetectionModel/WorldModel wrappers expose the graph as ``.model``;
+        # the wrapper itself has no __len__, which previously made this
+        # feature silently zero for every real checkpoint.
+        graph = getattr(model, "model", model)
         try:
-            top_level_count = len(model) if hasattr(model, '__len__') else 0
+            top_level_count = len(graph)
         except TypeError:
-            top_level_count = 0
+            top_level_count = len(list(graph.children())) if hasattr(graph, "children") else 0
         phi_depth = min(top_level_count / 30.0, 1.0) if top_level_count > 0 else 0.0
 
         # phi_width: log2-scale average channel width, normalised by 10.

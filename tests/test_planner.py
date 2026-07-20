@@ -278,6 +278,33 @@ class TestArchitectureFingerprint:
         # 2 conv + 2 linear = 4 total; text_fusion_proj and fusion_conv names give text
         assert fp.phi_text == pytest.approx(2 / 4, abs=1e-6)
 
+    def test_depth_uses_wrapped_sequential_graph(self):
+        model = nn.Module()
+        model.model = nn.Sequential(
+            nn.Conv2d(3, 8, 3),
+            nn.ReLU(),
+            nn.Conv2d(8, 16, 3),
+            nn.ReLU(),
+        )
+        fp = ArchitectureFingerprint.compute(model)
+        assert fp.phi_depth == pytest.approx(4 / 30, abs=1e-6)
+
+    def test_real_world_module_classes_are_text_fusion(self):
+        class WorldDetect(nn.Module):
+            def forward(self, x):
+                return x
+
+        class WorldModel(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.model = nn.Sequential(nn.Conv2d(3, 8, 1), nn.Linear(8, 8), nn.Identity())
+                self.world = WorldDetect()
+
+        model = WorldModel()
+        fp = ArchitectureFingerprint.compute(model)
+        assert fp.phi_text > 0.0
+        assert ArchitectureFingerprint._detect_architecture_family(model) == "yolo_world"
+
     def test_depthwise_conv(self):
         class _Model(nn.Module):
             def __init__(self):
