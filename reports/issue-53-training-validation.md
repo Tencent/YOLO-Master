@@ -1,76 +1,62 @@
 # MoA Training Validation Report — Issue #53
 
-## Quick Validation (5 epochs, COCO128, CPU)
+## Full Training: MoA vs MoE on VisDrone (50 epochs, GPU)
 
-| Epoch | box_loss | cls_loss | dfl_loss | moe_loss (MoA aux) | mAP50-95 |
-|-------|----------|----------|----------|---------------------|----------|
-| 1 | 3.809 | 5.511 | 3.756 | 6.341 | 0 |
-| 2 | 3.835 | 5.123 | 3.371 | 2.613 | 0 |
-| 3 | 3.790 | 4.918 | 3.260 | 1.904 | 0.00005 |
-| 4 | 3.741 | 4.773 | 3.228 | 1.685 | 0.00011 |
-| 5 | 3.789 | 4.706 | 3.203 | 1.711 | 0.00012 |
+| Config | MoA (this work) | MoE Baseline |
+|--------|-----------------|--------------|
+| Model | YOLO-Master v0.10 MoA-N | YOLO-Master v0.10 N |
+| Dataset | VisDrone (6471 train, 548 val, 10 cls) | VisDrone |
+| Image size | 320×320 | 320×320 |
+| Batch size | 24 | 24 |
+| Device | RTX 5070 Ti Laptop (12 GB) | RTX 5070 Ti Laptop (12 GB) |
+| Epochs | 50 | 50 |
+| AMP | Disabled (FP32 NaN recovery) | Disabled (FP32 NaN recovery) |
+| Train time | 4667s (78 min) | 3507s (58 min) |
+
+### Final Results (Epoch 50)
+
+| Metric | MoA | MoE | Delta |
+|--------|-----|-----|-------|
+| mAP50 | 0.133 | 0.133 | 0.000 |
+| mAP50-95 | 0.069 | 0.070 | -0.001 |
+| box_loss | 1.688 | 1.697 | -0.009 |
+| cls_loss | 1.247 | 1.259 | -0.012 |
+| dfl_loss | 0.905 | 0.905 | 0.000 |
+| Train time | 78 min | 58 min | +20 min (+34%) |
+
+### Loss Convergence
+
+| Epoch | MoA mAP50-95 | MoE mAP50-95 | MoA box_loss | MoE box_loss |
+|-------|-------------|-------------|-------------|-------------|
+| 1 | 0.012 | 0.013 | 3.738 | 3.744 |
+| 10 | 0.036 | 0.039 | 2.183 | 2.181 |
+| 20 | 0.049 | 0.048 | 1.997 | 2.000 |
+| 30 | 0.061 | 0.061 | 1.887 | 1.895 |
+| 40 | 0.067 | 0.067 | 1.806 | 1.811 |
+| 50 | 0.069 | 0.070 | 1.688 | 1.697 |
 
 ### Observations
 
-1. **MoA auxiliary loss converges**: Decreases monotonically from 6.34 → 1.71, showing the router is successfully learning to assign attention group probabilities.
+1. **MoA training is stable**: No NaN divergence after initial AMP->FP32 recovery. All metrics decrease smoothly over 50 epochs.
 
-2. **Classification loss decreases**: 5.51 → 4.71, indicating the model is learning object categories.
+2. **MoA router converges**: Aux loss quickly stabilizes at 2.0 (vs MoE's 1.0), reflecting the 3-group soft-routing mechanism.
 
-3. **DFL loss decreases**: 3.76 → 3.20, showing bounding box regression improvement.
+3. **Comparable accuracy**: MoA and MoE achieve nearly identical mAP (0.133/0.069 vs 0.133/0.070). At 320×320 resolution with 50 epochs, MoA attention routing shows no advantage over MoE FFN routing.
 
-4. **No NaN/Inf**: All metrics remain finite throughout training.
+4. **MoA training overhead**: +34% training time due to additional attention computation (window-partitioned SDPA, random-feature linear attention, cross-attention fusion).
 
-5. **mAP50-95 emerging**: From 0 (epochs 1-2) to 0.00012 (epoch 5), consistent with early-stage training from scratch on a small dataset.
+5. **Both converge smoothly**: No overfitting at 50 epochs; both would benefit from longer training at higher resolution.
 
-### Model Configuration
+### Conclusions
 
-- **Model**: YOLO-Master v0.10 MoA-N
-- **Parameters**: 3.58M
-- **GFLOPs**: 8.3
-- **C2fMoA modules**: 3
-- **MoABlock modules**: 6
+- MoA module trains successfully on VisDrone from scratch without NaN/Inf
+- MoA achieves parity with MoE baseline; attention routing is a viable alternative to FFN routing
+- Training overhead is acceptable (34% slower) for potential benefits at larger scales
+- Future work: higher resolution (640), longer training (100+ epochs), larger model variants
 
-## Full Training Instructions
+### Artifacts
 
-For the complete validation on VisDrone or SKU-110K, run:
-
-### VisDrone (2.3 GB)
-```bash
-# Download dataset (auto-download on first run)
-python -c "
-from ultralytics import YOLO
-model = YOLO('ultralytics/cfg/models/master/v0_10/det/yolo-master-moa-n.yaml')
-model.train(data='VisDrone.yaml', epochs=100, imgsz=640, batch=16, device=0,
-            project='runs/issue-53', name='moa-n-visdrone', exist_ok=True,
-            pretrained=False, patience=100, plots=True)
-"
-```
-
-### SKU-110K (13.6 GB)
-```bash
-python -c "
-from ultralytics import YOLO
-model = YOLO('ultralytics/cfg/models/master/v0_10/det/yolo-master-moa-n.yaml')
-model.train(data='SKU-110K.yaml', epochs=100, imgsz=640, batch=16, device=0,
-            project='runs/issue-53', name='moa-n-sku110k', exist_ok=True,
-            pretrained=False, patience=100, plots=True)
-"
-```
-
-### MoE Baseline Comparison
-```bash
-# MoE baseline (v0.10 without MoA)
-python -c "
-from ultralytics import YOLO
-model = YOLO('ultralytics/cfg/models/master/v0_10/det/yolo-master-n.yaml')
-model.train(data='VisDrone.yaml', epochs=100, imgsz=640, batch=16, device=0,
-            project='runs/issue-53', name='moe-n-visdrone', exist_ok=True,
-            pretrained=False, patience=100, plots=True)
-"
-```
-
-Alternatively, use the comparison script:
-```bash
-python scripts/compare_moa_ablation.py --train --epochs 100 --imgsz 640 --batch 16 --device 0 \
-    --models v10 v10_moa --data VisDrone.yaml --project runs/issue-53-visdrone
-```
+- MoA results: `runs/issue-53/moa-n-visdrone/`
+- MoE results: `runs/issue-53/moe-n-visdrone/`
+- Loss curves: `runs/issue-53/*/results.png`
+- Best checkpoints: `runs/issue-53/*/weights/best.pt`
