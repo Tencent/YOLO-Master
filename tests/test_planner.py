@@ -305,6 +305,19 @@ class TestArchitectureFingerprint:
         assert fp.phi_text > 0.0
         assert ArchitectureFingerprint._detect_architecture_family(model) == "yolo_world"
 
+    def test_paper_fingerprint_dimensions_are_present(self):
+        fp = ArchitectureFingerprint.compute(_make_yolo11s_like())
+        assert hasattr(fp, "phi_moe") and hasattr(fp, "phi_conv")
+        assert 0.0 <= fp.phi_moe <= 1.0
+        assert 0.0 <= fp.phi_conv <= 1.0
+
+    def test_known_world_family_uses_paper_profile(self):
+        model = _make_yolo_world_like()
+        fp = ArchitectureFingerprint.compute(model)
+        assert fp.phi_attn == pytest.approx(0.45)
+        assert fp.phi_text == pytest.approx(0.5)
+        ArchitectureFingerprint.invalidate_cache(model)
+
     def test_depthwise_conv(self):
         class _Model(nn.Module):
             def __init__(self):
@@ -465,6 +478,17 @@ class TestPEFTPlannerPlan:
         assert decision.status == "ACCEPT"
         assert decision.predicted_delta == pytest.approx(0.071, abs=0.01)
         assert "attn" not in (decision.target_modules_hint or [])
+
+    def test_budget_infeasible_refuses(self):
+        model = _make_yolo11s_like()
+        decision = PEFTPlanner().plan(model, LoRAConfig(peft_type="lora", r=8, adapter_budget=1))
+        assert decision.status == "REFUSE"
+        assert decision.safety_overrides["budget_infeasible"] is True
+
+    def test_paper_prediction_is_separate_from_extended_prediction(self):
+        planner = PEFTPlanner()
+        fp = ArchitectureFingerprint(phi_attn=0.45, phi_text=0.5, phi_dw=0.0)
+        assert planner.predict_paper(fp, "lora") == pytest.approx(0.06677, abs=1e-6)
 
     def test_yolo11s_dora_accept(self):
         """YOLO11s + DoRA r=16 → ACCEPT (Table 1: Δ=+0.0710)."""
@@ -663,6 +687,21 @@ class TestPEFTPlannerDetectTargets:
         # text_fusion_proj and text_proj_conv should be included
         assert any("text" in t for t in targets)
         assert any("fusion" in t or "text_proj" in t for t in targets)
+
+    def test_world_class_targets_are_not_lost_to_numeric_paths(self):
+        class ContrastiveHead(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.proj = nn.Linear(8, 8)
+
+        class WorldDetect(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.cv4 = nn.Sequential(ContrastiveHead())
+
+        model = nn.Sequential(nn.Conv2d(3, 8, 1), WorldDetect())
+        targets = PEFTPlanner().detect_targets(model, LoRAConfig(include_head=False))
+        assert "1.cv4.0.proj" in targets
 
     def test_config_filter_exclude_modules(self):
         model = _make_yolo11s_like()
