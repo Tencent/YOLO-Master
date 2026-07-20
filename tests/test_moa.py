@@ -13,9 +13,9 @@ from ultralytics.nn.modules.moa.moa import (
     _MoARouter,
     _flash_attn,
     _moa_router_aux_loss,
-    _fp_min,
     _window_flash_attn,
 )
+from ultralytics.nn.modules._numeric import fp_clamp_floor as _fp_min
 from ultralytics.nn.tasks import DetectionModel
 from ultralytics.utils.loss import _collect_moa_aux_loss
 
