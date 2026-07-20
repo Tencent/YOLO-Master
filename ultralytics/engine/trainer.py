@@ -806,13 +806,9 @@ class BaseTrainer:
                 m.eval()
 
     def save_model(self):
-        """Save normal checkpoints only after the recovery health gate succeeds."""
+        """Save standard last/best checkpoints following the upstream Ultralytics lifecycle."""
         serialized_ckpt = self._serialize_checkpoint()
         self.wdir.mkdir(parents=True, exist_ok=True)
-        if not self._save_healthy_checkpoint(serialized_ckpt):
-            self._checkpoint_health_failed = True
-            return False
-        self._checkpoint_health_failed = False
         self.last.write_bytes(serialized_ckpt)
         if self.best_fitness == self.fitness:
             self.best.write_bytes(serialized_ckpt)

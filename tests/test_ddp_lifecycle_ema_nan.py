@@ -456,7 +456,7 @@ def test_checkpoint_forward_smoke_uses_rtdetr_safe_minimum_shape():
     assert reason == ""
 
 
-def test_save_model_does_not_overwrite_last_or_best_when_health_gate_fails(tmp_path):
+def test_save_model_writes_last_and_best_without_recovery_gate(tmp_path):
     t = object.__new__(BaseTrainer)
     t.wdir = tmp_path
     t.last = tmp_path / "last.pt"
@@ -464,13 +464,12 @@ def test_save_model_does_not_overwrite_last_or_best_when_health_gate_fails(tmp_p
     t.last.write_bytes(b"prior-last")
     t.best.write_bytes(b"prior-best")
     t.best_fitness = t.fitness = 0.5
+    t.save_period = -1
+    t.epoch = 0
     t._serialize_checkpoint = MagicMock(return_value=b"bad-checkpoint")
-    t._save_healthy_checkpoint = MagicMock(return_value=False)
-
-    assert t.save_model() is False
-    assert t._checkpoint_health_failed is True
-    assert t.last.read_bytes() == b"prior-last"
-    assert t.best.read_bytes() == b"prior-best"
+    assert t.save_model() is True
+    assert t.last.read_bytes() == b"bad-checkpoint"
+    assert t.best.read_bytes() == b"bad-checkpoint"
 
 
 def final_eval_trainer(tmp_path):
