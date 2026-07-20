@@ -658,7 +658,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--workers", type=int, default=0)
     parser.add_argument("--seed", type=int, help="Single seed override (legacy compatibility)")
     parser.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2])
-    parser.add_argument("--ranks", type=int, nargs="+", default=list(RANKS))
+    parser.add_argument(
+        "--ranks", type=int, nargs="+", default=[16],
+        help="Core ranks for the formal matrix (default: r=16; pass 4 8 16 for a rank sweep)",
+    )
     parser.add_argument("--device", default="mps")
     parser.add_argument("--optimizer", default="AdamW")
     parser.add_argument("--lr0", type=float, default=0.01)
@@ -782,6 +785,30 @@ def main() -> int:
             "generated_at": utc_now(),
             "matrix_size": len(matrix),
             "calibration_sample_target": sum(item.variant != "full" for item in matrix),
+            "review_protocol": {
+                "min_architecture_families": 3,
+                "loao": "one complete named architecture per family",
+                "variants": list(RANK_VARIANTS),
+                "variant_lovo": "leave out every observation of one variant before fitting",
+                "datasets": [name for name, _ in _dataset_specs(args)],
+                "seeds": list(args.seeds),
+                "placements": list(_placements(args)),
+                "placement_only_control": True,
+                "training_controls": {
+                    "epochs": args.epochs,
+                    "imgsz": args.imgsz,
+                    "batch": args.batch,
+                    "optimizer": args.optimizer,
+                    "lr0": args.lr0,
+                    "lrf": args.lrf,
+                    "weight_decay": args.weight_decay,
+                    "momentum": args.momentum,
+                    "cos_lr": args.cos_lr,
+                    "lora_use_rslora": args.lora_use_rslora,
+                    "lora_dropout": args.lora_dropout,
+                    "lora_lr_mult": args.lora_lr_mult,
+                },
+            },
             "experiments": [asdict(item) for item in matrix],
         }
         atomic_json(args.project / "manifest.json", manifest)
