@@ -33,6 +33,18 @@ os.environ.setdefault("WANDB_SILENT", "true")
 os.environ.setdefault("YOLO_AUTOINSTALL", "false")
 os.environ.setdefault("YOLO_VERBOSE", "false")
 
+# The legacy OpenAI CLIP package imports ``packaging`` from pkg_resources,
+# while modern setuptools no longer re-exports it. Keep the compatibility
+# shim local to this experiment runner rather than mutating the environment.
+try:
+    import packaging as _packaging
+    import pkg_resources as _pkg_resources
+
+    if not hasattr(_pkg_resources, "packaging"):
+        _pkg_resources.packaging = _packaging
+except ImportError:
+    pass
+
 import torch
 
 import ultralytics
@@ -257,6 +269,7 @@ def run_experiment(spec: ExperimentSpec, args: argparse.Namespace) -> dict[str, 
         "lr0": args.lr0,
         "lrf": args.lrf,
         "weight_decay": args.weight_decay,
+        "amp": args.amp,
         "error": None,
     }
     model = None
@@ -317,6 +330,7 @@ def run_experiment(spec: ExperimentSpec, args: argparse.Namespace) -> dict[str, 
             "lr0": args.lr0,
             "lrf": args.lrf,
             "weight_decay": args.weight_decay,
+            "amp": args.amp,
             "warmup_epochs": 0.0,
             "close_mosaic": 0,
             "lora_lr_mult": 1.0,
@@ -387,11 +401,23 @@ def rank_aware_lovo(points: list[LOVODataPoint]) -> dict[str, Any]:
 def build_calibration_artifacts(results: list[dict[str, Any]], args: argparse.Namespace) -> dict[str, Any]:
     successful = {record["experiment_id"]: record for record in results if record.get("status") == "success"}
     collector = LOVODataCollector()
+    protocol_counts: dict[str, int] = {}
+    selected_protocol = args.calibration_protocol
     for record in results:
+        if record.get("status") == "success":
+            protocol = json.dumps(
+                {key: record.get(key) for key in ("epochs", "imgsz", "batch", "optimizer", "lr0", "amp")},
+                sort_keys=True,
+            )
+            protocol_counts[protocol] = protocol_counts.get(protocol, 0) + 1
         if record.get("status") != "success" or record["variant"] == "full":
+            continue
+        if selected_protocol and any(record.get(key) != value for key, value in selected_protocol.items()):
             continue
         baseline = successful.get(f"{record['model_name']}__full")
         if baseline is None:
+            continue
+        if selected_protocol and any(baseline.get(key) != value for key, value in selected_protocol.items()):
             continue
         metric = record["metrics"]["metrics/mAP50-95(B)"]
         baseline_metric = baseline["metrics"]["metrics/mAP50-95(B)"]
@@ -426,6 +452,8 @@ def build_calibration_artifacts(results: list[dict[str, Any]], args: argparse.Na
         "failed_runs": sum(record.get("status") == "failed" for record in results),
         "calibration_samples": len(collector),
         "collector_summary": collector.summary(),
+        "calibration_protocol": selected_protocol,
+        "successful_protocol_counts": protocol_counts,
     }
     if len(collector) < 5:
         report["status"] = "insufficient_data"
@@ -487,6 +515,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lr0", type=float, default=0.001)
     parser.add_argument("--lrf", type=float, default=0.01)
     parser.add_argument("--weight-decay", type=float, default=0.0005)
+    parser.add_argument("--amp", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--project", type=Path, default=REPO_ROOT / "runs/planner_mps_coco128_calibration")
     parser.add_argument("--results", type=Path)
     parser.add_argument("--lovo-output", type=Path)
@@ -498,6 +527,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--max-runs", type=int, default=0)
     parser.add_argument("--fit-only", action="store_true")
+    parser.add_argument(
+        "--protocol",
+        choices=("main", "batch4", "all"),
+        default="all",
+        help="Select comparable runs for fitting; main=batch 8 AdamW, batch4=batch 4 AdamW, all disables filtering",
+    )
+    parser.add_argument(
+        "--merge-results",
+        action="append",
+        type=Path,
+        default=[],
+        help="Additional runs.json files to merge before fitting; later records replace duplicate IDs",
+    )
     args = parser.parse_args()
     args.project = args.project.expanduser().resolve()
     args.results = (args.results or args.project / "runs.json").expanduser().resolve()
@@ -507,7 +549,37 @@ def parse_args() -> argparse.Namespace:
     ).expanduser().resolve()
     args.report_output = (args.report_output or args.project / "calibration_report.json").expanduser().resolve()
     args.data = args.data.expanduser().resolve()
+    args.merge_results = [path.expanduser().resolve() for path in args.merge_results]
+    args.calibration_protocol = {
+        "main": {"epochs": 1, "imgsz": 160, "batch": 8, "optimizer": "AdamW", "lr0": 0.001},
+        "batch4": {"epochs": 1, "imgsz": 160, "batch": 4, "optimizer": "AdamW", "lr0": 0.001},
+        "all": None,
+    }[args.protocol]
     return args
+
+
+def refresh_fingerprints(results: list[dict[str, Any]]) -> None:
+    """Refresh fingerprints after a fingerprint implementation change."""
+    models: dict[str, torch.nn.Module] = {}
+    for record in results:
+        if record.get("status") != "success":
+            continue
+        weights = record.get("weights")
+        if not weights or weights in models:
+            continue
+        try:
+            models[weights] = YOLO(weights).model
+        except Exception:
+            continue
+    for record in results:
+        model = models.get(record.get("weights"))
+        if model is None:
+            continue
+        record["fingerprint"] = fingerprint_dict(model)
+        record["architecture_family"] = ArchitectureFingerprint._detect_architecture_family(model)
+    for model in models.values():
+        del model
+    gc.collect()
 
 
 def main() -> int:
@@ -517,7 +589,14 @@ def main() -> int:
     if not args.data.is_file():
         raise FileNotFoundError(args.data)
     args.project.mkdir(parents=True, exist_ok=True)
-    results = load_results(args.results) if args.resume or args.fit_only else []
+    result_files = [args.results, *args.merge_results]
+    results = []
+    if args.resume or args.fit_only or args.merge_results:
+        indexed: dict[str, dict[str, Any]] = {}
+        for result_file in result_files:
+            for record in load_results(result_file):
+                indexed[record["experiment_id"]] = record
+        results = list(indexed.values())
     if not args.fit_only:
         models = parse_models(args.models or list(DEFAULT_MODELS))
         matrix = build_matrix(models, args)
@@ -550,6 +629,9 @@ def main() -> int:
                 f"elapsed={record['elapsed_sec']:.1f}s error={record.get('error')}",
                 flush=True,
             )
+    refresh_fingerprints(results)
+    if args.fit_only or args.merge_results:
+        atomic_json(args.results, results)
     report = build_calibration_artifacts(results, args)
     print(json.dumps({key: value for key, value in report.items() if key != "rank_aware_lovo"}, indent=2), flush=True)
     return 0 if report.get("failed_runs", 0) == 0 else 2
