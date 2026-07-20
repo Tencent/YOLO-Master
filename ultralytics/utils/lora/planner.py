@@ -1112,6 +1112,127 @@ class LOVOValidator:
             "feature_order": ["intercept", "phi_attn", "phi_text", "phi_dw", "variant_xi"],
         }
 
+    @staticmethod
+    def _grouped_predictions(
+        data_points: List[LOVODataPoint],
+        groups: Dict[str, List[LOVODataPoint]],
+        *,
+        paper: bool,
+    ) -> Dict[str, Any]:
+        """Evaluate group-held-out folds without fitting on the held-out group.
+
+        This helper is deliberately separate from point-wise LOVO: a complete
+        PEFT variant or architecture is removed from the training matrix for
+        every fold, so its variant/architecture effect cannot leak through a
+        fitted coefficient.
+        """
+        if len(data_points) < 5:
+            raise ValueError("Grouped LOVO requires at least 5 data points")
+        folds = []
+        for group_name in sorted(groups):
+            held_out = groups[group_name]
+            held_out_ids = {id(point) for point in held_out}
+            train = [point for point in data_points if id(point) not in held_out_ids]
+            if len(train) < 5:
+                raise ValueError(
+                    f"Grouped LOVO fold {group_name!r} has only {len(train)} training points"
+                )
+            planner = PEFTPlanner()
+            planner.fit(
+                [point.to_tuple() for point in train],
+                ranks=[max(int(point.rank), 1) for point in train],
+            )
+            predictions = []
+            for point in held_out:
+                predicted = (
+                    planner.predict_paper(point.fingerprint, point.variant)
+                    if paper
+                    else planner.predict(point.fingerprint, point.variant, max(int(point.rank), 1))
+                )
+                predictions.append(
+                    {
+                        "experiment": point.notes,
+                        "model": point.model_name,
+                        "variant": point.variant,
+                        "actual": point.delta_mAP,
+                        "predicted": predicted,
+                    }
+                )
+            folds.append(
+                {
+                    "held_out": group_name,
+                    "n_train": len(train),
+                    "n_test": len(held_out),
+                    "train_variants": sorted({point.variant.lower() for point in train}),
+                    "train_architectures": sorted({point.model_name for point in train if point.model_name}),
+                    "predictions": predictions,
+                }
+            )
+        flat = [prediction for fold in folds for prediction in fold["predictions"]]
+        try:
+            import numpy as np
+
+            actual = np.asarray([item["actual"] for item in flat], dtype=np.float64)
+            predicted = np.asarray([item["predicted"] for item in flat], dtype=np.float64)
+            residual = actual - predicted
+            mse = float(np.mean(residual ** 2)) if len(flat) else 0.0
+            total = float(np.sum((actual - np.mean(actual)) ** 2)) if len(flat) else 0.0
+            r2 = 1.0 - float(np.sum(residual ** 2)) / total if total > 1e-12 else 0.0
+        except ImportError:
+            mse = r2 = 0.0
+        return {
+            "folds": folds,
+            "predictions": flat,
+            "mse": mse,
+            "rmse": mse ** 0.5,
+            "r2": r2,
+            "n_samples": len(flat),
+            "n_groups": len(groups),
+            "paper_regression": paper,
+        }
+
+    def cross_validate_variant(
+        self, data_points: List[LOVODataPoint], *, paper: bool = True
+    ) -> Dict[str, Any]:
+        """Run genuine leave-one-variant-out validation.
+
+        Each fold excludes every observation of one variant before fitting;
+        this is stronger than point-wise LOVO and prevents a held-out variant's
+        fitted xi coefficient from entering its own prediction.
+        """
+        groups: Dict[str, List[LOVODataPoint]] = {}
+        for point in data_points:
+            groups.setdefault(point.variant.lower(), []).append(point)
+        if len(groups) < 3:
+            raise ValueError("Variant LOVO requires at least 3 PEFT variants")
+        result = self._grouped_predictions(data_points, groups, paper=paper)
+        result["held_out_variants"] = sorted(groups)
+        return result
+
+    def cross_validate_architecture(
+        self,
+        data_points: List[LOVODataPoint],
+        *,
+        holdout_models: Optional[List[str]] = None,
+        paper: bool = True,
+    ) -> Dict[str, Any]:
+        """Run architecture-held-out validation for complete model variants."""
+        groups: Dict[str, List[LOVODataPoint]] = {}
+        for point in data_points:
+            if point.model_name:
+                groups.setdefault(point.model_name, []).append(point)
+        if holdout_models is not None:
+            requested = set(holdout_models)
+            groups = {name: points for name, points in groups.items() if name in requested}
+        if not groups:
+            raise ValueError("Architecture LOAO requires named model architectures")
+        result = self._grouped_predictions(data_points, groups, paper=paper)
+        result["held_out_architectures"] = sorted(groups)
+        result["held_out_families"] = sorted(
+            {point.model_name for points in groups.values() for point in points if point.model_name}
+        )
+        return result
+
     def evaluate_catastrophe_detection(
         self, collector: LOVODataCollector
     ) -> Dict[str, Any]:

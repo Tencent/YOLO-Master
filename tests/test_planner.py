@@ -969,3 +969,37 @@ class TestLOVOEngine:
         validator = LOVOValidator()
         with pytest.raises(ValueError, match="at least 5"):
             validator.cross_validate([])
+
+    def test_variant_lovo_holds_out_entire_variant(self):
+        points = []
+        for model, attn in (("cnn", 0.0), ("yolo12", 0.45), ("rtdetr", 0.85)):
+            for variant, delta in (("lora", 0.06), ("dora", 0.05), ("loha", 0.04)):
+                points.append(
+                    LOVODataPoint(
+                        ArchitectureFingerprint(attn, 0.0, 0.0),
+                        variant,
+                        delta,
+                        model_name=model,
+                    )
+                )
+        result = LOVOValidator().cross_validate_variant(points)
+        assert result["held_out_variants"] == ["dora", "loha", "lora"]
+        for fold in result["folds"]:
+            assert fold["held_out"] not in fold["train_variants"]
+
+    def test_architecture_loao_holds_out_complete_model(self):
+        points = []
+        for model, attn in (("cnn", 0.0), ("yolo12", 0.45), ("rtdetr", 0.85)):
+            for variant, delta in (("lora", 0.06), ("dora", 0.05), ("loha", 0.04)):
+                points.append(
+                    LOVODataPoint(
+                        ArchitectureFingerprint(attn, 0.0, 0.0),
+                        variant,
+                        delta,
+                        model_name=model,
+                    )
+                )
+        result = LOVOValidator().cross_validate_architecture(points)
+        assert result["held_out_architectures"] == ["cnn", "rtdetr", "yolo12"]
+        for fold in result["folds"]:
+            assert fold["held_out"] not in fold["train_architectures"]
