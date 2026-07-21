@@ -448,6 +448,8 @@ LORA_RUNTIME_METADATA_KEYS = frozenset(
         "effective_lora_init_lora_weights",
         "effective_lora_type",
         "effective_lora_variant",
+        "effective_optimizer",
+        "effective_optimizer_lrs",
         "lora_planner_adapted",
         "lora_planner_refused",
         "lora_safety_overrides",

@@ -120,6 +120,17 @@ class AdapterRuntimeController:
         )
         if not enabled:
             return
+        for name in (
+            "lora_lr_mult",
+            "lora_alpha_warmup",
+            "lora_use_dora",
+            "lora_use_rslora",
+            "lora_layer_decay",
+            "lora_ortho_weight",
+        ):
+            requested_name = f"requested_{name}"
+            if not hasattr(args, requested_name):
+                setattr(args, requested_name, getattr(args, name, None))
         self.trainer.model = apply_lora(self.trainer.model, args)
         update_args_with_lora_runtime_metadata(args, self.trainer.model)
 
@@ -240,7 +251,14 @@ class AdapterRuntimeController:
         regularizer = LoraTrainingStrategy.compute_orthogonal_loss(
             self.trainer.model, weight=self.ortho_weight
         )
-        return loss + regularizer.to(device=loss.device, dtype=loss.dtype)
+        regularizer = regularizer.to(device=loss.device, dtype=loss.dtype)
+        if loss.ndim == 0:
+            return loss + regularizer
+        # Detection/segmentation criteria return one loss component per task
+        # term and the trainer sums them afterwards. Broadcasting a scalar here
+        # would count the regularizer once per component, so attach it once.
+        flat = loss.reshape(-1)
+        return torch.cat((flat[:1] + regularizer, flat[1:])).reshape_as(loss)
 
     def after_optimizer_step(self) -> None:
         """Advance optimizer-step-dependent adapter schedules such as AdaLoRA rank allocation."""

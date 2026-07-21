@@ -407,8 +407,18 @@ class BaseModel(torch.nn.Module):
             return 0
         src_nc, tgt_nc = len(src_names), len(tgt_names)
 
+        aliases = {
+            "aeroplane": "airplane",
+            "motorbike": "motorcycle",
+            "sofa": "couch",
+            "tvmonitor": "tv",
+            "diningtable": "dining table",
+            "pottedplant": "potted plant",
+        }
+
         def _norm(s):
-            return str(s).strip().lower()
+            name = " ".join(str(s).strip().lower().replace("_", " ").replace("-", " ").split())
+            return aliases.get(name, name)
 
         # Skip default placeholder names {0:"0", 1:"1", ...} (also catches empty dicts) — nothing to match on
         if any(all(str(k) == str(v) for k, v in n.items()) for n in (src_names, tgt_names)):

@@ -136,73 +136,66 @@ class LoraTrainingStrategy:
         if not factors:
             return 0
 
-        # Find the LoRA param group index and its base_lr.
-        # Build a name lookup once to avoid O(N*M) scan; then collect ALL LoRA
-        # params (the earlier implementation had an off-by-one break that only
-        # picked up the first LoRA parameter per group, collapsing everything
-        # into a single bucket).
+        # Build a name lookup once to avoid O(N*M) scans. Adapter parameters can
+        # live in more than one source group (for example MuSGD's special-LR
+        # split), so every source group must be rebuilt independently.
         name_by_id = {id(p): n for n, p in self.model.named_parameters()}
+        from collections import defaultdict
 
-        lora_pg_idx = None
-        base_lr = None
-        lora_params_in_pg = []
-
-        for idx, pg in enumerate(optimizer.param_groups):
-            pg_has_lora = False
-            for p in pg.get("params", []):
-                name = name_by_id.get(id(p))
+        original_groups = list(optimizer.param_groups)
+        new_param_groups = []
+        used_factors = []
+        adjusted = 0
+        for pg in original_groups:
+            adapter_entries = []
+            remaining = []
+            for param in pg.get("params", []):
+                name = name_by_id.get(id(param))
                 if name is not None and _is_adapter_param(name):
-                    pg_has_lora = True
-                    lora_params_in_pg.append((name, p, idx))
-            if pg_has_lora and base_lr is None:
-                base_lr = pg.get('lr', None)
-                lora_pg_idx = idx
+                    adapter_entries.append((name, param))
+                else:
+                    remaining.append(param)
 
-        if base_lr is None or lora_pg_idx is None:
+            if not adapter_entries:
+                new_param_groups.append(pg)
+                continue
+
+            if remaining:
+                remaining_group = dict(pg)
+                remaining_group["params"] = remaining
+                new_param_groups.append(remaining_group)
+
+            layer_groups = defaultdict(list)
+            for name, param in adapter_entries:
+                rounded_factor = round(factors.get(name, 1.0), 1)
+                layer_groups[rounded_factor].append(param)
+            base_lr = float(pg.get("lr", 0.0))
+            base_initial_lr = float(pg.get("initial_lr", base_lr))
+            for factor, params in sorted(layer_groups.items(), reverse=True):
+                new_group = {key: value for key, value in pg.items() if key != "params"}
+                new_group["params"] = params
+                new_group["lr"] = base_lr * factor
+                new_group["initial_lr"] = base_initial_lr * factor
+                new_param_groups.append(new_group)
+                used_factors.append(factor)
+                adjusted += len(params)
+
+        if adjusted == 0:
             LOGGER.warning("[LoRA-Strategy] No LoRA param group found for layer decay.")
             return 0
 
-        # Group LoRA params by layer index for efficient param_group creation
-        from collections import defaultdict
-        layer_groups = defaultdict(list)
-        
-        for name, param, _ in lora_params_in_pg:
-            factor = factors.get(name, 1.0)
-            # Round factor to reduce number of param groups.
-            # Use 1 decimal precision: this reduces group count from ~18 to ~3-5
-            # while still preserving meaningful stratification across depths.
-            # Previous 3-decimal precision created too many groups (18+), slowing optimizer.
-            rounded_factor = round(factor, 1)
-            layer_groups[rounded_factor].append(param)
-        
-        # Remove the original LoRA param group (remove from end to keep indices stable)
-        # We need to rebuild param_groups since PyTorch doesn't support deletion
-        original_groups = optimizer.param_groups.copy()
-        
-        # Create new param_groups list
-        new_param_groups = []
-        for idx, pg in enumerate(original_groups):
-            if idx == lora_pg_idx:
-                # Replace with multiple layer-specific groups
-                for factor, params in sorted(layer_groups.items(), reverse=True):
-                    new_lr = base_lr * factor
-                    # Start with a copy of the original param_group
-                    new_pg = {k: v for k, v in pg.items() if k != "params"}
-                    new_pg["params"] = params
-                    new_pg["lr"] = new_lr
-                    new_pg["initial_lr"] = new_lr  # for warmup scheduler
-                    new_param_groups.append(new_pg)
-            else:
-                new_param_groups.append(pg)
-        
         # Replace optimizer's param_groups
         optimizer.param_groups = new_param_groups
-        
+
         # Also rebuild state if necessary (state is keyed by parameter object, so it remains valid)
         # But we need to update the optimizer's internal _param_group map if it exists
         if hasattr(optimizer, '_param_groups'):
             optimizer._param_groups = optimizer.param_groups
-        
+
+        parameter_ids = [id(param) for pg in optimizer.param_groups for param in pg.get("params", [])]
+        if len(parameter_ids) != len(set(parameter_ids)):
+            raise RuntimeError("Layer-wise LR decay produced duplicate optimizer parameters.")
+
         avg_factor = sum(factors.values()) / len(factors)
         min_factor = min(factors.values())
         max_factor = max(factors.values())
@@ -212,7 +205,7 @@ class LoraTrainingStrategy:
         # for every LoRA param (e.g. when all names come from a sub-module without a
         # leading digit), or when decay_rate is so extreme that all factors round to
         # the same bucket.
-        if len(layer_groups) == 1:
+        if len(set(used_factors)) == 1:
             LOGGER.warning(
                 f"[LoRA-Strategy] ⚠️ Layer decay produced only 1 LR group "
                 f"(decay_rate={decay_rate}, factor_range=[{min_factor:.4f}, {max_factor:.4f}]). "
@@ -221,11 +214,11 @@ class LoraTrainingStrategy:
 
         LOGGER.info(
             f"[LoRA-Strategy] 📐 Layer-wise LR decay applied (rate={decay_rate}): "
-            f"{len(layer_groups)} LR groups, "
+            f"{len(used_factors)} LR groups, "
             f"avg_factor={avg_factor:.3f}, range=[{min_factor:.3f}, {max_factor:.3f}]"
         )
         self._layer_decay_factors = factors
-        return len(factors)
+        return adjusted
 
     # ── Strategy 2: Alpha Warmup ──
     def prepare_alpha_warmup(self):

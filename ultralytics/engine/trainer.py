@@ -114,6 +114,53 @@ def _validate_cuda_ddp_device(device: torch.device, env: tuple[int, int, int] | 
         )
 
 
+def _optimizer_family(optimizer) -> str | None:
+    """Return a coarse optimizer family used to validate checkpoint state compatibility."""
+    name = type(optimizer).__name__.lower()
+    if name == "musgd":
+        return "musgd"
+    if name in {"adam", "adamax", "adamw", "nadam", "radam"}:
+        return "adam"
+    if name == "rmsprop":
+        return "rmsprop"
+    if name == "sgd":
+        return "sgd"
+    return None
+
+
+def _optimizer_state_family(state_dict) -> str | None:
+    """Infer an optimizer family from a serialized PyTorch optimizer state."""
+    if not isinstance(state_dict, dict):
+        return None
+    groups = state_dict.get("param_groups", ())
+    if any("use_muon" in group for group in groups):
+        return "musgd"
+    state_keys = {
+        key
+        for state in state_dict.get("state", {}).values()
+        if isinstance(state, dict)
+        for key in state
+    }
+    if {"exp_avg", "exp_avg_sq"} <= state_keys:
+        return "adam"
+    if "square_avg" in state_keys:
+        return "rmsprop"
+    if "momentum_buffer" in state_keys:
+        return "sgd"
+    return None
+
+
+def _adapter_active(model, controller=None) -> bool:
+    """Return whether a model or any nested student/adapter module owns trainable adapters."""
+    if bool(getattr(controller, "active", False)):
+        return True
+    root = unwrap_model(model)
+    return any(
+        bool(getattr(module, "lora_enabled", False) or getattr(module, "molora_enabled", False))
+        for module in root.modules()
+    )
+
+
 class BaseTrainer:
     """A base class for creating trainers.
 
@@ -191,12 +238,7 @@ class BaseTrainer:
         if RANK in {-1, 0}:
             self.wdir.mkdir(parents=True, exist_ok=True)  # make dir
             self.args.save_dir = str(self.save_dir)
-            # Save run args, serializing augmentations as reprs for resume compatibility
-            args_dict = vars(self.args).copy()
-            if args_dict.get("augmentations") is not None:
-                # Serialize Albumentations transforms as their repr strings for checkpoint compatibility
-                args_dict["augmentations"] = [repr(t) for t in args_dict["augmentations"]]
-            YAML.save(self.save_dir / "args.yaml", args_dict)  # save run args
+            self._save_run_args()
         self.last, self.best = self.wdir / "last.pt", self.wdir / "best.pt"  # checkpoint paths
         self.healthy = self.wdir / "last_healthy.pt"
         self.save_period = self.args.save_period
@@ -251,6 +293,16 @@ class BaseTrainer:
         self.adapter_controller = AdapterRuntimeController(self)
         self.mixture_controller = MixtureRuntimeController(self)
         self.recovery_controller = TrainingRecoveryController(self)
+
+    def _save_run_args(self) -> None:
+        """Persist requested and effective run arguments on the main process."""
+        if RANK not in {-1, 0}:
+            return
+        args_dict = vars(self.args).copy()
+        if args_dict.get("augmentations") is not None:
+            # Serialize Albumentations transforms as repr strings for checkpoint compatibility.
+            args_dict["augmentations"] = [repr(transform) for transform in args_dict["augmentations"]]
+        YAML.save(self.save_dir / "args.yaml", args_dict)
 
     def add_callback(self, event: str, callback):
         """Append the given callback to the event's callback list."""
@@ -352,6 +404,9 @@ class BaseTrainer:
             iterations=iterations,
         )
         self.adapter_controller.configure_optimizer(self.optimizer)
+        self.args.effective_optimizer = type(self.optimizer).__name__
+        self.args.effective_optimizer_lrs = [float(group["lr"]) for group in self.optimizer.param_groups]
+        self._save_run_args()
         self._setup_scheduler()
 
     def _setup_train(self):
@@ -1243,12 +1298,25 @@ class BaseTrainer:
     def _load_checkpoint_state(self, ckpt):
         """Load optimizer, scaler, EMA, and best_fitness from checkpoint."""
         if ckpt.get("optimizer") is not None:
-            try:
-                self.optimizer.load_state_dict(ckpt["optimizer"])
-            except (KeyError, RuntimeError, ValueError):
-                if not getattr(unwrap_model(self.model), "lora_enabled", False):
-                    raise
-                LOGGER.warning("[LoRA] Resume optimizer state is incompatible; using the initialized optimizer.")
+            checkpoint_family = _optimizer_state_family(ckpt["optimizer"])
+            runtime_family = _optimizer_family(self.optimizer)
+            if checkpoint_family and runtime_family and checkpoint_family != runtime_family:
+                adapter_active = _adapter_active(self.model, getattr(self, "adapter_controller", None))
+                message = (
+                    f"Resume optimizer state uses {checkpoint_family}, but the current policy selected "
+                    f"{runtime_family}."
+                )
+                if not adapter_active:
+                    raise ValueError(f"{message} Refusing incompatible full-SFT optimizer state.")
+                LOGGER.warning(f"{message} Keeping the freshly initialized adapter optimizer.")
+            else:
+                try:
+                    self.optimizer.load_state_dict(ckpt["optimizer"])
+                except (KeyError, RuntimeError, ValueError):
+                    adapter_active = _adapter_active(self.model, getattr(self, "adapter_controller", None))
+                    if not adapter_active:
+                        raise
+                    LOGGER.warning("[PEFT] Resume optimizer state is incompatible; using the initialized optimizer.")
         if ckpt.get("scaler") is not None:
             self.scaler.load_state_dict(ckpt["scaler"])
         if self.ema and ckpt.get("ema"):
@@ -1276,14 +1344,46 @@ class BaseTrainer:
         self.best_fitness = ckpt.get("best_fitness")
 
     def _restore_lora_resume_model(self, ckpt):
-        """Restore adapter-only online weights before optimizer state is loaded."""
-        if not ckpt or not ckpt.get("ema") or not getattr(unwrap_model(self.model), "lora_enabled", False):
+        """Restore adapter-only EMA weights into the online model before optimizer state loading."""
+        if not ckpt or not _adapter_active(self.model, getattr(self, "adapter_controller", None)):
             return
+        source_model = ckpt.get("ema") or ckpt.get("model")
+        if not isinstance(source_model, nn.Module):
+            raise RuntimeError("Resume checkpoint has active adapters but no EMA/model state to restore.")
+        target = unwrap_model(self.model)
+        source_state = source_model.float().state_dict()
+        if any(bool(getattr(module, "molora_enabled", False)) for module in target.modules()):
+            from ultralytics.nn.peft.molora.model import _is_molora_state_key
+
+            target_state = target.state_dict()
+            target_keys = {key for key in target_state if _is_molora_state_key(key)}
+            source_keys = {key for key in source_state if _is_molora_state_key(key)}
+            missing = sorted(target_keys - source_keys)
+            unexpected = sorted(source_keys - target_keys)
+            shape_mismatch = sorted(
+                key
+                for key in target_keys & source_keys
+                if hasattr(target_state[key], "shape")
+                and hasattr(source_state[key], "shape")
+                and tuple(target_state[key].shape) != tuple(source_state[key].shape)
+            )
+            if missing or unexpected or shape_mismatch:
+                raise RuntimeError(
+                    "Resume checkpoint is incompatible with the current MoLoRA adapter topology: "
+                    f"missing={missing[:5]} ({len(missing)} total), "
+                    f"unexpected={unexpected[:5]} ({len(unexpected)} total), "
+                    f"shape_mismatch={shape_mismatch[:5]} ({len(shape_mismatch)} total)."
+                )
+            adapter_state = {key: source_state[key] for key in target_keys}
+            target.load_state_dict(adapter_state, strict=False)
+            LOGGER.info(f"[MoLoRA] Restored {len(adapter_state)} adapter tensors from resume checkpoint EMA.")
+            return
+
         from ultralytics.utils.lora import load_lora_compatible_state_dict
 
         load_lora_compatible_state_dict(
-            unwrap_model(self.model),
-            ckpt["ema"].float().state_dict(),
+            target,
+            source_state,
             context="resume checkpoint EMA",
             adapter_only=True,
         )
@@ -1347,6 +1447,16 @@ class BaseTrainer:
 
         router_lr_scale = float(getattr(self.args, "moe_router_lr_scale", 0.5) or 0.5)
         adapter_lr_mult = float(getattr(self.args, "lora_lr_mult", 1.0) or 1.0)
+        adapter_model = unwrap_model(model)
+        adapter_controller = getattr(self, "adapter_controller", None)
+        adapter_active = bool(getattr(adapter_controller, "active", False)) or bool(
+            getattr(adapter_model, "lora_enabled", False) or getattr(adapter_model, "molora_enabled", False)
+        )
+        if not adapter_active:
+            adapter_active = any(
+                parameter.requires_grad and _is_adapter_param(name)
+                for name, parameter in adapter_model.named_parameters()
+            )
         if name == "auto":
             LOGGER.info(
                 f"{colorstr('optimizer:')} 'optimizer=auto' found, "
@@ -1355,7 +1465,17 @@ class BaseTrainer:
             )
             nc = self.data.get("nc", 10)  # number of classes
             lr_fit = round(0.002 * 5 / (4 + nc), 6)  # lr0 fit equation to 6 decimal places
-            name, lr, momentum = ("MuSGD", 0.01, 0.9) if iterations > 10000 else ("AdamW", lr_fit, 0.9)
+            if adapter_active:
+                # Planned iteration count must not switch PEFT runs from AdamW to MuSGD. DoRA/LoRA update a small,
+                # highly scaled parameter subspace and MuSGD's 1e-2 LR can suppress detection confidences even while
+                # the training losses remain finite. Keep auto PEFT policy stable when users change only `epochs`.
+                name, lr, momentum = "AdamW", lr_fit, 0.9
+                LOGGER.info(
+                    f"{colorstr('optimizer:')} active adapters detected, selecting AdamW(lr={lr:g}) "
+                    f"instead of iteration-based MuSGD for PEFT stability."
+                )
+            else:
+                name, lr, momentum = ("MuSGD", 0.01, 0.9) if iterations > 10000 else ("AdamW", lr_fit, 0.9)
             self.args.warmup_bias_lr = 0.0  # no higher than 0.01 for Adam
 
         use_muon = name == "MuSGD"

@@ -407,7 +407,7 @@ class ES_MOE(nn.Module):
             reduction: Channel reduction ratio for the routing network
             top_k: Number of active experts; None means use all experts
             use_sparse_inference: Enable sparse Top-K expert computation during inference
-            dynamic_threshold: Threshold for pruning low-confidence experts during inference
+            dynamic_threshold: Optional threshold for pruning low-confidence experts during inference
             max_kernel_size: Largest odd depthwise kernel assigned to an expert
         """
         super(ES_MOE, self).__init__()
@@ -515,14 +515,14 @@ class ES_MOE(nn.Module):
                 finite_diagnostics=self.last_routing_diagnostics,
             )
 
-        # Dense forward only during training (gradients to all experts) or when
-        # exporting/tracing (sparse control-flow breaks exporters). For normal
-        # eval/inference use the Top-K sparse path to reclaim the MoE speedup.
+        # Dense forward during training, export/tracing, or whenever Top-K was
+        # not explicitly requested. ``top_k=None`` means "use all experts" and
+        # must not silently become threshold-pruned Top-1 during evaluation.
         use_dense = (
             self.training
             or torch.onnx.is_in_onnx_export()
             or torch.jit.is_tracing()
-            or not getattr(self, "use_sparse_inference", True)
+            or not self._eager_sparse_enabled()
         )
         if use_dense:
             final_output = self._dense_forward(x, routing_weights)
@@ -556,7 +556,7 @@ class ES_MOE(nn.Module):
 
     def export_capabilities(self) -> dict:
         capabilities = _export_routing_capabilities(self)
-        eager_sparse = bool(self.use_sparse_inference and self.top_k < self.num_experts)
+        eager_sparse = self._eager_sparse_enabled()
         capabilities.update(
             routing_kind="moe",
             sparse_dispatch=eager_sparse,
@@ -567,6 +567,16 @@ class ES_MOE(nn.Module):
             ),
         )
         return capabilities
+
+    def _eager_sparse_enabled(self) -> bool:
+        """Return whether eager evaluation can dispatch fewer than all experts."""
+        num_experts = int(getattr(self, "num_experts", len(getattr(self, "experts", ()))) or 0)
+        top_k = int(getattr(self, "top_k", num_experts) or num_experts)
+        return bool(
+            getattr(self, "use_sparse_inference", True)
+            and getattr(self, "use_top_k", False)
+            and top_k < num_experts
+        )
 
     def get_gflops(self, input_shape: Tuple[int, int, int, int]) -> Dict[str, float]:
         """Estimate GFLOPs for a single forward pass.
@@ -616,34 +626,34 @@ class ES_MOE(nn.Module):
         routing_weights_flat = routing_weights.view(B, E, -1)
         expert_importance = routing_weights_flat.mean(dim=2)
 
-        # Find Top-K experts
-        _, topk_indices = torch.topk(expert_importance, self.top_k, dim=1)
+        # Find Top-K experts and build the retained sample/expert mask. Dynamic
+        # pruning is an optional approximation, but it must preserve the total
+        # routing mass seen by the downstream normalization layer.
+        topk_importance, topk_indices = torch.topk(expert_importance, self.top_k, dim=1)
+        retained_topk = torch.ones_like(topk_indices, dtype=torch.bool)
+        if getattr(self, "dynamic_threshold", 0.0) > 0:
+            ranks = torch.arange(self.top_k, device=topk_indices.device).view(1, -1)
+            retained_topk = (ranks == 0) | (topk_importance >= self.dynamic_threshold)
+        retained = torch.zeros(B, E, dtype=torch.bool, device=topk_indices.device)
+        retained.scatter_(1, topk_indices, retained_topk)
+
+        retained_weights = routing_weights * retained[:, :, None, None].to(routing_weights.dtype)
+        normalizer = retained_weights.sum(dim=1, keepdim=True).clamp_min(torch.finfo(routing_weights.dtype).eps)
+        retained_weights = retained_weights / normalizer
 
         # Initialize output
         final_output = x.new_zeros(B, self.out_channels, H, W)
 
         # Iterate over experts (vectorized over batch)
         for expert_idx in range(self.num_experts):
-            # Find batch samples that selected this expert (avoid .any() GPU sync)
-            mask = (topk_indices == expert_idx)
-            batch_indices, k_ranks = torch.where(mask)
+            # Find batch samples that retained this expert (avoid .any() GPU sync)
+            batch_indices = torch.where(retained[:, expert_idx])[0]
             if batch_indices.numel() == 0:
                 continue
-            # === Dynamic Pruning ===
-            if hasattr(self, 'dynamic_threshold') and self.dynamic_threshold > 0:
-                current_weights = routing_weights[batch_indices, expert_idx:expert_idx + 1, :, :]
-                # Keep if (rank == 0) OR (weight >= threshold)
-                weight_means = current_weights.mean(dim=(1, 2, 3))
-                keep_mask = (k_ranks == 0) | (weight_means >= self.dynamic_threshold)
-
-                batch_indices = batch_indices[keep_mask]
-                if batch_indices.numel() == 0:
-                    continue
-            # =======================
 
             # Compute expert output for selected samples
             expert_out = self.experts[expert_idx](x[batch_indices])
-            weight = routing_weights[batch_indices, expert_idx:expert_idx + 1, :, :]
+            weight = retained_weights[batch_indices, expert_idx:expert_idx + 1, :, :]
 
             # Accumulate
             # fp16-safe: cast accumulator source to match final_output dtype (P0-2 fix)
