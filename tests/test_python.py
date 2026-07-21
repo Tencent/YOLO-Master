@@ -214,6 +214,31 @@ def test_model_load_remaps_cls_head_by_names():
     tgt.load(src, verbose=False)
     assert all(seq[-1].bias.tolist() == [20.0, 10.0] for seq in tgt.model[-1].cv3)
 
+    src = DetectionModel("yolo26n.yaml", nc=6, verbose=False)
+    tgt = DetectionModel("yolo26n.yaml", nc=6, verbose=False)
+    src.names = {
+        0: "airplane",
+        1: "motorcycle",
+        2: "couch",
+        3: "tv",
+        4: "dining table",
+        5: "potted plant",
+    }
+    tgt.names = {
+        0: "aeroplane",
+        1: "motorbike",
+        2: "sofa",
+        3: "tvmonitor",
+        4: "diningtable",
+        5: "pottedplant",
+    }
+    for seq in src.model[-1].cv3:
+        seq[-1].bias.data.copy_(torch.arange(6, dtype=seq[-1].bias.dtype))
+    for seq in tgt.model[-1].cv3:
+        seq[-1].bias.data.fill_(-1)
+    tgt.load(src, verbose=False)
+    assert all(seq[-1].bias.tolist() == list(range(6)) for seq in tgt.model[-1].cv3)
+
     src = YOLOEModel("yoloe-26n.yaml", nc=3, verbose=False)
     tgt = YOLOEModel("yoloe-26n.yaml", nc=2, verbose=False)
     src.names, tgt.names = {0: "cat", 1: "dog", 2: "car"}, {0: "dog", 1: "cat"}

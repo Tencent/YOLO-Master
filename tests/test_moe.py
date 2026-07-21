@@ -360,6 +360,50 @@ def test_es_moe_sparse_inference_supports_channel_projection():
     assert torch.isfinite(output).all()
 
 
+def test_es_moe_default_no_topk_eval_matches_dense(monkeypatch):
+    """top_k=None means all experts, so eval must not apply threshold-pruned sparse dispatch."""
+    module = ES_MOE(8, 8, num_experts=3, top_k=None, use_sparse_inference=True, dynamic_threshold=0.4).eval()
+    x = torch.randn(2, 8, 5, 7)
+    routing_weights = torch.full((2, 3, 5, 7), 1.0 / 3.0)
+
+    monkeypatch.setattr(module.routing, "forward", lambda _: routing_weights)
+    monkeypatch.setattr(
+        module,
+        "_sparse_forward",
+        lambda *_: (_ for _ in ()).throw(AssertionError("default all-expert eval must stay dense")),
+    )
+    with torch.no_grad():
+        expected = module.norm(module._dense_forward(x, routing_weights))
+        output = module(x)
+
+    assert module.use_top_k is False
+    assert module.top_k == module.num_experts
+    assert torch.allclose(output, expected)
+
+
+def test_es_moe_sparse_pruning_renormalizes_retained_mass():
+    """Optional threshold pruning must not shrink activations by discarded softmax mass."""
+    module = ES_MOE(1, 1, num_experts=3, top_k=2, dynamic_threshold=0.5).eval()
+    module.experts = nn.ModuleList([nn.Identity(), nn.Identity(), nn.Identity()])
+    x = torch.ones(1, 1, 2, 2)
+    routing_weights = torch.tensor([0.6, 0.4, 0.0]).view(1, 3, 1, 1).expand(1, 3, 2, 2)
+
+    with torch.no_grad():
+        output = module._sparse_forward(x, routing_weights)
+
+    assert torch.allclose(output, x)
+
+
+@pytest.mark.parametrize(
+    ("top_k", "use_sparse_inference", "expected"),
+    ((None, True, False), (3, True, False), (2, True, True), (2, False, False)),
+)
+def test_es_moe_sparse_capability_matches_effective_eval_path(top_k, use_sparse_inference, expected):
+    module = ES_MOE(8, 8, num_experts=3, top_k=top_k, use_sparse_inference=use_sparse_inference)
+
+    assert module.export_capabilities()["eager_sparse_dispatch"] is expected
+
+
 def test_es_moe_caps_expert_kernel_sizes():
     module = ES_MOE(8, 8, num_experts=16, top_k=2, max_kernel_size=15)
     kernels = [expert.conv.depthwise.kernel_size[0] for expert in module.experts]

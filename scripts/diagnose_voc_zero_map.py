@@ -23,12 +23,21 @@ import torch
 from torch import nn
 
 from ultralytics.nn.modules.head import Detect
+from ultralytics.nn.modules.moe.modules import ES_MOE
 from ultralytics.utils import YAML
 from ultralytics.utils.patches import torch_load
 from ultralytics.utils.torch_utils import unwrap_model
 
 
 ADAPTER_TOKENS = ("lora_", "adapter", "modules_to_save", "hada_", "oft_", "boft_", "hra_")
+TRAIN_ARG_KEYS = (
+    "model", "data", "epochs", "batch", "imgsz", "device", "optimizer",
+    "effective_optimizer", "effective_optimizer_lrs", "lr0", "lrf", "warmup_epochs", "nbs", "cos_lr",
+    "lora_type", "lora_r", "lora_alpha", "lora_include_head", "lora_use_rslora", "lora_use_dora",
+    "lora_backend", "lora_lr_mult", "requested_lora_lr_mult", "lora_layer_decay", "requested_lora_layer_decay",
+    "lora_alpha_warmup", "requested_lora_alpha_warmup", "lora_ortho_weight", "requested_lora_ortho_weight",
+    "moe_aux_gain", "mixture_aux_budget",
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -131,6 +140,25 @@ def module_diagnostics(module: nn.Module, expected_nc: int) -> tuple[dict[str, A
                     }
                 )
 
+    es_moe_routing = [
+        {
+            "name": name,
+            "use_sparse_inference": bool(getattr(child, "use_sparse_inference", True)),
+            "use_top_k": bool(getattr(child, "use_top_k", False)),
+            "top_k": int(getattr(child, "top_k", getattr(child, "num_experts", 1))),
+            "num_experts": int(getattr(child, "num_experts", len(getattr(child, "experts", ())))),
+            "dynamic_threshold": float(getattr(child, "dynamic_threshold", 0.0)),
+            "effective_sparse": bool(
+                getattr(child, "use_sparse_inference", True)
+                and getattr(child, "use_top_k", False)
+                and getattr(child, "top_k", getattr(child, "num_experts", 1))
+                < getattr(child, "num_experts", 1)
+            ),
+        }
+        for name, child in model.named_modules()
+        if isinstance(child, ES_MOE)
+    ]
+
     info = {
         "type": type(model).__name__,
         "finite": not nonfinite_keys,
@@ -153,6 +181,7 @@ def module_diagnostics(module: nn.Module, expected_nc: int) -> tuple[dict[str, A
         if isinstance(getattr(model, "_mixture_loss_ema_buf", None), torch.Tensor)
         else None,
         "classification_biases": cls_biases,
+        "es_moe_routing": es_moe_routing,
     }
 
     critical = None
@@ -202,7 +231,8 @@ def optimizer_diagnostics(optimizer: Any) -> dict[str, Any]:
     if not isinstance(optimizer, dict):
         return {"present": False}
     groups = []
-    for group in optimizer.get("param_groups", []):
+    raw_groups = optimizer.get("param_groups", [])
+    for group in raw_groups:
         groups.append(
             {
                 "name": group.get("param_group"),
@@ -210,12 +240,52 @@ def optimizer_diagnostics(optimizer: Any) -> dict[str, Any]:
                 "initial_lr": group.get("initial_lr"),
                 "weight_decay": group.get("weight_decay"),
                 "parameters": len(group.get("params", [])),
+                "use_muon": group.get("use_muon"),
             }
         )
-    return {"present": True, "state_entries": len(optimizer.get("state", {})), "groups": groups}
+    state_keys = sorted(
+        {
+            key
+            for state in optimizer.get("state", {}).values()
+            if isinstance(state, dict)
+            for key in state
+        }
+    )
+    if any("use_muon" in group for group in raw_groups):
+        effective_type = "MuSGD"
+    elif {"exp_avg", "exp_avg_sq"} <= set(state_keys):
+        effective_type = "Adam-family"
+    elif "momentum_buffer" in state_keys:
+        effective_type = "SGD/RMSProp-family"
+    else:
+        effective_type = "unknown"
+    active_groups = [group for group in groups if group["parameters"] > 0]
+    active_lrs = [as_float(group["lr"]) for group in active_groups]
+    active_lrs = [value for value in active_lrs if value is not None]
+    adapter_lrs = [
+        as_float(group["lr"])
+        for group in active_groups
+        if group["name"] == "adapter" and as_float(group["lr"]) is not None
+    ]
+    return {
+        "present": True,
+        "effective_type": effective_type,
+        "state_entries": len(optimizer.get("state", {})),
+        "state_keys": state_keys,
+        "active_lr_min": min(active_lrs) if active_lrs else None,
+        "active_lr_max": max(active_lrs) if active_lrs else None,
+        "active_adapter_lr_min": min(adapter_lrs) if adapter_lrs else None,
+        "active_adapter_lr_max": max(adapter_lrs) if adapter_lrs else None,
+        "groups": groups,
+    }
 
 
 def first_prediction_tensor(output: Any, expected_nc: int) -> torch.Tensor | None:
+    expected_channels = expected_nc + 4
+    if isinstance(output, (list, tuple)) and output:
+        primary = output[0]
+        if isinstance(primary, torch.Tensor) and primary.ndim == 3 and expected_channels in primary.shape[1:]:
+            return primary
     candidates = []
 
     def collect(value: Any) -> None:
@@ -231,9 +301,23 @@ def first_prediction_tensor(output: Any, expected_nc: int) -> torch.Tensor | Non
     collect(output)
     if not candidates:
         return None
-    minimum = expected_nc + 4
-    valid = [value for value in candidates if value.shape[1] >= minimum or value.shape[-1] >= minimum]
-    return max(valid or candidates, key=lambda value: value.numel())
+    exact = [value for value in candidates if value.shape[1] == expected_channels or value.shape[-1] == expected_channels]
+    if exact:
+        return max(exact, key=lambda value: value.numel())
+    valid = [value for value in candidates if value.shape[1] >= expected_channels or value.shape[-1] >= expected_channels]
+    return min(valid or candidates, key=lambda value: value.shape[1] if value.shape[1] > 1 else value.shape[-1])
+
+
+def prediction_scores(prediction: torch.Tensor, expected_nc: int) -> torch.Tensor | None:
+    """Extract class scores from decoded predictions regardless of tensor layout."""
+    channels = expected_nc + 4
+    if prediction.ndim != 3:
+        return None
+    if prediction.shape[1] == channels:
+        return prediction[:, 4 : 4 + expected_nc, :]
+    if prediction.shape[-1] == channels:
+        return prediction[..., 4 : 4 + expected_nc]
+    return None
 
 
 def forward_probe(module: nn.Module, expected_nc: int, imgsz: int, device: str, conf: float) -> dict[str, Any]:
@@ -248,11 +332,8 @@ def forward_probe(module: nn.Module, expected_nc: int, imgsz: int, device: str, 
     if prediction is None:
         return {"ok": False, "reason": "No rank-3 prediction tensor found", "seconds": elapsed}
     prediction = prediction.detach().float().cpu()
-    if prediction.shape[1] >= expected_nc + 4:
-        scores = prediction[:, 4 : 4 + expected_nc, :]
-    elif prediction.shape[-1] >= expected_nc + 4:
-        scores = prediction[..., 4 : 4 + expected_nc]
-    else:
+    scores = prediction_scores(prediction, expected_nc)
+    if scores is None:
         return {"ok": False, "reason": f"Unexpected prediction shape {tuple(prediction.shape)}", "seconds": elapsed}
     return {
         "ok": True,
@@ -365,33 +446,7 @@ def main() -> int:
             path.name: {"exists": path.exists(), "bytes": path.stat().st_size if path.exists() else None}
             for path in (args_path, results_path, healthy_path, last_path, best_path)
         },
-        "train_args": {
-            key: train_args.get(key)
-            for key in (
-                "model",
-                "data",
-                "epochs",
-                "batch",
-                "imgsz",
-                "device",
-                "optimizer",
-                "lr0",
-                "lrf",
-                "warmup_epochs",
-                "nbs",
-                "cos_lr",
-                "lora_type",
-                "lora_r",
-                "lora_alpha",
-                "lora_include_head",
-                "lora_use_rslora",
-                "lora_use_dora",
-                "lora_backend",
-                "lora_lr_mult",
-                "moe_aux_gain",
-                "mixture_aux_budget",
-            )
-        },
+        "train_args": {key: train_args.get(key) for key in TRAIN_ARG_KEYS},
         "findings": [],
     }
 
@@ -461,6 +516,12 @@ def main() -> int:
         checkpoint = torch_load(checkpoint_copy, map_location="cpu", weights_only=False)
         if not isinstance(checkpoint, dict):
             raise TypeError(f"Expected checkpoint dict, got {type(checkpoint).__name__}")
+        checkpoint_args = checkpoint.get("train_args")
+        if isinstance(checkpoint_args, dict):
+            # args.yaml is written before adapter setup; checkpoint metadata is
+            # authoritative for effective PEFT and optimizer settings.
+            train_args = {**train_args, **checkpoint_args}
+            report["train_args"] = {key: train_args.get(key) for key in TRAIN_ARG_KEYS}
         report["checkpoint"] = {
             "epoch_zero_based": checkpoint.get("epoch"),
             "best_fitness": checkpoint.get("best_fitness"),
@@ -470,6 +531,33 @@ def main() -> int:
             "optimizer": optimizer_diagnostics(checkpoint.get("optimizer")),
             "scaler_present": checkpoint.get("scaler") is not None,
         }
+        optimizer_info = report["checkpoint"]["optimizer"]
+        peft_active = int(train_args.get("lora_r") or 0) > 0 or str(train_args.get("lora_type") or "").lower() in {
+            "oft",
+            "boft",
+            "ia3",
+            "hra",
+        }
+        if peft_active and str(train_args.get("optimizer") or "").lower() == "auto" and optimizer_info.get(
+            "effective_type"
+        ) == "MuSGD":
+            report["findings"].append(
+                {
+                    "severity": "critical",
+                    "message": (
+                        "optimizer=auto selected MuSGD for active PEFT adapters. The effective adapter LR depends on "
+                        "planned epochs and is commonly too large for LoRA/DoRA; use AdamW or the patched auto policy."
+                    ),
+                }
+            )
+        adapter_lr_max = optimizer_info.get("active_adapter_lr_max")
+        if peft_active and isinstance(adapter_lr_max, (int, float)) and adapter_lr_max > 0.003:
+            report["findings"].append(
+                {
+                    "severity": "critical",
+                    "message": f"Active adapter LR is {adapter_lr_max:.6g}, above the 0.003 PEFT safety threshold.",
+                }
+            )
         inspected = {}
         for target in ("model", "ema"):
             module = checkpoint.get(target)
@@ -478,6 +566,55 @@ def main() -> int:
                 if critical:
                     report["findings"].append({"severity": "critical", "target": target, "message": critical})
         report["models"] = inspected
+
+        all_es_moe = [
+            (target, item)
+            for target, info in inspected.items()
+            for item in info.get("es_moe_routing", [])
+        ]
+        effective_sparse = [(target, item) for target, item in all_es_moe if item["effective_sparse"]]
+        if effective_sparse and len(rows) >= 2 and (report["results"].get("last_map50") or 0.0) < 0.01:
+            report["findings"].append(
+                {
+                    "severity": "critical",
+                    "message": (
+                        f"Found {len(effective_sparse)} ES_MOE blocks using effective sparse eval while mAP50 remains "
+                        "near zero. Compare against dense eval; sparse dispatch must be explicitly requested and "
+                        "retained routing weights must be normalized."
+                    ),
+                }
+            )
+        legacy_risk = [
+            (target, item)
+            for target, item in all_es_moe
+            if item["use_sparse_inference"] and not item["use_top_k"] and item["dynamic_threshold"] > 0
+        ]
+        if legacy_risk:
+            report["findings"].append(
+                {
+                    "severity": "warning",
+                    "message": (
+                        f"Found {len(legacy_risk)} all-expert ES_MOE blocks with a nonzero dynamic threshold. "
+                        "Current code keeps these dense, but checkpoints produced before the ES_MOE path fix may have "
+                        "validated with threshold-pruned sparse dispatch."
+                    ),
+                }
+            )
+        thresholded_sparse = [
+            (target, item)
+            for target, item in all_es_moe
+            if item["effective_sparse"] and item["dynamic_threshold"] > 0
+        ]
+        if thresholded_sparse:
+            report["findings"].append(
+                {
+                    "severity": "warning",
+                    "message": (
+                        f"Found {len(thresholded_sparse)} explicit sparse ES_MOE blocks with dynamic pruning. "
+                        "Verify retained routing weights are renormalized after threshold pruning."
+                    ),
+                }
+            )
 
         online = checkpoint.get("model")
         ema = checkpoint.get("ema")
