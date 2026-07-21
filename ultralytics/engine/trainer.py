@@ -715,9 +715,13 @@ class BaseTrainer:
                     if self.args.time:
                         self.stop |= (time.time() - self.train_time_start) > (self.args.time * 3600)
 
-                    # Save model
-                    if (self.args.save or final_epoch) and self.save_model():
-                        self.run_callbacks("on_model_save")
+                    # Save standard checkpoints first; otherwise keep the independent
+                    # online recovery point current even when save=False.
+                    if self.args.save or final_epoch:
+                        if self.save_model():
+                            self.run_callbacks("on_model_save")
+                    else:
+                        self._refresh_healthy_checkpoint()
                 except Exception as exc:
                     if RANK == -1:
                         raise
@@ -827,6 +831,7 @@ class BaseTrainer:
             self.best.write_bytes(serialized_ckpt)
         if (self.save_period > 0) and (self.epoch % self.save_period == 0):
             (self.wdir / f"epoch{self.epoch}.pt").write_bytes(serialized_ckpt)  # save epoch, i.e. 'epoch3.pt'
+        self._refresh_healthy_checkpoint()
         return True
 
     def get_dataset(self):
@@ -988,7 +993,7 @@ class BaseTrainer:
     def _sync_ema_buffers_for_validation(self):
         return self._recovery_controller().sync_ema_buffers()
 
-    def _serialize_checkpoint(self, *, include_online_model=True):
+    def _serialize_checkpoint(self, *, include_online_model=False):
         return self._recovery_controller().serialize_checkpoint(include_online_model=include_online_model)
 
     def _checkpoint_forward_smoke(self, checkpoint):
@@ -1030,6 +1035,14 @@ class BaseTrainer:
 
     def _bootstrap_healthy_checkpoint(self):
         return self._recovery_controller().bootstrap()
+
+    def _refresh_healthy_checkpoint(self):
+        """Best-effort refresh that never blocks standard last/best checkpoint saving."""
+        try:
+            return self._recovery_controller().refresh_healthy()
+        except (OSError, RuntimeError, ValueError) as exc:
+            LOGGER.warning(f"Recovery checkpoint refresh failed; preserving the previous file: {exc}")
+            return False
 
     @staticmethod
     def _check_mox_aux_finite(model=None):
@@ -1239,12 +1252,18 @@ class BaseTrainer:
         if ckpt.get("scaler") is not None:
             self.scaler.load_state_dict(ckpt["scaler"])
         if self.ema and ckpt.get("ema"):
-            from ultralytics.nn.mixture_loss import _get_mixture_loss_ema
+            from ultralytics.nn.mixture_loss import initialize_mixture_loss_ema_buffer
 
-            _get_mixture_loss_ema(unwrap_model(self.model))
+            online_target = unwrap_model(self.model)
+            online_mixture_ema = initialize_mixture_loss_ema_buffer(online_target)
+            ema_state = ckpt["ema"].float().state_dict()
+            checkpoint_mixture_ema = ema_state.get("_mixture_loss_ema_buf")
+            if checkpoint_mixture_ema is not None:
+                online_mixture_ema.copy_(
+                    checkpoint_mixture_ema.to(device=online_mixture_ema.device, dtype=online_mixture_ema.dtype)
+                )
             self.ema = ModelEMA(self.model)  # validation with EMA creates inference tensors that can't be updated
             ema_target = unwrap_model(self.ema.ema)
-            ema_state = ckpt["ema"].float().state_dict()
             if getattr(ema_target, "lora_enabled", False):
                 from ultralytics.utils.lora import load_lora_compatible_state_dict
 

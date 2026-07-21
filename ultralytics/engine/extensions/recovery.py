@@ -46,6 +46,24 @@ class TrainingRecoveryController:
             return all(TrainingRecoveryController.state_is_finite(item) for item in value)
         return True
 
+    @classmethod
+    def replace_nonfinite_tensors(cls, target: nn.Module, source: nn.Module) -> bool:
+        """Replace non-finite target tensors with matching finite source tensors."""
+        target_state = target.state_dict()
+        source_state = source.state_dict()
+        with torch.no_grad():
+            for key, value in target_state.items():
+                if not isinstance(value, torch.Tensor) or cls.state_is_finite(value):
+                    continue
+                source_value = source_state.get(key)
+                if (
+                    isinstance(source_value, torch.Tensor)
+                    and source_value.shape == value.shape
+                    and cls.state_is_finite(source_value)
+                ):
+                    value.copy_(source_value.to(device=value.device, dtype=value.dtype))
+        return cls.state_is_finite(target)
+
     def sync_nonfinite_flag(self, local_nonfinite: bool) -> bool:
         """Reduce a local non-finite flag across all initialized ranks."""
         if self.rank() == -1 or not dist.is_initialized():
@@ -57,9 +75,24 @@ class TrainingRecoveryController:
         return bool(flag.item())
 
     @staticmethod
-    def buffer_schema(model: nn.Module) -> tuple[tuple[str, tuple[int, ...], str], ...]:
-        """Return a stable name/shape/dtype schema for model buffers."""
-        return tuple((name, tuple(buffer.shape), str(buffer.dtype)) for name, buffer in model.named_buffers())
+    def buffer_schema(model: nn.Module) -> tuple[tuple[str, tuple[int, ...], str, bool, str, str], ...]:
+        """Return the collective-relevant schema for every model buffer."""
+        schema = []
+        for module_name, module in model.named_modules():
+            for name, buffer in module.named_buffers(recurse=False):
+                full_name = f"{module_name}.{name}" if module_name else name
+                persistent = name not in module._non_persistent_buffers_set
+                schema.append(
+                    (
+                        full_name,
+                        tuple(buffer.shape),
+                        str(buffer.dtype),
+                        persistent,
+                        buffer.device.type,
+                        str(buffer.layout),
+                    )
+                )
+        return tuple(schema)
 
     def sync_ema_buffers(self) -> None:
         """Fail fast on schema mismatch, then broadcast EMA buffers."""
@@ -68,12 +101,7 @@ class TrainingRecoveryController:
             return
         ema_model = trainer.ema.ema
         local_schema = self.buffer_schema(ema_model)
-        schemas = [None] * dist.get_world_size()
-        dist.all_gather_object(schemas, local_schema)
-        if any(schema != schemas[0] for schema in schemas[1:]):
-            details = "; ".join(f"rank {rank}: {schema}" for rank, schema in enumerate(schemas))
-            raise RuntimeError(f"EMA buffer schema mismatch before validation broadcast: {details}")
-        backend, skipped = dist.get_backend(), []
+        backend, skipped, prepared, preparation_errors = dist.get_backend(), [], [], []
         for module_name, module in ema_model.named_modules():
             for name, buffer in module.named_buffers(recurse=False):
                 full_name = f"{module_name}.{name}" if module_name else name
@@ -85,10 +113,29 @@ class TrainingRecoveryController:
                     try:
                         buffer = buffer.to(trainer.device, non_blocking=True).detach()
                         module._buffers[name] = buffer
-                    except RuntimeError:
-                        skipped.append(full_name)
+                    except RuntimeError as exc:
+                        preparation_errors.append(f"{full_name}: {type(exc).__name__}: {exc}")
                         continue
-                dist.broadcast(buffer, src=0)
+                prepared.append((full_name, buffer))
+
+        # No rank may enter a per-buffer broadcast until every rank confirms
+        # both an identical schema and successful device preparation.
+        local_state = {"schema": local_schema, "preparation_errors": tuple(preparation_errors)}
+        states = [None] * dist.get_world_size()
+        dist.all_gather_object(states, local_state)
+        schemas = [state["schema"] for state in states]
+        if any(schema != schemas[0] for schema in schemas[1:]):
+            details = "; ".join(f"rank {rank}: {schema}" for rank, schema in enumerate(schemas))
+            raise RuntimeError(f"EMA buffer schema mismatch before validation broadcast: {details}")
+        rank_errors = [
+            f"rank {rank}: {error}" for rank, state in enumerate(states) for error in state["preparation_errors"]
+        ]
+        if rank_errors:
+            raise RuntimeError(
+                "EMA buffer device preparation failed before validation broadcast: " + "; ".join(rank_errors)
+            )
+        for _, buffer in prepared:
+            dist.broadcast(buffer, src=0)
         if skipped and not getattr(trainer, "_warned_ema_cpu_diagnostics", False):
             LOGGER.warning(f"Skipping {len(skipped)} non-persistent CPU EMA diagnostic buffer(s) for validation.")
             trainer._warned_ema_cpu_diagnostics = True
@@ -103,22 +150,27 @@ class TrainingRecoveryController:
             MOE_LOSS_REGISTRY.clear()
         reset_routing_runtime_state(unwrap_model(model) if model is not None else None)
 
-    def serialize_checkpoint(self, *, include_online_model: bool = True) -> bytes:
+    def serialize_checkpoint(self, *, include_online_model: bool = False) -> bytes:
         """Serialize a standard EMA checkpoint or complete healthy recovery state."""
         trainer = self.trainer
         from ultralytics.utils.checkpoint_compat import checkpoint_runtime_metadata
 
         buffer = io.BytesIO()
-        model = deepcopy(unwrap_model(trainer.model)).half()
-        ema = deepcopy(unwrap_model(trainer.ema.ema)).half() if getattr(trainer, "ema", None) else None
+        source_model = unwrap_model(trainer.model)
+        model = deepcopy(source_model) if include_online_model else None
+        ema = deepcopy(unwrap_model(trainer.ema.ema)) if getattr(trainer, "ema", None) else None
+        if ema is not None:
+            self.replace_nonfinite_tensors(ema, source_model)
         for snapshot in (model, ema):
             if snapshot is None:
                 continue
+            snapshot.half()
             if hasattr(snapshot, "criterion"):
                 snapshot.criterion = None
             for value in snapshot.state_dict().values():
                 if isinstance(value, torch.Tensor) and value.is_floating_point():
                     torch.nan_to_num_(value)
+        metadata_model = model if model is not None else ema if ema is not None else source_model
         torch.save(
             {
                 "epoch": getattr(trainer, "epoch", trainer.start_epoch - 1),
@@ -136,7 +188,7 @@ class TrainingRecoveryController:
                 "git": {"root": str(GIT.root), "branch": GIT.branch, "commit": GIT.commit, "origin": GIT.origin},
                 "license": "AGPL-3.0 (https://ultralytics.com/license)",
                 "docs": "https://docs.ultralytics.com",
-                "mixture_checkpoint": checkpoint_runtime_metadata(model),
+                "mixture_checkpoint": checkpoint_runtime_metadata(metadata_model),
             },
             buffer,
         )
@@ -149,20 +201,7 @@ class TrainingRecoveryController:
         model = getattr(trainer, "model", None)
         if ema is None or model is None:
             return ema is None
-        ema_state = unwrap_model(ema).state_dict()
-        model_state = unwrap_model(model).state_dict()
-        with torch.no_grad():
-            for key, value in ema_state.items():
-                if not isinstance(value, torch.Tensor) or self.state_is_finite(value):
-                    continue
-                source = model_state.get(key)
-                if (
-                    isinstance(source, torch.Tensor)
-                    and source.shape == value.shape
-                    and self.state_is_finite(source)
-                ):
-                    value.copy_(source.to(device=value.device, dtype=value.dtype))
-        return self.state_is_finite(ema)
+        return self.replace_nonfinite_tensors(unwrap_model(ema), unwrap_model(model))
 
     def checkpoint_forward_smoke(self, checkpoint) -> tuple[bool, str]:
         """Run small fused FP32 inference samples and reject non-finite activations."""
@@ -281,7 +320,9 @@ class TrainingRecoveryController:
                 healthy = all(
                     self.state_is_finite(state)
                     for state in (unwrap_model(trainer.model), trainer.optimizer.state_dict(), trainer.scaler.state_dict())
-                ) and trainer._save_healthy_checkpoint(trainer._serialize_checkpoint(), verify_forward=True)
+                ) and trainer._save_healthy_checkpoint(
+                    trainer._serialize_checkpoint(include_online_model=True), verify_forward=True
+                )
             except (OSError, RuntimeError, ValueError) as exc:
                 LOGGER.warning(f"Initial healthy checkpoint creation failed: {exc}")
                 healthy = False
@@ -293,6 +334,23 @@ class TrainingRecoveryController:
             healthy = bool(status.item())
         if not healthy:
             raise RuntimeError("Initial training state is nonfinite; refusing to start without a healthy recovery checkpoint.")
+
+    def refresh_healthy(self) -> bool:
+        """Atomically refresh the recovery checkpoint from the latest finite online state."""
+        trainer = self.trainer
+        states = (
+            unwrap_model(trainer.model),
+            unwrap_model(trainer.ema.ema) if getattr(trainer, "ema", None) else None,
+            trainer.optimizer.state_dict(),
+            trainer.scaler.state_dict(),
+        )
+        if not self.aux_state_is_finite() or not all(
+            self.state_is_finite(state) for state in states if state is not None
+        ):
+            LOGGER.warning("Preserving the previous recovery checkpoint because the latest live state is non-finite.")
+            return False
+        serialized = trainer._serialize_checkpoint(include_online_model=True)
+        return self.save_healthy(serialized, state_verified=True)
 
     def recover(self, epoch: int) -> bool:
         """Restore globally confirmed non-finite state from the latest healthy online snapshot."""

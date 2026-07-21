@@ -94,9 +94,18 @@ def initialize_mixture_loss_ema_buffer(model: nn.Module | None) -> torch.Tensor 
     if model is None:
         return None
     parameter = next(model.parameters(), None)
-    target_device = parameter.device if parameter is not None else torch.device("cpu")
+    existing_buffer = next(model.buffers(), None)
+    target_device = (
+        parameter.device
+        if parameter is not None
+        else existing_buffer.device
+        if existing_buffer is not None
+        else torch.device("cpu")
+    )
     existing = getattr(model, "_mixture_loss_ema_buf", None)
     if existing is not None:
+        if "_mixture_loss_ema_buf" not in model._buffers:
+            raise RuntimeError("_mixture_loss_ema_buf exists but is not registered as a model buffer")
         if not isinstance(existing, torch.Tensor) or existing.shape != (len(_MIXTURE_LOSS_EMA_KEYS),):
             raise RuntimeError(
                 "Invalid _mixture_loss_ema_buf schema: expected "
@@ -104,6 +113,7 @@ def initialize_mixture_loss_ema_buffer(model: nn.Module | None) -> torch.Tensor 
             )
         if existing.dtype != torch.float32 or existing.device != target_device:
             model._buffers["_mixture_loss_ema_buf"] = existing.to(device=target_device, dtype=torch.float32)
+        model._non_persistent_buffers_set.discard("_mixture_loss_ema_buf")
         return model._mixture_loss_ema_buf
     defaults = [_MIXTURE_LOSS_EMA_DEFAULTS[key] for key in _MIXTURE_LOSS_EMA_KEYS]
     model.register_buffer(
@@ -167,8 +177,7 @@ def _update_mixture_loss_ema(model: nn.Module | None, key: str, loss_t: torch.Te
         return
     buf = getattr(model, "_mixture_loss_ema_buf", None)
     if buf is None:
-        _get_mixture_loss_ema(model)          # lazy-init buffer
-        buf = model._mixture_loss_ema_buf
+        buf = initialize_mixture_loss_ema_buffer(model)
     idx = _MIXTURE_LOSS_EMA_KEYS.index(key)
     with torch.no_grad():
         val = float(loss_t.detach().abs().reshape(-1)[0]) if loss_t.numel() else 0.0
@@ -372,4 +381,5 @@ __all__ = [
     "_collect_moa_aux_loss",
     "_collect_mixture_aux_loss",
     "_get_mixture_loss_ema",
+    "initialize_mixture_loss_ema_buffer",
 ]

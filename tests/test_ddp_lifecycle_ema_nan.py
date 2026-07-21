@@ -1,3 +1,4 @@
+from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import MagicMock, call, patch
 
@@ -148,6 +149,25 @@ def test_nccl_moves_persistent_cpu_buffer_before_broadcast():
     broadcast.assert_called_once()
 
 
+def test_nccl_buffer_transfer_failure_is_coordinated_before_broadcast():
+    t = tr(E(True))
+    t.device = torch.device("cpu")
+
+    def gather_rank_states(output, value):
+        remote = {**value, "preparation_errors": ("diagnostic: RuntimeError: injected transfer failure",)}
+        output[:] = [value, remote]
+
+    with patch("torch.distributed.is_initialized", return_value=True), patch(
+        "torch.distributed.get_backend", return_value="nccl"
+    ), patch("torch.distributed.get_world_size", return_value=2), patch(
+        "torch.distributed.all_gather_object", side_effect=gather_rank_states
+    ), patch("torch.distributed.broadcast") as broadcast, pytest.raises(
+        RuntimeError, match="rank 1: diagnostic: RuntimeError: injected transfer failure"
+    ):
+        t._sync_ema_buffers_for_validation()
+    broadcast.assert_not_called()
+
+
 def test_train_destroys_group_on_error():
     t = object.__new__(BaseTrainer)
     t.ddp = False
@@ -176,7 +196,9 @@ def test_bootstrap_checkpoint_serializes_before_training_epoch_is_set(tmp_path):
     del trainer.epoch
 
     checkpoint = torch_load(
-        __import__("io").BytesIO(trainer._serialize_checkpoint()), map_location="cpu", weights_only=False
+        __import__("io").BytesIO(trainer._serialize_checkpoint(include_online_model=True)),
+        map_location="cpu",
+        weights_only=False,
     )
 
     assert checkpoint["epoch"] == 6
@@ -211,6 +233,30 @@ def test_standard_checkpoint_omits_online_model_but_healthy_keeps_it(tmp_path):
     assert standard["ema"] is not None
     assert healthy["model"] is not None
     assert healthy["ema"] is not None
+
+
+def test_standard_checkpoint_does_not_deepcopy_online_model(tmp_path):
+    trainer = bootstrap_trainer(tmp_path)
+    with patch("ultralytics.engine.extensions.recovery.deepcopy", wraps=deepcopy) as copied:
+        trainer._serialize_checkpoint(include_online_model=False)
+    copied_values = [item.args[0] for item in copied.call_args_list]
+    assert trainer.model not in copied_values
+    assert trainer.ema.ema in copied_values
+
+
+def test_standard_checkpoint_repairs_nonfinite_ema_snapshot_from_online_model(tmp_path):
+    trainer = bootstrap_trainer(tmp_path)
+    online = next(trainer.model.parameters())
+    ema = next(trainer.ema.ema.parameters())
+    online.data.fill_(3.0)
+    ema.data.fill_(float("nan"))
+
+    checkpoint = torch_load(
+        __import__("io").BytesIO(trainer._serialize_checkpoint()), map_location="cpu", weights_only=False
+    )
+
+    assert torch.equal(next(checkpoint["ema"].parameters()).float(), torch.full_like(online, 3.0))
+    assert torch.isnan(ema).all()
 
 
 def test_checkpoint_serialization_clamps_fp16_overflow_without_mutating_live_ema(tmp_path):
@@ -442,11 +488,29 @@ def test_checkpoint_restore_tolerates_missing_lazy_ema_buffer():
     old_ema = nn.Linear(1, 1)
 
     t.model.register_buffer("_mixture_loss_ema_buf", torch.tensor([1.0, 0.1, 0.1]))
-    t._load_checkpoint_state(
-        {"ema": old_ema, "optimizer": None, "scaler": None, "best_fitness": 0.0, "updates": 0}
-    )
+    t._load_checkpoint_state({"ema": old_ema, "optimizer": None, "scaler": None, "best_fitness": 0.0, "updates": 0})
 
     assert torch.equal(t.ema.ema._mixture_loss_ema_buf, torch.tensor([1.0, 0.1, 0.1]))
+    assert torch.equal(t.model._mixture_loss_ema_buf, torch.tensor([1.0, 0.1, 0.1]))
+
+
+def test_checkpoint_restore_preserves_mixture_ema_on_online_and_ema_models():
+    t = object.__new__(BaseTrainer)
+    t.model = nn.Linear(1, 1)
+    t.ema = ModelEMA(t.model)
+    t.optimizer = torch.optim.SGD(t.model.parameters(), lr=0.01)
+    t.scaler = torch.amp.GradScaler("cuda", enabled=False)
+    checkpoint_ema = nn.Linear(1, 1)
+    checkpoint_ema.register_buffer("_mixture_loss_ema_buf", torch.tensor([9.0, 8.0, 7.0]))
+
+    t._load_checkpoint_state(
+        {"ema": checkpoint_ema, "optimizer": None, "scaler": None, "best_fitness": 0.0, "updates": 3}
+    )
+
+    expected = torch.tensor([9.0, 8.0, 7.0])
+    assert torch.equal(t.model._mixture_loss_ema_buf, expected)
+    assert torch.equal(t.ema.ema._mixture_loss_ema_buf, expected)
+    assert t.ema.updates == 3
 
 
 def test_healthy_checkpoint_rejects_nonfinite_state_and_preserves_prior(tmp_path):
@@ -502,9 +566,30 @@ def test_save_model_writes_last_and_best_without_recovery_gate(tmp_path):
     t.save_period = -1
     t.epoch = 0
     t._serialize_checkpoint = MagicMock(return_value=b"bad-checkpoint")
+    t._refresh_healthy_checkpoint = MagicMock(return_value=False)
     assert t.save_model() is True
     assert t.last.read_bytes() == b"bad-checkpoint"
     assert t.best.read_bytes() == b"bad-checkpoint"
+    t._refresh_healthy_checkpoint.assert_called_once_with()
+
+
+def test_save_model_keeps_upstream_payload_and_refreshes_full_recovery_checkpoint(tmp_path):
+    t = bootstrap_trainer(tmp_path)
+    t.best = tmp_path / "best.pt"
+    t.best_fitness = t.fitness = 0.5
+    t.save_period = -1
+    t.loss = torch.tensor(1.0)
+    t._gradient_nonfinite = False
+
+    assert t.save_model() is True
+
+    standard = torch_load(t.last, map_location="cpu", weights_only=False)
+    healthy = torch_load(t.healthy, map_location="cpu", weights_only=False)
+    assert standard["model"] is None
+    assert standard["ema"] is not None
+    assert healthy["model"] is not None
+    assert healthy["ema"] is not None
+    assert t.best.read_bytes() == t.last.read_bytes()
 
 
 def final_eval_trainer(tmp_path):
@@ -654,6 +739,31 @@ def test_bootstrap_checkpoint_precedes_first_nonfinite_recovery(tmp_path):
     assert t.optimizer.state_dict()["state"] == {}
     assert t.scaler.state_dict() == payload["scaler"]
     assert t.ema.updates == payload["updates"]
+
+
+def test_epoch_refresh_recovery_restores_latest_finite_online_state(tmp_path):
+    t = bootstrap_trainer(tmp_path)
+    with patch("ultralytics.engine.trainer.RANK", -1):
+        t._bootstrap_healthy_checkpoint()
+
+    t.epoch = 4
+    t.loss = torch.tensor(1.0)
+    t._gradient_nonfinite = False
+    with torch.no_grad():
+        t.model.weight.fill_(5.0)
+        t.model.bias.fill_(6.0)
+        t.ema.ema.load_state_dict(t.model.state_dict())
+    assert t._refresh_healthy_checkpoint() is True
+
+    refreshed = torch_load(t.healthy, map_location="cpu", weights_only=False)
+    assert refreshed["epoch"] == 4
+    assert torch.equal(refreshed["model"].float().weight, torch.full_like(t.model.weight, 5.0))
+
+    with torch.no_grad():
+        t.model.weight.fill_(99.0)
+    t.loss = torch.tensor(float("nan"))
+    assert t._handle_nan_recovery(5) is True
+    assert torch.equal(t.model.weight, torch.full_like(t.model.weight, 5.0))
 
 
 def test_bootstrap_failure_never_creates_unverified_checkpoint(tmp_path):
