@@ -1,12 +1,16 @@
 from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 
+from ultralytics.engine.extensions.recovery import TrainingRecoveryController
 from ultralytics.engine.trainer import BaseTrainer
+from ultralytics.nn.mixture_loss import initialize_mixture_loss_ema_buffer
 
 
 def _gloo_coordination_worker(rank, init_file, output_dir):
@@ -64,6 +68,43 @@ def test_healthy_save_does_not_block_last_and_best(tmp_path):
     assert trainer.healthy.read_bytes() == b"checkpoint"
     assert trainer.last.read_bytes() == b"checkpoint"
     assert trainer.best.read_bytes() == b"checkpoint"
+
+
+def _schema_worker(rank, init_file, output_dir, mismatch):
+    dist.init_process_group(
+        "gloo", init_method=f"file://{init_file}", rank=rank, world_size=2, timeout=timedelta(seconds=20)
+    )
+    try:
+        model = torch.nn.Linear(2, 2)
+        model.register_buffer("shared", torch.zeros(1 if not mismatch or rank == 0 else 2))
+        trainer = SimpleNamespace(ema=SimpleNamespace(ema=model), world_size=2, device=torch.device("cpu"))
+        try:
+            TrainingRecoveryController(trainer).sync_ema_buffers()
+        except RuntimeError as exc:
+            result = f"error:{exc}"
+        else:
+            result = "ok"
+        Path(output_dir, f"schema-rank{rank}.txt").write_text(result, encoding="utf-8")
+    finally:
+        dist.destroy_process_group()
+
+
+def test_mixture_buffer_initializer_is_idempotent_and_shape_three():
+    model = torch.nn.Linear(2, 2)
+    first = initialize_mixture_loss_ema_buffer(model)
+    second = initialize_mixture_loss_ema_buffer(model)
+    assert first is second
+    assert first.shape == (3,)
+    assert first.dtype == torch.float32
+
+
+@pytest.mark.parametrize("mismatch", [False, True])
+def test_two_process_gloo_ema_schema_guard(tmp_path, mismatch):
+    init_file = tmp_path / f"schema-init-{mismatch}"
+    mp.spawn(_schema_worker, args=(str(init_file), str(tmp_path), mismatch), nprocs=2, join=True)
+    for rank in range(2):
+        result = (tmp_path / f"schema-rank{rank}.txt").read_text(encoding="utf-8")
+        assert ("EMA buffer schema mismatch" in result) if mismatch else result == "ok"
 
 
 def test_two_process_gloo_coordinates_gate_and_save_failure(tmp_path):

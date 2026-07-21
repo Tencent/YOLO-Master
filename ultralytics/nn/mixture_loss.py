@@ -89,6 +89,31 @@ _MIXTURE_LOSS_EMA_DEFAULTS = {"moe": 1.0, "mot": 0.1, "moa": 0.1}
 _MIXTURE_LOSS_EMA_KEYS = ("moe", "mot", "moa")
 
 
+def initialize_mixture_loss_ema_buffer(model: nn.Module | None) -> torch.Tensor | None:
+    """Deterministically register the persistent mixture-loss EMA buffer."""
+    if model is None:
+        return None
+    parameter = next(model.parameters(), None)
+    target_device = parameter.device if parameter is not None else torch.device("cpu")
+    existing = getattr(model, "_mixture_loss_ema_buf", None)
+    if existing is not None:
+        if not isinstance(existing, torch.Tensor) or existing.shape != (len(_MIXTURE_LOSS_EMA_KEYS),):
+            raise RuntimeError(
+                "Invalid _mixture_loss_ema_buf schema: expected "
+                f"shape ({len(_MIXTURE_LOSS_EMA_KEYS)},), got {getattr(existing, 'shape', None)}"
+            )
+        if existing.dtype != torch.float32 or existing.device != target_device:
+            model._buffers["_mixture_loss_ema_buf"] = existing.to(device=target_device, dtype=torch.float32)
+        return model._mixture_loss_ema_buf
+    defaults = [_MIXTURE_LOSS_EMA_DEFAULTS[key] for key in _MIXTURE_LOSS_EMA_KEYS]
+    model.register_buffer(
+        "_mixture_loss_ema_buf",
+        torch.tensor(defaults, dtype=torch.float32, device=target_device),
+        persistent=True,
+    )
+    return model._mixture_loss_ema_buf
+
+
 def _get_mixture_loss_ema(model: nn.Module | None) -> dict[str, float] | None:
     """Return (and lazily init) EMA scales for MoE/MoT/MoA aux-loss magnitudes.
 
@@ -99,31 +124,7 @@ def _get_mixture_loss_ema(model: nn.Module | None) -> dict[str, float] | None:
     """
     if model is None:
         return None
-    buf = getattr(model, "_mixture_loss_ema_buf", None)
-    # Determine target device from model parameters so the buffer stays aligned
-    # with the model even after ``.to(device)`` calls.
-    parameter = next(model.parameters(), None)
-    if parameter is not None:
-        target_device = parameter.device
-    elif torch.cuda.is_available():
-        # No parameters available (e.g. frozen params, stripped model).
-        # Default to CUDA so the buffer doesn't end up on CPU, which would
-        # break NCCL validation broadcasts.
-        target_device = torch.device("cuda")
-    else:
-        target_device = torch.device("cpu")
-    if buf is None:
-        defaults = [_MIXTURE_LOSS_EMA_DEFAULTS[k] for k in _MIXTURE_LOSS_EMA_KEYS]
-        model.register_buffer(
-            "_mixture_loss_ema_buf",
-            torch.tensor(defaults, dtype=torch.float32, device=target_device),
-            persistent=True,
-        )
-        buf = model._mixture_loss_ema_buf
-    elif buf.device != target_device:
-        # Re-align buffer device if model was moved after lazy-init
-        # (e.g. CPU checkpoint resumed then moved to CUDA).
-        buf.data = buf.to(target_device)
+    buf = initialize_mixture_loss_ema_buffer(model)
     result = {}
     for i in range(len(_MIXTURE_LOSS_EMA_KEYS)):
         v = float(buf[i])

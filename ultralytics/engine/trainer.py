@@ -362,6 +362,10 @@ class BaseTrainer:
         self.adapter_controller.setup()
         self.mixture_controller.setup()
         has_mixture_loss = has_routed_modules(unwrap_model(self.model))
+        if has_mixture_loss:
+            from ultralytics.nn.mixture_loss import initialize_mixture_loss_ema_buffer
+
+            initialize_mixture_loss_ema_buffer(unwrap_model(self.model))
 
         # Compile model (knowledge distillation runs the wrapped model eagerly and relies on
         # find_unused_parameters under DDP for the frozen teacher, so disable compilation when distilling)
@@ -984,8 +988,8 @@ class BaseTrainer:
     def _sync_ema_buffers_for_validation(self):
         return self._recovery_controller().sync_ema_buffers()
 
-    def _serialize_checkpoint(self):
-        return self._recovery_controller().serialize_checkpoint()
+    def _serialize_checkpoint(self, *, include_online_model=True):
+        return self._recovery_controller().serialize_checkpoint(include_online_model=include_online_model)
 
     def _checkpoint_forward_smoke(self, checkpoint):
         return self._recovery_controller().checkpoint_forward_smoke(checkpoint)

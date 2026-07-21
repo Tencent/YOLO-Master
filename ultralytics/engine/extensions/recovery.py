@@ -56,13 +56,25 @@ class TrainingRecoveryController:
         dist.all_reduce(flag, op=dist.ReduceOp.MAX)
         return bool(flag.item())
 
+    @staticmethod
+    def buffer_schema(model: nn.Module) -> tuple[tuple[str, tuple[int, ...], str], ...]:
+        """Return a stable name/shape/dtype schema for model buffers."""
+        return tuple((name, tuple(buffer.shape), str(buffer.dtype)) for name, buffer in model.named_buffers())
+
     def sync_ema_buffers(self) -> None:
-        """Broadcast EMA buffers while keeping non-persistent CPU diagnostics off NCCL."""
+        """Fail fast on schema mismatch, then broadcast EMA buffers."""
         trainer = self.trainer
         if not getattr(trainer, "ema", None) or getattr(trainer, "world_size", 1) <= 1 or not dist.is_initialized():
             return
+        ema_model = trainer.ema.ema
+        local_schema = self.buffer_schema(ema_model)
+        schemas = [None] * dist.get_world_size()
+        dist.all_gather_object(schemas, local_schema)
+        if any(schema != schemas[0] for schema in schemas[1:]):
+            details = "; ".join(f"rank {rank}: {schema}" for rank, schema in enumerate(schemas))
+            raise RuntimeError(f"EMA buffer schema mismatch before validation broadcast: {details}")
         backend, skipped = dist.get_backend(), []
-        for module_name, module in trainer.ema.ema.named_modules():
+        for module_name, module in ema_model.named_modules():
             for name, buffer in module.named_buffers(recurse=False):
                 full_name = f"{module_name}.{name}" if module_name else name
                 persistent = name not in module._non_persistent_buffers_set
@@ -91,15 +103,11 @@ class TrainingRecoveryController:
             MOE_LOSS_REGISTRY.clear()
         reset_routing_runtime_state(unwrap_model(model) if model is not None else None)
 
-    def serialize_checkpoint(self) -> bytes:
-        """Serialize complete online, EMA, optimizer, scaler, and metadata state."""
+    def serialize_checkpoint(self, *, include_online_model: bool = True) -> bytes:
+        """Serialize a standard EMA checkpoint or complete healthy recovery state."""
         trainer = self.trainer
-        from ultralytics.nn.mixture_loss import _get_mixture_loss_ema
         from ultralytics.utils.checkpoint_compat import checkpoint_runtime_metadata
 
-        _get_mixture_loss_ema(unwrap_model(trainer.model))
-        if getattr(trainer, "ema", None):
-            _get_mixture_loss_ema(unwrap_model(trainer.ema.ema))
         buffer = io.BytesIO()
         model = deepcopy(unwrap_model(trainer.model)).half()
         ema = deepcopy(unwrap_model(trainer.ema.ema)).half() if getattr(trainer, "ema", None) else None
@@ -115,7 +123,7 @@ class TrainingRecoveryController:
             {
                 "epoch": getattr(trainer, "epoch", trainer.start_epoch - 1),
                 "best_fitness": trainer.best_fitness,
-                "model": model,
+                "model": model if include_online_model else None,
                 "ema": ema,
                 "updates": trainer.ema.updates if trainer.ema else 0,
                 "optimizer": convert_optimizer_state_dict_to_fp16(deepcopy(trainer.optimizer.state_dict())),

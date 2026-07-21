@@ -129,6 +129,8 @@ def test_nccl_skips_nonpersistent_cpu():
     t = tr(E(False))
     with patch("torch.distributed.is_initialized", return_value=True), patch(
         "torch.distributed.get_backend", return_value="nccl"
+    ), patch("torch.distributed.get_world_size", return_value=2), patch(
+        "torch.distributed.all_gather_object", side_effect=lambda output, value: output.__setitem__(slice(None), [value, value])
     ), patch("torch.distributed.broadcast") as broadcast:
         t._sync_ema_buffers_for_validation()
     broadcast.assert_not_called()
@@ -139,6 +141,8 @@ def test_nccl_moves_persistent_cpu_buffer_before_broadcast():
     t.device = torch.device("cpu")
     with patch("torch.distributed.is_initialized", return_value=True), patch(
         "torch.distributed.get_backend", return_value="nccl"
+    ), patch("torch.distributed.get_world_size", return_value=2), patch(
+        "torch.distributed.all_gather_object", side_effect=lambda output, value: output.__setitem__(slice(None), [value, value])
     ), patch("torch.distributed.broadcast") as broadcast:
         t._sync_ema_buffers_for_validation()
     broadcast.assert_called_once()
@@ -176,6 +180,37 @@ def test_bootstrap_checkpoint_serializes_before_training_epoch_is_set(tmp_path):
     )
 
     assert checkpoint["epoch"] == 6
+
+
+def test_checkpoint_serialization_does_not_change_buffer_schema(tmp_path):
+    trainer = bootstrap_trainer(tmp_path)
+    before_model = tuple((name, tuple(value.shape), value.dtype) for name, value in trainer.model.named_buffers())
+    before_ema = tuple((name, tuple(value.shape), value.dtype) for name, value in trainer.ema.ema.named_buffers())
+
+    trainer._serialize_checkpoint()
+
+    after_model = tuple((name, tuple(value.shape), value.dtype) for name, value in trainer.model.named_buffers())
+    after_ema = tuple((name, tuple(value.shape), value.dtype) for name, value in trainer.ema.ema.named_buffers())
+    assert after_model == before_model
+    assert after_ema == before_ema
+
+
+def test_standard_checkpoint_omits_online_model_but_healthy_keeps_it(tmp_path):
+    trainer = bootstrap_trainer(tmp_path)
+    standard = torch_load(
+        __import__("io").BytesIO(trainer._serialize_checkpoint(include_online_model=False)),
+        map_location="cpu",
+        weights_only=False,
+    )
+    healthy = torch_load(
+        __import__("io").BytesIO(trainer._serialize_checkpoint(include_online_model=True)),
+        map_location="cpu",
+        weights_only=False,
+    )
+    assert standard["model"] is None
+    assert standard["ema"] is not None
+    assert healthy["model"] is not None
+    assert healthy["ema"] is not None
 
 
 def test_checkpoint_serialization_clamps_fp16_overflow_without_mutating_live_ema(tmp_path):
