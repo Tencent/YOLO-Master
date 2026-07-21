@@ -5,7 +5,7 @@ import torch.nn as nn
 import copy
 import argparse
 from typing import Dict, List, Optional, Tuple, Any
-from .analysis import ExpertUsageTracker
+from ultralytics.nn.modules.moe.analysis import ExpertUsageTracker
 from ultralytics.utils import LOGGER
 
 
@@ -514,24 +514,28 @@ class MoEPruner:
 
 
 def prune_moe_model(
-    model_path: str, 
-    output_path: str, 
-    threshold: float = 0.15, 
-    dataset: str = 'coco8.yaml'
+    model_path: str,
+    output_path: str,
+    threshold: float = 0.15,
+    dataset: str = 'coco8.yaml',
+    device: Optional[str] = None,
+    importance_mode: str = "usage",
 ) -> bool:
     """
     Prune MoE model by removing underutilized experts
-    
+
     Args:
         model_path: Path to input model file
         output_path: Path to save pruned model
         threshold: Minimum usage percentage to keep expert (0.0-1.0)
         dataset: Dataset configuration for validation
-        
+        device: Ultralytics device string
+        importance_mode: Expert importance scoring mode
+
     Returns:
         True if pruning successful
     """
-    pruner = MoEPruner(model_path, threshold, dataset)
+    pruner = MoEPruner(model_path, threshold, dataset, device=device, importance_mode=importance_mode)
     return pruner.prune(output_path)
 
 
@@ -551,9 +555,9 @@ def main():
         help="Path to save pruned model"
     )
     parser.add_argument(
-        "--threshold", 
-        type=float, 
-        default=0.15, 
+        "--threshold",
+        type=float,
+        default=0.15,
         help="Minimum usage percentage to keep expert (0.0-1.0)"
     )
     parser.add_argument(
@@ -561,18 +565,31 @@ def main():
         default="coco8.yaml",
         help="Dataset configuration for validation"
     )
-    
+    parser.add_argument(
+        "--device",
+        default=None,
+        help="Ultralytics device string, e.g. '0', '0,1,2,3', 'cpu'"
+    )
+    parser.add_argument(
+        "--importance-mode",
+        choices=("usage", "usage_weight"),
+        default="usage",
+        help="Expert importance scoring mode"
+    )
+
     args = parser.parse_args()
-    
+
     # Validate threshold
     if not 0.0 <= args.threshold <= 1.0:
         parser.error("Threshold must be between 0.0 and 1.0")
-    
+
     success = prune_moe_model(
-        args.model_path, 
-        args.output, 
+        args.model_path,
+        args.output,
         args.threshold,
-        args.dataset
+        args.dataset,
+        device=args.device,
+        importance_mode=args.importance_mode,
     )
     
     exit(0 if success else 1)
