@@ -83,13 +83,6 @@
               ]
             },
             {
-              "name": "Utility-Function-API",
-              "path": "API-Reference/Core-API/Utility-Function-API",
-              "landingPage": null,
-              "children": [],
-              "pages": []
-            },
-            {
               "name": "Utility-Functions-API",
               "path": "API-Reference/Core-API/Utility-Functions-API",
               "landingPage": "en/API-Reference/Core-API/Utility-Functions-API/Utility-Functions-API.md",
@@ -423,36 +416,6 @@
               "alternatePath": null
             }
           ]
-        },
-        {
-          "name": "Utility-API",
-          "path": "API-Reference/Utility-API",
-          "landingPage": null,
-          "children": [
-            {
-              "name": "Callback-System-API",
-              "path": "API-Reference/Utility-API/Callback-System-API",
-              "landingPage": null,
-              "children": [
-                {
-                  "name": "Training-Callback-API",
-                  "path": "API-Reference/Utility-API/Callback-System-API/Training-Callback-API",
-                  "landingPage": null,
-                  "children": [],
-                  "pages": []
-                }
-              ],
-              "pages": []
-            },
-            {
-              "name": "General-Utility-Functions",
-              "path": "API-Reference/Utility-API/General-Utility-Functions",
-              "landingPage": null,
-              "children": [],
-              "pages": []
-            }
-          ],
-          "pages": []
         }
       ],
       "pages": [
@@ -766,13 +729,6 @@
               "alternatePath": "zh/开发者指南/测试体系构建/集成测试体系.md"
             }
           ]
-        },
-        {
-          "name": "Testing-System-Construction",
-          "path": "Developer-Guide/Testing-System-Construction",
-          "landingPage": null,
-          "children": [],
-          "pages": []
         }
       ],
       "pages": [
@@ -2429,43 +2385,6 @@
           "alternatePath": null
         }
       ]
-    },
-    {
-      "name": "Parameter-Efficient-Fine-Tuning",
-      "path": "Parameter-Efficient-Fine-Tuning",
-      "landingPage": null,
-      "children": [
-        {
-          "name": "Adapter-Management-System",
-          "path": "Parameter-Efficient-Fine-Tuning/Adapter-Management-System",
-          "landingPage": null,
-          "children": [],
-          "pages": []
-        },
-        {
-          "name": "PEFT-Examples-and-Tutorials",
-          "path": "Parameter-Efficient-Fine-Tuning/PEFT-Examples-and-Tutorials",
-          "landingPage": null,
-          "children": [
-            {
-              "name": "Advanced-Application-Scenarios",
-              "path": "Parameter-Efficient-Fine-Tuning/PEFT-Examples-and-Tutorials/Advanced-Application-Scenarios",
-              "landingPage": null,
-              "children": [],
-              "pages": []
-            },
-            {
-              "name": "Task-Specific-PEFT-Configuration",
-              "path": "Parameter-Efficient-Fine-Tuning/PEFT-Examples-and-Tutorials/Task-Specific-PEFT-Configuration",
-              "landingPage": null,
-              "children": [],
-              "pages": []
-            }
-          ],
-          "pages": []
-        }
-      ],
-      "pages": []
     },
     {
       "name": "Project-Overview",
