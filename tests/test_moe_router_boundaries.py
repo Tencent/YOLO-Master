@@ -224,6 +224,31 @@ class TestDynamicRoutingLayerBoundaries:
         with pytest.raises(ValueError, match="top_k"):
             DynamicRoutingLayer(IN_CHANNELS, NUM_EXPERTS, top_k=0)
 
+    def test_legacy_checkpoint_without_in_channels_preserves_output(self):
+        torch.manual_seed(0)
+        router = DynamicRoutingLayer(IN_CHANNELS, NUM_EXPERTS, top_k=TOP_K).eval()
+        x = _valid_input()
+
+        with torch.no_grad():
+            expected = router(x)
+        state_before = {name: tensor.clone() for name, tensor in router.state_dict().items()}
+
+        del router.in_channels
+        with torch.no_grad():
+            actual = router(x)
+
+        assert torch.equal(actual, expected)
+        assert state_before.keys() == router.state_dict().keys()
+        for name, tensor in router.state_dict().items():
+            assert torch.equal(tensor, state_before[name])
+
+    def test_legacy_checkpoint_without_in_channels_still_checks_channels(self):
+        router = DynamicRoutingLayer(IN_CHANNELS, NUM_EXPERTS, top_k=TOP_K)
+        del router.in_channels
+
+        with pytest.raises(ShapeMismatchError):
+            router(torch.randn(2, IN_CHANNELS // 2, 16, 16))
+
 
 def test_capacity_overflow_is_distributed_round_robin():
     from ultralytics.nn.modules.moe.routers import BaseRouter

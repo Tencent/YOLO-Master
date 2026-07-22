@@ -441,7 +441,8 @@ class DynamicRoutingLayer(nn.Module):
     def forward(self, x):
         exporting = torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()
         if not exporting:
-            _validate_router_input(x, self.in_channels, "DynamicRoutingLayer")
+            expected_channels = getattr(self, "in_channels", _get_router_in_channels(self.routing_network))
+            _validate_router_input(x, expected_channels, "DynamicRoutingLayer")
         pooled = self.global_pool(x)
         routing_logits = self.routing_network(pooled)  # [B, num_experts, 1, 1]
         if not exporting:
