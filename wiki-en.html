@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wiki (English) — YOLO-Master</title>
+  <meta name="description" content="Comprehensive YOLO-Master wiki: API reference, architecture, training, inference, deployment, PEFT, MoE, and more.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="stylesheet" href="./assets/css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <style>
+    /* Wiki-specific styles */
+    .wiki-container { display: flex; height: calc(100vh - 56px); }
+    .wiki-sidebar {
+      width: 300px; min-width: 300px; overflow-y: auto;
+      border-right: 1px solid var(--border, #e2e8f0);
+      padding: 16px 12px; background: var(--bg-sidebar, #f8fafc);
+      font-size: 0.875rem;
+    }
+    .wiki-content-area {
+      flex: 1; overflow-y: auto; padding: 24px 32px;
+      max-width: 960px;
+    }
+    .wiki-search {
+      width: 100%; padding: 8px 12px; margin-bottom: 12px;
+      border: 1px solid #e2e8f0; border-radius: 6px;
+      font-size: 0.875rem; outline: none;
+      transition: border-color 0.2s;
+    }
+    .wiki-search:focus { border-color: #3f51b5; }
+    .wiki-nav-category { margin-bottom: 8px; }
+    .wiki-nav-category > .wiki-cat-label {
+      font-weight: 700; font-size: 0.8rem; text-transform: uppercase;
+      letter-spacing: 0.05em; color: #64748b; padding: 6px 8px;
+      cursor: pointer; user-select: none;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .wiki-cat-label .chevron { transition: transform 0.2s; font-size: 0.6rem; }
+    .wiki-cat-label.collapsed .chevron { transform: rotate(-90deg); }
+    .wiki-nav-children { margin-left: 8px; border-left: 2px solid #e2e8f0; padding-left: 4px; }
+    .wiki-nav-children.hidden { display: none; }
+    .wiki-nav-page {
+      display: block; padding: 4px 8px; text-decoration: none;
+      color: #475569; border-radius: 4px; font-size: 0.82rem;
+      cursor: pointer; transition: background 0.15s;
+    }
+    .wiki-nav-page:hover { background: #e2e8f0; color: #1e293b; }
+    .wiki-nav-page.active { background: #3f51b5; color: white; }
+    .wiki-loading { text-align: center; padding: 60px; color: #94a3b8; }
+    .wiki-loading i { font-size: 2rem; margin-bottom: 12px; display: block; }
+    .wiki-content-area h1 { border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; }
+    .wiki-content-area h2 { margin-top: 28px; }
+    .wiki-content-area pre {
+      background: #1e293b; color: #e2e8f0; padding: 16px;
+      border-radius: 8px; overflow-x: auto; font-size: 0.85rem;
+    }
+    .wiki-content-area code {
+      font-family: 'Roboto Mono', monospace; font-size: 0.85rem;
+    }
+    .wiki-content-area p code, .wiki-content-area li code {
+      background: #f1f5f9; padding: 2px 6px; border-radius: 4px;
+      color: #d6336c;
+    }
+    .wiki-content-area table { border-collapse: collapse; width: 100%; margin: 16px 0; }
+    .wiki-content-area th, .wiki-content-area td {
+      border: 1px solid #e2e8f0; padding: 8px 12px; text-align: left;
+    }
+    .wiki-content-area th { background: #f1f5f9; font-weight: 600; }
+    .wiki-content-area blockquote {
+      border-left: 4px solid #3f51b5; margin: 16px 0; padding: 8px 16px;
+      background: #f8fafc; color: #475569;
+    }
+    .wiki-content-area img { max-width: 100%; border-radius: 8px; }
+    .wiki-content-area a { color: #3f51b5; }
+    .wiki-breadcrumb { font-size: 0.8rem; color: #94a3b8; margin-bottom: 16px; }
+    .wiki-breadcrumb a { color: #64748b; text-decoration: none; }
+    .wiki-breadcrumb a:hover { color: #3f51b5; }
+    .wiki-empty { text-align: center; padding: 80px 20px; color: #94a3b8; }
+    .wiki-empty i { font-size: 3rem; margin-bottom: 16px; display: block; }
+    .wiki-lang-toggle {
+      display: inline-flex; gap: 0; border: 1px solid #e2e8f0;
+      border-radius: 6px; overflow: hidden; margin-left: 12px;
+    }
+    .wiki-lang-toggle a {
+      padding: 4px 12px; font-size: 0.8rem; text-decoration: none;
+      color: #475569; transition: all 0.2s;
+    }
+    .wiki-lang-toggle a.active { background: #3f51b5; color: white; }
+    .wiki-lang-toggle a:not(.active):hover { background: #e2e8f0; }
+    @media (max-width: 768px) {
+      .wiki-sidebar { display: none; }
+      .wiki-content-area { padding: 16px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ==================== App Bar ==================== -->
+<header class="app-bar" role="banner">
+  <div class="app-bar-inner">
+    <a href="./index.html" class="app-bar-brand">
+      <span class="app-bar-brand-icon"><i class="fas fa-bolt"></i></span>
+      YOLO-Master
+    </a>
+    <nav class="app-bar-links" aria-label="Main navigation">
+      <a href="./index.html"><i class="fas fa-home"></i> Home</a>
+      <a href="./wiki-en.html" class="active"><i class="fas fa-book"></i> Wiki</a>
+      <a href="./docs.html"><i class="fas fa-file-lines"></i> Docs</a>
+      <a href="./model-zoo.html"><i class="fas fa-cubes"></i> Model Zoo</a>
+      <a href="./demo.html"><i class="fas fa-play"></i> Demo</a>
+    </nav>
+    <div class="app-bar-meta">
+      <div class="wiki-lang-toggle">
+        <a href="./wiki-en.html" class="active">EN</a>
+        <a href="./wiki-zh.html">中文</a>
+      </div>
+      <a href="https://github.com/Tencent/YOLO-Master" target="_blank" rel="noopener noreferrer">
+        <i class="fab fa-github"></i>
+        <img src="https://img.shields.io/github/stars/Tencent/YOLO-Master?style=flat-square&logo=github&logoColor=white&color=3f51b5&label=" alt="GitHub Stars" class="meta-badge">
+      </a>
+    </div>
+  </div>
+</header>
+
+<!-- ==================== Wiki Layout ==================== -->
+<div class="wiki-container">
+  <!-- Sidebar -->
+  <aside class="wiki-sidebar" id="wikiSidebar">
+    <input type="text" class="wiki-search" id="wikiSearch" placeholder="Search wiki pages...">
+    <div id="wikiNav"></div>
+  </aside>
+
+  <!-- Content -->
+  <main class="wiki-content-area" id="wikiContent">
+    <div class="wiki-empty" id="wikiEmpty">
+      <i class="fas fa-book-open"></i>
+      <h2>YOLO-Master Wiki</h2>
+      <p>349 pages across 16 categories. Select a page from the sidebar to begin.</p>
+    </div>
+    <div id="wikiBody" style="display:none;"></div>
+  </main>
+</div>
+
+<script>
+const INDEX_URL = './wiki-content/index-en.json';
+const CONTENT_BASE = './wiki-content/';
+let wikiTree = null;
+let allPages = [];
+
+// ---- Load index ----
+async function loadIndex() {
+  try {
+    const resp = await fetch(INDEX_URL);
+    wikiTree = await resp.json();
+    flattenPages(wikiTree.children, []);
+    renderSidebar(wikiTree.children, document.getElementById('wikiNav'));
+    // Check URL hash for deep link
+    if (location.hash) {
+      const path = decodeURIComponent(location.hash.slice(1));
+      loadPage(path);
+    }
+  } catch (e) {
+    document.getElementById('wikiNav').innerHTML =
+      '<p style="color:#ef4444;padding:12px;">Failed to load wiki index.</p>';
+    console.error(e);
+  }
+}
+
+// ---- Flatten pages for search ----
+function flattenPages(categories, breadcrumb) {
+  if (!categories) return;
+  for (const cat of categories) {
+    const trail = [...breadcrumb, cat.name];
+    if (cat.pages) {
+      for (const pg of cat.pages) {
+        allPages.push({ ...pg, trail: trail.join(' / ') });
+      }
+    }
+    if (cat.children) {
+      flattenPages(cat.children, trail);
+    }
+  }
+}
+
+// ---- Render sidebar ----
+function renderSidebar(categories, container, depth = 0) {
+  for (const cat of categories) {
+    const catDiv = document.createElement('div');
+    catDiv.className = 'wiki-nav-category';
+
+    const label = document.createElement('div');
+    label.className = 'wiki-cat-label';
+    label.innerHTML = '<i class="fas fa-chevron-down chevron"></i> ' + escapeHtml(cat.name);
+
+    const childrenDiv = document.createElement('div');
+    childrenDiv.className = 'wiki-nav-children';
+
+    // Sub-categories
+    if (cat.children && cat.children.length > 0) {
+      renderSidebar(cat.children, childrenDiv, depth + 1);
+    }
+
+    // Pages
+    if (cat.pages && cat.pages.length > 0) {
+      for (const pg of cat.pages) {
+        const link = document.createElement('a');
+        link.className = 'wiki-nav-page';
+        link.textContent = pg.name;
+        link.dataset.path = pg.path;
+        link.addEventListener('click', (e) => {
+          e.preventDefault();
+          loadPage(pg.path);
+          // Remove active from all
+          document.querySelectorAll('.wiki-nav-page').forEach(el => el.classList.remove('active'));
+          link.classList.add('active');
+        });
+        childrenDiv.appendChild(link);
+      }
+    }
+
+    label.addEventListener('click', () => {
+      label.classList.toggle('collapsed');
+      childrenDiv.classList.toggle('hidden');
+    });
+
+    catDiv.appendChild(label);
+    catDiv.appendChild(childrenDiv);
+    container.appendChild(catDiv);
+  }
+}
+
+// ---- Load and render a page ----
+async function loadPage(relPath) {
+  const body = document.getElementById('wikiBody');
+  const empty = document.getElementById('wikiEmpty');
+  empty.style.display = 'none';
+  body.style.display = 'block';
+  body.innerHTML = '<div class="wiki-loading"><i class="fas fa-spinner fa-spin"></i><p>Loading...</p></div>';
+
+  try {
+    const resp = await fetch(CONTENT_BASE + relPath);
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const md = await resp.text();
+
+    // Strip <cite> blocks (file reference metadata)
+    const cleaned = md.replace(/<cite>[\s\S]*?<\/cite>/gi, '');
+
+    const html = marked.parse(cleaned);
+    body.innerHTML = '<div class="wiki-breadcrumb">' +
+      '<a href="./wiki-en.html">Wiki</a> / ' +
+      escapeHtml(relPath.split('/').slice(0, -1).join(' / ')) +
+      '</div>' + html;
+
+    // Update hash
+    history.replaceState(null, '', '#' + relPath);
+
+    // Scroll to top
+    document.querySelector('.wiki-content-area').scrollTop = 0;
+  } catch (e) {
+    body.innerHTML = '<div class="wiki-empty"><i class="fas fa-exclamation-triangle"></i>' +
+      '<h2>Failed to load</h2><p>' + escapeHtml(relPath) + '</p></div>';
+    console.error(e);
+  }
+}
+
+// ---- Search ----
+document.getElementById('wikiSearch').addEventListener('input', (e) => {
+  const q = e.target.value.toLowerCase().trim();
+  const navEl = document.getElementById('wikiNav');
+  if (!q) {
+    renderSidebar(wikiTree.children, navEl);
+    return;
+  }
+  // Filter pages
+  const matches = allPages.filter(p =>
+    p.name.toLowerCase().includes(q) || p.trail.toLowerCase().includes(q)
+  );
+  navEl.innerHTML = '';
+  if (matches.length === 0) {
+    navEl.innerHTML = '<p style="padding:12px;color:#94a3b8;">No results.</p>';
+    return;
+  }
+  for (const m of matches.slice(0, 80)) {
+    const link = document.createElement('a');
+    link.className = 'wiki-nav-page';
+    link.innerHTML = '<strong>' + escapeHtml(m.name) + '</strong><br><span style="font-size:0.72rem;color:#94a3b8;">' + escapeHtml(m.trail) + '</span>';
+    link.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      loadPage(m.path);
+      document.querySelectorAll('.wiki-nav-page').forEach(el => el.classList.remove('active'));
+      link.classList.add('active');
+    });
+    navEl.appendChild(link);
+  }
+});
+
+// ---- Utils ----
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// ---- Init ----
+loadIndex();
+</script>
+</body>
+</html>
