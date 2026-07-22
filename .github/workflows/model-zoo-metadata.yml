@@ -1,0 +1,22 @@
+name: Model Zoo Metadata
+on:
+  pull_request:
+    paths: ["model-zoo/submissions/**"]
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.11"}
+      - run: pip install PyYAML
+      - env: {GH_TOKEN: "${{ github.token }}"}
+        run: gh api --paginate repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files > "$RUNNER_TEMP/files.json"
+      - name: Validate with base-branch code
+        run: |
+          git show "${{ github.event.pull_request.base.sha }}:tools/model_zoo_automation.py" > "$RUNNER_TEMP/validator.py"
+          manifest=$(python -c 'import json; x=[i["filename"] for i in json.load(open("${{ runner.temp }}/files.json")) if i["filename"].startswith("model-zoo/submissions/") and i["filename"].endswith((".yaml",".yml"))]; print(x[0] if len(x)==1 else "")')
+          test -n "$manifest"
+          python "$RUNNER_TEMP/validator.py" validate "$manifest" --changed-files-json "$RUNNER_TEMP/files.json"

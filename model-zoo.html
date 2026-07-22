@@ -1,348 +1,37 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Search and compare YOLO-Master pretrained models, benchmarks, weights, and configs.">
   <title>Model Zoo — YOLO-Master</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-  <link rel="stylesheet" href="./assets/css/style.css">
+  <link rel="stylesheet" href="./assets/css/style.css"><link rel="stylesheet" href="./assets/css/model-zoo.css">
 </head>
-<body>
-
-<!-- App Bar -->
-<header class="app-bar" role="banner">
-  <div class="app-bar-inner">
-    <a href="./index.html" class="app-bar-brand">
-      <span class="app-bar-brand-icon"><i class="fas fa-bolt"></i></span>
-      YOLO-Master
-    </a>
-    <nav class="app-bar-links" aria-label="Main navigation">
-      <a href="./index.html"><i class="fas fa-home"></i> Home</a>
-      <a href="./wiki.html"><i class="fas fa-book"></i> Wiki</a>
-      <a href="./docs.html"><i class="fas fa-file-lines"></i> Docs</a>
-      <a href="./model-zoo.html" class="active"><i class="fas fa-cubes"></i> Model Zoo</a>
-      <a href="./demo.html"><i class="fas fa-play"></i> Demo</a>
-    </nav>
-    <div class="app-bar-search">
-      <i class="fas fa-search"></i> Search
+<body class="zoo-page">
+<header class="app-bar" role="banner"><div class="app-bar-inner">
+  <a href="./index.html" class="app-bar-brand"><span class="app-bar-brand-icon"><i class="fas fa-bolt" aria-hidden="true"></i></span>YOLO-Master</a>
+  <nav class="app-bar-links" aria-label="Main navigation"><a href="./index.html"><i class="fas fa-home" aria-hidden="true"></i> Home</a><a href="https://github.com/Tencent/YOLO-Master/wiki"><i class="fas fa-book" aria-hidden="true"></i> Wiki</a><a href="./docs.html"><i class="fas fa-file-lines" aria-hidden="true"></i> Docs</a><a href="./model-zoo.html" class="active" aria-current="page"><i class="fas fa-cubes" aria-hidden="true"></i> Model Zoo</a><a href="./demo.html"><i class="fas fa-play" aria-hidden="true"></i> Demo</a></nav>
+  <div class="app-bar-meta"><a href="https://github.com/Tencent/YOLO-Master" target="_blank" rel="noopener noreferrer" aria-label="YOLO-Master on GitHub"><i class="fab fa-github" aria-hidden="true"></i> GitHub</a><span><i class="fas fa-tag" aria-hidden="true"></i> v26.02</span></div>
+</div></header>
+<div class="container"><main class="doc-content" id="main-content">
+  <div class="hero-intro zoo-hero"><h1>Model Zoo</h1><p>Search, compare, and download YOLO-Master checkpoints and configurations.</p><div class="hero-actions"><a class="btn btn-primary" href="#models"><i class="fas fa-cubes" aria-hidden="true"></i> Browse models</a><a class="btn btn-secondary" href="https://github.com/Tencent/YOLO-Master/issues/new?template=model-submission.md" target="_blank" rel="noopener noreferrer"><i class="fab fa-github" aria-hidden="true"></i> Submit a model</a></div></div>
+  <noscript><div class="zoo-noscript"><strong>JavaScript is disabled.</strong> The interactive catalog requires JavaScript. You can still browse configs in the <a href="https://github.com/Tencent/YOLO-Master/tree/main/ultralytics/cfg/models/master">GitHub model directory</a> or download assets from <a href="https://github.com/Tencent/YOLO-Master/releases">Releases</a>.</div></noscript>
+  <section id="models" data-model-zoo aria-busy="true" aria-labelledby="models-title"><h2 id="models-title">Available models</h2>
+    <div class="zoo-controls" role="search">
+      <div class="zoo-field"><label for="model-search">Search models</label><input id="model-search" type="search" placeholder="Name, family, or dataset…" autocomplete="off"></div>
+      <div class="zoo-field"><label for="task-filter">Task</label><select id="task-filter"><option value="">All tasks</option><option value="detection">Detection</option><option value="segmentation">Segmentation</option><option value="classification">Classification</option><option value="pose">Pose</option></select></div>
+      <div class="zoo-field"><label for="scale-filter">Scale</label><select id="scale-filter"><option value="">All scales</option><option>N</option><option>S</option><option>M</option><option>L</option><option>X</option></select></div>
+      <div class="zoo-field"><label for="status-filter">Evaluation</label><select id="status-filter"><option value="">All statuses</option><option value="evaluated">Evaluated</option><option value="evaluating">Evaluating</option><option value="pending">Pending</option></select></div>
+      <div class="zoo-field"><label for="model-sort">Sort by</label><select id="model-sort"><option value="map">mAP50–95 (high first)</option><option value="speed">Speed (high first)</option><option value="params">Parameters (low first)</option><option value="name">Name</option></select></div>
     </div>
-    <div class="app-bar-meta">
-      <a href="https://github.com/Tencent/YOLO-Master" target="_blank" rel="noopener noreferrer">
-        <i class="fab fa-github"></i>
-        <img src="https://img.shields.io/github/stars/Tencent/YOLO-Master?style=flat-square&logo=github&logoColor=white&color=3f51b5&label=" alt="GitHub Stars" class="meta-badge">
-      </a>
-      <span><i class="fas fa-tag"></i> v26.02</span>
-    </div>
-    <button class="app-bar-toggle" aria-label="Toggle menu"><i class="fas fa-bars"></i></button>
-  </div>
-</header>
-
-<!-- Main Content -->
-<div class="container">
-  <main class="doc-content">
-
-    <!-- Hero -->
-    <div class="hero-intro">
-      <h1>Model Zoo</h1>
-      <p class="text-muted">Pre-trained weights and benchmarks</p>
-    </div>
-
-    <!-- EsMoE Series -->
-    <section class="section">
-      <div class="section-header">
-        <h2>YOLO-Master-EsMoE Series</h2>
-        <p>Efficient Sparse Mixture-of-Experts models</p>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Model</th>
-              <th>Weights</th>
-              <th>Params(M)</th>
-              <th>GFLOPs</th>
-              <th>Box(P)</th>
-              <th>R</th>
-              <th>mAP50</th>
-              <th>mAP50-95</th>
-              <th>Speed(4090 TRT FPS)</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr class="highlight">
-              <td>YOLO-Master-EsMoE-N</td>
-              <td><a href="https://github.com/Tencent/YOLO-Master/releases/download/YOLO-Master-v26.02/YOLO-Master-EsMoE-N.pt" target="_blank" rel="noopener noreferrer">Download</a></td>
-              <td>2.68</td>
-              <td>8.7</td>
-              <td>0.684</td>
-              <td>0.536</td>
-              <td>0.587</td>
-              <td>0.427</td>
-              <td>640.18</td>
-            </tr>
-            <tr>
-              <td>YOLO-Master-EsMoE-S</td>
-              <td><a href="https://github.com/Tencent/YOLO-Master/releases/download/YOLO-Master-v26.02/YOLO-Master-EsMoE-S.pt" target="_blank" rel="noopener noreferrer">Download</a></td>
-              <td>9.69</td>
-              <td>29.1</td>
-              <td>0.699</td>
-              <td>0.603</td>
-              <td>0.603</td>
-              <td>0.489</td>
-              <td>423.87</td>
-            </tr>
-            <tr>
-              <td>YOLO-Master-EsMoE-M</td>
-              <td><a href="https://github.com/Tencent/YOLO-Master/releases/download/YOLO-Master-v26.02/YOLO-Master-EsMoE-M.pt" target="_blank" rel="noopener noreferrer">Download</a></td>
-              <td>34.88</td>
-              <td>97.4</td>
-              <td>0.737</td>
-              <td>0.640</td>
-              <td>0.697</td>
-              <td>0.530</td>
-              <td>243.79</td>
-            </tr>
-            <tr>
-              <td>YOLO-Master-EsMoE-L</td>
-              <td>—</td>
-              <td>🔥 training</td>
-              <td>TBD</td>
-              <td>TBD</td>
-              <td>TBD</td>
-              <td>TBD</td>
-              <td>TBD</td>
-              <td>TBD</td>
-            </tr>
-            <tr>
-              <td>YOLO-Master-EsMoE-X</td>
-              <td>—</td>
-              <td>🔥 training</td>
-              <td>TBD</td>
-              <td>TBD</td>
-              <td>TBD</td>
-              <td>TBD</td>
-              <td>TBD</td>
-              <td>TBD</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <!-- v0.1 Series -->
-    <section class="section section-alt">
-      <div class="section-header">
-        <h2>YOLO-Master-v0.1 Series</h2>
-        <p>Baseline YOLO-Master models</p>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Model</th>
-              <th>Weights</th>
-              <th>Params(M)</th>
-              <th>GFLOPs</th>
-              <th>Box(P)</th>
-              <th>R</th>
-              <th>mAP50</th>
-              <th>mAP50-95</th>
-              <th>Speed(4090 TRT FPS)</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>YOLO-Master-v0.1-N</td>
-              <td><a href="https://github.com/Tencent/YOLO-Master/releases/download/YOLO-Master-v26.02/YOLO-Master-v0.1-N.pt" target="_blank" rel="noopener noreferrer">Download</a></td>
-              <td>7.54</td>
-              <td>10.1</td>
-              <td>0.684</td>
-              <td>0.542</td>
-              <td>0.592</td>
-              <td>0.429</td>
-              <td>528.84</td>
-            </tr>
-            <tr>
-              <td>YOLO-Master-v0.1-S</td>
-              <td><a href="https://github.com/Tencent/YOLO-Master/releases/download/YOLO-Master-v26.02/YOLO-Master-v0.1-S.pt" target="_blank" rel="noopener noreferrer">Download</a></td>
-              <td>29.15</td>
-              <td>36.0</td>
-              <td>0.724</td>
-              <td>0.607</td>
-              <td>0.662</td>
-              <td>0.489</td>
-              <td>345.24</td>
-            </tr>
-            <tr>
-              <td>YOLO-Master-v0.1-M</td>
-              <td><a href="https://github.com/Tencent/YOLO-Master/releases/download/YOLO-Master-v26.02/YOLO-Master-v0.1-M.pt" target="_blank" rel="noopener noreferrer">Download</a></td>
-              <td>52.17</td>
-              <td>116.7</td>
-              <td>0.729</td>
-              <td>0.641</td>
-              <td>0.696</td>
-              <td>0.528</td>
-              <td>170.72</td>
-            </tr>
-            <tr>
-              <td>YOLO-Master-v0.1-L</td>
-              <td><a href="https://github.com/Tencent/YOLO-Master/releases/download/YOLO-Master-v26.02/YOLO-Master-v0.1-L.pt" target="_blank" rel="noopener noreferrer">Download</a></td>
-              <td>58.41</td>
-              <td>138.1</td>
-              <td>0.739</td>
-              <td>0.646</td>
-              <td>0.705</td>
-              <td>0.539</td>
-              <td>149.86</td>
-            </tr>
-            <tr>
-              <td>YOLO-Master-v0.1-X</td>
-              <td>—</td>
-              <td>🔥 training</td>
-              <td>TBD</td>
-              <td>TBD</td>
-              <td>TBD</td>
-              <td>TBD</td>
-              <td>TBD</td>
-              <td>TBD</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <!-- Task Variants -->
-    <section class="section">
-      <div class="section-header">
-        <h2>Task Variants</h2>
-      </div>
-      <div class="grid-2">
-        <div class="model-card">
-          <div class="model-card-header">
-            <span class="model-card-title"><i class="fas fa-search"></i> Detection</span>
-            <span class="model-card-badge badge-stable">stable</span>
-          </div>
-          <p>Standard object detection with bounding boxes.</p>
-          <p class="text-muted">Configs: <span class="code-inline">yolo-master-n.yaml</span> through <span class="code-inline">yolo-master-x.yaml</span></p>
-        </div>
-        <div class="model-card">
-          <div class="model-card-header">
-            <span class="model-card-title"><i class="fas fa-vector-square"></i> Segmentation</span>
-            <span class="model-card-badge badge-stable">stable</span>
-          </div>
-          <p>Instance segmentation with pixel-level masks.</p>
-          <p class="text-muted">Configs: <span class="code-inline">yolo-master-seg-n.yaml</span> through <span class="code-inline">yolo-master-seg-x.yaml</span></p>
-        </div>
-        <div class="model-card">
-          <div class="model-card-header">
-            <span class="model-card-title"><i class="fas fa-tags"></i> Classification</span>
-            <span class="model-card-badge badge-stable">stable</span>
-          </div>
-          <p>Image classification on ImageNet.</p>
-          <p class="text-muted">Configs: <span class="code-inline">yolo-master-cls-n.yaml</span> through <span class="code-inline">yolo-master-cls-x.yaml</span></p>
-        </div>
-        <div class="model-card">
-          <div class="model-card-header">
-            <span class="model-card-title"><i class="fas fa-person"></i> Pose Estimation</span>
-            <span class="model-card-badge badge-new">new</span>
-          </div>
-          <p>Keypoint detection for human pose.</p>
-          <p class="text-muted">Configs: <span class="code-inline">yolo-master-pose-n.yaml</span> through <span class="code-inline">yolo-master-pose-x.yaml</span></p>
-        </div>
-      </div>
-    </section>
-
-    <!-- Usage Example -->
-    <section class="section section-alt">
-      <div class="section-header">
-        <h2>Usage Example</h2>
-      </div>
-      <div class="code-block">
-        <div class="code-header">
-          <span class="code-lang">Python</span>
-          <button class="code-copy" onclick="copyCode(this)" title="Copy"><i class="fas fa-copy"></i></button>
-        </div>
-        <pre><code>from ultralytics import YOLO
-
-# Load EsMoE-N model
-model = YOLO("yolo-master-esmoe-n.pt")
-
-# Or build from config
-model = YOLO("ultralytics/cfg/models/master/v0_1/det/yolo-master-n.yaml")
-
-# Train
-results = model.train(data="coco.yaml", epochs=100, imgsz=640)</code></pre>
-      </div>
-    </section>
-
-  </main>
-</div>
-
-<!-- Footer -->
-<footer class="footer" role="contentinfo">
-  <div class="footer-inner">
-    <div class="footer-grid">
-      <div>
-        <div class="footer-brand"><i class="fas fa-bolt"></i> YOLO-Master</div>
-        <p class="footer-desc">MoE-Accelerated Real-time Detection Framework</p>
-      </div>
-      <div>
-        <div class="footer-heading">Project</div>
-        <ul class="footer-links">
-          <li><a href="./index.html">Home</a></li>
-          <li><a href="./wiki.html">Wiki</a></li>
-          <li><a href="./docs.html">Docs</a></li>
-          <li><a href="./model-zoo.html">Model Zoo</a></li>
-          <li><a href="./demo.html">Demo</a></li>
-        </ul>
-      </div>
-      <div>
-        <div class="footer-heading">Resources</div>
-        <ul class="footer-links">
-          <li><a href="https://github.com/Tencent/YOLO-Master" target="_blank" rel="noopener noreferrer">GitHub</a></li>
-          <li><a href="https://arxiv.org/abs/2512.23273" target="_blank" rel="noopener noreferrer">Paper</a></li>
-          <li><a href="https://huggingface.co/spaces/gatilin/YOLO-Master-WebUI-Demo" target="_blank" rel="noopener noreferrer">HuggingFace</a></li>
-        </ul>
-      </div>
-      <div>
-        <div class="footer-heading">Legal</div>
-        <ul class="footer-links">
-          <li><a href="https://github.com/Tencent/YOLO-Master/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">License</a></li>
-        </ul>
-      </div>
-    </div>
-    <div class="footer-bottom">
-      <span>© 2025 Tencent Youtu Lab. Released under AGPL-3.0.</span>
-      <span>Made with <i class="fas fa-heart" style="color: #ef4444;"></i></span>
-    </div>
-  </div>
-</footer>
-
-<script>
-  // Copy code helper
-  function copyCode(btn) {
-    const pre = btn.closest('.code-block').querySelector('pre');
-    const code = pre.innerText;
-    navigator.clipboard.writeText(code).then(() => {
-      const icon = btn.querySelector('i');
-      icon.className = 'fas fa-check';
-      setTimeout(() => icon.className = 'fas fa-copy', 1500);
-    });
-  }
-
-  // Navbar scroll shadow
-  const appBar = document.querySelector('.app-bar');
-  window.addEventListener('scroll', () => {
-    if (window.scrollY > 10) {
-      appBar.classList.add('scrolled');
-    } else {
-      appBar.classList.remove('scrolled');
-    }
-  });
-</script>
-
-</body>
-</html>
+    <div class="zoo-toolbar"><span id="result-count" class="zoo-result-count" aria-live="polite">Loading models…</span><button id="clear-filters" class="btn btn-ghost btn-sm" type="button">Clear filters</button></div>
+    <div id="model-error" class="zoo-message" role="alert" hidden>Model data could not be loaded. Please browse <a href="https://github.com/Tencent/YOLO-Master/releases">GitHub Releases</a>.</div>
+    <div id="model-empty" class="zoo-message" hidden>No models match these filters.</div><div id="model-grid" class="zoo-grid"></div>
+  </section>
+  <section class="zoo-submit" aria-labelledby="submit-title"><h2 id="submit-title">Contribute a model</h2><p>Share reproducible weights, configs, dataset details, and benchmark evidence. Submissions are reviewed before receiving an evaluated status.</p><a class="btn btn-primary" href="https://github.com/Tencent/YOLO-Master/issues/new?template=model-submission.md" target="_blank" rel="noopener noreferrer">Open submission form</a></section>
+</main></div>
+<footer class="footer" role="contentinfo"><div class="footer-inner"><div class="footer-bottom"><span>© 2026 Tencent Youtu Lab. Released under AGPL-3.0.</span><span><a href="https://github.com/Tencent/YOLO-Master">GitHub</a> · <a href="./docs.html">Docs</a> · <a href="./model-zoo.html">Model Zoo</a></span></div></div></footer>
+<script src="./assets/js/model-zoo.js" defer></script>
+</body></html>

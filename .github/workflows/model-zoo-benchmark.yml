@@ -1,0 +1,41 @@
+name: Model Zoo Benchmark
+on:
+  pull_request_target:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      pr_number: {description: Pull request number, required: true, type: string}
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  benchmark:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'model-zoo-benchmark'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with: {ref: "${{ github.event.repository.default_branch }}"}
+      - uses: actions/setup-python@v6
+        with: {python-version: "3.11"}
+      - name: Fetch manifest only; never execute PR code
+        id: pr
+        env:
+          GH_TOKEN: "${{ github.token }}"
+          PR: "${{ github.event.pull_request.number || inputs.pr_number }}"
+        run: |
+          gh api "repos/${{ github.repository }}/pulls/$PR" > "$RUNNER_TEMP/pr.json"
+          sha=$(jq -r .head.sha "$RUNNER_TEMP/pr.json")
+          gh api --paginate "repos/${{ github.repository }}/pulls/$PR/files" > "$RUNNER_TEMP/files.json"
+          manifest=$(jq -r '[.[]|.filename|select(startswith("model-zoo/submissions/") and (endswith(".yaml") or endswith(".yml")))][0]' "$RUNNER_TEMP/files.json")
+          gh api -H 'Accept: application/vnd.github.raw+json' "repos/${{ github.repository }}/contents/$manifest?ref=$sha" > "$RUNNER_TEMP/submission.yaml"
+          echo "number=$PR" >> "$GITHUB_OUTPUT"
+      - run: pip install -e .
+      - run: python tools/model_zoo_automation.py validate "$RUNNER_TEMP/submission.yaml" --changed-files-json "$RUNNER_TEMP/files.json"
+      - run: python tools/model_zoo_automation.py benchmark "$RUNNER_TEMP/submission.yaml" --output benchmark-results
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with: {name: "model-zoo-benchmark-pr-${{ steps.pr.outputs.number }}", path: benchmark-results, retention-days: 30}
+      - if: always()
+        env: {GH_TOKEN: "${{ github.token }}"}
+        run: gh pr comment "${{ steps.pr.outputs.number }}" --repo "${{ github.repository }}" --body-file benchmark-results/result.md

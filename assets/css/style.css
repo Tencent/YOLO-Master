@@ -155,6 +155,8 @@ p:last-child { margin-bottom: 0; }
   font-size: 0.85rem;
 }
 .app-bar-search i { margin-right: 0.4rem; font-size: 0.8rem; }
+.app-bar-search { text-decoration: none !important; }
+.app-bar-search:hover, .app-bar-search:focus { color: #fff; background: rgba(255,255,255,0.2); }
 
 .app-bar-meta {
   display: flex; align-items: center; gap: 1rem;

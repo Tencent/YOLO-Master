@@ -1,0 +1,8 @@
+name: Model Zoo submission request
+description: Propose externally hosted ONNX weights
+title: "[Model Zoo]: "
+labels: ["model-zoo"]
+body:
+  - type: markdown
+    attributes:
+      value: Do not attach weights. Provide HTTPS URL, SHA-256, size, and license.

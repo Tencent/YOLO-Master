@@ -1,0 +1,13 @@
+schema_version: 1
+name: example-yolo-onnx
+description: Example model
+license: AGPL-3.0
+weights:
+  url: https://github.com/example/project/releases/download/v1/model.onnx
+  sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+  size_bytes: 123456
+benchmark:
+  task: detect
+  dataset: coco8.yaml
+  imgsz: 640
+  batch: 1
