@@ -1,0 +1,69 @@
+name: Deploy Wiki to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "wiki/repowiki/**"
+      - "wiki-content/**"
+      - "wiki-*.html"
+      - "wiki-assets/**"
+      - "index.html"
+      - "assets/**"
+      - "scripts/sync_repowiki.py"
+      - ".github/workflows/deploy-wiki-pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Sync RepoWiki content
+        run: python scripts/sync_repowiki.py
+
+      - name: Prepare Pages artifact
+        run: |
+          mkdir -p _site
+          # Copy wiki HTML pages
+          cp wiki-en.html _site/
+          cp wiki-zh.html _site/
+          cp index.html _site/
+          # Copy wiki content (markdown + index JSONs)
+          cp -r wiki-content _site/wiki-content
+          # Copy wiki assets (JS)
+          cp -r wiki-assets _site/wiki-assets
+          # Copy shared assets (CSS, images)
+          cp -r assets _site/assets
+          # Copy other static pages if they exist
+          for f in docs.html demo.html model-zoo.html; do
+            [ -f "$f" ] && cp "$f" _site/
+          done
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

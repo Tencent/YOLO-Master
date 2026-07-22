@@ -32,7 +32,8 @@
       font-size: 0.875rem; outline: none;
       transition: border-color 0.2s;
     }
-    .wiki-search:focus { border-color: #3f51b5; }
+    .wiki-search:focus { border-color: #3f51b5; outline: 3px solid rgba(63,81,181,.18); }
+    .wiki-search-results { margin-top: 4px; }
     .wiki-nav-category { margin-bottom: 8px; }
     .wiki-nav-category > .wiki-cat-label {
       font-weight: 700; font-size: 0.8rem; text-transform: uppercase;
@@ -53,12 +54,18 @@
     .wiki-nav-page.active { background: #3f51b5; color: white; }
     .wiki-loading { text-align: center; padding: 60px; color: #94a3b8; }
     .wiki-loading i { font-size: 2rem; margin-bottom: 12px; display: block; }
-    .wiki-content-area h1 { border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; }
-    .wiki-content-area h2 { margin-top: 28px; }
+    .wiki-content-area h1 { border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; font-size: clamp(1.75rem, 4vw, 2.35rem); }
+    .wiki-content-area h2 { margin-top: 32px; padding-top: 4px; font-size: clamp(1.35rem, 3vw, 1.7rem); }
+    .wiki-content-area h3 { margin-top: 24px; }
+    .wiki-content-area :is(h1,h2,h3,h4,h5,h6) { scroll-margin-top: 72px; line-height: 1.25; }
+    .wiki-content-area p, .wiki-content-area li { line-height: 1.7; }
+    .wiki-content-area li + li { margin-top: 4px; }
     .wiki-content-area pre {
       background: #1e293b; color: #e2e8f0; padding: 16px;
-      border-radius: 8px; overflow-x: auto; font-size: 0.85rem;
+      border-radius: 8px; overflow-x: auto; font-size: 0.85rem; line-height: 1.55;
+      white-space: pre; tab-size: 2;
     }
+    .wiki-content-area pre code { color: inherit; background: transparent; padding: 0; }
     .wiki-content-area code {
       font-family: 'Roboto Mono', monospace; font-size: 0.85rem;
     }
@@ -66,17 +73,23 @@
       background: #f1f5f9; padding: 2px 6px; border-radius: 4px;
       color: #d6336c;
     }
-    .wiki-content-area table { border-collapse: collapse; width: 100%; margin: 16px 0; }
+    .wiki-table-scroll { overflow-x: auto; margin: 20px 0; border-radius: 8px; }
+    .wiki-table-scroll:focus { outline: 3px solid rgba(63,81,181,.22); outline-offset: 2px; }
+    .wiki-content-area table { border-collapse: collapse; width: 100%; min-width: 520px; margin: 0; }
     .wiki-content-area th, .wiki-content-area td {
-      border: 1px solid #e2e8f0; padding: 8px 12px; text-align: left;
+      border: 1px solid #e2e8f0; padding: 9px 12px; text-align: left; vertical-align: top;
     }
     .wiki-content-area th { background: #f1f5f9; font-weight: 600; }
+    .wiki-content-area tbody tr:nth-child(even) { background: #f8fafc; }
     .wiki-content-area blockquote {
       border-left: 4px solid #3f51b5; margin: 16px 0; padding: 8px 16px;
       background: #f8fafc; color: #475569;
     }
     .wiki-content-area img { max-width: 100%; border-radius: 8px; }
-    .wiki-content-area a { color: #3f51b5; }
+    .wiki-content-area a { color: #3f51b5; text-underline-offset: 2px; }
+    .wiki-content-area a:focus-visible { outline: 3px solid rgba(63,81,181,.25); border-radius: 2px; }
+    .wiki-source-ref { color: #64748b; border-bottom: 1px dotted currentColor; cursor: help; overflow-wrap: anywhere; }
+    .mermaid { overflow-x: auto; margin: 24px 0; padding: 12px; border: 1px solid #e2e8f0; border-radius: 8px; text-align: center; }
     .wiki-breadcrumb { font-size: 0.8rem; color: #94a3b8; margin-bottom: 16px; }
     .wiki-breadcrumb a { color: #64748b; text-decoration: none; }
     .wiki-breadcrumb a:hover { color: #3f51b5; }
@@ -93,9 +106,13 @@
     .wiki-lang-toggle a.active { background: #3f51b5; color: white; }
     .wiki-lang-toggle a:not(.active):hover { background: #e2e8f0; }
     @media (max-width: 768px) {
-      .wiki-sidebar { display: none; }
-      .wiki-content-area { padding: 16px; }
+      .wiki-container { height: auto; min-height: calc(100vh - 56px); }
+      .wiki-sidebar { display: block; width: 100%; min-width: 0; max-height: 38vh; border-right: 0; border-bottom: 1px solid #e2e8f0; }
+      .wiki-container { flex-direction: column; }
+      .wiki-content-area { padding: 16px; width: 100%; overflow: visible; }
+      .wiki-content-area table { min-width: 440px; }
     }
+    @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; } }
   </style>
 </head>
 <body>
@@ -131,8 +148,9 @@
 <div class="wiki-container">
   <!-- Sidebar -->
   <aside class="wiki-sidebar" id="wikiSidebar">
-    <input type="text" class="wiki-search" id="wikiSearch" placeholder="Search wiki pages...">
-    <div id="wikiNav"></div>
+    <label for="wikiSearch" class="sr-only">Search wiki pages</label>
+    <input type="search" class="wiki-search" id="wikiSearch" placeholder="Search wiki pages..." autocomplete="off" aria-controls="wikiNav">
+    <div id="wikiNav" aria-live="polite"></div>
   </aside>
 
   <!-- Content -->
@@ -160,10 +178,8 @@ async function loadIndex() {
     flattenPages(wikiTree.children, []);
     renderSidebar(wikiTree.children, document.getElementById('wikiNav'));
     // Check URL hash for deep link
-    if (location.hash) {
-      const path = decodeURIComponent(location.hash.slice(1));
-      loadPage(path);
-    }
+    const route = repoWiki.parseRoute();
+    if (route) loadPage(route.path, route.anchor);
   } catch (e) {
     document.getElementById('wikiNav').innerHTML =
       '<p style="color:#ef4444;padding:12px;">Failed to load wiki index.</p>';
@@ -262,9 +278,10 @@ async function loadPage(relPath, anchor = '') {
       : './wiki-zh.html';
     alternate.title = current && current.alternatePath ? '' : 'Translation unavailable; opening language home';
     document.querySelectorAll('.wiki-nav-page').forEach(el => el.classList.toggle('active', el.dataset.path === relPath));
-    if (anchor) requestAnimationFrame(() => document.getElementById(anchor)?.scrollIntoView());
+    if (anchor) requestAnimationFrame(() => repoWiki.resolveAnchor(body, anchor)?.scrollIntoView());
     else document.querySelector('.wiki-content-area').scrollTop = 0;
   } catch (e) {
+    if (e.name === 'AbortError') return;
     body.innerHTML = '<div class="wiki-empty"><i class="fas fa-exclamation-triangle"></i>' +
       '<h2>Failed to load</h2><p>' + escapeHtml(relPath) + '</p></div>';
     console.error(e);
@@ -273,15 +290,16 @@ async function loadPage(relPath, anchor = '') {
 
 // ---- Search ----
 document.getElementById('wikiSearch').addEventListener('input', (e) => {
-  const q = e.target.value.toLowerCase().trim();
+  const q = e.target.value.trim();
   const navEl = document.getElementById('wikiNav');
   if (!q) {
+    navEl.replaceChildren();
     renderSidebar(wikiTree.children, navEl);
     return;
   }
-  // Filter pages
+  // Match every normalized token across page name, trail, and path.
   const matches = allPages.filter(p =>
-    p.name.toLowerCase().includes(q) || p.trail.toLowerCase().includes(q)
+    repoWiki.matchesSearch([p.name, p.trail, p.path].join(' '), q)
   );
   navEl.innerHTML = '';
   if (matches.length === 0) {
@@ -308,6 +326,11 @@ function escapeHtml(str) {
   div.textContent = str;
   return div.innerHTML;
 }
+
+window.addEventListener('hashchange', () => {
+  const route = repoWiki.parseRoute();
+  if (route) loadPage(route.path, route.anchor);
+});
 
 // ---- Init ----
 loadIndex();

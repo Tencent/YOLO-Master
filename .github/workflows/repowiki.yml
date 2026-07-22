@@ -8,6 +8,7 @@ on:
       - "wiki-*.html"
       - "wiki-assets/**"
       - "scripts/sync_repowiki.py"
+      - "tests/test_repowiki_quality.py"
       - ".github/workflows/repowiki.yml"
   push:
     branches: [main]
@@ -17,6 +18,7 @@ on:
       - "wiki-*.html"
       - "wiki-assets/**"
       - "scripts/sync_repowiki.py"
+      - "tests/test_repowiki_quality.py"
   workflow_dispatch:
 
 permissions:
@@ -36,6 +38,7 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           git show "$BASE_SHA:scripts/sync_repowiki.py" > "$RUNNER_TEMP/sync_repowiki.py"
+          test "$(git rev-parse "$BASE_SHA^{commit}")" = "$(git merge-base "$BASE_SHA" HEAD)"
           python "$RUNNER_TEMP/sync_repowiki.py" --source wiki/repowiki --dest wiki-content --check
       - name: Check committed snapshot
         if: github.event_name != 'pull_request'
