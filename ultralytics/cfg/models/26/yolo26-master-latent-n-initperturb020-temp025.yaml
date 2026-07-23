@@ -1,0 +1,38 @@
+# YOLO26-Master Latent n with residual_init=0.01, router head init std=0.02, and router temperature=0.25
+
+nc: 80
+end2end: True
+reg_max: 1
+scales:
+  n: [0.50, 0.25, 1024]
+
+backbone:
+  - [-1, 1, Conv, [64, 3, 2]]
+  - [-1, 1, Conv, [128, 3, 2]]
+  - [-1, 2, C3k2, [256, False, 0.25]]
+  - [-1, 1, Conv, [256, 3, 2]]
+  - [-1, 2, A2C2fMoE, [512, True, 1, False, 2.0, 0.5, 1, True, 4, 2]]
+  - [-1, 1, Conv, [512, 3, 2]]
+  - [-1, 2, A2C2fMoE, [512, True, 1, False, 2.0, 0.5, 1, True, 8, 2]]
+  - [-1, 1, Conv, [1024, 3, 2]]
+  - [-1, 2, A2C2fMoE, [1024, True, 1, False, 2.0, 0.5, 1, True, 16, 2]]
+  - [-1, 1, SPPF, [1024, 5]]
+  - [-1, 2, C2PSA, [1024]]
+
+head:
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
+  - [[-1, 6], 1, Concat, [1]]
+  - [-1, 2, C3k2, [512, True]]
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
+  - [[-1, 4], 1, Concat, [1]]
+  - [-1, 2, C3k2, [256, True]]
+  - [-1, 1, Conv, [256, 3, 2]]
+  - [[-1, 13], 1, Concat, [1]]
+  - [-1, 2, C3k2, [512, True]]
+  - [-1, 1, Conv, [512, 3, 2]]
+  - [[-1, 10], 1, Concat, [1]]
+  - [-1, 1, C3k2, [1024, True, 0.5, True]]
+  - [[16, 4], 1, LatentMixture, [256, 4, 0.25, null, 0.25, 0.01, 0.001, 0.01, 0.0, 0.02]]
+  - [[19, 13, 6], 1, LatentMixture, [512, 4, 0.25, null, 0.25, 0.01, 0.001, 0.01, 0.0, 0.02]]
+  - [[22, 10, 8], 1, LatentMixture, [1024, 4, 0.25, null, 0.25, 0.01, 0.001, 0.01, 0.0, 0.02]]
+  - [[23, 24, 25], 1, Detect, [nc]]
