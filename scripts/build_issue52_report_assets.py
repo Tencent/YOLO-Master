@@ -1,31 +1,18 @@
 #!/usr/bin/env python3
-"""Archive and plot the local COCO128 experiments for Issue #52.
-
-Local runs are the primary evidence. Upstream PR #85 tables are copied under
-an explicit cross-validation-pr85 prefix and never mixed into local plots.
-"""
+"""Archive and plot locally executed COCO experiments for Issue #52."""
 
 from __future__ import annotations
 
 import argparse
 import csv
 import json
-import shutil
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCAL_RESULTS = ROOT / "runs/issue52_coco128_corrected/pruning/results.csv"
-DYNAMIC_SUMMARY = ROOT / "runs/issue52_coco128_dynamic/dynamic_schedule_summary.csv"
-DYNAMIC_TRACE = ROOT / "runs/issue52_coco128_dynamic/visdrone_issue52_gini_balance/moe_dynamic_schedule.csv"
-SMOKE_TRACE = ROOT / "runs/detect/runs/issue52_dynamic_smoke/gini/moe_dynamic_schedule.csv"
-PR85_TABLES = {
-    "pruning": ROOT / "scripts/issue52_pruning_results.csv",
-    "alternative-pruning": ROOT / "scripts/issue52_alternative_pruning_results.csv",
-    "dynamic-schedule": ROOT / "scripts/issue52_dynamic_schedule_results.csv",
-    "expert-usage-gini": ROOT / "scripts/issue52_expert_usage_gini.csv",
-    "per-layer-experts": ROOT / "scripts/issue52_per_layer_experts.csv",
-}
+DYNAMIC_SUMMARY = ROOT / "runs/issue52_coco128_dynamic_selfrun_v2/dynamic_schedule_summary.csv"
+DYNAMIC_TRACE = ROOT / "runs/issue52_coco128_dynamic_selfrun_v2/issue52_gini_balance/moe_dynamic_schedule.csv"
 
 
 def read_csv(path: Path) -> list[dict[str, str]]:
@@ -127,17 +114,15 @@ def derive_pareto(output: Path, pruning: list[dict[str, str]]) -> list[dict[str,
 
 def archive_dynamic(summary: Path, trace: Path, output: Path) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
     summary_out = output / "coco128-dynamic-schedule-results.csv"
-    trace_out = output / "local-dynamic-gini-smoke.csv"
+    trace_out = output / "coco128-dynamic-gini-trace.csv"
     if summary.exists():
-        shutil.copyfile(summary, summary_out)
+        write_csv(summary_out, read_csv(summary))
     if trace.exists():
-        shutil.copyfile(trace, trace_out)
-    elif SMOKE_TRACE.exists() and not trace_out.exists():
-        shutil.copyfile(SMOKE_TRACE, trace_out)
-    return (
-        read_csv(summary_out) if summary_out.exists() else [],
-        read_csv(trace_out) if trace_out.exists() else [],
-    )
+        write_csv(trace_out, read_csv(trace))
+    missing = [path for path in (summary_out, trace_out) if not path.exists()]
+    if missing:
+        raise FileNotFoundError(f"Required local dynamic experiment outputs are missing: {missing}")
+    return read_csv(summary_out), read_csv(trace_out)
 
 
 def archive_auxiliary(output: Path) -> None:
@@ -164,9 +149,6 @@ def archive_auxiliary(output: Path) -> None:
             },
         ],
     )
-    for label, source in PR85_TABLES.items():
-        if source.exists():
-            shutil.copyfile(source, output / f"cross-validation-pr85-visdrone-{label}.csv")
 
 
 def build_plots(
@@ -330,7 +312,7 @@ def build_plots(
         handles_r, labels_r = right.get_legend_handles_labels()
         left.legend(handles_l + handles_r, labels_l + labels_r, fontsize=8)
         fig.tight_layout()
-        fig.savefig(output / "local-dynamic-gini-smoke.png", dpi=180)
+        fig.savefig(output / "coco128-dynamic-gini-trace.png", dpi=180)
         plt.close(fig)
 
 
@@ -357,7 +339,6 @@ def main() -> int:
     build_plots(pruning, layers, pareto, dynamic, trace, figure_output)
     print(f"Local COCO128 CSV files written to {data_output}")
     print(f"Local COCO128 figures written to {figure_output}")
-    print("PR #85 tables archived separately as cross-validation-pr85-visdrone-*")
     return 0
 
 

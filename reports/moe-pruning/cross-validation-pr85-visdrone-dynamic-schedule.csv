@@ -1,4 +1,0 @@
-variant,final_mAP50,final_mAP50-95,best_mAP50-95,epoch_to_95pct_baseline,convergence_ratio,note
-fixed_baseline,0.30612,0.17615,0.17664,65,1.000,reference_fixed_balance
-gini_balance,0.30571,0.17631,0.17755,58,0.892,faster_to_95pct_with_similar_final_accuracy
-low_balance_ablation,0.30677,0.17577,0.17623,63,0.969,minor_speedup_but_slightly_lower_final_map

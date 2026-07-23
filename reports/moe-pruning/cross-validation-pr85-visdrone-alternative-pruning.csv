@@ -1,4 +1,0 @@
-variant,importance_mode,keep_top_m,stage,mAP50,mAP50-95,moe_gflops,latency_mean_ms,params_m,retained_experts,note
-baseline_usage_threshold,usage,,direct,0.30747,0.17719,2.04288,16.37,2.653,3/3,no_structural_pruning_for_thresholds_0p05_to_0p30
-weighted_top2,usage_weight,2,direct,0.20923,0.11402,1.29516,14.77,2.535,2/2,structural_pruning_works_but_direct_accuracy_drop_is_large
-weighted_top2,usage_weight,2,lora10,0.26163,0.14550,2.30830,40.67,2.883,3/3,lora_recovery_improves_accuracy_but_rebuilds_3of3_experts_not_a_structural_pruned_deployment_point

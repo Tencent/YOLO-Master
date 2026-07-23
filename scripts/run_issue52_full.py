@@ -588,15 +588,14 @@ def _run_pruning_sweep(args: argparse.Namespace, baseline_ckpt: Path) -> None:
     print(f"[pruning] recommendation -> {recommendation}")
 
 
-def _run_schedule_ablation(args: argparse.Namespace) -> None:
+def _run_schedule_ablation(args: argparse.Namespace, baseline_ckpt: Path) -> None:
     project = args.output / "schedule"
     project.mkdir(parents=True, exist_ok=True)
     init_checkpoint = project / "initial_state.pt"
     if not init_checkpoint.exists():
-        torch.manual_seed(args.seed)
-        initial_model = YOLO(str(args.model_cfg))
+        initial_model = YOLO(str(baseline_ckpt))
         initial_model.save(str(init_checkpoint))
-        print(f"[schedule] shared initial state -> {init_checkpoint}")
+        print(f"[schedule] shared baseline state -> {init_checkpoint}")
     for key, variant in SCHEDULE_VARIANTS.items():
         run_dir = project / variant["name"]
         if args.skip_existing and (run_dir / "results.csv").exists():
@@ -615,7 +614,7 @@ def _run_schedule_ablation(args: argparse.Namespace) -> None:
             project=str(project),
             name=variant["name"],
             exist_ok=True,
-            pretrained=False,
+            pretrained=True,
             val=True,
             plots=False,
             amp=args.amp,
@@ -794,7 +793,7 @@ def run(args: argparse.Namespace) -> int:
     if not args.skip_pruning:
         _run_pruning_sweep(args, baseline_ckpt)
     if not args.skip_schedule:
-        _run_schedule_ablation(args)
+        _run_schedule_ablation(args, baseline_ckpt)
     report = _generate_report(args, baseline_ckpt)
 
     print(f"[issue52] report -> {report}")

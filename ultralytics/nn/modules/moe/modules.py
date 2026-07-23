@@ -666,7 +666,10 @@ class ES_MOE(nn.Module):
         expert_usage = routing_weights.mean(dim=(0, 2, 3))
         # reduce_ddp=should_reduce_ddp(self) → usage averaged across ranks so all GPUs share one
         # global balance target (matches MoELoss; no-op on single GPU).
-        load_balance_loss = gshard_balance_loss(expert_usage, self.num_experts, reduce_ddp=should_reduce_ddp(self))
+        raw_balance_loss = gshard_balance_loss(
+            expert_usage, self.num_experts, reduce_ddp=should_reduce_ddp(self)
+        )
+        load_balance_loss = raw_balance_loss * float(getattr(self, "balance_loss_coeff", 1.0))
 
         router_diagnostics = getattr(self.routing, "last_routing_diagnostics", {})
         downstream = routing_finite_diagnostics(probabilities=routing_weights, aux_loss=load_balance_loss)
@@ -687,7 +690,7 @@ class ES_MOE(nn.Module):
             load_balance_loss = graph_connected_finite_zero(routing_weights, load_balance_loss)
 
         if not exporting:
-            self.load_balancing_loss.copy_(load_balance_loss.detach())
+            self.load_balancing_loss.copy_(raw_balance_loss.detach())
             self.expert_usage_counts.copy_(expert_usage.detach())
         
         # Store in registry (training only — avoids leaving graph-detached eval

@@ -1,2 +1,0 @@
-epoch,mean_gini,ema_gini,balance_loss_coeff,layers,routing_observations,layer_gini
-1,0.05772804655134678,0.05772804655134678,0.825082453959135,4,16.0,"{""model.12"": 0.03134147450327873, ""model.3"": 0.060794513672590256, ""model.6"": 0.07253751903772354, ""model.9"": 0.06623867899179459}"

@@ -128,6 +128,25 @@ def test_es_moe_get_gflops_reports_nonzero_total():
     assert module.balance_loss_coeff == pytest.approx(1.5)
 
 
+def test_es_moe_balance_coefficient_scales_published_aux_loss():
+    """The scheduled coefficient must affect the loss graph, not only module metadata."""
+    torch.manual_seed(0)
+    module = ES_MOE(8, 8, num_experts=3, top_k=2).train()
+    module.routing.noise_std = 0.0
+    sample = torch.randn(2, 8, 4, 4)
+
+    apply_balance_loss_coeff(module, 1.0)
+    module(sample)
+    unscaled = module.aux_loss.detach().clone()
+
+    apply_balance_loss_coeff(module, 0.25)
+    module(sample)
+    scaled = module.aux_loss.detach().clone()
+
+    assert scaled == pytest.approx(unscaled * 0.25)
+    assert module.load_balancing_loss == pytest.approx(unscaled)
+
+
 def test_moe_pruner_usage_weight_score_preserves_usage_default():
     """The optional weighted score distinguishes equally selected experts."""
     stats = [
