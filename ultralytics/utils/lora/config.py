@@ -140,6 +140,7 @@ class LoRAConfig:
     # None preserves legacy unlimited-target behavior when the planner is off.
     adapter_budget: Optional[int] = None
     planner_solver: str = "ao"  # ao, dco, mip; AO is deterministic/default
+    planner_backend: str = "legacy"  # legacy or vpeft; V-PEFT remains opt-in
     sensitivity_select: bool = False
     sensitivity_num_batches: int = 4
     sensitivity_top_ratio: float = 0.5
@@ -292,6 +293,7 @@ class LoRAConfig:
             "planner_enabled": "lora_planner_enabled",
             "adapter_budget": "lora_adapter_budget",
             "planner_solver": "lora_planner_solver",
+            "planner_backend": "lora_planner_backend",
             "sensitivity_select": "lora_sensitivity_select",
             "sensitivity_num_batches": "lora_sensitivity_num_batches",
             "sensitivity_top_ratio": "lora_sensitivity_top_ratio",

@@ -203,6 +203,11 @@ class MoLoRABackend:
             "merge_mode": "dynamic",
             "exact_merge": False,
             "merge_records": merge_records,
+            "publishable_merge": bool(merge_records)
+            and all(
+                record.get("mode") == "calibrated" and bool(record.get("calibration_fingerprint"))
+                for record in merge_records
+            ),
         }
 
 

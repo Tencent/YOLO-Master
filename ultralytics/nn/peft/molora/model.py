@@ -9,6 +9,8 @@ from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Union
 
 import torch
 import torch.nn as nn
+import hashlib
+import json
 
 from ultralytics.utils import LOGGER
 from .config import MoLoRAConfig, MoLoRAConfigBuilder
@@ -285,6 +287,12 @@ def _validate_calibration_weights(weights: List[float], num_experts: int, layer_
     return (tensor / tensor.sum()).tolist()
 
 
+def _calibration_fingerprint(weights: Mapping[str, List[float]], batches: int) -> str:
+    """Hash normalized per-layer calibration weights for artifact reproducibility."""
+    payload = json.dumps({"batches": int(batches), "weights": weights}, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 # ---------------------------------------------------------------------------
 # Wrapper class (optional convenience)
 # ---------------------------------------------------------------------------
@@ -380,6 +388,10 @@ class MoLoRAModel(nn.Module):
                     weights = _explicit_calibration_weights(calibration, name)
                 resolved_weights[name] = _validate_calibration_weights(weights, layer.num_experts, name)
 
+        calibration_fp = None
+        if mode == "calibrated":
+            calibration_fp = _calibration_fingerprint(resolved_weights, int(result.get("batches", 0)))
+
         for name, layer in layers.items():
             weights = resolved_weights.get(name)
             metadata = None
@@ -388,6 +400,7 @@ class MoLoRAModel(nn.Module):
                 metadata = {
                     "calibration_batches": observed,
                     "calibration_source": "data" if calibration_data is not None else "explicit",
+                    "calibration_fingerprint": calibration_fp,
                 }
             layer.merge_weights(
                 mode=mode,
