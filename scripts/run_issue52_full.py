@@ -82,11 +82,17 @@ SCHEDULE_VARIANTS = {
 
 def _device_tensor(value: str) -> torch.device:
     if value in {"", "cuda"} and torch.cuda.is_available():
+<<<<<<< HEAD
         return torch.device("cuda")
     if value.isdigit() and torch.cuda.is_available():
         # When CUDA_VISIBLE_DEVICES restricts visibility, any requested ordinal
         # should map to the currently visible CUDA device (usually cuda:0).
         return torch.device("cuda")
+=======
+        return torch.device("cuda:0")
+    if value.isdigit() and torch.cuda.is_available():
+        return torch.device(f"cuda:{value}")
+>>>>>>> 90b5422 (feat(scripts): add VisDrone EsMoE-N config and one-shot issue #52 runner)
     if value == "mps":
         return torch.device("mps")
     return torch.device("cpu")
