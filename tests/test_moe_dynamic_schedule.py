@@ -173,6 +173,21 @@ def test_gated_router_pruning_updates_all_projection_branches_and_forward():
     assert pruned[0].routing.local_conv[-1].out_channels == 2
 
 
+def test_es_moe_pruning_resizes_usage_buffer_and_forward():
+    pruner = MoEPruner("dummy.pt")
+    module = ES_MOE(8, 8, num_experts=3, top_k=None)
+    pruner.model = SimpleNamespace(model=nn.Sequential(module))
+    pruner.pruning_plan = {"0.routing": [0, 2]}
+
+    pruned = pruner._perform_surgery()
+    result = pruned(torch.randn(2, 8, 8, 8))
+
+    assert result.shape == (2, 8, 8, 8)
+    assert len(pruned[0].experts) == 2
+    assert pruned[0].routing.num_experts == 2
+    assert pruned[0].expert_usage_counts.shape == (2,)
+
+
 def test_pruning_fails_fast_when_router_projection_is_missing():
     class InvalidMoE(nn.Module):
         def __init__(self):

@@ -160,7 +160,7 @@ class MoEPruner:
             
             # Safety check: ensure at least one expert remains
             if len(experts_to_keep) == 0:
-                LOGGER.info(f"     ❌ Error: All experts would be pruned! Keeping top expert.")
+                LOGGER.info("     ❌ Error: All experts would be pruned! Keeping top expert.")
                 # Keep the expert with highest usage
                 top_expert = max(stats.items(), key=lambda x: x[1].hits)[0]
                 experts_to_keep = [top_expert]
@@ -254,6 +254,15 @@ class MoEPruner:
         loss_fn = getattr(moe_module, "moe_loss_fn", None)
         if loss_fn is not None and hasattr(loss_fn, "num_experts"):
             loss_fn.num_experts = len(keep_indices)
+
+        # ES_MOE keeps a non-persistent per-expert diagnostics buffer.  It is
+        # still present after deepcopy even though it is omitted from the
+        # checkpoint state_dict.  Leaving its original length makes the first
+        # post-pruning forward fail when the new usage vector is copied into
+        # it (for example, 3 experts -> 2 experts).
+        usage = getattr(moe_module, "expert_usage_counts", None)
+        if isinstance(usage, torch.Tensor) and usage.numel() == len(old_experts):
+            moe_module._buffers["expert_usage_counts"] = usage.detach()[keep_indices].clone()
         
         # Adjust top_k if necessary
         if hasattr(moe_module, 'top_k') and moe_module.top_k > moe_module.num_experts:
@@ -292,8 +301,8 @@ class MoEPruner:
         """
         results = self._find_projection_layers(router, num_old_experts)
         if not results:
-            LOGGER.info(f"     ⚠️  Could not locate router projection layer. "
-                  f"Skipping weight pruning.")
+            LOGGER.info("     ⚠️  Could not locate router projection layer. "
+                  "Skipping weight pruning.")
             return False
         for proj_layer, layer_path in results:
             LOGGER.info(f"     ✂️  Pruning router projection ({layer_path})")
@@ -411,7 +420,7 @@ class MoEPruner:
             pruned_model: Pruned model
             output_path: Output file path
         """
-        LOGGER.info(f"\n[Phase 4] Saving Pruned Model...")
+        LOGGER.info("\n[Phase 4] Saving Pruned Model...")
         
         # Update YOLO wrapper
         self.model.model = pruned_model
@@ -496,9 +505,9 @@ class MoEPruner:
             True if pruning successful
         """
         LOGGER.info(f"\n{'='*80}")
-        LOGGER.info(f"✂️  MoE MODEL PRUNING PIPELINE".center(80))
+        LOGGER.info("✂️  MoE MODEL PRUNING PIPELINE".center(80))
         LOGGER.info(f"{'='*80}")
-        LOGGER.info(f"\n📋 Configuration:")
+        LOGGER.info("\n📋 Configuration:")
         LOGGER.info(f"   • Input Model: {self.model_path}")
         LOGGER.info(f"   • Output Model: {output_path}")
         LOGGER.info(f"   • Usage Threshold: {self.threshold*100:.1f}%")
@@ -525,7 +534,7 @@ class MoEPruner:
             
             if success:
                 LOGGER.info(f"\n{'='*80}")
-                LOGGER.info(f"🎉 PRUNING COMPLETED SUCCESSFULLY".center(80))
+                LOGGER.info("🎉 PRUNING COMPLETED SUCCESSFULLY".center(80))
                 LOGGER.info(f"{'='*80}\n")
             
             return success

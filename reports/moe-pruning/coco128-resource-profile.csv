@@ -1,0 +1,3 @@
+probe,gpu,batch,imgsz,result,peak_allocated_GiB,peak_reserved_GiB
+oom_boundary,NVIDIA RTX PRO 6000 Blackwell Server Edition 97GB,128,1600,OOM; automatic batch fallback reached 16,,
+stable_high_utilization,NVIDIA RTX PRO 6000 Blackwell Server Edition 97GB,36,1344,completed without batch fallback,87.28,92.89

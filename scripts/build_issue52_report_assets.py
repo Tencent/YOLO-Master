@@ -1,26 +1,30 @@
 #!/usr/bin/env python3
-"""Build the checked-in Issue #52 report dataset and figures.
+"""Archive and plot the local COCO128 experiments for Issue #52.
 
-The source tables are the compact VisDrone results imported from upstream PR
-#85.  This script keeps the report assets reproducible instead of checking in
-figures that cannot be regenerated from the accompanying CSV files.
+Local runs are the primary evidence. Upstream PR #85 tables are copied under
+an explicit cross-validation-pr85 prefix and never mixed into local plots.
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
+import json
 import shutil
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE_TABLES = {
-    "pruning-threshold-results.csv": ROOT / "scripts/issue52_pruning_results.csv",
-    "alternative-pruning-results.csv": ROOT / "scripts/issue52_alternative_pruning_results.csv",
-    "dynamic-schedule-results.csv": ROOT / "scripts/issue52_dynamic_schedule_results.csv",
-    "expert-usage-gini.csv": ROOT / "scripts/issue52_expert_usage_gini.csv",
-    "per-layer-experts.csv": ROOT / "scripts/issue52_per_layer_experts.csv",
+LOCAL_RESULTS = ROOT / "runs/issue52_coco128_corrected/pruning/results.csv"
+DYNAMIC_SUMMARY = ROOT / "runs/issue52_coco128_dynamic/dynamic_schedule_summary.csv"
+DYNAMIC_TRACE = ROOT / "runs/issue52_coco128_dynamic/visdrone_issue52_gini_balance/moe_dynamic_schedule.csv"
+SMOKE_TRACE = ROOT / "runs/detect/runs/issue52_dynamic_smoke/gini/moe_dynamic_schedule.csv"
+PR85_TABLES = {
+    "pruning": ROOT / "scripts/issue52_pruning_results.csv",
+    "alternative-pruning": ROOT / "scripts/issue52_alternative_pruning_results.csv",
+    "dynamic-schedule": ROOT / "scripts/issue52_dynamic_schedule_results.csv",
+    "expert-usage-gini": ROOT / "scripts/issue52_expert_usage_gini.csv",
+    "per-layer-experts": ROOT / "scripts/issue52_per_layer_experts.csv",
 }
 
 
@@ -29,79 +33,171 @@ def read_csv(path: Path) -> list[dict[str, str]]:
         return list(csv.DictReader(handle))
 
 
-def number(row: dict[str, str], key: str) -> float:
+def write_csv(path: Path, rows: list[dict[str, object]]) -> None:
+    if not rows:
+        return
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0]), lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def num(row: dict[str, object], key: str) -> float:
     return float(row[key])
 
 
-def copy_tables(output: Path) -> None:
-    for name, source in SOURCE_TABLES.items():
-        shutil.copyfile(source, output / name)
+def relative_checkpoint(value: str) -> str:
+    try:
+        return str(Path(value).relative_to(ROOT))
+    except ValueError:
+        return value
 
 
-def write_pareto(output: Path, pruning: list[dict[str, str]], alternatives: list[dict[str, str]]) -> list[dict[str, str]]:
-    points = [
-        {
-            "label": f"t={row['threshold']} {row['stage']}",
-            "source": "threshold_sweep",
-            "structurally_pruned": "false",
-            "mAP50-95": row["mAP50-95"],
-            "latency_mean_ms": row["latency_mean_ms"],
-        }
-        for row in pruning
-    ]
-    points.extend(
-        {
-            "label": f"{row['variant']} {row['stage']}",
-            "source": "fixed_budget_probe",
-            "structurally_pruned": str(row["retained_experts"] == "2/2").lower(),
-            "mAP50-95": row["mAP50-95"],
-            "latency_mean_ms": row["latency_mean_ms"],
-        }
-        for row in alternatives
-        if row["variant"] == "weighted_top2"
-    )
-    ranked = sorted(points, key=lambda row: (number(row, "latency_mean_ms"), -number(row, "mAP50-95")))
+def archive_pruning(source: Path, output: Path) -> list[dict[str, str]]:
+    archived = output / "coco128-pruning-results.csv"
+    if source.exists():
+        rows: list[dict[str, object]] = []
+        for row in read_csv(source):
+            rows.append(
+                {
+                    "threshold": row["threshold"],
+                    "stage": row["recovery"],
+                    "dataset": "coco128",
+                    "checkpoint": relative_checkpoint(row["checkpoint"]),
+                    "mAP50-95": row["map50_95"],
+                    "mAP50": row["map50"],
+                    "GFLOPs": row["gflops"],
+                    "latency_mean_ms": row["latency_ms"],
+                    "params_M": row["params_m"],
+                    "mean_gini": row["mean_gini"],
+                    "experts_per_layer": row["experts_per_layer"],
+                    "layer_gini": row["layer_gini"],
+                }
+            )
+        write_csv(archived, rows)
+    if not archived.exists():
+        raise FileNotFoundError(f"Local COCO128 results not found: {source}")
+    return read_csv(archived)
+
+
+def derive_layers(output: Path, pruning: list[dict[str, str]]) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for row in pruning:
+        for layer, retained in sorted(
+            json.loads(row["experts_per_layer"]).items(), key=lambda item: int(item[0].split(".")[-1])
+        ):
+            rows.append(
+                {
+                    "threshold": row["threshold"],
+                    "stage": row["stage"],
+                    "layer_name": layer.replace("model.base_model.model.", "model."),
+                    "retained_experts": retained,
+                    "original_experts": 3,
+                }
+            )
+    write_csv(output / "coco128-per-layer-experts.csv", rows)
+    return rows
+
+
+def derive_pareto(output: Path, pruning: list[dict[str, str]]) -> list[dict[str, object]]:
+    dense = next(row for row in pruning if row["stage"] == "dense")
+    ranked = sorted(pruning, key=lambda row: (num(row, "latency_mean_ms"), -num(row, "mAP50-95")))
+    rows: list[dict[str, object]] = []
     best_map = -1.0
     for row in ranked:
-        is_pareto = number(row, "mAP50-95") > best_map
-        row["pareto"] = str(is_pareto).lower()
-        if is_pareto:
-            best_map = number(row, "mAP50-95")
-    fields = ("label", "source", "structurally_pruned", "mAP50-95", "latency_mean_ms", "pareto")
-    with (output / "pareto-accuracy-latency.csv").open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields, lineterminator="\n")
-        writer.writeheader()
-        writer.writerows(ranked)
-    return ranked
+        is_pareto = num(row, "mAP50-95") > best_map
+        best_map = max(best_map, num(row, "mAP50-95"))
+        pruned = row["experts_per_layer"] != dense["experts_per_layer"]
+        rows.append(
+            {
+                "threshold": row["threshold"],
+                "stage": row["stage"],
+                "mAP50-95": row["mAP50-95"],
+                "latency_mean_ms": row["latency_mean_ms"],
+                "structurally_pruned": str(pruned).lower(),
+                "quality_gate_pass": str(
+                    pruned and num(dense, "mAP50-95") - num(row, "mAP50-95") <= 0.01
+                ).lower(),
+                "pareto": str(is_pareto).lower(),
+            }
+        )
+    write_csv(output / "coco128-pareto-accuracy-latency.csv", rows)
+    return rows
 
 
-def build_plots(data_output: Path, figure_output: Path) -> None:
+def archive_dynamic(summary: Path, trace: Path, output: Path) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    summary_out = output / "coco128-dynamic-schedule-results.csv"
+    trace_out = output / "local-dynamic-gini-smoke.csv"
+    if summary.exists():
+        shutil.copyfile(summary, summary_out)
+    if trace.exists():
+        shutil.copyfile(trace, trace_out)
+    elif SMOKE_TRACE.exists() and not trace_out.exists():
+        shutil.copyfile(SMOKE_TRACE, trace_out)
+    return (
+        read_csv(summary_out) if summary_out.exists() else [],
+        read_csv(trace_out) if trace_out.exists() else [],
+    )
+
+
+def archive_auxiliary(output: Path) -> None:
+    write_csv(
+        output / "coco128-resource-profile.csv",
+        [
+            {
+                "probe": "oom_boundary",
+                "gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition 97GB",
+                "batch": 128,
+                "imgsz": 1600,
+                "result": "OOM; automatic batch fallback reached 16",
+                "peak_allocated_GiB": "",
+                "peak_reserved_GiB": "",
+            },
+            {
+                "probe": "stable_high_utilization",
+                "gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition 97GB",
+                "batch": 36,
+                "imgsz": 1344,
+                "result": "completed without batch fallback",
+                "peak_allocated_GiB": 87.28,
+                "peak_reserved_GiB": 92.89,
+            },
+        ],
+    )
+    for label, source in PR85_TABLES.items():
+        if source.exists():
+            shutil.copyfile(source, output / f"cross-validation-pr85-visdrone-{label}.csv")
+
+
+def build_plots(
+    pruning: list[dict[str, str]],
+    layers: list[dict[str, object]],
+    pareto: list[dict[str, object]],
+    dynamic: list[dict[str, str]],
+    trace: list[dict[str, str]],
+    output: Path,
+) -> None:
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     import numpy as np
 
-    figure_output.mkdir(parents=True, exist_ok=True)
-    pruning = read_csv(data_output / "pruning-threshold-results.csv")
-    alternatives = read_csv(data_output / "alternative-pruning-results.csv")
-    dynamic = read_csv(data_output / "dynamic-schedule-results.csv")
-    layers = read_csv(data_output / "per-layer-experts.csv")
-    pareto = write_pareto(data_output, pruning, alternatives)
-
-    colors = {"direct": "#2878B5", "LoRA10": "#F28E2B"}
-    metric_specs = (
-        ("mAP50-95", "mAP50-95", "threshold-map.png"),
-        ("moe_gflops", "MoE GFLOPs", "threshold-gflops.png"),
-        ("latency_mean_ms", "Latency (ms)", "threshold-latency.png"),
-    )
-    for key, ylabel, filename in metric_specs:
+    output.mkdir(parents=True, exist_ok=True)
+    dense = next(row for row in pruning if row["stage"] == "dense")
+    colors = {"direct": "#2878B5", "lora10": "#F28E2B"}
+    for key, ylabel, filename in (
+        ("mAP50-95", "mAP50-95", "coco128-threshold-map.png"),
+        ("GFLOPs", "Whole-model GFLOPs", "coco128-threshold-gflops.png"),
+        ("latency_mean_ms", "Latency (ms/image)", "coco128-threshold-latency.png"),
+    ):
         fig, axis = plt.subplots(figsize=(7.2, 4.4))
-        for stage in ("direct", "LoRA10"):
-            group = sorted((row for row in pruning if row["stage"] == stage), key=lambda row: number(row, "threshold"))
+        axis.axhline(num(dense, key), color="#555555", linestyle="--", label="dense baseline")
+        for stage in ("direct", "lora10"):
+            group = sorted((row for row in pruning if row["stage"] == stage), key=lambda row: num(row, "threshold"))
             axis.plot(
-                [number(row, "threshold") for row in group],
-                [number(row, key) for row in group],
+                [num(row, "threshold") for row in group],
+                [num(row, key) for row in group],
                 marker="o",
                 linewidth=2,
                 label=stage,
@@ -111,94 +207,138 @@ def build_plots(data_output: Path, figure_output: Path) -> None:
         axis.grid(alpha=0.25)
         axis.legend()
         fig.tight_layout()
-        fig.savefig(figure_output / filename, dpi=180)
+        fig.savefig(output / filename, dpi=180)
         plt.close(fig)
 
+    points = [row for row in pruning if row["stage"] != "dense"]
     fig = plt.figure(figsize=(8.2, 6.2))
     axis = fig.add_subplot(111, projection="3d")
     scatter = axis.scatter(
-        [number(row, "threshold") for row in pruning],
-        [number(row, "moe_gflops") for row in pruning],
-        [number(row, "latency_mean_ms") for row in pruning],
-        c=[number(row, "mAP50-95") for row in pruning],
+        [num(row, "threshold") for row in points],
+        [num(row, "GFLOPs") for row in points],
+        [num(row, "latency_mean_ms") for row in points],
+        c=[num(row, "mAP50-95") for row in points],
         cmap="viridis",
         s=55,
     )
-    axis.set(xlabel="Threshold", ylabel="MoE GFLOPs", zlabel="Latency (ms)")
+    axis.set(xlabel="Threshold", ylabel="Whole-model GFLOPs", zlabel="Latency (ms/image)")
     fig.colorbar(scatter, ax=axis, label="mAP50-95", shrink=0.72)
     fig.tight_layout()
-    fig.savefig(figure_output / "threshold-map-flops-latency-3d.png", dpi=180)
+    fig.savefig(output / "coco128-threshold-map-flops-latency-3d.png", dpi=180)
     plt.close(fig)
 
     fig, axis = plt.subplots(figsize=(7.5, 5.0))
     for row in pareto:
-        x, y = number(row, "latency_mean_ms"), number(row, "mAP50-95")
         marker = "s" if row["structurally_pruned"] == "true" else "o"
-        axis.scatter(x, y, marker=marker, s=72, alpha=0.8)
-        axis.annotate(row["label"], (x, y), xytext=(4, 5), textcoords="offset points", fontsize=7)
+        axis.scatter(num(row, "latency_mean_ms"), num(row, "mAP50-95"), marker=marker, s=72, alpha=0.8)
+        axis.annotate(
+            f"t={float(row['threshold']):.2f} {row['stage']}",
+            (num(row, "latency_mean_ms"), num(row, "mAP50-95")),
+            xytext=(4, 5),
+            textcoords="offset points",
+            fontsize=7,
+        )
     front = [row for row in pareto if row["pareto"] == "true"]
     axis.plot(
-        [number(row, "latency_mean_ms") for row in front],
-        [number(row, "mAP50-95") for row in front],
+        [num(row, "latency_mean_ms") for row in front],
+        [num(row, "mAP50-95") for row in front],
         color="#D62728",
         linewidth=1.8,
         label="Pareto front",
     )
-    axis.set(xlabel="Latency (ms)", ylabel="mAP50-95", title="No quality-qualified structural sweet spot observed")
+    axis.set(xlabel="Latency (ms/image)", ylabel="mAP50-95", title="COCO128: no pruned point passes 0.01 mAP gate")
     axis.grid(alpha=0.25)
     axis.legend()
     fig.tight_layout()
-    fig.savefig(figure_output / "pareto-accuracy-latency.png", dpi=180)
+    fig.savefig(output / "coco128-pareto-accuracy-latency.png", dpi=180)
     plt.close(fig)
 
-    labels = [row["variant"].replace("_", "\n") for row in dynamic]
-    x = np.arange(len(dynamic))
-    width = 0.34
-    fig, left = plt.subplots(figsize=(7.4, 4.8))
-    left.bar(x - width / 2, [number(row, "final_mAP50-95") for row in dynamic], width, label="Final mAP50-95")
-    left.bar(x + width / 2, [number(row, "best_mAP50-95") for row in dynamic], width, label="Best mAP50-95")
-    left.set_ylabel("mAP50-95")
-    left.set_xticks(x, labels)
-    left.set_ylim(0.17, 0.18)
-    left.grid(axis="y", alpha=0.2)
-    right = left.twinx()
-    right.plot(x, [number(row, "convergence_ratio") for row in dynamic], color="#D62728", marker="D", label="Convergence ratio")
-    right.set_ylabel("Epoch ratio to 95% target")
-    right.set_ylim(0.85, 1.02)
-    handles_l, labels_l = left.get_legend_handles_labels()
-    handles_r, labels_r = right.get_legend_handles_labels()
-    left.legend(handles_l + handles_r, labels_l + labels_r, loc="lower right", fontsize=8)
-    fig.tight_layout()
-    fig.savefig(figure_output / "dynamic-schedule-comparison.png", dpi=180)
-    plt.close(fig)
-
-    thresholds = sorted({number(row, "threshold") for row in layers})
-    layer_names = sorted({row["layer_name"] for row in layers}, key=lambda value: int(value.split(".")[-1]))
+    direct = [row for row in layers if row["stage"] in {"dense", "direct"}]
+    thresholds = sorted({float(row["threshold"]) for row in direct})
+    names = sorted({str(row["layer_name"]) for row in direct}, key=lambda value: int(value.split(".")[-1]))
     matrix = np.array(
         [
             [
-                number(next(row for row in layers if number(row, "threshold") == threshold and row["layer_name"] == layer), "retained_experts")
-                for layer in layer_names
+                int(
+                    next(
+                        row
+                        for row in direct
+                        if float(row["threshold"]) == threshold and row["layer_name"] == layer
+                    )["retained_experts"]
+                )
+                for layer in names
             ]
             for threshold in thresholds
         ]
     )
-    fig, axis = plt.subplots(figsize=(7.0, 3.8))
-    image = axis.imshow(matrix, cmap="Blues", vmin=0, vmax=3, aspect="auto")
-    axis.set_xticks(range(len(layer_names)), layer_names)
+    fig, axis = plt.subplots(figsize=(7.0, 4.0))
+    image = axis.imshow(matrix, cmap="Blues", vmin=1, vmax=3, aspect="auto")
+    axis.set_xticks(range(len(names)), names)
     axis.set_yticks(range(len(thresholds)), [f"{value:.2f}" for value in thresholds])
-    axis.set(xlabel="MoE layer", ylabel="Threshold", title="Retained experts (all default points remain 3/3)")
+    axis.set(xlabel="MoE layer", ylabel="Threshold (0=dense)", title="COCO128 retained experts")
     for i in range(matrix.shape[0]):
         for j in range(matrix.shape[1]):
-            axis.text(j, i, f"{int(matrix[i, j])}/3", ha="center", va="center", color="black")
+            axis.text(j, i, f"{matrix[i, j]}/3", ha="center", va="center")
     fig.colorbar(image, ax=axis, label="Retained experts")
     fig.tight_layout()
-    fig.savefig(figure_output / "per-layer-retained-experts.png", dpi=180)
+    fig.savefig(output / "coco128-per-layer-retained-experts.png", dpi=180)
     plt.close(fig)
+
+    if dynamic:
+        labels = [row["variant"] for row in dynamic]
+        x = np.arange(len(dynamic))
+        width = 0.34
+        fig, left = plt.subplots(figsize=(7.4, 4.8))
+        left.bar(x - width / 2, [num(row, "final_mAP50-95") for row in dynamic], width, label="Final")
+        left.bar(x + width / 2, [num(row, "best_mAP50-95") for row in dynamic], width, label="Best")
+        left.set_xticks(x, labels)
+        left.set_ylabel("mAP50-95")
+        left.grid(axis="y", alpha=0.2)
+        right = left.twinx()
+        right.plot(
+            x,
+            [float(row["convergence_epoch_ratio"] or "nan") for row in dynamic],
+            color="#D62728",
+            marker="D",
+            label="Epoch ratio",
+        )
+        right.set_ylabel("Epoch ratio to 95% baseline-final target")
+        handles_l, labels_l = left.get_legend_handles_labels()
+        handles_r, labels_r = right.get_legend_handles_labels()
+        left.legend(handles_l + handles_r, labels_l + labels_r, fontsize=8)
+        fig.tight_layout()
+        fig.savefig(output / "coco128-dynamic-schedule-comparison.png", dpi=180)
+        plt.close(fig)
+
+    if trace:
+        fig, left = plt.subplots(figsize=(7.2, 4.4))
+        epochs = [num(row, "epoch") for row in trace]
+        left.plot(epochs, [num(row, "mean_gini") for row in trace], marker="o", label="mean Gini")
+        left.plot(epochs, [num(row, "ema_gini") for row in trace], marker="s", label="EMA Gini")
+        left.set(xlabel="Epoch", ylabel="Gini")
+        left.grid(alpha=0.25)
+        right = left.twinx()
+        right.plot(
+            epochs,
+            [num(row, "balance_loss_coeff") for row in trace],
+            color="#D62728",
+            marker="D",
+            label="coefficient",
+        )
+        right.set_ylabel("Balance loss coefficient")
+        handles_l, labels_l = left.get_legend_handles_labels()
+        handles_r, labels_r = right.get_legend_handles_labels()
+        left.legend(handles_l + handles_r, labels_l + labels_r, fontsize=8)
+        fig.tight_layout()
+        fig.savefig(output / "local-dynamic-gini-smoke.png", dpi=180)
+        plt.close(fig)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--local-results", type=Path, default=LOCAL_RESULTS)
+    parser.add_argument("--dynamic-summary", type=Path, default=DYNAMIC_SUMMARY)
+    parser.add_argument("--dynamic-trace", type=Path, default=DYNAMIC_TRACE)
     parser.add_argument("--data-output", type=Path, default=ROOT / "reports/moe-pruning")
     parser.add_argument("--figure-output", type=Path, default=ROOT / "reports/issue52-figs")
     return parser.parse_args()
@@ -209,10 +349,15 @@ def main() -> int:
     data_output = args.data_output.resolve()
     figure_output = args.figure_output.resolve()
     data_output.mkdir(parents=True, exist_ok=True)
-    copy_tables(data_output)
-    build_plots(data_output, figure_output)
-    print(f"Issue #52 CSV files written to {data_output}")
-    print(f"Issue #52 figures written to {figure_output}")
+    pruning = archive_pruning(args.local_results.resolve(), data_output)
+    layers = derive_layers(data_output, pruning)
+    pareto = derive_pareto(data_output, pruning)
+    dynamic, trace = archive_dynamic(args.dynamic_summary.resolve(), args.dynamic_trace.resolve(), data_output)
+    archive_auxiliary(data_output)
+    build_plots(pruning, layers, pareto, dynamic, trace, figure_output)
+    print(f"Local COCO128 CSV files written to {data_output}")
+    print(f"Local COCO128 figures written to {figure_output}")
+    print("PR #85 tables archived separately as cross-validation-pr85-visdrone-*")
     return 0
 
 
