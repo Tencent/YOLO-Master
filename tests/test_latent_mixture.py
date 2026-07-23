@@ -1,9 +1,15 @@
 from pathlib import Path
 
+import pytest
 import torch
 
 from ultralytics.nn.modules import LatentMixture, LatentRouter, MultiScaleLatentMixture
-from ultralytics.nn.modules.routing_protocol import clear_aux_records, collect_aux_loss, iter_aux_records
+from ultralytics.nn.modules.routing_protocol import (
+    anneal_mixture_temperatures,
+    clear_aux_records,
+    collect_aux_loss,
+    iter_aux_records,
+)
 from ultralytics.nn.tasks import DetectionModel
 
 
@@ -38,6 +44,16 @@ def test_latent_router_stays_fp32_after_half_conversion():
     assert {b.dtype for b in router.buffers()} == {torch.float32}
 
 
+def test_latent_router_init_std_breaks_uniform_symmetry():
+    torch.manual_seed(0)
+    router = LatentRouter(16, 4, router_init_std=0.05).eval()
+    x = torch.randn(2, 3, 16)
+
+    _, probs = router(x)
+    assert not torch.allclose(probs, torch.full_like(probs, 0.25))
+    assert torch.allclose(probs.sum(dim=-1), torch.ones_like(probs.sum(dim=-1)), atol=1e-6)
+
+
 def test_latent_mixture_preserves_first_input_when_residual_zero():
     module = LatentMixture([16, 16], 16, residual_init=0.0).eval()
     xs = [torch.randn(2, 16, 8, 8), torch.randn(2, 16, 8, 8)]
@@ -64,6 +80,7 @@ def test_latent_mixture_publishes_single_train_aux_and_snapshot():
     snapshot = module.routing_snapshot()
     assert snapshot["family"] == "latent"
     assert snapshot["noise_std"] == 0.0
+    assert snapshot["router_init_std"] == 0.0
     assert snapshot["mean_router_probs"].requires_grad is False
     assert torch.allclose(snapshot["mean_router_probs"].sum(), torch.tensor(1.0), atol=1e-5)
 
@@ -84,9 +101,66 @@ def test_multiscale_latent_mixture_shapes_and_scale_snapshot():
 
 
 def test_yolo26_latent_yaml_builds_and_runs():
-    model = DetectionModel(ROOT / "ultralytics/cfg/models/26/yolo26-master-latent-n-resinit010.yaml", ch=3, nc=80, verbose=False).eval()
+    model = DetectionModel(
+        ROOT / "ultralytics/cfg/models/26/yolo26-master-latent-n-resinit010.yaml", ch=3, nc=80, verbose=False
+    ).eval()
     latent_layers = [m for m in model.modules() if isinstance(m, LatentMixture)]
     assert len(latent_layers) == 3
     with torch.no_grad():
         output = model(torch.zeros(1, 3, 64, 64))
     assert output is not None
+
+
+def test_yolo26_latent_initperturb_yaml_builds_and_runs():
+    model = DetectionModel(
+        ROOT / "ultralytics/cfg/models/26/yolo26-master-latent-n-initperturb020.yaml",
+        ch=3,
+        nc=80,
+        verbose=False,
+    ).eval()
+    latent_layers = [m for m in model.modules() if isinstance(m, LatentMixture)]
+    assert len(latent_layers) == 3
+    assert all(layer.router.router_init_std == 0.02 for layer in latent_layers)
+    with torch.no_grad():
+        output = model(torch.zeros(1, 3, 64, 64))
+    assert output is not None
+
+
+def test_yolo26_latent_initperturb_lowtemp_yaml_builds_and_runs():
+    model = DetectionModel(
+        ROOT / "ultralytics/cfg/models/26/yolo26-master-latent-n-initperturb020-temp025.yaml",
+        ch=3,
+        nc=80,
+        verbose=False,
+    ).eval()
+    latent_layers = [m for m in model.modules() if isinstance(m, LatentMixture)]
+    assert len(latent_layers) == 3
+    assert all(layer.router.router_init_std == 0.02 for layer in latent_layers)
+    assert all(float(layer.temperature) == pytest.approx(0.25) for layer in latent_layers)
+    with torch.no_grad():
+        output = model(torch.zeros(1, 3, 64, 64))
+    assert output is not None
+
+
+def test_yolo26_latent_initperturb_anneal_yaml_builds_and_runs():
+    model = DetectionModel(
+        ROOT / "ultralytics/cfg/models/26/yolo26-master-latent-n-initperturb020-temp05.yaml",
+        ch=3,
+        nc=80,
+        verbose=False,
+    ).eval()
+    latent_layers = [m for m in model.modules() if isinstance(m, LatentMixture)]
+    assert len(latent_layers) == 3
+    assert all(layer.router.router_init_std == 0.02 for layer in latent_layers)
+    assert all(float(layer.temperature) == pytest.approx(0.5) for layer in latent_layers)
+    with torch.no_grad():
+        output = model(torch.zeros(1, 3, 64, 64))
+    assert output is not None
+
+
+def test_latent_temperature_anneal_updates_latent_modules():
+    module = LatentMixture([16, 16], 16, temperature=0.5)
+    updated = anneal_mixture_temperatures(module, factor=0.95, min_temp=0.2)
+
+    assert updated == 1
+    assert float(module.temperature) == pytest.approx(0.475)

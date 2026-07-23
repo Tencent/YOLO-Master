@@ -102,9 +102,7 @@ def _validate_inputs(
         if x.shape[2] <= 0 or x.shape[3] <= 0:
             raise ValueError(f"input {i} has invalid spatial size {tuple(x.shape[2:])}")
         if require_same_spatial and tuple(x.shape[2:]) != (height, width):
-            raise ValueError(
-                f"input {i} spatial size {tuple(x.shape[2:])} does not match input 0 {(height, width)}"
-            )
+            raise ValueError(f"input {i} spatial size {tuple(x.shape[2:])} does not match input 0 {(height, width)}")
         if not torch.jit.is_tracing() and not torch.onnx.is_in_onnx_export():
             if not bool(torch.isfinite(x.detach()).all().item()):
                 raise FloatingPointError(f"input {i} contains non-finite values")
@@ -147,6 +145,7 @@ class LatentRouter(nn.Module):
         router_hidden_dim: int | None = None,
         temperature: float = 1.0,
         noise_std: float = 0.0,
+        router_init_std: float = 0.0,
         num_tokens: int | None = None,
         per_token: bool = False,
     ):
@@ -157,6 +156,7 @@ class LatentRouter(nn.Module):
         temperature = float(temperature)
         if temperature <= 0.0:
             raise ValueError(f"temperature must be positive, got {temperature}")
+        self.router_init_std = _non_negative_float(router_init_std, "router_init_std")
         self.num_tokens = None if num_tokens is None else _positive_int(num_tokens, "num_tokens")
         self.per_token = bool(per_token)
         self.norm = nn.LayerNorm(self.latent_dim)
@@ -174,8 +174,12 @@ class LatentRouter(nn.Module):
             nn.init.normal_(self.scale_embedding, mean=0.0, std=0.02)
         self.register_buffer("_temperature", torch.tensor(float(temperature), dtype=torch.float32), persistent=True)
         self.register_buffer("_noise_std", torch.tensor(float(noise_std), dtype=torch.float32), persistent=True)
-        nn.init.zeros_(self.expert_head.weight)
-        nn.init.zeros_(self.expert_head.bias)
+        if self.router_init_std > 0.0:
+            nn.init.normal_(self.expert_head.weight, mean=0.0, std=self.router_init_std)
+            nn.init.normal_(self.expert_head.bias, mean=0.0, std=self.router_init_std)
+        else:
+            nn.init.zeros_(self.expert_head.weight)
+            nn.init.zeros_(self.expert_head.bias)
         self._cast_fp32()
 
     @property
@@ -286,7 +290,9 @@ class _LatentAuxMixin:
     def set_noise_std(self, value: float | torch.Tensor) -> None:
         self.router.set_noise_std(value)
 
-    def _compute_aux(self, logits: torch.Tensor, probs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def _compute_aux(
+        self, logits: torch.Tensor, probs: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         if not self.training or (float(self.balance_loss_coeff) == 0.0 and float(self.router_z_loss_coeff) == 0.0):
             zero = graph_connected_finite_zero(logits, probs)
             return zero, zero.detach(), zero.detach()
@@ -322,7 +328,10 @@ class _LatentAuxMixin:
                 "aux_loss": float(aux.cpu()),
                 "temperature": float(self.router.temperature.detach().cpu()),
                 "noise_std": float(self.router._noise_std.detach().cpu()),
-                "finite": bool(routing_finite_diagnostics(logits=logits, probabilities=probs, aux_loss=aux).get("all_finite", True)),
+                "router_init_std": float(getattr(self.router, "router_init_std", 0.0)),
+                "finite": bool(
+                    routing_finite_diagnostics(logits=logits, probabilities=probs, aux_loss=aux).get("all_finite", True)
+                ),
             }
             if probs.ndim == 3:
                 snapshot["routing_axis"] = "scale_expert"
@@ -367,6 +376,7 @@ class LatentMixture(_LatentAuxMixin, nn.Module):
         router_z_loss_coeff: float = 1e-3,
         residual_init: float = 0.0,
         noise_std: float = 0.0,
+        router_init_std: float = 0.0,
     ):
         super().__init__()
         if isinstance(in_channels, int):
@@ -380,7 +390,11 @@ class LatentMixture(_LatentAuxMixin, nn.Module):
         self.top_k = self.num_experts
         self.balance_loss_coeff = _non_negative_float(balance_loss_coeff, "balance_loss_coeff")
         self.router_z_loss_coeff = _non_negative_float(router_z_loss_coeff, "router_z_loss_coeff")
-        self.base_proj = nn.Identity() if self.in_channels[0] == self.out_channels else _conv1x1(self.in_channels[0], self.out_channels)
+        self.base_proj = (
+            nn.Identity()
+            if self.in_channels[0] == self.out_channels
+            else _conv1x1(self.in_channels[0], self.out_channels)
+        )
         self.token_projs = nn.ModuleList(
             [nn.Identity() if c == self.out_channels else _conv1x1(c, self.out_channels) for c in self.in_channels]
         )
@@ -390,10 +404,13 @@ class LatentMixture(_LatentAuxMixin, nn.Module):
             router_hidden_dim=router_hidden_dim,
             temperature=temperature,
             noise_std=noise_std,
+            router_init_std=router_init_std,
             num_tokens=self.num_inputs,
             per_token=False,
         )
-        self.experts = nn.ModuleList(DenseChannelExpert(self.out_channels, expert_ratio) for _ in range(self.num_experts))
+        self.experts = nn.ModuleList(
+            DenseChannelExpert(self.out_channels, expert_ratio) for _ in range(self.num_experts)
+        )
         self.residual_gain = nn.Parameter(torch.tensor(float(residual_init), dtype=torch.float32))
         self._init_runtime_state()
 
@@ -406,7 +423,9 @@ class LatentMixture(_LatentAuxMixin, nn.Module):
             tokens.append(F.adaptive_avg_pool2d(token, 1).flatten(1).float())
         scale_tokens = torch.stack(tokens, dim=1)
         logits, probs = self.router(scale_tokens)
-        return base, LatentRoutingContext(latent=scale_tokens.mean(dim=1), scale_tokens=scale_tokens, logits=logits, probs=probs)
+        return base, LatentRoutingContext(
+            latent=scale_tokens.mean(dim=1), scale_tokens=scale_tokens, logits=logits, probs=probs
+        )
 
     def forward(self, xs: Sequence[torch.Tensor]) -> torch.Tensor:
         base, context = self._build_context(xs)
@@ -437,6 +456,7 @@ class MultiScaleLatentMixture(_LatentAuxMixin, nn.Module):
         router_z_loss_coeff: float = 1e-3,
         residual_init: float = 0.0,
         noise_std: float = 0.0,
+        router_init_std: float = 0.0,
     ):
         super().__init__()
         self.channels = tuple(_positive_int(c, "channels") for c in channels)
@@ -457,6 +477,7 @@ class MultiScaleLatentMixture(_LatentAuxMixin, nn.Module):
             router_hidden_dim=router_hidden_dim,
             temperature=temperature,
             noise_std=noise_std,
+            router_init_std=router_init_std,
             num_tokens=self.num_scales,
             per_token=True,
         )
@@ -474,7 +495,9 @@ class MultiScaleLatentMixture(_LatentAuxMixin, nn.Module):
             tokens.append(F.adaptive_avg_pool2d(token, 1).flatten(1).float())
         scale_tokens = torch.stack(tokens, dim=1)
         logits, probs = self.router(scale_tokens)
-        return LatentRoutingContext(latent=scale_tokens.mean(dim=1), scale_tokens=scale_tokens, logits=logits, probs=probs)
+        return LatentRoutingContext(
+            latent=scale_tokens.mean(dim=1), scale_tokens=scale_tokens, logits=logits, probs=probs
+        )
 
     def forward(self, xs: Sequence[torch.Tensor]) -> list[torch.Tensor]:
         checked = _validate_inputs(xs, self.channels, require_same_spatial=False)
