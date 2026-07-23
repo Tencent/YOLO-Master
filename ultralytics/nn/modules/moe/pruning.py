@@ -12,9 +12,16 @@ from ultralytics.utils import LOGGER
 class MoEPruner:
     """Pruner for Mixture-of-Experts models based on usage statistics"""
     
-    def __init__(self, model_path: str, threshold: float = 0.15, dataset: str = 'coco8.yaml',
-                 device: Optional[str] = None, importance_mode: str = "usage",
-                 keep_top_m: Optional[int] = None):
+    def __init__(
+        self,
+        model_path: str,
+        threshold: float = 0.15,
+        dataset: str = 'coco8.yaml',
+        device: Optional[str] = None,
+        importance_mode: str = "usage",
+        keep_top_m: Optional[int] = None,
+        usage_stats: Optional[Dict[str, Dict[int, Any]]] = None,
+    ):
         """
         Initialize MoE pruner
 
@@ -31,6 +38,8 @@ class MoEPruner:
                 experts by how strongly the router favours them).
             keep_top_m: If set, always keep the top-M highest-scoring experts
                 regardless of threshold.
+            usage_stats: Optional pre-computed usage statistics. When provided,
+                the diagnosis pass is skipped and these stats are reused.
         """
         self.model_path = model_path
         self.threshold = threshold
@@ -39,7 +48,7 @@ class MoEPruner:
         self.importance_mode = importance_mode
         self.keep_top_m = keep_top_m
         self.model = None
-        self.usage_stats: Dict[str, Dict[int, Any]] = {}
+        self.usage_stats: Dict[str, Dict[int, Any]] = usage_stats if usage_stats is not None else {}
         self.pruning_plan: Dict[str, List[int]] = {}
 
     def _expert_score(self, stats: Any, total_hits: float) -> float:
@@ -83,22 +92,37 @@ class MoEPruner:
             raise RuntimeError(f"Failed to load model: {e}")
     
     def _diagnose_usage(self) -> None:
-        """Run diagnosis to collect expert usage statistics"""
+        """Run diagnosis to collect expert usage statistics."""
+        if self.usage_stats:
+            LOGGER.info("[Phase 1] Reusing pre-computed expert usage stats")
+            return
+
         LOGGER.info("\n[Phase 1] Diagnosing Expert Usage...")
-        
+
         with ExpertUsageTracker(self.model.model) as tracker:
             try:
                 self.model.val(
-                    data=self.dataset, 
-                    split='val', 
-                    batch=1, 
-                    verbose=False, 
+                    data=self.dataset,
+                    split='val',
+                    batch=1,
+                    verbose=False,
                     device=self.device
                 )
                 self.usage_stats = tracker.usage_stats
                 LOGGER.info(f"✅ Collected usage stats for {len(self.usage_stats)} layers")
             except Exception as e:
                 raise RuntimeError(f"Diagnosis failed: {e}")
+
+    def collect_usage(self) -> Dict[str, Dict[int, Any]]:
+        """Load the model and collect expert usage statistics once.
+
+        Returns:
+            Mapping from layer name to per-expert usage statistics.
+        """
+        if not self.usage_stats:
+            self._load_model()
+            self._diagnose_usage()
+        return self.usage_stats
     
     def _create_pruning_plan(self) -> None:
         """Create pruning plan based on usage statistics"""

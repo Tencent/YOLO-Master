@@ -82,9 +82,11 @@ SCHEDULE_VARIANTS = {
 
 def _device_tensor(value: str) -> torch.device:
     if value in {"", "cuda"} and torch.cuda.is_available():
-        return torch.device("cuda:0")
+        return torch.device("cuda")
     if value.isdigit() and torch.cuda.is_available():
-        return torch.device(f"cuda:{value}")
+        # When CUDA_VISIBLE_DEVICES restricts visibility, any requested ordinal
+        # should map to the currently visible CUDA device (usually cuda:0).
+        return torch.device("cuda")
     if value == "mps":
         return torch.device("mps")
     return torch.device("cpu")
