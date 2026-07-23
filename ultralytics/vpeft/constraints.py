@@ -10,7 +10,7 @@ Soft constraints  → scalar penalties (≥ 0) weighted by Lagrange multipliers.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -624,17 +624,37 @@ class ConstraintRegistry:
         if hard_constraints or soft_constraints:
             self._build_from_legacy_names(hard_constraints or [], soft_constraints or [])
 
+    @staticmethod
+    def normalize_name(name: str) -> str:
+        """Return the canonical constraint id used by solver logs and duals."""
+        value = str(name).strip()
+        if not value:
+            return value
+        return value if value.startswith("C_") else f"C_{value}"
+
+    def hard_constraint_names(self) -> List[str]:
+        """Return canonical names of constraints participating in projection."""
+        return [constraint.name for constraint in self._hard_constraints]
+
+    def soft_constraint_names(self) -> List[str]:
+        """Return canonical names of constraints participating in dual penalties."""
+        return [constraint.name for constraint in self._soft_constraints]
+
     def _build_from_legacy_names(self, hard_names: List[str], soft_names: List[str]) -> None:
         """Build default constraint instances from legacy name lists."""
         name_map = self._default_name_map()
         for name in hard_names:
-            c = name_map.get(name)
+            c = name_map.get(self.normalize_name(name))
             if c is not None and c not in self._constraints:
                 self._register(c, as_hard=True)
+            elif c is not None:
+                self._add_classification(c, as_hard=True)
         for name in soft_names:
-            c = name_map.get(name)
+            c = name_map.get(self.normalize_name(name))
             if c is not None and c not in self._constraints:
                 self._register(c, as_hard=False)
+            elif c is not None:
+                self._add_classification(c, as_hard=False)
 
     @staticmethod
     def _default_name_map() -> Dict[str, Constraint]:
@@ -649,24 +669,26 @@ class ConstraintRegistry:
         }
 
     def _register(self, c: Constraint, as_hard: bool = True) -> None:
-        self._constraints.append(c)
-        if as_hard:
-            self._hard_constraints.append(c)
-        else:
-            self._soft_constraints.append(c)
+        if c not in self._constraints:
+            self._constraints.append(c)
+        self._add_classification(c, as_hard=as_hard)
         if isinstance(c, BudgetConstraint):
             self._budget_constraint = c
         if isinstance(c, MoEConsistencyConstraint):
             self._moe_constraint = c
 
+    def _add_classification(self, c: Constraint, *, as_hard: bool) -> None:
+        """Classify an existing constraint without duplicating its instance."""
+        target = self._hard_constraints if as_hard else self._soft_constraints
+        if c not in target:
+            target.append(c)
+
     def _register_list(self, constraints: List[Constraint]) -> None:
         for c in constraints:
-            # Default: all constraints are hard except Budget which can be soft
-            is_hard = not isinstance(c, BudgetConstraint)
-            self._register(c, as_hard=is_hard)
-            # Also register Budget as soft if not already
-            if isinstance(c, BudgetConstraint) and c not in self._soft_constraints:
-                self._soft_constraints.append(c)
+            # A flat legacy list still enforces every supplied constraint.
+            self._register(c, as_hard=True)
+            if isinstance(c, BudgetConstraint):
+                self._add_classification(c, as_hard=False)
 
     @property
     def constraints(self) -> List[Constraint]:
@@ -677,24 +699,39 @@ class ConstraintRegistry:
 
     @classmethod
     def default(cls, config: Optional[Dict[str, Any]] = None) -> "ConstraintRegistry":
-        """Build a default registry with all 7 constraints."""
+        """Build a registry with explicit hard and soft constraint semantics."""
         cfg = config or {}
         registry = cls()
-        registry._register(OperatorCompatibilityConstraint(
-            allow_depthwise=cfg.get("allow_depthwise", False)), as_hard=True)
-        registry._register(SemanticProtectionConstraint(
-            include_head=cfg.get("include_head", False),
-            only_backbone=cfg.get("only_backbone", False),
-            exclude_modules=cfg.get("exclude_modules", None)), as_hard=True)
-        registry._register(BudgetConstraint(
-            max_params=cfg.get("max_params", 2_100_000)), as_hard=True)
-        registry._register(DeploymentCompatibilityConstraint(
-            platform=cfg.get("platform", "pytorch")), as_hard=True)
-        registry._register(VariantModuleCompatibilityConstraint(
-            block_size=cfg.get("block_size", None)), as_hard=True)
-        registry._register(MoEConsistencyConstraint(
-            epsilon=cfg.get("moe_epsilon", 4)), as_hard=True)
-        registry._register(DivisibilityConstraint(), as_hard=True)
+        all_constraints = [
+            OperatorCompatibilityConstraint(allow_depthwise=cfg.get("allow_depthwise", False)),
+            SemanticProtectionConstraint(
+                include_head=cfg.get("include_head", False),
+                only_backbone=cfg.get("only_backbone", False),
+                exclude_modules=cfg.get("exclude_modules", None),
+            ),
+            BudgetConstraint(max_params=cfg.get("max_params", 2_100_000)),
+            DeploymentCompatibilityConstraint(platform=cfg.get("platform", "pytorch")),
+            VariantModuleCompatibilityConstraint(block_size=cfg.get("block_size", None)),
+            MoEConsistencyConstraint(epsilon=cfg.get("moe_epsilon", 4)),
+            DivisibilityConstraint(),
+        ]
+        by_name = {constraint.name: constraint for constraint in all_constraints}
+        default_hard = ["C_op", "C_sem", "C_budget", "C_deploy", "C_compat", "C_moe", "C_div"]
+        default_soft = ["C_budget", "C_deploy"]
+        hard_names = [cls.normalize_name(name) for name in cfg.get("hard_constraints", default_hard)]
+        soft_names = [cls.normalize_name(name) for name in cfg.get("soft_constraints", default_soft)]
+        for constraint in all_constraints:
+            if constraint.name in hard_names:
+                registry._register(constraint, as_hard=True)
+            elif constraint.name in soft_names:
+                registry._register(constraint, as_hard=False)
+        for name in soft_names:
+            if name in by_name:
+                constraint = by_name[name]
+                if constraint not in registry._constraints:
+                    registry._register(constraint, as_hard=False)
+                else:
+                    registry._add_classification(constraint, as_hard=False)
         candidates = cfg.get("candidate_targets")
         if candidates:
             registry._register(CandidateTargetConstraint(candidates), as_hard=True)
@@ -754,57 +791,112 @@ class ConstraintRegistry:
         return mask
 
     def enforce_moe_consistency(
-        self, graph: ComputationGraph, placement: torch.Tensor, ranks: torch.Tensor,
-        variant: str, candidate_ranks: Iterable[int],
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Project placed graph-discovered expert groups onto one common rank."""
+        self,
+        graph: ComputationGraph,
+        placement: torch.Tensor,
+        ranks: torch.Tensor,
+        variant: Union[str, Sequence[str]],
+        candidate_ranks: Iterable[int],
+    ) -> Tuple[torch.Tensor, torch.Tensor, List[str]]:
+        """Project placed graph-discovered expert groups onto one feasible variant and rank."""
+        variants = [variant] * graph.n_nodes if isinstance(variant, str) else list(variant)
+        if len(variants) != graph.n_nodes:
+            raise ValueError("variant list must have one entry per graph node")
         if self._moe_constraint is None:
-            return placement, ranks
+            return placement, ranks, variants
+        rank_candidates = sorted({int(rank) for rank in candidate_ranks if int(rank) > 0})
         groups: Dict[str, List[int]] = {}
-        for i in range(graph.n_nodes):
-            info = self._node_info_from_graph(graph, i)
-            if placement[i] > 0.5 and info.semantic_role == "MoE_expert" and info.moe_group:
-                groups.setdefault(info.moe_group, []).append(i)
+        for index in range(graph.n_nodes):
+            info = self._node_info_from_graph(graph, index)
+            if placement[index] > 0.5 and info.semantic_role == "MoE_expert" and info.moe_group:
+                groups.setdefault(info.moe_group, []).append(index)
         for indices in groups.values():
             if len(indices) < 2:
                 continue
-            common = []
-            for rank in sorted({int(x) for x in candidate_ranks if int(x) > 0}):
+            candidate_variants = list(dict.fromkeys(variants[index] for index in indices))
+            compatible_variants = [
+                candidate
+                for candidate in candidate_variants
                 if all(
-                    all(c.is_feasible(self._node_info_from_graph(graph, i), variant, rank)
-                        for c in self._hard_constraints if c is not self._moe_constraint)
-                    for i in indices
-                ):
-                    common.append(rank)
-            if not common:
-                for i in indices:
-                    placement[i] = 0.0
-                    ranks[i] = 0
+                    any(
+                        all(
+                            constraint.is_feasible(self._node_info_from_graph(graph, index), candidate, rank)
+                            for constraint in self._hard_constraints
+                            if constraint is not self._moe_constraint
+                        )
+                        for rank in rank_candidates
+                    )
+                    for index in indices
+                )
+            ]
+            if not compatible_variants:
+                for index in indices:
+                    placement[index] = 0.0
+                    ranks[index] = 0
                 continue
-            chosen = min(common, key=lambda rank: (sum(abs(int(ranks[i].item()) - rank) for i in indices), rank))
-            for i in indices:
-                ranks[i] = chosen
-        return placement, ranks
+            chosen_variant = compatible_variants[0]
+            for index in indices:
+                variants[index] = chosen_variant
+            common_ranks = [
+                rank
+                for rank in rank_candidates
+                if all(
+                    all(
+                        constraint.is_feasible(self._node_info_from_graph(graph, index), chosen_variant, rank)
+                        for constraint in self._hard_constraints
+                        if constraint is not self._moe_constraint
+                    )
+                    for index in indices
+                )
+            ]
+            if not common_ranks:
+                for index in indices:
+                    placement[index] = 0.0
+                    ranks[index] = 0
+                continue
+            chosen_rank = min(
+                common_ranks,
+                key=lambda rank: (sum(abs(int(ranks[index].item()) - rank) for index in indices), rank),
+            )
+            for index in indices:
+                ranks[index] = chosen_rank
+        return placement, ranks, variants
 
     def evaluate_soft(
         self,
         graph: ComputationGraph,
         placement: torch.Tensor,
         ranks: torch.Tensor,
-        variant: str,
-    ) -> Dict[str, float]:
+        variant: Union[str, Sequence[str]],
+    ) -> Dict[str, Union[float, torch.Tensor]]:
         """Evaluate soft constraints and return a dict of violation scalars.
         Positive values indicate violation; zero means satisfied.
         """
-        # Aggregate per-node penalties for placed modules
-        total_penalties: Dict[str, float] = {}
+        variants = [variant] * graph.n_nodes if isinstance(variant, str) else list(variant)
+        if len(variants) != graph.n_nodes:
+            raise ValueError("variant list must have one entry per graph node")
+        differentiable = bool(placement.requires_grad or ranks.requires_grad)
+        total_penalties: Dict[str, Union[float, torch.Tensor]] = {}
         for c in self._soft_constraints:
+            if differentiable and isinstance(c, BudgetConstraint):
+                costs = []
+                for index in range(graph.n_nodes):
+                    cost = graph.estimate_params(index, ranks[index], variants[index])
+                    if not isinstance(cost, torch.Tensor):
+                        cost = torch.as_tensor(cost, dtype=placement.dtype, device=placement.device)
+                    costs.append(cost)
+                used = torch.sum(placement * torch.stack(costs))
+                total_penalties[c.name] = torch.relu(used - c.max_params) / max(float(c.max_params), 1.0)
+                continue
             total = 0.0
-            for i in range(graph.n_nodes):
-                if placement[i] > 0.5:
-                    node_info = self._node_info_from_graph(graph, i)
-                    rank = int(ranks[i].item()) if isinstance(ranks[i], torch.Tensor) else int(ranks[i])
-                    total += c.penalty(node_info, variant, rank)
+            for index in range(graph.n_nodes):
+                node_info = self._node_info_from_graph(graph, index)
+                rank = int(ranks[index].item()) if isinstance(ranks[index], torch.Tensor) else int(ranks[index])
+                penalty = c.penalty(node_info, variants[index], rank)
+                if differentiable:
+                    total = total + placement[index] * penalty
+                elif placement[index] > 0.5:
+                    total += penalty
             total_penalties[c.name] = total * c.weight
         return total_penalties
 
@@ -813,13 +905,16 @@ class ConstraintRegistry:
         graph: ComputationGraph,
         placement: torch.Tensor,
         ranks: torch.Tensor,
-        variant: str,
+        variant: Union[str, Sequence[str]],
     ) -> int:
         """Sum of adapter parameters for all placed modules."""
+        variants = [variant] * graph.n_nodes if isinstance(variant, str) else list(variant)
+        if len(variants) != graph.n_nodes:
+            raise ValueError("variant list must have one entry per graph node")
         total = 0
-        for i in range(graph.n_nodes):
-            if placement[i] > 0.5:
-                total += int(graph.estimate_params(i, int(ranks[i].item()), variant))
+        for index in range(graph.n_nodes):
+            if placement[index] > 0.5:
+                total += int(graph.estimate_params(index, int(ranks[index].item()), variants[index]))
         return total
 
     # -- new per-node interface --

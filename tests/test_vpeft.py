@@ -122,7 +122,7 @@ def test_vpeft_ao_budget_accounts_for_per_node_variants():
     graph = ComputationGraph(
         modules=[
             ModuleNode("backbone.linear", "Linear", 8, 8),
-            ModuleNode("backbone.linear2", "Linear", 64, 64),
+            ModuleNode("backbone.conv", "Conv2d", 8, 8, kernel_size=3),
         ]
     )
     decision = AlternatingOptimizationSolver(
@@ -130,6 +130,7 @@ def test_vpeft_ao_budget_accounts_for_per_node_variants():
     ).solve(graph, budget=10_000, variant="lora", constraints=ConstraintRegistry.default())
 
     assert len(decision.variants) == graph.n_nodes
+    assert decision.variants == ["ia3", "lora"]
     assert decision.budget_used == sum(
         graph.estimate_params(index, int(decision.ranks[index]), decision.variants[index])
         for index in range(graph.n_nodes)
