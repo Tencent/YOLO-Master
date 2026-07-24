@@ -1,94 +1,71 @@
-# Ultralytics YOLO 🚀, AGPL-3.0 license
-# LoRA Training Configuration for YOLO-Master-EsMoE-N on Brain Tumor
-# Usage: yolo train cfg=examples/lora_examples/yolo_master_brain_tumor_lora.yaml lora_r=4 lora_alpha=8
+# YOLO-Master-EsMoE-N LoRA - Brain Tumor 稀疏医疗检测
+# ============================================================
+# 使用: yolo train cfg=examples/lora_examples/yolo_master_brain_tumor_lora.yaml lora_r=8
 
-# Global settings ------------------------------------------------------------------------------------------------------
-task: detect # (str) YOLO task, i.e. detect, segment, classify, pose, obb
-mode: train # (str) YOLO mode, i.e. train, val, predict, export, track, benchmark
-device: 0 # (int | str | list) device: 0 or [0,1,2,3] for CUDA, 'cpu'/'mps', or -1/[-1,-1] to auto-select idle GPUs
+task: detect
+mode: train
+device: 0
 
-# Train settings -------------------------------------------------------------------------------------------------------
-model: ultralytics/cfg/models/master/v0_10/det/yolo-master-n.yaml # (str) YOLO-Master EsMoE-N release weight; override with a local path if needed
-data: ultralytics/cfg/datasets/brain-tumor.yaml # (str) sparse medical detection dataset
-epochs: 40 # (int) 20-50 epochs for few-shot/rapid domain adaptation comparisons
-time: # (float, optional) max hours to train; overrides epochs if set
-patience: 15 # (int) early stop after N epochs without val improvement
-batch: 16 # (int) batch size; use -1 for AutoBatch
-imgsz: 640 # (int | list) medical images are less scale-varied than VisDrone; keep the default unless validating high-res scans
-save: True # (bool) save train checkpoints and predict results
-save_period: -1 # (int) save checkpoint every N epochs; disabled if < 1
-cache: False # (bool | str) cache images in RAM (True/'ram') or on 'disk' to speed dataloading; False disables
-workers: 4 # (int) dataloader workers (per RANK if DDP)
-project: runs/lora_examples # (str, optional) project name for results root
-name: yolo_master_brain_tumor_lora_r4 # (str, optional) experiment name; override for r4/r8/r16 sweeps
-exist_ok: False # (bool) overwrite existing 'project/name' if True
-pretrained: True # (bool | str) use pretrained weights (bool) or load weights from path (str)
-optimizer: auto # (str) optimizer: SGD, Adam, Adamax, AdamW, NAdam, RAdam, RMSProp, or auto
-verbose: True # (bool) print verbose logs during training/val
-seed: 0 # (int) random seed for reproducibility
-deterministic: True # (bool) enable deterministic ops; reproducible but may be slower
-single_cls: False # (bool) keep negative/positive labels separate as defined by brain-tumor.yaml
-rect: False # (bool) rectangular batches for train; rectangular batching for val when mode='val'
-cos_lr: True # (bool) cosine learning rate scheduler
-close_mosaic: 0 # (int) disable mosaic earlier for small medical dataset stabilization
-resume: False # (bool) resume training from last checkpoint in the run dir
-amp: True # (bool) Automatic Mixed Precision (AMP) training; True runs AMP capability check
-fraction: 1.0 # (float) fraction of training dataset to use (1.0 = all)
-profile: False # (bool) profile ONNX/TensorRT speeds during training for loggers
-freeze: # (int | list, optional) freeze first N layers (int) or specific layer indices (list)
-multi_scale: False # (bool) avoid extra scale noise in the small medical dataset
-compile: False # (bool | str) enable torch.compile() backend='inductor'; True="default", False=off, or "default|reduce-overhead|max-autotune-no-cudagraphs"
+model: yolo-master-n.pt
+data: brain-tumor.yaml
+epochs: 40
+patience: 20
+batch: 8
+imgsz: 640
+save: True
+workers: 4
+pretrained: True
+optimizer: AdamW
+cos_lr: True
+close_mosaic: 0
+amp: True
+seed: 42
+deterministic: True
+val: True
+max_det: 300
+plots: True
 
-# Val/Test settings ----------------------------------------------------------------------------------------------------
-val: True # (bool) run validation/testing during training
-split: val # (str) dataset split to evaluate: 'val', 'test' or 'train'
-save_json: False # (bool) save results to COCO JSON for external evaluation
-conf: # (float, optional) confidence threshold; defaults: predict=0.25, val=0.001
-iou: 0.7 # (float) IoU threshold used for NMS
-max_det: 100 # (int) sparse medical images do not need a dense-scene detection cap
-half: False # (bool) use half precision (FP16) if supported
-dnn: False # (bool) use OpenCV DNN for ONNX inference
-plots: True # (bool) save plots and images during train/val
+# ---- LoRA 核心参数 ----
+lora_r: 8
+lora_alpha: 16
+lora_use_rslora: True
+lora_include_attention: False
+lora_gradient_checkpointing: True
 
-# LoRA settings --------------------------------------------------------------------------------------------------------
-lora_r: 4 # (int) conservative default rank for small medical data; compare r=4,8,16 with lora_alpha=2*r
-lora_alpha: 8 # (int) LoRA alpha
-lora_dropout: 0.05 # (float) stronger regularization for the small brain-tumor dataset
-lora_bias: "none" # (str) LoRA bias type: "none", "all", "lora_only"
-lora_backend: "auto" # (str) LoRA backend: "auto", "peft", "fallback"
-lora_variant: "lora" # (str) Adapter variant: "lora", "loha", "dora"
-lora_include_head: False # (bool) keep prediction head trainable via trainer logic, but do not LoRA-wrap final heads
-lora_freeze_bn: True # (bool) freeze BatchNorm to reduce overfitting on limited medical images
+# ---- 目标模块 ----
 lora_target_modules: [
-  "conv", "fused_conv", "bottleneck.0", "shared_feature.0", "static_net.3", "proj",
-  "expert_projections.0.0", "expert_projections.1.0", "expert_projections.2.0", "expert_projections.3.0",
-  "expert_projections.4.0", "expert_projections.5.0", "expert_projections.6.0", "expert_projections.7.0",
-  "expert_projections.8.0", "expert_projections.9.0", "expert_projections.10.0", "expert_projections.11.0",
-  "expert_projections.12.0", "expert_projections.13.0", "expert_projections.14.0", "expert_projections.15.0"
+  "conv", "fused_conv", "bottleneck.0",
+  "static_net.0", "static_net.3",
+  "shared_feature.0", "shared_feature.3", "proj",
+  "feature_refiner.0",
+  "pool_projections.0.0", "pool_projections.1.0",
+  "expert_projections.0.0","expert_projections.1.0",
+  "expert_projections.2.0","expert_projections.3.0",
+  "expert_projections.4.0","expert_projections.5.0",
+  "expert_projections.6.0","expert_projections.7.0",
+  "expert_projections.8.0","expert_projections.9.0",
+  "expert_projections.10.0","expert_projections.11.0",
+  "expert_projections.12.0","expert_projections.13.0",
+  "expert_projections.14.0","expert_projections.15.0",
 ]
-lora_save_adapters: True # (bool) Save LoRA adapters
-lora_adapter_dir: "lora_adapter" # (str) Directory name for adapters
-lora_auto_r_ratio: 0.0 # (float) Auto calculate LoRA rank based on params ratio
-lora_use_dora: False # (bool) Enable DoRA (Weight-Decomposed Low-Rank Adaptation)
-lora_use_rslora: True # (bool) Enable RS-LoRA scaling for better high-rank stability
-lora_init_lora_weights: "gaussian" # (str) PEFT Conv2d-compatible init; PiSSA/OLoRA are Linear-oriented
-lora_type: "lora" # (str) PEFT type: "lora", "loha", "lokr"
-lora_quantization: "none" # (str) Quantization type: "none", "4bit", "8bit" (Requires bitsandbytes)
-lora_include_moe: True # (bool) include EsMoE expert convolutions as adaptation targets
-lora_include_attention: False # (bool) YOLO-Master-N detection config is Conv/MoE-heavy; attention targets are not required
-lora_only_backbone: False # (bool) allow neck convolutions; final Detect/DFL layers remain filtered by LoRA safety logic
-lora_only_3x3: False # (bool) skip 1x1 convs to keep adapter count low on a small dataset
-# MoE routing policy: routing/gate layers are NOT included in LoRA targets.
-# Rationale: small medical LoRA runs should adapt visual/expert convolutions without changing
-# expert-assignment dynamics; routing-LoRA should be tested only as a separate ablation.
-lora_exclude_modules: ["router", "routing", "gate", "gating"]
-lora_last_n: # (int, optional) Only apply to last N layers
-lora_from_layer: # (int, optional) Start applying from layer index
-lora_to_layer: # (int, optional) Stop applying from layer index
-lora_allow_depthwise: False # (bool) Allow depthwise convolution
-lora_kernels: # (list[int], optional) Filter by kernel size
-lora_gradient_checkpointing: True # (bool) Enable gradient checkpointing for LoRA memory optimization
-lr0: 0.001
-lrf: 0.01 
-lora_lr_mult: 1.0
+
+# ---- MoE 路由策略 ----
+# 排除路由层: 医疗图像特征分布稳定, 短期微调不应改变 expert 分配动态
+lora_exclude_modules: ["router", "routing"]
+
+# ---- 训练优化参数 ----
+lora_backend: "fallback"
+lora_include_head: True
+lora_freeze_bn: False
+lora_lr_mult: 0.5
+lr0: 0.0005
 warmup_epochs: 5
+lora_dropout: 0.0
+lora_bias: "none"
+lora_variant: "lora"
+lora_only_3x3: False
+lora_use_dora: False
+lora_init_lora_weights: "gaussian"
+lora_only_backbone: False
+lora_include_moe: True
+lora_save_adapters: True

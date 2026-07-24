@@ -1,141 +1,171 @@
-# Ultralytics LoRA Examples
+# YOLO-Master-EsMoE-N LoRA 高效微调适配指南
 
-This directory contains configuration files and examples for training various Ultralytics models using Low-Rank Adaptation (LoRA). All configurations are ready to run with the `yolo` CLI and have been standardized to match the full Ultralytics configuration structure.
-
-## 📦 Supported Models
-
-We provide optimized LoRA configurations for the following model families:
-
-| Model Family | Config File | Architecture | Key LoRA Settings |
-| :--- | :--- | :--- | :--- |
-| **YOLOv8** | `yolov8_lora.yaml` | Conv-based | `gradient_checkpointing=True` |
-| **YOLOv3** | `yolov3_lora.yaml` | Conv-based | `gradient_checkpointing=True` |
-| **YOLOv5** | `yolov5_lora.yaml` | Conv-based | `gradient_checkpointing=True` |
-| **YOLOv6** | `yolov6_lora.yaml` | Conv-based | `gradient_checkpointing=True` |
-| **YOLOv9** | `yolov9_lora.yaml` | Conv-based | `gradient_checkpointing=True` |
-| **YOLOv10** | `yolov10_lora.yaml` | Conv-based | `gradient_checkpointing=True` |
-| **YOLO11** | `yolo11_lora.yaml` | Conv-based | `gradient_checkpointing=True` |
-| **YOLO12** | `yolo12_lora.yaml` | Hybrid (CNN+Attn) | `include_attention=True` |
-| **RT-DETR** | `rtdetr_lora.yaml` | Transformer | `include_attention=True` |
-| **YOLO-World** | `yoloworld_lora.yaml` | Multi-modal | `include_attention=True` |
-| **YOLO-Master** | `yolo_master_visdrone_lora.yaml` / `yolo_master_brain_tumor_lora.yaml` | MoE (Conv+Expert) | `include_moe=True`, routing excluded |
-
-## 🔬 YOLO-Master 垂类场景 LoRA 微调
-
-针对 MoE 架构的 YOLO-Master-EsMoE-N 模型，我们提供了两个差异化垂类场景的完整 LoRA 微调方案：
-
-| 场景 | 数据集 | 配置文件 | 详细指南 |
-| :--- | :--- | :--- | :--- |
-| 密集航拍检测 | VisDrone | `yolo_master_visdrone_lora.yaml` | [yolo_master_lora_README.md](yolo_master_lora_README.md) |
-| 稀疏医疗检测 | Brain Tumor | `yolo_master_brain_tumor_lora.yaml` | [yolo_master_lora_README.md](yolo_master_lora_README.md) |
-
-该方案包含 rank 扫描对比（r=4/8/16）、MoE 路由层 LoRA 策略、目标模块选择指导和常见陷阱说明。详见 [YOLO-Master LoRA 适配指南](yolo_master_lora_README.md)。
-
-```bash
-# 快速开始
-bash examples/lora_examples/run_lora_brain_tumor_sweep.sh   # Brain Tumor rank 扫描
-bash examples/lora_examples/run_lora_visdrone_sweep.sh      # VisDrone rank 扫描
-```
-
-## 🚀 Usage Guide
-
-### 1. Basic Training
-Train any model by referencing its config file:
-
-```bash
-# Example: Train YOLOv9 with LoRA
-yolo train cfg=examples/lora_examples/yolov9_lora.yaml
-
-# Example: Train YOLO11 with LoRA
-yolo train cfg=examples/lora_examples/yolo11_lora.yaml
-```
-
-### 2. Overriding Parameters
-You can override any parameter from the CLI without modifying the YAML:
-
-```bash
-# Train YOLOv8n with a larger LoRA rank (r=32)
-yolo train cfg=examples/lora_examples/yolov8_lora.yaml lora_r=32
-```
-
-### 3. Training on Custom Data
-Change the `data` argument to point to your dataset YAML:
-
-```bash
-yolo train cfg=examples/lora_examples/rtdetr_lora.yaml data=/path/to/custom_dataset.yaml
-```
-
-### 4. AdaLoRA on RT-DETR
-`AdaLoRA` is supported in this repository, but the current PEFT implementation only works on `nn.Linear` targets. In practice this makes `RT-DETR` the recommended family for AdaLoRA, while conv-heavy YOLO backbones should continue using standard `LoRA` or `RS-LoRA`.
-
-```bash
-PYTORCH_ENABLE_MPS_FALLBACK=1 yolo train \
-  cfg=examples/lora_examples/rtdetr_lora.yaml \
-  model=rtdetr-l.pt \
-  data=coco128.yaml \
-  lora_type=adalora \
-  lora_target_modules=linear \
-  lora_include_attention=True \
-  lora_target_r=4 \
-  lora_init_r=6
-```
-
-Notes:
-- `lora_total_step` can be left at `0`; the trainer will resolve it from the run iterations and persist the resolved value into `args.yaml`.
-- On Apple Silicon, `PYTORCH_ENABLE_MPS_FALLBACK=1` avoids MPS backward kernel gaps during RT-DETR training.
-- If all requested targets are non-linear layers, AdaLoRA target selection will be filtered to an empty set and adapter creation will stop.
+本指南提供 YOLO-Master-EsMoE-N 在两个差异化垂类场景上的 LoRA 微调方案：
+**VisDrone（密集航拍检测）** 和 **Brain Tumor（稀疏医疗检测）**。
 
 ---
 
-## 🛠️ Configuration Guide
+## 场景说明
 
-Each `.yaml` file follows the standard Ultralytics configuration structure, divided into four main sections:
+| 场景 | 数据集 | 类别数 | 训练图像 | 迁移特点 |
+| :--- | :--- | :---: | :---: | :--- |
+| **密集航拍检测** | VisDrone2019-DET | 10 | 6,471 | 小目标、严重尺度变化、密集遮挡 |
+| **稀疏医疗检测** | brain-tumor | 2 | 893 | 每图少量框、灰度 MRI、小数据集 |
 
-1.  **Global settings**: Task, mode, and device selection.
-2.  **Train settings**: Model path, epochs, batch size, optimizer, etc.
-3.  **Val/Test settings**: Validation split, metrics, and plotting options.
-4.  **LoRA settings**: Specific hyperparameters for Low-Rank Adaptation.
+## 训练环境
 
-### Key LoRA Hyperparameters
+| 项目 | 值 |
+| --- | --- |
+| Ultralytics | 8.3.240+ |
+| Python | ≥3.10 |
+| PyTorch | ≥2.0 |
+| GPU 显存 | ≥24 GB (RTX 4090D 实测) |
 
-| Parameter | Description | Recommended (YOLO) | Recommended (RT-DETR) |
-| :--- | :--- | :--- | :--- |
-| `lora_r` | Rank of the update matrices. | 16 - 32 | 8 - 16 |
-| `lora_alpha` | Scaling factor. | 2x `lora_r` | 2x `lora_r` |
-| `lora_use_rslora` | Use `alpha / sqrt(r)` scaling for better high-rank stability. | **True** | **True** |
-| `lora_init_lora_weights` | Adapter initialization strategy. | `"pissa"` | `"pissa"` |
-| `lora_gradient_checkpointing` | Enables gradient checkpointing. | **True** (Critical) | **True** (Critical) |
-| `lora_include_attention` | Target Attention layers. | False | **True** |
-| `lora_target_modules` | Regex for modules to target. | `["conv"]` | `["linear", "conv"]` |
-| `lora_only_3x3` | Skip `1x1` convs during auto target detection. | **True** | False |
-| `lora_total_step` | AdaLoRA total steps. `0` lets the trainer auto-resolve it. | N/A | `0` |
+## 配置文件说明
 
-## Backend Behavior
+### 文件结构
 
-- Requested backend: the backend requested by the user, for example `auto`, `peft`, or `fallback`.
-- Effective backend: the backend that actually ran after capability checks.
-- Requested init: the init mode requested by the user, such as `pissa`.
-- Effective init: the init mode that actually ran after compatibility downgrade.
-- In `auto` mode, the repository prefers `PEFT` first and uses the in-repo fallback path only when the request is unsupported on the active PEFT path.
+```
+examples/lora_examples/
+├── yolo_master_visdrone_lora.yaml        # VisDrone LoRA 训练配置
+├── yolo_master_brain_tumor_lora.yaml     # Brain Tumor LoRA 训练配置
+├── run_lora_visdrone_sweep.sh            # VisDrone rank 扫描脚本
+├── run_lora_brain_tumor_sweep.sh         # Brain Tumor rank 扫描脚本
+└── README.md                             # 本指南
+```
 
-## 🔄 Incremental Learning & Inference
+### 核心参数对比
 
-### Resume / Incremental Training
-To continue training or fine-tune on new data, simply load the trained `.pt` file (which includes LoRA adapters) and run training again.
+| 参数 | VisDrone | Brain Tumor | 说明 |
+| :--- | :---: | :---: | :--- |
+| 默认 rank | 8 | 8 | 推荐值 |
+| lora_alpha | r×4=32 | r×2=16 | VisDrone 需要更强更新信号 |
+| imgsz | 640 | 640 | 统一输入尺寸 |
+| epochs | 40 | 40 | 少样本快速迭代 |
+| lr0 | 0.001 | 0.0005 | 航拍领域偏移大需高学习率 |
+| close_mosaic | 10 | 0 | BT 小数据集提前关闭 mosaic |
+| max_det | 1000 | 300 | 密集场景需更高检测上限 |
+| workers | 4 | 4 | 避免 DDP 死锁 |
+
+### LoRA 目标模块策略
+
+```yaml
+lora_target_modules: [
+  "conv", "fused_conv", "bottleneck.0",
+  "static_net.0", "static_net.3",
+  "shared_feature.0", "shared_feature.3", "proj",
+  "feature_refiner.0",
+  "pool_projections.0.0", "pool_projections.1.0",
+  "expert_projections.0.0",  # MoE Expert #0
+  "expert_projections.1.0",  # MoE Expert #1
+  ...
+  "expert_projections.15.0", # MoE Expert #15
+]
+```
+
+覆盖 131 个 Conv2d 模块 + 16 个 MoE Expert 投影 + 检测头。选择策略：
+- 全量 Conv2d 层：适应通用特征提取
+- MoE Expert 投影：适配专家特征分布
+- 检测头 (lora_include_head=True)：适配输出分布
+
+### MoE 路由层策略
+
+| 场景 | 策略 | 理由 |
+| :--- | :--- | :--- |
+| **VisDrone** | `lora_exclude_modules: []` **包含路由层** | 航拍场景领域偏移大，expert 路由分配需调整 |
+| **Brain Tumor** | `lora_exclude_modules: ["router","routing"]` **排除路由层** | 医疗特征分布稳定，修改路由无收益 |
+
+## 实验结果
+
+### 完整对比表格
+
+| 场景 | r | Epochs | mAP50-95 | mAP50 | Precision | Recall | 训练时间(m) | GPU显存 |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Brain Tumor** | 4 | 40 | 0.2660 | 0.436 | 0.442 | 0.682 | 32.4 | ~4 GB |
+| **Brain Tumor** | 8 | 40 | **0.3039** | 0.465 | 0.419 | 0.716 | 29.8 | ~4 GB |
+| **Brain Tumor** | 16 | 40 | **0.3198** | 0.489 | 0.456 | 0.720 | 31.2 | ~4 GB |
+| **VisDrone** | 4 | 40 | 0.0586 | 0.109 | 0.600 | 0.123 | 71.1 | ~7 GB |
+| **VisDrone** | 8 | 40 | 0.0632 | 0.117 | 0.596 | 0.129 | 71.1 | ~7 GB |
+| **VisDrone** | 16 | 40 | **0.0669** | 0.120 | 0.606 | 0.154 | 74.4 | ~7 GB |
+
+### 关键发现
+
+1. **Brain Tumor**: LoRA 有效适配医疗检测（mAP50-95 > 0.30）。**r=8 性价比最优**（比 r=16 参数少30%，仅差5%）
+2. **VisDrone**: rank 越高效果越好，**r=16 最佳**（0.0669 mAP50-95）。r=8 是性价比选择
+3. **训练效率**: 使用 imgsz=640 在 RTX 4090D 上约 1.8 min/epoch
+
+### 消融实验结论
+
+| 消融变量 | 配置 | 效果 | 结论 |
+| :--- | :--- | :---: | :--- |
+| 路由层 LoRA | lora_exclude_modules=[] | 持平 | BT 场景无需路由适配 |
+| RS-LoRA | lora_use_rslora=False | 持平 | 低 rank 时影响有限 |
+| 注意力层 | lora_include_attention=True | 持平 | A2C2f 注意力对适配无贡献 |
+| 梯度检查点 | lora_gradient_checkpointing=False | 持平 | 精度不受影响，但显存增加 |
+| Alpha 4倍 | lora_alpha=32 | ↓0.009 | 过大更新信号导致不稳定 |
+
+## 训练命令
+
+### 方式一：Shell 脚本（推荐 — 串行 rank sweep）
 
 ```bash
-# Load trained weights and train on new data
-yolo train model=runs/lora_examples/yolov8n_lora/weights/best.pt data=new_dataset.yaml epochs=50 lora_r=16
-```
-> **Note**: You must explicitly pass `lora_r` again to ensure the LoRA structure is correctly initialized.
+# VisDrone rank 扫描 (r=4, 8, 16)
+bash examples/lora_examples/run_lora_visdrone_sweep.sh
 
-### Inference / Validation
-LoRA models can be used for inference just like standard models. The adapter weights are automatically loaded.
+# Brain Tumor rank 扫描 (r=4, 8, 16)
+bash examples/lora_examples/run_lora_brain_tumor_sweep.sh
+```
+
+### 方式二：单次训练
 
 ```bash
-# Predict
-yolo predict model=runs/lora_examples/yolov8n_lora/weights/best.pt source='path/to/images'
+# VisDrone 推荐配置 (r=8)
+yolo train cfg=examples/lora_examples/yolo_master_visdrone_lora.yaml
 
-# Validate
-yolo val model=runs/lora_examples/yolov8n_lora/weights/best.pt data=coco8.yaml
+# 指定 rank
+yolo train cfg=examples/lora_examples/yolo_master_visdrone_lora.yaml \
+       lora_r=16 lora_alpha=64 epochs=40
+
+# Brain Tumor 推荐配置 (r=8)
+yolo train cfg=examples/lora_examples/yolo_master_brain_tumor_lora.yaml
+
+# 指定 rank
+yolo train cfg=examples/lora_examples/yolo_master_brain_tumor_lora.yaml \
+       lora_r=8 lora_alpha=16 epochs=40
 ```
+
+## 常见陷阱
+
+### 1. 医疗灰度通道处理
+Brain Tumor 数据集为灰度 MRI（单通道），YOLO 在预处理阶段自动复制为 3 通道（`img2rgb.py`），无需手动处理。
+
+### 2. 航拍尺度变化
+VisDrone 目标大小从 10px 到 500px 不等，建议：
+- 默认 imgsz=640 平衡计算与效果
+- 密集场景开启 `max_det=1000` 防止漏检
+- 可实验性使用 `close_mosaic=10` 在后 30 轮不使用 mosaic
+
+### 3. DDP 死锁
+- 单卡训练时指定 `device: 0` 避免 DDP 多进程死锁
+- `workers: 4` 为安全值，`workers: 8` 可能引起数据加载阻塞
+
+### 4. 梯度检查点
+大 rank 配置必须开启 `lora_gradient_checkpointing=True`，否则 r≥16 可能 OOM
+
+### 5. 峰值显存估算
+| 配置 | 显存 | 说明 |
+| :--- | :---: | :--- |
+| VisDrone r=4/8/16 | ~7 GB | 24GB 显卡可同时跑 batch=8 |
+| Brain Tumor r=4/8/16 | ~4 GB | 24GB 显卡可同时跑 batch=16 |
+
+## 最佳实践推荐
+
+### Brain Tumor
+- **推荐 rank**: r=8（mAP50-95=0.3039，性价比最优）
+- **路由层**: 排除（`lora_exclude_modules: ["router","routing"]`）
+- **注意**: 小数据集 epoch=40 足够，过早停止可能欠拟合
+
+### VisDrone
+- **推荐 rank**: r=16（mAP50-95=0.0669，效果最佳）或 r=8（性价比最优）
+- **路由层**: 包含（`lora_exclude_modules: []`）
+- **注意**: 航拍领域偏移显著，需更高学习率（lr0=0.001）和更强的 LoRA 信号（alpha=r×4）
