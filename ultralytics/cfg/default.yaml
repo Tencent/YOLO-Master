@@ -101,7 +101,7 @@ warmup_momentum: 0.8 # (float) initial momentum during warmup
 warmup_bias_lr: 0.1 # (float) bias learning rate during warmup
 distill_model: # (str, optional) path to teacher model for knowledge distillation
 dis: 6.0 # (float) distillation loss weight
-moe_dynamic_schedule: none # (str) dynamic MoE balance-loss scheduling: none or gini
+moe_dynamic_schedule: none # (str) epoch-level MoE balance-loss scheduling: none or gini
 box: 7.5 # (float) box loss gain
 cls: 0.5 # (float) classification loss gain
 cls_pw: 0.0 # (float) class weights power for handling class imbalance (0.0=disable, 1.0=full inverse frequency)
@@ -246,6 +246,11 @@ moe_weight_threshold: 0.01 # (float) Weight threshold for conditional computatio
 moe_expert_warmup_epochs: 3 # (int) Epochs to freeze experts while router learns (was 5, too long)
 moe_router_lr_scale: 0.5 # (float) Router LR as fraction of base LR (was 0.1, too small to correct collapse)
 moe_collapse_threshold: 0.8 # (float) If max expert usage > threshold, trigger collapse recovery
+moe_dynamic_gini_target: 0.25 # (float) target expert-usage Gini for dynamic balance scheduling
+moe_dynamic_gini_alpha: 1.0 # (float) exponential response gain for Gini scheduling
+moe_dynamic_gini_beta: 0.8 # (float) epoch-to-epoch EMA momentum for Gini scheduling
+moe_dynamic_balance_min: 0.5 # (float) minimum dynamic MoE balance-loss coefficient
+moe_dynamic_balance_max: 2.0 # (float) maximum dynamic MoE balance-loss coefficient
 mot_balance_loss: 0.01 # (float) GShard balance loss coefficient for MoT blocks
 mot_router_z_loss: 0.01 # (float) Router z-loss coefficient for MoT blocks
 mot_temperature: 1.0 # (float) Initial MoT router temperature

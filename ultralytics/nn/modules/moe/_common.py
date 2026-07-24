@@ -82,6 +82,8 @@ MOE_SNAPSHOT_INTERVAL = max(int(os.environ.get("MOE_SNAPSHOT_INTERVAL", "10")), 
 
 def _should_record_snapshot(module: nn.Module) -> bool:
     """Per-module forward gate so snapshots are taken every Nth step only."""
+    if getattr(module, "_moe_force_snapshot", False):
+        return True
     if MOE_SNAPSHOT_INTERVAL <= 1:
         return True
     c = getattr(module, "_moe_snap_counter", 0) + 1

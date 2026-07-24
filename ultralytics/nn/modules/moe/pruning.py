@@ -5,16 +5,23 @@ import torch.nn as nn
 import copy
 import argparse
 from typing import Dict, List, Optional, Tuple, Any
-from .analysis import ExpertUsageTracker
+from ultralytics.nn.modules.moe.analysis import ExpertUsageTracker
 from ultralytics.utils import LOGGER
 
 
 class MoEPruner:
     """Pruner for Mixture-of-Experts models based on usage statistics"""
     
-    def __init__(self, model_path: str, threshold: float = 0.15, dataset: str = 'coco8.yaml',
-                 device: Optional[str] = None, importance_mode: str = "usage",
-                 keep_top_m: Optional[int] = None):
+    def __init__(
+        self,
+        model_path: str,
+        threshold: float = 0.15,
+        dataset: str = 'coco8.yaml',
+        device: Optional[str] = None,
+        importance_mode: str = "usage",
+        keep_top_m: Optional[int] = None,
+        usage_stats: Optional[Dict[str, Dict[int, Any]]] = None,
+    ):
         """
         Initialize MoE pruner
 
@@ -31,6 +38,8 @@ class MoEPruner:
                 experts by how strongly the router favours them).
             keep_top_m: If set, always keep the top-M highest-scoring experts
                 regardless of threshold.
+            usage_stats: Optional pre-computed usage statistics. When provided,
+                the diagnosis pass is skipped and these stats are reused.
         """
         self.model_path = model_path
         self.threshold = threshold
@@ -39,7 +48,7 @@ class MoEPruner:
         self.importance_mode = importance_mode
         self.keep_top_m = keep_top_m
         self.model = None
-        self.usage_stats: Dict[str, Dict[int, Any]] = {}
+        self.usage_stats: Dict[str, Dict[int, Any]] = usage_stats if usage_stats is not None else {}
         self.pruning_plan: Dict[str, List[int]] = {}
 
     def _expert_score(self, stats: Any, total_hits: float) -> float:
@@ -83,22 +92,37 @@ class MoEPruner:
             raise RuntimeError(f"Failed to load model: {e}")
     
     def _diagnose_usage(self) -> None:
-        """Run diagnosis to collect expert usage statistics"""
+        """Run diagnosis to collect expert usage statistics."""
+        if self.usage_stats:
+            LOGGER.info("[Phase 1] Reusing pre-computed expert usage stats")
+            return
+
         LOGGER.info("\n[Phase 1] Diagnosing Expert Usage...")
-        
+
         with ExpertUsageTracker(self.model.model) as tracker:
             try:
                 self.model.val(
-                    data=self.dataset, 
-                    split='val', 
-                    batch=1, 
-                    verbose=False, 
+                    data=self.dataset,
+                    split='val',
+                    batch=1,
+                    verbose=False,
                     device=self.device
                 )
                 self.usage_stats = tracker.usage_stats
                 LOGGER.info(f"✅ Collected usage stats for {len(self.usage_stats)} layers")
             except Exception as e:
                 raise RuntimeError(f"Diagnosis failed: {e}")
+
+    def collect_usage(self) -> Dict[str, Dict[int, Any]]:
+        """Load the model and collect expert usage statistics once.
+
+        Returns:
+            Mapping from layer name to per-expert usage statistics.
+        """
+        if not self.usage_stats:
+            self._load_model()
+            self._diagnose_usage()
+        return self.usage_stats
     
     def _create_pruning_plan(self) -> None:
         """Create pruning plan based on usage statistics"""
@@ -136,7 +160,7 @@ class MoEPruner:
             
             # Safety check: ensure at least one expert remains
             if len(experts_to_keep) == 0:
-                LOGGER.info(f"     ❌ Error: All experts would be pruned! Keeping top expert.")
+                LOGGER.info("     ❌ Error: All experts would be pruned! Keeping top expert.")
                 # Keep the expert with highest usage
                 top_expert = max(stats.items(), key=lambda x: x[1].hits)[0]
                 experts_to_keep = [top_expert]
@@ -230,6 +254,15 @@ class MoEPruner:
         loss_fn = getattr(moe_module, "moe_loss_fn", None)
         if loss_fn is not None and hasattr(loss_fn, "num_experts"):
             loss_fn.num_experts = len(keep_indices)
+
+        # ES_MOE keeps a non-persistent per-expert diagnostics buffer.  It is
+        # still present after deepcopy even though it is omitted from the
+        # checkpoint state_dict.  Leaving its original length makes the first
+        # post-pruning forward fail when the new usage vector is copied into
+        # it (for example, 3 experts -> 2 experts).
+        usage = getattr(moe_module, "expert_usage_counts", None)
+        if isinstance(usage, torch.Tensor) and usage.numel() == len(old_experts):
+            moe_module._buffers["expert_usage_counts"] = usage.detach()[keep_indices].clone()
         
         # Adjust top_k if necessary
         if hasattr(moe_module, 'top_k') and moe_module.top_k > moe_module.num_experts:
@@ -268,8 +301,8 @@ class MoEPruner:
         """
         results = self._find_projection_layers(router, num_old_experts)
         if not results:
-            LOGGER.info(f"     ⚠️  Could not locate router projection layer. "
-                  f"Skipping weight pruning.")
+            LOGGER.info("     ⚠️  Could not locate router projection layer. "
+                  "Skipping weight pruning.")
             return False
         for proj_layer, layer_path in results:
             LOGGER.info(f"     ✂️  Pruning router projection ({layer_path})")
@@ -387,7 +420,7 @@ class MoEPruner:
             pruned_model: Pruned model
             output_path: Output file path
         """
-        LOGGER.info(f"\n[Phase 4] Saving Pruned Model...")
+        LOGGER.info("\n[Phase 4] Saving Pruned Model...")
         
         # Update YOLO wrapper
         self.model.model = pruned_model
@@ -472,9 +505,9 @@ class MoEPruner:
             True if pruning successful
         """
         LOGGER.info(f"\n{'='*80}")
-        LOGGER.info(f"✂️  MoE MODEL PRUNING PIPELINE".center(80))
+        LOGGER.info("✂️  MoE MODEL PRUNING PIPELINE".center(80))
         LOGGER.info(f"{'='*80}")
-        LOGGER.info(f"\n📋 Configuration:")
+        LOGGER.info("\n📋 Configuration:")
         LOGGER.info(f"   • Input Model: {self.model_path}")
         LOGGER.info(f"   • Output Model: {output_path}")
         LOGGER.info(f"   • Usage Threshold: {self.threshold*100:.1f}%")
@@ -501,7 +534,7 @@ class MoEPruner:
             
             if success:
                 LOGGER.info(f"\n{'='*80}")
-                LOGGER.info(f"🎉 PRUNING COMPLETED SUCCESSFULLY".center(80))
+                LOGGER.info("🎉 PRUNING COMPLETED SUCCESSFULLY".center(80))
                 LOGGER.info(f"{'='*80}\n")
             
             return success
@@ -514,24 +547,28 @@ class MoEPruner:
 
 
 def prune_moe_model(
-    model_path: str, 
-    output_path: str, 
-    threshold: float = 0.15, 
-    dataset: str = 'coco8.yaml'
+    model_path: str,
+    output_path: str,
+    threshold: float = 0.15,
+    dataset: str = 'coco8.yaml',
+    device: Optional[str] = None,
+    importance_mode: str = "usage",
 ) -> bool:
     """
     Prune MoE model by removing underutilized experts
-    
+
     Args:
         model_path: Path to input model file
         output_path: Path to save pruned model
         threshold: Minimum usage percentage to keep expert (0.0-1.0)
         dataset: Dataset configuration for validation
-        
+        device: Ultralytics device string
+        importance_mode: Expert importance scoring mode
+
     Returns:
         True if pruning successful
     """
-    pruner = MoEPruner(model_path, threshold, dataset)
+    pruner = MoEPruner(model_path, threshold, dataset, device=device, importance_mode=importance_mode)
     return pruner.prune(output_path)
 
 
@@ -551,9 +588,9 @@ def main():
         help="Path to save pruned model"
     )
     parser.add_argument(
-        "--threshold", 
-        type=float, 
-        default=0.15, 
+        "--threshold",
+        type=float,
+        default=0.15,
         help="Minimum usage percentage to keep expert (0.0-1.0)"
     )
     parser.add_argument(
@@ -561,18 +598,31 @@ def main():
         default="coco8.yaml",
         help="Dataset configuration for validation"
     )
-    
+    parser.add_argument(
+        "--device",
+        default=None,
+        help="Ultralytics device string, e.g. '0', '0,1,2,3', 'cpu'"
+    )
+    parser.add_argument(
+        "--importance-mode",
+        choices=("usage", "usage_weight"),
+        default="usage",
+        help="Expert importance scoring mode"
+    )
+
     args = parser.parse_args()
-    
+
     # Validate threshold
     if not 0.0 <= args.threshold <= 1.0:
         parser.error("Threshold must be between 0.0 and 1.0")
-    
+
     success = prune_moe_model(
-        args.model_path, 
-        args.output, 
+        args.model_path,
+        args.output,
         args.threshold,
-        args.dataset
+        args.dataset,
+        device=args.device,
+        importance_mode=args.importance_mode,
     )
     
     exit(0 if success else 1)
