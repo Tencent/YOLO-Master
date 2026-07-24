@@ -39,10 +39,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from ultralytics import YOLO  # noqa: E402
+from ultralytics.cfg import get_cfg  # noqa: E402
 from ultralytics.nn.modules.moe.analysis import ExpertUsageTracker  # noqa: E402
 from ultralytics.nn.modules.moe.pruning import MoEPruner  # noqa: E402
 from ultralytics.nn.modules.moe.scheduler import compute_gini  # noqa: E402
 from ultralytics.nn.modules.moe.utils import is_core_moe_block  # noqa: E402
+from ultralytics.utils.lora import apply_lora  # noqa: E402
 
 
 DEFAULT_THRESHOLDS = (0.05, 0.10, 0.15, 0.20, 0.30)
@@ -114,6 +116,78 @@ def _expert_counts(model: torch.nn.Module) -> dict[str, int]:
         for name, module in model.named_modules()
         if is_core_moe_block(module) and hasattr(module, "experts")
     }
+
+
+def _canonical_moe_layer_name(name: str) -> str:
+    """Normalize PEFT wrapper prefixes so pre/post-recovery signatures are comparable."""
+    for prefix in ("model.base_model.model.", "base_model.model."):
+        if name.startswith(prefix):
+            return f"model.{name.removeprefix(prefix)}"
+    return name
+
+
+def _expert_signature(model: torch.nn.Module) -> dict[str, dict[str, int]]:
+    """Return a stable structural signature for every core MoE layer."""
+    return {
+        _canonical_moe_layer_name(name): {
+            "num_experts": int(getattr(module, "num_experts", len(module.experts))),
+            "top_k": int(getattr(module, "top_k", 0)),
+        }
+        for name, module in model.named_modules()
+        if is_core_moe_block(module) and hasattr(module, "experts")
+    }
+
+
+def _freeze_detection_heads(model: torch.nn.Module) -> int:
+    """Lock all detector heads after adapter injection and return their parameter count."""
+    frozen = 0
+    for module in model.modules():
+        if not any(base.__name__ == "Detect" for base in module.__class__.mro()):
+            continue
+        for parameter in module.parameters():
+            parameter.requires_grad = False
+            frozen += parameter.numel()
+    return frozen
+
+
+def _detection_head_parameter_count(model: torch.nn.Module) -> int:
+    """Return the number of parameters owned by concrete Detect heads."""
+    return sum(
+        parameter.numel()
+        for module in model.modules()
+        if any(base.__name__ == "Detect" for base in module.__class__.mro())
+        for parameter in module.parameters()
+    )
+
+
+def _prepare_structure_preserving_lora(
+    recovered: YOLO, args: argparse.Namespace
+) -> tuple[dict[str, dict[str, int]], int]:
+    """Inject LoRA into the loaded pruned graph before Trainer can rebuild it from YAML."""
+    before = _expert_signature(recovered.model)
+    lora_args = get_cfg(
+        overrides={
+            "lora_r": args.lora_r,
+            "lora_alpha": args.lora_alpha,
+            "lora_include_moe": True,
+            "lora_include_head": False,
+            "lora_freeze_bn": True,
+            "lora_save_adapters": False,
+            "lora_gradient_checkpointing": False,
+            "lora_lr_mult": args.lora_lr_mult,
+            "lora_alpha_warmup": 3,
+        }
+    )
+    recovered.model = apply_lora(recovered.model, lora_args)
+    frozen_head_params = _freeze_detection_heads(recovered.model)
+    after = _expert_signature(recovered.model)
+    if not before or after != before:
+        raise RuntimeError(f"LoRA injection changed the pruned MoE graph: before={before}, after={after}")
+    if not getattr(recovered.model, "lora_enabled", False):
+        raise RuntimeError("LoRA injection did not activate an adapter model")
+    if frozen_head_params <= 0:
+        raise RuntimeError("No detection-head parameters were found to lock")
+    return before, frozen_head_params
 
 
 def _tracker_gini(tracker: ExpertUsageTracker, model: torch.nn.Module) -> dict[str, float]:
@@ -486,6 +560,14 @@ def _run_pruning_sweep(args: argparse.Namespace, baseline_ckpt: Path) -> None:
     if args.skip_existing and results_csv.exists():
         with results_csv.open(newline="", encoding="utf-8") as handle:
             rows = list(csv.DictReader(handle))
+    if args.rerun_lora:
+        rows = [
+            row
+            for row in rows
+            if row["recovery"] != "lora10" or "lora_recovery_structural" in row.get("checkpoint", "")
+        ]
+        if rows:
+            _write_csv(results_csv, rows)
 
     def completed(threshold: float, recovery: str) -> bool:
         return any(float(row["threshold"]) == threshold and row["recovery"] == recovery for row in rows)
@@ -542,9 +624,13 @@ def _run_pruning_sweep(args: argparse.Namespace, baseline_ckpt: Path) -> None:
             _write_csv(results_csv, rows)
             print(f"[pruning t={threshold}] direct map50-95={direct['map50_95']:.4f}")
 
-        recovered_path = point_dir / "lora_recovery" / "lora10" / "weights" / "best.pt"
+        recovery_dir = point_dir / "lora_recovery_structural"
+        recovered_path = recovery_dir / "lora10" / "weights" / "best.pt"
+        source_signature = _expert_signature(YOLO(str(pruned_path)).model)
+        frozen_head_params = 0
         if not recovered_path.exists() or not args.skip_existing:
             recovered = YOLO(str(pruned_path))
+            source_signature, frozen_head_params = _prepare_structure_preserving_lora(recovered, args)
             recovered.train(
                 data=str(args.data),
                 epochs=args.lora_epochs,
@@ -553,19 +639,52 @@ def _run_pruning_sweep(args: argparse.Namespace, baseline_ckpt: Path) -> None:
                 workers=args.workers,
                 device=args.device,
                 seed=args.seed,
-                project=str(point_dir / "lora_recovery"),
+                project=str(recovery_dir),
                 name="lora10",
                 exist_ok=True,
                 val=True,
                 plots=False,
                 amp=args.amp,
+                pretrained=True,
+                lr0=args.lora_lr0,
                 lora_r=args.lora_r,
                 lora_alpha=args.lora_alpha,
+                lora_lr_mult=args.lora_lr_mult,
                 lora_include_moe=True,
-                lora_include_head=True,
+                lora_include_head=False,
                 lora_freeze_bn=True,
+                lora_gradient_checkpointing=False,
+                lora_alpha_warmup=3,
                 lora_save_adapters=False,
             )
+        recovered_model = YOLO(str(recovered_path))
+        frozen_head_params = frozen_head_params or _detection_head_parameter_count(recovered_model.model)
+        recovered_signature = _expert_signature(recovered_model.model)
+        if recovered_signature != source_signature:
+            raise RuntimeError(
+                f"Recovered checkpoint changed the pruned MoE graph: source={source_signature}, "
+                f"recovered={recovered_signature}"
+            )
+        signature_path = recovery_dir / "lora10" / "structure_signature.json"
+        signature_path.write_text(
+            json.dumps(
+                {
+                    "status": "preserved",
+                    "source_checkpoint": str(pruned_path),
+                    "recovered_checkpoint": str(recovered_path),
+                    "source_signature": source_signature,
+                    "recovered_signature": recovered_signature,
+                    "detection_head_locked": True,
+                    "frozen_head_params_at_injection": frozen_head_params,
+                    "lr0": args.lora_lr0,
+                    "lora_lr_mult": args.lora_lr_mult,
+                    "lora_rank": args.lora_r,
+                    "lora_alpha": args.lora_alpha,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
         if not completed(threshold, "lora10"):
             lora = _evaluate(
                 recovered_path,
@@ -821,6 +940,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lora-epochs", type=int, default=10)
     parser.add_argument("--lora-r", type=int, default=8)
     parser.add_argument("--lora-alpha", type=int, default=16)
+    parser.add_argument("--lora-lr0", type=float, default=1e-3)
+    parser.add_argument("--lora-lr-mult", type=float, default=1.0)
     parser.add_argument("--thresholds", type=float, nargs="+", default=DEFAULT_THRESHOLDS)
     parser.add_argument("--importance-mode", choices=("usage", "usage_weight"), default="usage_weight")
     parser.add_argument("--max-map-drop", type=float, default=0.01)
@@ -828,6 +949,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--warmup", type=int, default=20)
     parser.add_argument("--runs", type=int, default=100)
     parser.add_argument("--skip-existing", action="store_true")
+    parser.add_argument(
+        "--rerun-lora",
+        action="store_true",
+        help="Discard legacy LoRA rows and resume/re-run structure-preserving recovery outputs.",
+    )
     parser.add_argument("--skip-pruning", action="store_true")
     parser.add_argument("--skip-schedule", action="store_true")
     parser.add_argument("--dry-run", action="store_true")

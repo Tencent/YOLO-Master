@@ -15,6 +15,9 @@ from scripts.run_issue52_full import (
     PRUNE_FIELDS,
     SCHEDULE_VARIANTS,
     _analyze_pruning,
+    _canonical_moe_layer_name,
+    _expert_signature,
+    _freeze_detection_heads,
     _summarize_schedule,
     _tracker_gini,
     _write_csv,
@@ -111,6 +114,32 @@ def test_full_runner_uses_real_gini_dynamic_variant():
     assert SCHEDULE_VARIANTS["dynamic"]["args"]["moe_dynamic_schedule"] == "gini"
     assert SCHEDULE_VARIANTS["baseline"]["args"]["moe_dynamic_schedule"] == "none"
     assert (DEFAULT_BATCH, DEFAULT_IMGSZ) == (36, 1344)
+
+
+def test_structure_signature_normalizes_peft_wrapper_prefix():
+    assert _canonical_moe_layer_name("model.3") == "model.3"
+    assert _canonical_moe_layer_name("model.base_model.model.3") == "model.3"
+    assert _canonical_moe_layer_name("base_model.model.12") == "model.12"
+
+    model = nn.Module()
+    model.model = nn.ModuleList([nn.Identity(), ES_MOE(8, 8, num_experts=2, top_k=1)])
+    assert _expert_signature(model) == {"model.1": {"num_experts": 2, "top_k": 1}}
+
+
+def test_structure_preserving_recovery_locks_detection_head_only():
+    class Detect(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.proj = nn.Linear(4, 2)
+
+    backbone = nn.Linear(4, 4)
+    head = Detect()
+    model = nn.Sequential(backbone, head)
+    frozen = _freeze_detection_heads(model)
+
+    assert frozen == sum(parameter.numel() for parameter in head.parameters())
+    assert all(parameter.requires_grad for parameter in backbone.parameters())
+    assert not any(parameter.requires_grad for parameter in head.parameters())
 
 
 def test_tracker_gini_ignores_nested_lora_router_name_matches():

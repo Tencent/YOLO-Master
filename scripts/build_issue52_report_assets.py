@@ -11,6 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCAL_RESULTS = ROOT / "runs/issue52_coco128_corrected/pruning/results.csv"
+RECOVERY_ROOT = ROOT / "runs/issue52_coco128_corrected/pruning"
 DYNAMIC_SUMMARY = ROOT / "runs/issue52_coco128_dynamic_selfrun_v2/dynamic_schedule_summary.csv"
 DYNAMIC_TRACE = ROOT / "runs/issue52_coco128_dynamic_selfrun_v2/issue52_gini_balance/moe_dynamic_schedule.csv"
 
@@ -40,6 +41,15 @@ def relative_checkpoint(value: str) -> str:
         return value
 
 
+def normalize_layer_json(value: str) -> str:
+    """Strip PEFT wrapper prefixes from layer-keyed JSON fields."""
+    layers = json.loads(value)
+    return json.dumps(
+        {name.replace("model.base_model.model.", "model."): item for name, item in layers.items()},
+        sort_keys=True,
+    )
+
+
 def archive_pruning(source: Path, output: Path) -> list[dict[str, str]]:
     archived = output / "coco128-pruning-results.csv"
     if source.exists():
@@ -57,8 +67,8 @@ def archive_pruning(source: Path, output: Path) -> list[dict[str, str]]:
                     "latency_mean_ms": row["latency_ms"],
                     "params_M": row["params_m"],
                     "mean_gini": row["mean_gini"],
-                    "experts_per_layer": row["experts_per_layer"],
-                    "layer_gini": row["layer_gini"],
+                    "experts_per_layer": normalize_layer_json(row["experts_per_layer"]),
+                    "layer_gini": normalize_layer_json(row["layer_gini"]),
                 }
             )
         write_csv(archived, rows)
@@ -125,6 +135,51 @@ def archive_dynamic(summary: Path, trace: Path, output: Path) -> tuple[list[dict
     return read_csv(summary_out), read_csv(trace_out)
 
 
+def archive_recovery(recovery_root: Path, output: Path) -> list[dict[str, object]]:
+    """Archive structure signatures and per-epoch metrics from the corrected LoRA recovery."""
+    signature_rows: list[dict[str, object]] = []
+    curve_rows: list[dict[str, object]] = []
+    for threshold in (0.05, 0.10, 0.15, 0.20, 0.30):
+        tag = f"t{int(round(threshold * 100)):02d}"
+        run_dir = recovery_root / f"threshold_{tag}" / "lora_recovery_structural" / "lora10"
+        signature_path = run_dir / "structure_signature.json"
+        results_path = run_dir / "results.csv"
+        if not signature_path.exists() or not results_path.exists():
+            raise FileNotFoundError(f"Required local structural recovery output is missing: {run_dir}")
+        signature = json.loads(signature_path.read_text(encoding="utf-8"))
+        signature_rows.append(
+            {
+                "threshold": threshold,
+                "status": signature["status"],
+                "detection_head_locked": str(signature["detection_head_locked"]).lower(),
+                "frozen_head_params": signature["frozen_head_params_at_injection"],
+                "lr0": signature["lr0"],
+                "lora_lr_mult": signature["lora_lr_mult"],
+                "lora_rank": signature["lora_rank"],
+                "lora_alpha": signature["lora_alpha"],
+                "source_signature": json.dumps(signature["source_signature"], sort_keys=True),
+                "recovered_signature": json.dumps(signature["recovered_signature"], sort_keys=True),
+            }
+        )
+        for raw in read_csv(results_path):
+            row = {key.strip(): value for key, value in raw.items()}
+            curve_rows.append(
+                {
+                    "threshold": threshold,
+                    "epoch": row["epoch"],
+                    "mAP50-95": row["metrics/mAP50-95(B)"],
+                    "mAP50": row["metrics/mAP50(B)"],
+                    "train_box_loss": row["train/box_loss"],
+                    "train_cls_loss": row["train/cls_loss"],
+                    "train_dfl_loss": row["train/dfl_loss"],
+                    "train_mixture_aux_loss": row["train/mixture_aux_loss"],
+                }
+            )
+    write_csv(output / "coco128-lora-structure-signatures.csv", signature_rows)
+    write_csv(output / "coco128-lora-training-curves.csv", curve_rows)
+    return curve_rows
+
+
 def archive_auxiliary(output: Path) -> None:
     write_csv(
         output / "coco128-resource-profile.csv",
@@ -157,6 +212,7 @@ def build_plots(
     pareto: list[dict[str, object]],
     dynamic: list[dict[str, str]],
     trace: list[dict[str, str]],
+    recovery_curves: list[dict[str, object]],
     output: Path,
 ) -> None:
     import matplotlib
@@ -190,6 +246,28 @@ def build_plots(
         axis.legend()
         fig.tight_layout()
         fig.savefig(output / filename, dpi=180)
+        plt.close(fig)
+
+    if recovery_curves:
+        fig, axis = plt.subplots(figsize=(7.4, 4.8))
+        for threshold in sorted({float(row["threshold"]) for row in recovery_curves}):
+            group = [row for row in recovery_curves if float(row["threshold"]) == threshold]
+            axis.plot(
+                [float(row["epoch"]) for row in group],
+                [float(row["mAP50-95"]) for row in group],
+                marker="o",
+                linewidth=1.8,
+                label=f"t={threshold:.2f}",
+            )
+        axis.set(
+            xlabel="Recovery epoch",
+            ylabel="Validation mAP50-95",
+            title="COCO128 structure-preserving LoRA recovery",
+        )
+        axis.grid(alpha=0.25)
+        axis.legend(ncol=2, fontsize=8)
+        fig.tight_layout()
+        fig.savefig(output / "coco128-lora-recovery-curves.png", dpi=180)
         plt.close(fig)
 
     points = [row for row in pruning if row["stage"] != "dense"]
@@ -319,10 +397,11 @@ def build_plots(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--local-results", type=Path, default=LOCAL_RESULTS)
+    parser.add_argument("--recovery-root", type=Path, default=RECOVERY_ROOT)
     parser.add_argument("--dynamic-summary", type=Path, default=DYNAMIC_SUMMARY)
     parser.add_argument("--dynamic-trace", type=Path, default=DYNAMIC_TRACE)
     parser.add_argument("--data-output", type=Path, default=ROOT / "reports/moe-pruning")
-    parser.add_argument("--figure-output", type=Path, default=ROOT / "reports/issue52-figs")
+    parser.add_argument("--figure-output", type=Path, default=ROOT / "reports/moe-pruning/figs")
     return parser.parse_args()
 
 
@@ -332,11 +411,12 @@ def main() -> int:
     figure_output = args.figure_output.resolve()
     data_output.mkdir(parents=True, exist_ok=True)
     pruning = archive_pruning(args.local_results.resolve(), data_output)
+    recovery_curves = archive_recovery(args.recovery_root.resolve(), data_output)
     layers = derive_layers(data_output, pruning)
     pareto = derive_pareto(data_output, pruning)
     dynamic, trace = archive_dynamic(args.dynamic_summary.resolve(), args.dynamic_trace.resolve(), data_output)
     archive_auxiliary(data_output)
-    build_plots(pruning, layers, pareto, dynamic, trace, figure_output)
+    build_plots(pruning, layers, pareto, dynamic, trace, recovery_curves, figure_output)
     print(f"Local COCO128 CSV files written to {data_output}")
     print(f"Local COCO128 figures written to {figure_output}")
     return 0

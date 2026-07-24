@@ -13,9 +13,10 @@
 100 epoch 训练消融。所有训练均使用 640 输入、batch 32、GPU 6、seed 42；原始 checkpoint 的直接验证
 mAP50-95 为 0.54039，三组调度训练也都从该 checkpoint 的 811/811 权重项启动。
 
-剪枝得到明确的负结果：阈值 0.05 仅删除 1/12 个专家槽，mAP50-95 已从 0.54039 降至 0.11281；阈值
-0.10 及以上精度接近零。当前 LoRA 恢复路径又会按 YAML 重建为每层 3 个专家，已经不是结构保持的恢复。
-以“mAP50-95 绝对下降不超过 0.01 且确实减少专家”为标准，本轮没有可部署的剪枝 Sweet Spot。
+剪枝直接验证得到明确的负结果：阈值 0.05 仅删除 1/12 个专家槽，mAP50-95 已从 0.54039 降至
+0.11281；阈值 0.10 及以上精度接近零。修复后的 LoRA 恢复在原剪枝 module graph 上训练，五档 checkpoint
+均通过专家数与 Top-k 签名校验；其中 0.05 在 10 epoch 后恢复到 0.46512，但相对 dense 仍下降 0.07527。
+以“mAP50-95 绝对下降不超过 0.01 且确实减少专家”为标准，本轮仍没有可部署的剪枝 Sweet Spot。
 
 动态调度实验则验证了完整训练链路。Gini 组最终 mAP50-95 为 0.79255，比固定系数组高 0.00261；达到
 固定组最终精度 95% 阈值的时间由第 46 epoch 提前到第 45 epoch。它说明实现有效并产生了不同轨迹，但
@@ -31,7 +32,7 @@ weights/YOLO-Master-EsMoE-N.pt
   -> scripts/run_issue52_full.py
   -> runs/issue52_coco128_corrected/pruning/results.csv
   -> reports/moe-pruning/coco128-*.csv
-  -> reports/issue52-figs/coco128-*.png
+  -> reports/moe-pruning/figs/coco128-*.png
 
 动态调度：
 weights/YOLO-Master-EsMoE-N.pt
@@ -39,7 +40,7 @@ weights/YOLO-Master-EsMoE-N.pt
   -> runs/issue52_coco128_dynamic_selfrun_v2/{三组}/results.csv
   -> runs/issue52_coco128_dynamic_selfrun_v2/dynamic_schedule_summary.csv
   -> reports/moe-pruning/coco128-dynamic-*.csv
-  -> reports/issue52-figs/coco128-dynamic-*.png
+  -> reports/moe-pruning/figs/coco128-dynamic-*.png
 ~~~
 
 基线权重 SHA-256：
@@ -50,12 +51,15 @@ weights/YOLO-Master-EsMoE-N.pt
 ~~~bash
 ./yolo/bin/python scripts/run_issue52_full.py \
   --baseline-checkpoint weights/YOLO-Master-EsMoE-N.pt \
-  --data coco128.yaml --device 6 --imgsz 640 --batch 32 --workers 4 \
+  --data ultralytics/cfg/datasets/coco128.yaml \
+  --device 6 --imgsz 640 --batch 32 --workers 4 \
   --thresholds 0.05 0.10 0.15 0.20 0.30 \
-  --lora-epochs 10 --importance-mode usage_weight \
+  --lora-epochs 10 --lora-r 8 --lora-alpha 16 \
+  --lora-lr0 0.001 --lora-lr-mult 1.0 \
+  --importance-mode usage_weight \
   --warmup 10 --runs 30 \
   --output runs/issue52_coco128_corrected \
-  --skip-schedule
+  --skip-schedule --skip-existing --rerun-lora
 ~~~
 
 动态消融命令：
@@ -72,6 +76,8 @@ weights/YOLO-Master-EsMoE-N.pt
 归档主表：[剪枝结果](./moe-pruning/coco128-pruning-results.csv)、
 [逐层专家数](./moe-pruning/coco128-per-layer-experts.csv)、
 [精度/延迟 Pareto](./moe-pruning/coco128-pareto-accuracy-latency.csv)、
+[LoRA 结构签名](./moe-pruning/coco128-lora-structure-signatures.csv)、
+[LoRA 逐 epoch 曲线](./moe-pruning/coco128-lora-training-curves.csv)、
 [动态消融结果](./moe-pruning/coco128-dynamic-schedule-results.csv)、
 [动态 Gini 轨迹](./moe-pruning/coco128-dynamic-gini-trace.csv)。
 
@@ -120,7 +126,7 @@ checkpoint resume 和 CSV trace，默认关闭以保持原训练行为。
 | 初始化 | `weights/YOLO-Master-EsMoE-N.pt`，训练时迁移 811/811 权重项 |
 | 剪枝阈值 | 0.05、0.10、0.15、0.20、0.30 |
 | 剪枝重要性 | `usage_weight` |
-| 剪枝恢复 | direct；LoRA 10 epoch |
+| 剪枝恢复 | direct；结构保持 LoRA 10 epoch，rank 8、alpha 16、lr0 0.001、LR multiplier 1.0 |
 | 动态消融 | fixed 1.0；Gini 动态；fixed 0.3 |
 | 动态训练 | 每组 100 epoch，三组共享相同 checkpoint 与 seed |
 | 输入/批量 | imgsz 640，batch 32 |
@@ -138,21 +144,21 @@ COCO128 的训练集与验证集同源，本文将它用于代码链路验证、
 | ---: | --- | ---: | ---: | ---: | ---: | ---: | --- |
 | 0.00 | dense | 0.69991 | 0.54039 | 8.6540 | 8.692 | 2.6834 | 3 / 3 / 3 / 3 |
 | 0.05 | direct | 0.14741 | 0.11281 | 8.3493 | 8.551 | 2.6775 | 2 / 3 / 3 / 3 |
-| 0.05 | LoRA10 | 0.00149 | 0.00027 | 9.8636 | 15.750 | 2.9110 | 3 / 3 / 3 / 3（重建） |
+| 0.05 | LoRA10 | 0.62142 | 0.46512 | 9.2343 | 14.453 | 2.8490 | 2 / 3 / 3 / 3（保持） |
 | 0.10 | direct | 0.00000 | 0.00000 | 7.5318 | 9.323 | 2.5457 | 1 / 2 / 2 / 2 |
-| 0.10 | LoRA10 | 0.00000 | 0.00000 | 9.8636 | 15.874 | 2.9110 | 3 / 3 / 3 / 3（重建） |
+| 0.10 | LoRA10 | 0.02557 | 0.01646 | 8.3284 | 14.120 | 2.7079 | 1 / 2 / 2 / 2（保持） |
 | 0.15 | direct | 0.00030 | 0.00010 | 7.1519 | 9.095 | 2.4335 | 1 / 1 / 1 / 1 |
-| 0.15 | LoRA10 | 0.00000 | 0.00000 | 9.8636 | 15.865 | 2.9110 | 3 / 3 / 3 / 3（重建） |
+| 0.15 | LoRA10 | 0.00507 | 0.00259 | 7.9124 | 13.883 | 2.5875 | 1 / 1 / 1 / 1（保持） |
 | 0.20 | direct | 0.00030 | 0.00010 | 7.1519 | 9.119 | 2.4335 | 1 / 1 / 1 / 1 |
-| 0.20 | LoRA10 | 0.00000 | 0.00000 | 9.8636 | 16.048 | 2.9110 | 3 / 3 / 3 / 3（重建） |
+| 0.20 | LoRA10 | 0.00507 | 0.00259 | 7.9124 | 13.804 | 2.5875 | 1 / 1 / 1 / 1（保持） |
 | 0.30 | direct | 0.00030 | 0.00010 | 7.1519 | 9.068 | 2.4335 | 1 / 1 / 1 / 1 |
-| 0.30 | LoRA10 | 0.00000 | 0.00000 | 9.8636 | 16.075 | 2.9110 | 3 / 3 / 3 / 3（重建） |
+| 0.30 | LoRA10 | 0.00507 | 0.00259 | 7.9124 | 13.772 | 2.5875 | 1 / 1 / 1 / 1（保持） |
 
-![COCO128 阈值与 mAP](./issue52-figs/coco128-threshold-map.png)
+![COCO128 阈值与 mAP](./moe-pruning/figs/coco128-threshold-map.png)
 
-![COCO128 阈值与 GFLOPs](./issue52-figs/coco128-threshold-gflops.png)
+![COCO128 阈值与 GFLOPs](./moe-pruning/figs/coco128-threshold-gflops.png)
 
-![COCO128 阈值与延迟](./issue52-figs/coco128-threshold-latency.png)
+![COCO128 阈值与延迟](./moe-pruning/figs/coco128-threshold-latency.png)
 
 直接剪枝的压缩是真实的，但质量代价不可接受：
 
@@ -160,6 +166,13 @@ COCO128 的训练集与验证集同源，本文将它用于代码链路验证、
 - 0.10 的 GFLOPs 下降 12.97%，mAP50-95 已为 0；
 - 0.15 以上把所有层压到 1 个专家，GFLOPs 下降 17.36%，精度近零；
 - GPU 延迟没有随 GFLOPs 单调下降，当前路径受 kernel 调度与测量噪声影响，不能凭理论 FLOPs 宣称加速。
+
+结构保持恢复的收益也呈明显阈值敏感性：0.05 相对 direct 提升 0.35231 mAP50-95，说明 adapter 确实
+学到了有效补偿；0.10 只恢复到 0.01646，0.15 以上只恢复到 0.00259，过度剪枝丢失的信息无法靠 10 epoch
+低秩更新补回。LoRA checkpoint 的 GFLOPs 和参数量包含尚未 merge 的 adapter，因此高于对应 direct 模型。
+0.15、0.20、0.30 保留的是同一组 1/1/1/1 专家，且使用相同 seed，所以三档恢复指标一致。
+
+![COCO128 LoRA 恢复曲线](./moe-pruning/figs/coco128-lora-recovery-curves.png)
 
 ## 5. 逐层结构与 Pareto 分析
 
@@ -172,28 +185,32 @@ COCO128 的训练集与验证集同源，本文将它用于代码链路验证、
 | 0.20 | 1/3 | 1/3 | 1/3 | 1/3 |
 | 0.30 | 1/3 | 1/3 | 1/3 | 1/3 |
 
-![COCO128 逐层保留专家](./issue52-figs/coco128-per-layer-retained-experts.png)
+![COCO128 逐层保留专家](./moe-pruning/figs/coco128-per-layer-retained-experts.png)
 
-![COCO128 三维权衡](./issue52-figs/coco128-threshold-map-flops-latency-3d.png)
+![COCO128 三维权衡](./moe-pruning/figs/coco128-threshold-map-flops-latency-3d.png)
 
-![COCO128 Pareto](./issue52-figs/coco128-pareto-accuracy-latency.png)
+![COCO128 Pareto](./moe-pruning/figs/coco128-pareto-accuracy-latency.png)
 
 没有任何结构剪枝点通过 0.01 mAP50-95 质量门槛，因此 Sweet Spot 状态为 `not_observed`。数学上的
 Pareto 点不等于可部署点；精度已经坍塌的低 FLOPs 模型不能只因不可支配就被推荐。
 
-## 6. LoRA10 失败实验与原因
+## 6. 结构保持 LoRA10 重跑
 
-LoRA 日志显示恢复阶段只从剪枝 checkpoint 迁移约 747/811 或 801/811 个权重项，并提示 detection head
-因 class mismatch 被重新初始化。更关键的是，恢复结果重新变成每层 3 个专家，参数量从 dense 的
-2.683 M 升到 2.911 M，GFLOPs 从 8.654 升到 9.864。它已经不是原剪枝 module graph 上的低秩恢复。
+旧恢复之所以失败，不是“LoRA 本身无效”，而是 adapter 在训练器按 YAML 重建模型后才注入：专家结构回到
+3/3/3/3，检测头被重新初始化，实验对象已经不再是剪枝模型。本轮按既定修复方案重新执行：
 
-本文保留这组本地负结果作为失败诊断。后续正确恢复方案应：
+1. 加载 pruned checkpoint 后，在内存中的原 module graph 上先注入 adapter；
+2. 显式锁定真实 `Detect` head 的 379,536 个参数，避免 class-mismatch 自动解冻；
+3. 将 `lr0` 降至 0.001、LoRA LR multiplier 降至 1.0，rank/alpha 保持 8/16；
+4. 每档保存恢复前后 `num_experts + top_k` 签名，训练后重新加载 `best.pt` 再比较；
+5. 只有签名完全一致才进入独立验证、延迟和 GFLOPs 测量。
 
-1. 在 pruned module graph 原位插入 adapter，不按原始 YAML 重建；
-2. 锁定 detection head，仅在类别数确实变化时重新初始化；
-3. 保存并校验每层专家索引、router 输出通道和 Top-k；
-4. 恢复前后比较结构签名，再比较精度；
-5. 使用更低学习率和多个 seed，报告 mean±std。
+五档签名状态全部为 `preserved`：0.05 保持 2/3/3/3，0.10 保持 1/2/2/2，0.15–0.30 保持
+1/1/1/1。完整证据见[结构签名 CSV](./moe-pruning/coco128-lora-structure-signatures.csv)。
+
+重跑将 0.05 从 direct 的 0.11281 恢复到 0.46512，证明修复后的恢复链路有效；但它仍比 dense 低
+0.07527，未通过 0.01 质量门槛。0.10 及以上剪枝过强，10 epoch LoRA 无法恢复。因此结论从“恢复实验
+无效”更新为“恢复实验有效，但当前阈值和训练预算下仍无部署 Sweet Spot”。
 
 ## 7. 本地 100 epoch 动态调度消融
 
@@ -210,12 +227,12 @@ LoRA 日志显示恢复阶段只从剪枝 checkpoint 迁移约 747/811 或 801/8
 比 fixed 1.0 低 0.00365。这个结果支持“动态系数已经进入实际损失图并改变训练轨迹”，但不支持在单 seed
 上宣称显著或稳定的收敛提升。
 
-![COCO128 动态调度对比](./issue52-figs/coco128-dynamic-schedule-comparison.png)
+![COCO128 动态调度对比](./moe-pruning/figs/coco128-dynamic-schedule-comparison.png)
 
 Gini 组 100 epoch 的 mean Gini 从 0.153321 降至 0.149961，EMA 对应降至 0.149957；balance loss
 系数从 0.907848 平滑变化到 0.904799。每个 epoch 记录 4 个 MoE 层、512 次路由观测。
 
-![COCO128 动态 Gini 轨迹](./issue52-figs/coco128-dynamic-gini-trace.png)
+![COCO128 动态 Gini 轨迹](./moe-pruning/figs/coco128-dynamic-gini-trace.png)
 
 完整数值见[动态消融 CSV](./moe-pruning/coco128-dynamic-schedule-results.csv)和
 [100 epoch Gini trace](./moe-pruning/coco128-dynamic-gini-trace.csv)。
@@ -232,8 +249,10 @@ Gini 组 100 epoch 的 mean Gini 从 0.153321 降至 0.149961，EMA 对应降至
    同时保留原始 loss buffer 供诊断，并增加 1.0/0.25 比例回归测试。
 3. 结构剪枝后 `expert_usage_counts` buffer 长度未同步，导致 pruned checkpoint 验证异常。现随保留专家
    数重建 buffer，并增加剪枝后前向回归测试。
+4. 旧 LoRA 恢复在 YAML 重建后才注入 adapter，破坏剪枝结构。现改为训练前原位注入、锁定检测头，并对
+   注入前和 checkpoint 重载后的结构签名做强制一致性校验。
 
-修复前产生的无效初始化或无效系数实验均未进入本文 CSV、图表和结论；`selfrun_v2` 才是报告引用的最终结果。
+修复前产生的无效初始化、无效系数或结构重建恢复实验均未进入本文 CSV、图表和结论。
 
 ## 9. 动态调度的风险与后续实验
 
@@ -257,9 +276,10 @@ Gini 组 100 epoch 的 mean Gini 从 0.153321 降至 0.149961，EMA 对应降至
 97 GB GPU 上，36/1344 比表面设置 128/1600、实际退化到 batch 16 更稳定。不同 GPU 应先做短 probe，
 再选择能持续稳定运行的 batch 与分辨率。
 
-服务器端与边缘端本轮都建议保留 dense checkpoint。0.05 的理论计算量只下降 3.52%，却损失 0.42758
-mAP50-95；更高阈值直接坍塌。后续剪枝应优先研究逐层敏感度、训练期稀疏正则和结构保持 recovery，并在
-TensorRT/ONNX 等真实导出后端测端到端延迟。
+服务器端与边缘端本轮都建议保留 dense checkpoint。结构保持 LoRA 已把 0.05 的 mAP50-95 恢复到
+0.46512，但仍比 dense 低 0.07527，而且未 merge adapter 的延迟为 14.453 ms，高于 dense 的 8.692 ms。
+后续应在更温和的逐层阈值上训练期引入稀疏正则、延长恢复并运行多 seed；通过质量门槛后再 merge adapter，
+并在 TensorRT/ONNX 等真实导出后端测端到端延迟。
 
 ## 11. 涉及脚本与仓库链接
 
@@ -287,8 +307,9 @@ TensorRT/ONNX 等真实导出后端测端到端延迟。
 
 ## 12. 结论
 
-本报告的全部证据来自本仓库自行运行的 COCO128 实验。五档 `usage_weight` 剪枝没有任何点通过 0.01
-mAP50-95 质量门槛，LoRA10 也没有保持剪枝结构，因此当前不能推荐结构剪枝部署点。
+本报告的全部证据来自本仓库自行运行的 COCO128 实验。失败的 LoRA 路径已经按方案修复并完整重跑，五档
+checkpoint 均保持原剪枝专家数和 Top-k；0.05 从 0.11281 恢复到 0.46512。尽管恢复有效，五档
+`usage_weight` 剪枝仍没有任何点通过 0.01 mAP50-95 质量门槛，因此当前不能推荐结构剪枝部署点。
 
 动态 Gini 调度在修复 checkpoint 初始化和 balance loss 接线后完成了本地 100 epoch 三组消融。动态组
 最终 mAP50-95 为 0.79255，比固定组高 0.00261，并提前 1 epoch 达到统一目标；这足以证明调度链路有效，
