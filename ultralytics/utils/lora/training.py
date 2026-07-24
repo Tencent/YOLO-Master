@@ -254,9 +254,6 @@ class LoraTrainingStrategy:
             if isinstance(lora_a, nn.ModuleDict):
                 # Check that at least one adapter entry has a weight attribute
                 is_lora_layer = any(hasattr(child, 'weight') for child in lora_a.values())
-            elif isinstance(lora_a, nn.Parameter):
-                # In-repo fallback wrappers store lora_A directly as a Parameter.
-                is_lora_layer = True
             elif hasattr(lora_a, 'weight'):
                 is_lora_layer = True
             if not is_lora_layer:

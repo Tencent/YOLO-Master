@@ -14,7 +14,6 @@ from ultralytics.utils.lora.fallback import (
     _merge_fallback_modules,
     apply_manual_lora,
 )
-from ultralytics.utils.lora.training import LoraTrainingStrategy
 
 
 def _manual_layer(*, use_rslora: bool) -> ManualLoRAConv:
@@ -27,19 +26,6 @@ def test_fallback_honors_requested_rslora_scaling():
     assert FewShotLoRAConv(nn.Conv2d(4, 4, 1), r=8, alpha=16, use_rslora=True).scaling == pytest.approx(
         16 / math.sqrt(8)
     )
-
-
-def test_fallback_alpha_warmup_covers_parameter_adapters():
-    layer = _manual_layer(use_rslora=True)
-    strategy = LoraTrainingStrategy(nn.Sequential(layer))
-    target_scaling = layer.scaling
-
-    assert strategy.prepare_alpha_warmup()
-    assert layer.scaling == 0.0
-    assert strategy.step_alpha_warmup(epoch=2, warmup_epochs=4) == pytest.approx(0.5)
-    assert layer.scaling == pytest.approx(target_scaling * 0.5)
-    strategy.finalize_alpha_warmup()
-    assert layer.scaling == pytest.approx(target_scaling)
 
 
 def test_fallback_adapter_round_trip_preserves_effective_rslora(tmp_path):
