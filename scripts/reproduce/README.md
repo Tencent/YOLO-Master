@@ -1,4 +1,4 @@
-# Reproduction Methodology for Training the Baseline YOLO-Master-v0.1-N & YOLO-Master-EsMoE-N on VisDrone, SKU-110K, and AI-TOD-v2
+# Reproduction Methodology for Training the Baseline YOLO-Master-v0.1-N & YOLO-Master-EsMoE-N on VisDrone, SKU-110K, AI-TOD-v2, construction-ppe, and brain-tumor
  
 
 Reproducible training strategy for the two YOLO-Master nano variants on three vertical scenes, with per-epoch logging of the required metrics (mAP50, mAP50-95, box_loss, cls_loss, moe_loss)
@@ -26,6 +26,7 @@ Below is a comprehensive guide on how to reproduce the full training pipeline
 ---
 
 ### 🚀 Updates (Latest First)
+- **🦺 2026-07-24: construction-ppe & brain-tumor Datasets:** Added two new vertical datasets — **construction-ppe** (industrial safety PPE detection, 11 classes, 1,132 images) and **brain-tumor** (medical imaging, 2 classes, 893 images) — with reproduce scripts and baseline results. See [this section](#3-training).
 - **⭐️ 2026-07-19: Optimized P2 and UoMoE Models for Tiny Object Detection:** Four new nano variants (`v0.1-P2`, `EsMoE-P2`, `UoMoE`, `UoMoE-P2`) that attack the sub-8px floor from two orthogonal angles — a stride-4 **P2 head** (spatial resolution) and **UoMoE** routing (feature/compute allocation). `UoMoE-N`, `v0.1-P2-N` and `UoMoE-P2-N` are the only real-time N-tier detectors to break **≥20% AP on AI-TOD-v2**, outperforming YOLOv12-X by ~5 AP at ~10% of its FLOPs. See [this section](#6-p2--uomoe-variants-for-tiny-object-detection).
 - **⚡️ 2026-07-18: Multi-GPU DDP Training:** All baseline models and datasets now support DDP training with up to **8 GPUs**. See [this section](#new-ddp-training).
 - **🔎 2026-07-14: AI-TOD-v2 Dataset:** [AI-TOD-v2](https://github.com/Chasel-Tsui/AI-TOD-v2) is a much harder aerial **tiny-object** benchmark: 8 classes, ~800px crops, **mean object size ≈ 12px**, and a heavy class imbalance (one class dominates ~88% of the boxes). It pushes the two nano variants well past VisDrone/SKU-110K, and cleanly exposes a difference between their two MoE designs. See [this section](#new-ddp-training).
@@ -89,7 +90,14 @@ python -c "from ultralytics.data.utils import check_det_dataset; check_det_datas
 
 Since this dataset is constructed upon the [xVIEW](https://xviewdataset.org) dataset, please refer to the offical [AI-TOD repo](https://github.com/jwwangchn/AI-TOD) for raw image downloads and generation scripts. 
 
-The dataset should be stored under the default Ultralytics `datasets_dir` , usually under `../datasets`. VisDrone is ~2.3GB, SKU-110K ~13.6GB and AI-TOD-v2 is ~27GB
+The dataset should be stored under the default Ultralytics `datasets_dir` , usually under `../datasets`. VisDrone is ~2.3GB, SKU-110K ~13.6GB, AI-TOD-v2 is ~27GB, construction-ppe is ~170MB, and brain-tumor is ~6MB.
+
+### construction-ppe & brain-tumor:
+
+```bash
+python -c "from ultralytics.data.utils import check_det_dataset; check_det_dataset('construction-ppe.yaml', autodownload=True)"
+python -c "from ultralytics.data.utils import check_det_dataset; check_det_dataset('brain-tumor.yaml', autodownload=True)"
+```
 
 ## 3. Training
 
@@ -117,6 +125,18 @@ python scripts/reproduce/reproduce_sku110k.py  --model EsMoE-N --epochs <epoch> 
 python scripts/reproduce/reproduce_aitodv2.py --model v0.1-N  --imgsz 800 --batch 64 --epochs 300
 # YOLO-Master-EsMoE-N
 python scripts/reproduce/reproduce_aitodv2.py --model EsMoE-N --imgsz 800 --batch 64 --epochs 300 --no-sparse-eval
+
+# ------ construction-ppe ------
+# YOLO-Master-v0.1-N
+python scripts/reproduce/reproduce_ppe.py --model v0.1-N  --epochs <epoch> --batch <batch-size>
+# YOLO-Master-EsMoE-N
+python scripts/reproduce/reproduce_ppe.py --model EsMoE-N --epochs <epoch> --batch <batch-size> --no-sparse-eval
+
+# ------ brain-tumor ------
+# YOLO-Master-v0.1-N
+python scripts/reproduce/reproduce_brain_tumor.py --model v0.1-N  --epochs <epoch> --batch <batch-size>
+# YOLO-Master-EsMoE-N
+python scripts/reproduce/reproduce_brain_tumor.py --model EsMoE-N --epochs <epoch> --batch <batch-size> --no-sparse-eval
 ```
 
 ### Key flags
@@ -198,6 +218,10 @@ python scripts/reproduce/reproduce_ddp.py --dataset VisDrone --model UoMoE-N --d
 | EsMoE-N | SKU-110K | `--no-sparse-eval` | 0.904 | 0.583 | [View](https://wandb.ai/yolo-master-reproduce/yolo-master-reproduce/runs/yiz22jp3) | [Download](https://github.com/skywalker-lt/YOLO-Master/releases/download/v0.1.0/result-esmoen-sku110k.zip) |
 | v0.1-N | AI-TOD-v2 | default | 0.282 | 0.120 | [View](https://wandb.ai/yolo-master-reproduce/yolo-master-reproduce/runs/x8447xku) | N/A |
 | EsMoE-N | AI-TOD-v2 | `--no-sparse-eval` | ≈0 (collapsed) | ≈0 | [View](https://wandb.ai/yolo-master-reproduce/yolo-master-reproduce/runs/x8447xku) | N/A | 
+| v0.1-N | construction-ppe | default | 0.527 | 0.253 | [View](https://wandb.ai/delei-kong-szu/yolo-master-reproduce/runs/3z8vcfuy) | N/A |
+| EsMoE-N | construction-ppe | `--no-sparse-eval` | 0.535 | 0.267 | [View](https://wandb.ai/delei-kong-szu/yolo-master-reproduce/runs/cvsslgdu) | N/A |
+| v0.1-N | brain-tumor | default | 0.531 | 0.364 | [View](https://wandb.ai/delei-kong-szu/yolo-master-reproduce/runs/n1qozc3y) | N/A |
+| EsMoE-N | brain-tumor | `--no-sparse-eval` | 0.552 | 0.381 | [View](https://wandb.ai/delei-kong-szu/yolo-master-reproduce/runs/hpi4dvhj) | N/A | 
 
 *The raw results of the AI-TOD-v2 training runs are unavailable. Please check the W&B runs instead.
 
