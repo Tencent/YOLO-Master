@@ -29,6 +29,14 @@ from .api import (
     resolve_effective_lora_request,
 )
 
+
+def _fallback_lora_scaling(alpha: int, r: int, use_rslora: bool) -> float:
+    """Return the effective fallback LoRA scale; direct wrappers default to historical standard LoRA."""
+    if r <= 0:
+        raise ValueError(f"Fallback LoRA rank must be positive, got r={r}.")
+    return alpha / math.sqrt(r) if use_rslora else alpha / r
+
+
 class FewShotLoRAConv(nn.Module):
     """LoRA wrapper optimized for few-shot learning.
 
@@ -48,12 +56,14 @@ class FewShotLoRAConv(nn.Module):
                  dropconnect_min: float = 0.0,
                  gradient_importance_weighted: bool = False,
                  variational_rank: bool = False,
-                 rank_budget: float = 0.5):
+                 rank_budget: float = 0.5,
+                 use_rslora: bool = False):
         super().__init__()
         self.conv = conv
         self.r = r
         self.alpha = alpha
-        self.scaling = alpha / max(r, 1)
+        self.use_rslora = bool(use_rslora)
+        self.scaling = _fallback_lora_scaling(alpha, r, self.use_rslora)
         self.lora_dropout = nn.Dropout(dropout) if dropout > 0 else None
         self.dropconnect_rate = dropconnect
         self.adaptive_rank = adaptive_rank
@@ -298,12 +308,20 @@ class ManualLoRAConv(nn.Module):
     MUST be divisible by `groups`.
     """
 
-    def __init__(self, conv: nn.Conv2d, r: int = 8, alpha: int = 16, dropout: float = 0.0):
+    def __init__(
+        self,
+        conv: nn.Conv2d,
+        r: int = 8,
+        alpha: int = 16,
+        dropout: float = 0.0,
+        use_rslora: bool = False,
+    ):
         super().__init__()
         self.conv = conv
         self.r = r
         self.alpha = alpha
-        self.scaling = alpha / max(r, 1)
+        self.use_rslora = bool(use_rslora)
+        self.scaling = _fallback_lora_scaling(alpha, r, self.use_rslora)
         self.lora_dropout = nn.Dropout(dropout) if dropout > 0 else None
 
         groups = conv.groups
@@ -532,6 +550,7 @@ def _replace_conv_with_manual_lora(module: nn.Module, config: "LoRAConfig", pref
                 lora_kwargs = {
                     "r": r, "alpha": max(r * 2, config.alpha),
                     "dropout": config.dropout,
+                    "use_rslora": bool(getattr(config, "use_rslora", False)),
                     "dropconnect": getattr(config, "few_shot_dropconnect", 0.1),
                     "adaptive_rank": getattr(config, "few_shot_adaptive_rank", True),
                     "dropconnect_schedule": getattr(config, "few_shot_dropconnect_schedule", "constant"),
@@ -543,7 +562,12 @@ def _replace_conv_with_manual_lora(module: nn.Module, config: "LoRAConfig", pref
                 }
             else:
                 lora_cls = ManualLoRAConv
-                lora_kwargs = {"r": r, "alpha": max(r * 2, config.alpha), "dropout": config.dropout}
+                lora_kwargs = {
+                    "r": r,
+                    "alpha": max(r * 2, config.alpha),
+                    "dropout": config.dropout,
+                    "use_rslora": bool(getattr(config, "use_rslora", False)),
+                }
             setattr(module, name, lora_cls(child, **lora_kwargs))
             replaced += 1
             continue
@@ -626,6 +650,8 @@ def apply_manual_lora(model: nn.Module, config: "LoRAConfig", include_head: bool
         effective_variant="lora",
         requested_init_lora_weights=config.init_lora_weights,
         effective_init_lora_weights=config.init_lora_weights,
+        requested_use_rslora=bool(getattr(config, "use_rslora", False)),
+        effective_use_rslora=bool(getattr(config, "use_rslora", False)),
         include_head=include_head,
         freeze_bn=bool(getattr(config, "freeze_bn", False)),
         target_modules=model.lora_target_modules,
@@ -673,6 +699,7 @@ def _collect_fallback_adapter_state(model: nn.Module) -> Dict[str, Any]:
             "r": int(module.r),
             "alpha": int(module.alpha),
             "dropout": float(module.lora_dropout.p if module.lora_dropout is not None else 0.0),
+            "use_rslora": bool(getattr(module, "use_rslora", False)),
         }
         state[name] = {
             "lora_A": module.lora_A.detach().cpu(),
@@ -707,6 +734,7 @@ def _load_fallback_adapter_state(model: nn.Module, path: Path, payload: Dict[str
 
     for module_name, config in module_configs.items():
         original = _get_module_by_name(target_root, module_name)
+        use_rslora = bool(config.get("use_rslora", False))
         if isinstance(original, (ManualLoRAConv, FewShotLoRAConv)):
             wrapped = original
         else:
@@ -718,6 +746,7 @@ def _load_fallback_adapter_state(model: nn.Module, path: Path, payload: Dict[str
                 "r": int(config.get("r", 0)),
                 "alpha": int(config.get("alpha", 0)),
                 "dropout": float(config.get("dropout", 0.0)),
+                "use_rslora": use_rslora,
             }
             if is_few_shot:
                 lora_kwargs["dropconnect"] = float(config.get("dropconnect", 0.1))
@@ -731,6 +760,8 @@ def _load_fallback_adapter_state(model: nn.Module, path: Path, payload: Dict[str
             wrapped = lora_cls(original, **lora_kwargs)
             _set_module_by_name(target_root, module_name, wrapped)
 
+        wrapped.use_rslora = use_rslora
+        wrapped.scaling = _fallback_lora_scaling(wrapped.alpha, wrapped.r, use_rslora)
         params = module_state.get(module_name, {})
         wrapped.lora_A.data.copy_(params["lora_A"])
         wrapped.lora_B.data.copy_(params["lora_B"])
