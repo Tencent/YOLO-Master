@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run issue #52 dynamic MoE schedule comparison on VisDrone.
+"""Run issue #52 dynamic MoE schedule comparison on a selected dataset.
 
 The script compares three groups:
 
@@ -47,12 +47,12 @@ class Variant:
 VARIANTS = {
     "baseline": Variant(
         key="baseline",
-        name="visdrone_issue52_fixed_balance",
+        name="issue52_fixed_balance",
         extra_args={"moe_dynamic_schedule": "none", "moe_balance_loss": 1.0},
     ),
     "dynamic": Variant(
         key="dynamic",
-        name="visdrone_issue52_gini_balance",
+        name="issue52_gini_balance",
         extra_args={
             "moe_dynamic_schedule": "gini_balance",
             "moe_balance_loss": 1.0,
@@ -65,7 +65,7 @@ VARIANTS = {
     ),
     "ablation": Variant(
         key="ablation",
-        name="visdrone_issue52_low_balance",
+        name="issue52_low_balance",
         extra_args={"moe_dynamic_schedule": "none", "moe_balance_loss": 0.3},
     ),
 }
@@ -240,7 +240,7 @@ def main() -> int:
             name=variant.name,
             exist_ok=args.exist_ok,
             save_period=args.save_period,
-            pretrained=False,
+            pretrained=True,
             **variant.extra_args,
         )
 

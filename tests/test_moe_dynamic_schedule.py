@@ -1,5 +1,6 @@
 """Issue #52 regression tests for MoE dynamic scheduling and pruning metrics."""
 
+import copy
 from types import SimpleNamespace
 
 import pytest
@@ -12,6 +13,7 @@ from ultralytics.nn.modules.moe.pruning import MoEPruner
 from ultralytics.nn.modules.moe.schedule import GiniBalanceScheduler, apply_balance_loss_coeff, usage_gini
 from ultralytics.utils import DEFAULT_CFG_DICT
 from scripts.moe_pruning_sweep import compare_expert_signatures
+from ultralytics.engine.extensions.mixture import MixtureRuntimeController
 
 
 def test_usage_gini_uniform_and_collapsed():
@@ -40,6 +42,82 @@ def test_dynamic_schedule_is_disabled_by_default():
     assert DEFAULT_CFG_DICT["moe_dynamic_schedule"] == "none"
 
 
+def _gini_controller(tmp_path, *, mode="gini"):
+    model = nn.Sequential(ES_MOE(8, 8, num_experts=3, top_k=2))
+    trainer = SimpleNamespace(
+        model=model,
+        ema=SimpleNamespace(ema=copy.deepcopy(model)),
+        args=SimpleNamespace(
+            moe_dynamic_schedule=mode,
+            moe_balance_loss=1.0,
+            moe_dynamic_gini_target=0.25,
+            moe_dynamic_gini_alpha=1.0,
+            moe_dynamic_gini_beta=0.8,
+            moe_dynamic_balance_min=0.5,
+            moe_dynamic_balance_max=2.0,
+        ),
+        _has_moe=True,
+        save_dir=tmp_path,
+        epoch=0,
+        start_epoch=0,
+    )
+    controller = MixtureRuntimeController(trainer)
+    controller._configure_gini_schedule()
+    return controller, trainer
+
+
+def test_gini_runtime_accumulates_epoch_updates_model_ema_and_trace(tmp_path):
+    controller, trainer = _gini_controller(tmp_path)
+    block = trainer.model[0]
+    assert block._moe_force_snapshot is True
+
+    block.last_routing_snapshot = {"expert_usage": torch.tensor([1.0, 0.0, 0.0])}
+    assert controller.collect_routing_usage(batch_weight=4) == 1
+    block.last_routing_snapshot = {"expert_usage": torch.tensor([0.5, 0.5, 0.0])}
+    assert controller.collect_routing_usage(batch_weight=2) == 1
+
+    assert controller.finalize_epoch(recovered=False, validated=True) >= 1
+    state = trainer.model._moe_gini_schedule_state
+    assert state["mean_gini"] > 0.25
+    assert state["balance_loss_coeff"] > 1.0
+    assert trainer.model[0].balance_loss_coeff == pytest.approx(state["balance_loss_coeff"])
+    assert trainer.ema.ema[0].balance_loss_coeff == pytest.approx(state["balance_loss_coeff"])
+    assert trainer.ema.ema._moe_gini_schedule_state == state
+
+    trace = tmp_path / "moe_dynamic_schedule.csv"
+    lines = trace.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+    assert "routing_observations" in lines[0]
+
+
+def test_gini_runtime_recovery_rejects_epoch_and_resume_restores_ema(tmp_path):
+    controller, trainer = _gini_controller(tmp_path)
+    trainer.model[0].last_routing_snapshot = {"expert_usage": torch.tensor([1.0, 0.0, 0.0])}
+    controller.collect_routing_usage(batch_weight=4)
+    assert controller.finalize_epoch(recovered=True, validated=True) == 0
+    assert not hasattr(trainer.model, "_moe_gini_schedule_state")
+    assert not (tmp_path / "moe_dynamic_schedule.csv").exists()
+
+    controller.begin_epoch(1)
+    trainer.model[0].last_routing_snapshot = {"expert_usage": torch.tensor([1.0, 0.0, 0.0])}
+    controller.collect_routing_usage(batch_weight=4)
+    controller.finalize_epoch(recovered=False, validated=True)
+    saved_ema = copy.deepcopy(trainer.ema.ema)
+
+    resumed = SimpleNamespace(model=saved_ema, args=trainer.args, _has_moe=True)
+    restored = MixtureRuntimeController(resumed)
+    restored._configure_gini_schedule()
+    assert restored._gini_scheduler.ema == pytest.approx(saved_ema._moe_gini_schedule_state["ema_gini"])
+    assert saved_ema[0].balance_loss_coeff == pytest.approx(saved_ema._moe_gini_schedule_state["balance_loss_coeff"])
+
+
+def test_gini_runtime_rejects_unknown_schedule(tmp_path):
+    controller, trainer = _gini_controller(tmp_path)
+    trainer.args.moe_dynamic_schedule = "unknown"
+    with pytest.raises(ValueError, match="Unsupported moe_dynamic_schedule"):
+        controller._configure_gini_schedule()
+
+
 def test_es_moe_get_gflops_reports_nonzero_total():
     """The pruning script can collect ES_MOE FLOPs via get_gflops()."""
     module = ES_MOE(32, 32, num_experts=3, top_k=2)
@@ -48,6 +126,25 @@ def test_es_moe_get_gflops_reports_nonzero_total():
     assert gflops["total_gflops"] > 0
     assert apply_balance_loss_coeff(module, 1.5) >= 1
     assert module.balance_loss_coeff == pytest.approx(1.5)
+
+
+def test_es_moe_balance_coefficient_scales_published_aux_loss():
+    """The scheduled coefficient must affect the loss graph, not only module metadata."""
+    torch.manual_seed(0)
+    module = ES_MOE(8, 8, num_experts=3, top_k=2).train()
+    module.routing.noise_std = 0.0
+    sample = torch.randn(2, 8, 4, 4)
+
+    apply_balance_loss_coeff(module, 1.0)
+    module(sample)
+    unscaled = module.aux_loss.detach().clone()
+
+    apply_balance_loss_coeff(module, 0.25)
+    module(sample)
+    scaled = module.aux_loss.detach().clone()
+
+    assert scaled == pytest.approx(unscaled * 0.25)
+    assert module.load_balancing_loss == pytest.approx(unscaled)
 
 
 def test_moe_pruner_usage_weight_score_preserves_usage_default():
@@ -93,6 +190,21 @@ def test_gated_router_pruning_updates_all_projection_branches_and_forward():
     assert pruned[0].routing.num_experts == 2
     assert pruned[0].routing.global_fc.out_features == 2
     assert pruned[0].routing.local_conv[-1].out_channels == 2
+
+
+def test_es_moe_pruning_resizes_usage_buffer_and_forward():
+    pruner = MoEPruner("dummy.pt")
+    module = ES_MOE(8, 8, num_experts=3, top_k=None)
+    pruner.model = SimpleNamespace(model=nn.Sequential(module))
+    pruner.pruning_plan = {"0.routing": [0, 2]}
+
+    pruned = pruner._perform_surgery()
+    result = pruned(torch.randn(2, 8, 8, 8))
+
+    assert result.shape == (2, 8, 8, 8)
+    assert len(pruned[0].experts) == 2
+    assert pruned[0].routing.num_experts == 2
+    assert pruned[0].expert_usage_counts.shape == (2,)
 
 
 def test_pruning_fails_fast_when_router_projection_is_missing():

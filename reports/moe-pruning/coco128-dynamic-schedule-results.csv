@@ -1,0 +1,4 @@
+variant,run_dir,epochs,final_mAP50-95,final_mAP50,best_mAP50-95,best_mAP50,target_95pct_baseline_mAP50-95,epoch_to_target,convergence_epoch_ratio
+baseline,runs/issue52_coco128_dynamic_selfrun_v2/issue52_fixed_balance,100,0.78994,0.91694,0.80103,0.92365,0.750443,46,1.0
+dynamic,runs/issue52_coco128_dynamic_selfrun_v2/issue52_gini_balance,100,0.79255,0.92148,0.79787,0.92138,0.750443,45,0.9782608695652174
+ablation,runs/issue52_coco128_dynamic_selfrun_v2/issue52_low_balance,100,0.78629,0.92067,0.79842,0.92484,0.750443,46,1.0

@@ -658,6 +658,7 @@ class BaseTrainer:
                                 loss, self.loss_items = unwrap_model(self.model).loss(batch, preds)
                             else:
                                 loss, self.loss_items = self.model(batch)
+                            self.mixture_controller.collect_routing_usage(batch_weight=batch["img"].shape[0])
                             loss = self.adapter_controller.augment_loss(loss)
                             loss = self.adapter_controller.augment_few_shot_loss(loss, batch["img"], epoch)
                             self.loss = loss.sum()
