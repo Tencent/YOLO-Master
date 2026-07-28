@@ -1,7 +1,9 @@
-scene,rank,alpha,epochs,fraction,map50_95,best_epoch,trainable_params,adapter_params,train_time_min,peak_vram_gb,return_code,log,run_dir
-brain_tumor,4,8,40,1.0,0.27129,36,468290,123116,13.31,3.200,0,runs/lora_rank_sweeps/logs/yolo_master_brain_tumor_lora_r4.log,runs/lora_rank_sweeps/yolo_master_brain_tumor_lora_r4
-brain_tumor,8,16,40,1.0,0.31259,40,596782,251608,13.74,3.210,0,runs/lora_rank_sweeps/logs/yolo_master_brain_tumor_lora_r8.log,runs/lora_rank_sweeps/yolo_master_brain_tumor_lora_r8
-brain_tumor,16,32,40,1.0,0.33535,37,848390,503216,14.82,3.300,0,runs/lora_rank_sweeps/logs/yolo_master_brain_tumor_lora_r16.log,runs/lora_rank_sweeps/yolo_master_brain_tumor_lora_r16
-visdrone,4,8,30,0.25,0.01239,20,472410,123116,34.82,12.500,0,runs/lora_rank_sweeps/logs/yolo_master_visdrone_lora_r4.log,runs/lora_rank_sweeps/yolo_master_visdrone_lora_r4
-visdrone,8,16,30,0.25,0.0149,23,600902,251608,34.71,12.500,0,runs/lora_rank_sweeps/logs/yolo_master_visdrone_lora_r8.log,runs/lora_rank_sweeps/yolo_master_visdrone_lora_r8
-visdrone,16,32,30,0.25,0.02615,26,852510,503216,36.04,12.600,0,runs/lora_rank_sweeps/logs/yolo_master_visdrone_lora_r16.log,runs/lora_rank_sweeps/yolo_master_visdrone_lora_r16
+scene,rank,alpha,lora_module_count,trainable_params,adapter_params,best_epoch,map50,map50_95,precision,recall,train_time_min,peak_vram_gb,epochs_requested,fraction,status,return_code,log,run_dir
+visdrone,4,8,,,,29,0.04525,0.01942,0.42141,0.06582,303.6,24.7,30,1.0,completed,0,lora_sweep_89299.log,runs/detect/runs/lora_examples/visdrone_r4-8
+visdrone,8,16,,,,30,0.04927,0.02153,0.42279,0.07248,303.6,24.7,30,1.0,completed,0,lora_sweep_89299.log,runs/detect/runs/lora_examples/visdrone_r8
+visdrone,16,32,,,,29,0.0636,0.02851,0.33374,0.0878,314.9,24.7,30,1.0,completed,0,lora_sweep_89299.log,runs/detect/runs/lora_examples/visdrone_r16
+visdrone,32,64,,,,,,,,,,30,1.0,skipped,,,,
+brain_tumor,4,8,,,,35,0.44923,0.29407,0.46442,0.65902,21.8,24.7,40,1.0,completed,0,lora_sweep_89299.log,runs/detect/runs/lora_examples/brain_tumor_r4
+brain_tumor,8,16,,,,34,0.45024,0.28717,0.44235,0.7207,22.2,24.7,40,1.0,completed,0,lora_sweep_89299.log,runs/detect/runs/lora_examples/brain_tumor_r8
+brain_tumor,16,32,,,,31,0.47585,0.31353,0.46647,0.72136,23.3,24.7,40,1.0,completed,0,lora_sweep_89299.log,runs/detect/runs/lora_examples/brain_tumor_r16
+brain_tumor,32,64,,,,,,,,,,40,1.0,skipped,,,,
