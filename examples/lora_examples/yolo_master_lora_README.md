@@ -264,6 +264,16 @@ examples/lora_examples/yolo_master_lora_rank_sweep_results.csv
 - 各优化器参数组的学习率
 - 最后一个 epoch 的 mAP 用于与最佳 epoch 对比
 
+## Research extension: strong baselines and audited evaluation
+
+Issue #50 的后续研究补充了强微调基线、稳定性诊断、多随机种子和正式有效性审计。该扩展不替代上述
+rank-sweep 协议，也不把失败或恢复运行作为正式结果：
+
+- [English report](yolo_master_issue50_research_extension.md)
+- [Audited formal runs](yolo_master_issue50_audited_results.csv)
+- [Multi-seed summary](yolo_master_issue50_seed_summary.csv)
+- [Dependency-free validator](validate_yolo_master_issue50_research_extension.py)
+
 ---
 
 *本指南为 2026 犀牛鸟开源人才培养活动 Issue #50 的交付物之一。*
