@@ -9,6 +9,9 @@
 实验包含完整消融、路由解释、混合架构、统计检验、医疗 TIFF 兼容、稳定性测试和一键编排。
 所有结果文件由脚本生成，文档不预填未运行的指标。
 
+完整的问题发现、修复与再实验过程见
+[`experiment_journey_zh.md`](experiment_journey_zh.md)。
+
 ## 1. 贡献与创新
 
 ### 1.1 同检查点跨域审计
@@ -253,3 +256,4 @@ ruff check \
 | `yolo-master-mot-p5-n.yaml` | 低预算 P5-only MoT 混合配置 |
 | `tests/test_mot_cross_domain_analysis.py` | 新增统计、TIFF、配置测试 |
 | `discussion_template_zh.md` | 实验完成后发布 Discussion 的结构化模板 |
+| `experiment_journey_zh.md` | 问题、设计、失败、修复与再实验链路 |
