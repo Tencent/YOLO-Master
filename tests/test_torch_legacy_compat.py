@@ -15,7 +15,7 @@ def test_disabled_autocast_uses_modern_api(monkeypatch, device_type):
     context = nullcontext()
     modern_autocast = Mock(return_value=context)
     legacy_autocast = Mock(return_value=nullcontext())
-    monkeypatch.setattr(torch, "autocast", modern_autocast)
+    monkeypatch.setattr(torch, "autocast", modern_autocast, raising=False)
     monkeypatch.setattr(torch.cuda.amp, "autocast", legacy_autocast)
 
     assert disabled_autocast(device_type) is context
@@ -56,7 +56,7 @@ def test_disabled_autocast_legacy_mps_is_noop(monkeypatch):
 def test_disabled_autocast_unknown_device_is_noop(monkeypatch):
     modern_autocast = Mock(return_value=nullcontext())
     legacy_autocast = Mock(return_value=nullcontext())
-    monkeypatch.setattr(torch, "autocast", modern_autocast)
+    monkeypatch.setattr(torch, "autocast", modern_autocast, raising=False)
     monkeypatch.setattr(torch.cuda.amp, "autocast", legacy_autocast)
 
     with disabled_autocast("unknown") as value:
