@@ -22,6 +22,9 @@
 统计单位是“图像”：先在图像内跨 MoT 层聚合，再做 bootstrap 和 permutation test，避免把大量 token
 当成独立样本造成伪显著。
 
+脚本还会按样本指纹审计场景集合重叠。若两个场景共享图像，仍输出描述性均值，但自动禁用独立样本
+bootstrap、permutation test 和 FDR 结论；密集/稀疏、小目标/大目标主比较使用互斥集合。
+
 ### 1.2 MoT-P5 低计算预算混合架构
 
 新增配置：
@@ -199,9 +202,12 @@ runs/mot_cross_domain/
 │   │   ├── routing_detailed.csv
 │   │   ├── domain_summary.csv
 │   │   ├── pairwise_statistics.csv
+│   │   ├── sample_overlap.csv
 │   │   ├── robustness_detailed.csv
 │   │   ├── robustness_summary.csv
 │   │   ├── routing_probability_heatmap.png
+│   │   ├── routing_layer_probability_delta_heatmap.png
+│   │   ├── routing_layer_top1_share_heatmap.png
 │   │   └── recommendations_zh.md
 │   └── visdrone_scenes/
 └── logs/
@@ -223,6 +229,7 @@ runs/mot_cross_domain/
 路由解释采用以下约束：
 
 - 只有 FDR 校正后 `q <= 0.05` 且 bootstrap CI 不跨 0，才称为稳定跨域差异；
+- `comparison_valid=false` 表示场景共享样本，不得引用该行的独立样本显著性；
 - effect size 与差值必须同时报告，不能只写 p-value；
 - DeformableTransformer 激活增加只能说明路由偏好，不证明遮挡检测更准确；
 - brain-tumor 与 VisDrone 的语义标签不同，不做跨数据集 mAP 排名。

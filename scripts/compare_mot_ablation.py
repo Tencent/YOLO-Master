@@ -331,6 +331,21 @@ def read_last_metrics(results_csv: Path) -> dict[str, str]:
     return rows[-1] if rows else {}
 
 
+def read_best_observed_metrics(results_csv: Path) -> dict[str, str]:
+    """Return the CSV row with the highest observed mAP50-95."""
+    rows = read_csv_rows(results_csv)
+    metric = "metrics/mAP50-95(B)"
+    finite_rows = []
+    for row in rows:
+        try:
+            value = float(row.get(metric, "nan"))
+        except ValueError:
+            continue
+        if math.isfinite(value):
+            finite_rows.append((value, row))
+    return max(finite_rows, key=lambda item: item[0])[1] if finite_rows else {}
+
+
 def row_total_loss(row: dict[str, str]) -> float | None:
     values = [finite_float(row.get(key)) for key in LOSS_KEYS]
     values = [v for v in values if v is not None]
@@ -460,6 +475,7 @@ def write_summary(project: Path, specs: list[ModelSpec]) -> Path:
     for spec in specs:
         run_dir = project / spec.key
         metrics = read_last_metrics(run_dir / "results.csv")
+        best_observed = read_best_observed_metrics(run_dir / "results.csv")
         checkpoint = run_dir / "weights/best.pt"
         if not checkpoint.exists():
             checkpoint = run_dir / "weights/last.pt"
@@ -474,6 +490,9 @@ def write_summary(project: Path, specs: list[ModelSpec]) -> Path:
             {
                 "run_dir": str(run_dir.relative_to(ROOT)) if run_dir.is_relative_to(ROOT) else str(run_dir),
                 "epoch": metrics.get("epoch", ""),
+                "final_epoch": metrics.get("epoch", ""),
+                "best_observed_epoch": best_observed.get("epoch", ""),
+                "training_time_seconds": metrics.get("time", ""),
             }
         )
         for key, value in benchmark_rows.get(spec.key, {}).items():
@@ -481,6 +500,8 @@ def write_summary(project: Path, specs: list[ModelSpec]) -> Path:
                 row[key] = value
         for key in METRIC_KEYS:
             row[key] = metrics.get(key, "")
+            row[f"final/{key}"] = metrics.get(key, "")
+            row[f"best_observed/{key}"] = best_observed.get(key, "")
         row.update(stability_from_results(run_dir / "results.csv", run_dir / "recovery_events.jsonl"))
         rows.append(row)
     out = project / "summary.csv"

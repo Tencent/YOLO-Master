@@ -41,6 +41,7 @@ DETAIL_FIELDS = (
     "domain",
     "perturbation",
     "image_id",
+    "sample_fingerprint",
     "layer",
     "expert_id",
     "expert",
@@ -252,6 +253,7 @@ class RouterCollector:
 
             batch, experts = probabilities.shape[:2]
             image_ids = self.context.get("image_ids", [])
+            sample_fingerprints = self.context.get("sample_fingerprints", [])
             top1 = probabilities.argmax(dim=1)
             entropy_map = -(probabilities.clamp_min(1e-12).log() * probabilities).sum(dim=1)
             entropy = entropy_map.mean(dim=(1, 2))
@@ -262,6 +264,11 @@ class RouterCollector:
 
             for batch_index in range(batch):
                 image_id = image_ids[batch_index] if batch_index < len(image_ids) else f"sample_{batch_index}"
+                sample_fingerprint = (
+                    sample_fingerprints[batch_index]
+                    if batch_index < len(sample_fingerprints)
+                    else stable_fallback_fingerprint(self.context.get("domain", "unknown"), str(image_id))
+                )
                 token_count = int(top1[batch_index].numel())
                 counts = torch.bincount(top1[batch_index].reshape(-1).long(), minlength=experts).float()
                 routed_mean = weights[batch_index].mean(dim=(1, 2))
@@ -273,6 +280,7 @@ class RouterCollector:
                             "domain": self.context.get("domain", "unknown"),
                             "perturbation": self.context.get("perturbation", "base"),
                             "image_id": str(image_id),
+                            "sample_fingerprint": sample_fingerprint,
                             "layer": layer_name,
                             "expert_id": expert_id,
                             "expert": expert_name,
@@ -316,10 +324,16 @@ def relative_image_id(path: Path, root: Path) -> str:
         return path.name
 
 
+def stable_fallback_fingerprint(domain: str, image_id: str) -> str:
+    """Return a non-content identity when sample hashing is explicitly disabled."""
+    return hashlib.sha256(f"{domain}\0{image_id}".encode()).hexdigest()
+
+
 def collect_routing(
     model: torch.nn.Module,
     domains: list[DomainSpec],
     selected: dict[str, list[Path]],
+    sample_fingerprints: dict[tuple[str, str], str],
     device: str,
     imgsz: int,
     batch_size: int,
@@ -335,11 +349,16 @@ def collect_routing(
                     batch_paths = paths[start : start + batch_size]
                     tensor = torch.stack([load_image_tensor(path, imgsz) for path in batch_paths]).to(device)
                     image_ids = [relative_image_id(path, domain.path) for path in batch_paths]
+                    fingerprints = [
+                        sample_fingerprints[(domain.name, image_id)]
+                        for image_id in image_ids
+                    ]
                     for perturbation in ("base", *perturbations):
                         collector.context = {
                             "domain": domain.name,
                             "perturbation": perturbation,
                             "image_ids": image_ids,
+                            "sample_fingerprints": fingerprints,
                         }
                         _ = model(apply_perturbation(tensor, perturbation))
     finally:
@@ -372,10 +391,14 @@ def image_level_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         "top1_margin",
     )
     for (domain, image_id, expert), items in sorted(grouped.items()):
+        sample_fingerprint = str(
+            items[0].get("sample_fingerprint") or stable_fallback_fingerprint(domain, image_id)
+        )
         output.append(
             {
                 "domain": domain,
                 "image_id": image_id,
+                "sample_fingerprint": sample_fingerprint,
                 "expert": expert,
                 **{metric: float(np.mean([item[metric] for item in items])) for metric in metrics},
             }
@@ -490,16 +513,17 @@ def pairwise_statistics(
     seed: int,
     alpha: float,
 ) -> list[dict[str, Any]]:
-    """Compare domain routing while preserving image-level independence."""
+    """Compare domain routing with image-level units and explicit overlap guards."""
     image_rows = image_level_records(records)
-    observations: dict[tuple[str, str, str], list[float]] = {}
+    observations: dict[tuple[str, str, str], dict[str, float]] = {}
     for row in image_rows:
+        fingerprint = row["sample_fingerprint"]
         for metric in ("top1_share", "mean_probability"):
-            observations.setdefault((row["domain"], row["expert"], metric), []).append(row[metric])
+            observations.setdefault((row["domain"], row["expert"], metric), {})[fingerprint] = row[metric]
         if row["expert"] == EXPERT_NAMES[0]:
-            observations.setdefault((row["domain"], "all_experts", "normalized_entropy"), []).append(
-                row["normalized_entropy"]
-            )
+            observations.setdefault((row["domain"], "all_experts", "normalized_entropy"), {})[fingerprint] = row[
+                "normalized_entropy"
+            ]
 
     rows: list[dict[str, Any]] = []
     domains = sorted({row["domain"] for row in image_rows})
@@ -507,11 +531,21 @@ def pairwise_statistics(
     targets.append(("all_experts", "normalized_entropy"))
     for domain_a, domain_b in itertools.combinations(domains, 2):
         for expert, metric in targets:
-            values_a = np.asarray(observations.get((domain_a, expert, metric), []), dtype=np.float64)
-            values_b = np.asarray(observations.get((domain_b, expert, metric), []), dtype=np.float64)
+            samples_a = observations.get((domain_a, expert, metric), {})
+            samples_b = observations.get((domain_b, expert, metric), {})
+            values_a = np.asarray(list(samples_a.values()), dtype=np.float64)
+            values_b = np.asarray(list(samples_b.values()), dtype=np.float64)
+            shared_samples = set(samples_a).intersection(samples_b)
+            comparison_valid = not shared_samples
             comparison_seed = stable_seed(seed, domain_a, domain_b, expert, metric)
-            ci_low, ci_high = bootstrap_mean_diff_ci(values_a, values_b, bootstrap_samples, comparison_seed)
-            p_value = permutation_p_value_two_sided(values_a, values_b, permutations, comparison_seed)
+            if comparison_valid:
+                ci_low, ci_high = bootstrap_mean_diff_ci(values_a, values_b, bootstrap_samples, comparison_seed)
+                p_value = permutation_p_value_two_sided(values_a, values_b, permutations, comparison_seed)
+                effect_size = hedges_g(values_a, values_b)
+            else:
+                ci_low, ci_high = float("nan"), float("nan")
+                p_value = float("nan")
+                effect_size = float("nan")
             rows.append(
                 {
                     "domain_a": domain_a,
@@ -520,6 +554,14 @@ def pairwise_statistics(
                     "metric": metric,
                     "n_a": int(values_a.size),
                     "n_b": int(values_b.size),
+                    "n_shared": len(shared_samples),
+                    "shared_fraction_min": (
+                        len(shared_samples) / min(values_a.size, values_b.size)
+                        if values_a.size and values_b.size
+                        else float("nan")
+                    ),
+                    "comparison_valid": comparison_valid,
+                    "invalid_reason": "" if comparison_valid else "shared_samples_require_paired_or_disjoint_design",
                     "mean_a": float(values_a.mean()) if values_a.size else float("nan"),
                     "mean_b": float(values_b.mean()) if values_b.size else float("nan"),
                     "mean_diff_b_minus_a": (
@@ -527,7 +569,7 @@ def pairwise_statistics(
                     ),
                     "bootstrap_ci95_low": ci_low,
                     "bootstrap_ci95_high": ci_high,
-                    "hedges_g": hedges_g(values_a, values_b),
+                    "hedges_g": effect_size,
                     "permutation_p_value_two_sided": p_value,
                 }
             )
@@ -535,8 +577,31 @@ def pairwise_statistics(
     q_values = benjamini_hochberg([row["permutation_p_value_two_sided"] for row in rows])
     for row, q_value in zip(rows, q_values):
         row["fdr_q_value"] = q_value
-        row["significant_after_fdr"] = bool(np.isfinite(q_value) and q_value <= alpha)
+        row["significant_after_fdr"] = bool(row["comparison_valid"] and np.isfinite(q_value) and q_value <= alpha)
         row["alpha"] = alpha
+    return rows
+
+
+def sample_overlap_summary(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Summarize shared image identities so domain-comparison assumptions are auditable."""
+    samples: dict[str, set[str]] = {}
+    for row in image_level_records(records):
+        samples.setdefault(row["domain"], set()).add(row["sample_fingerprint"])
+    rows = []
+    for domain_a, domain_b in itertools.combinations(sorted(samples), 2):
+        shared = samples[domain_a].intersection(samples[domain_b])
+        denominator = min(len(samples[domain_a]), len(samples[domain_b]))
+        rows.append(
+            {
+                "domain_a": domain_a,
+                "domain_b": domain_b,
+                "n_a": len(samples[domain_a]),
+                "n_b": len(samples[domain_b]),
+                "n_shared": len(shared),
+                "shared_fraction_min": len(shared) / denominator if denominator else float("nan"),
+                "independent_sample_test_valid": not shared,
+            }
+        )
     return rows
 
 
@@ -638,25 +703,70 @@ def write_csv(path: Path, rows: list[dict[str, Any]], fieldnames: tuple[str, ...
         writer.writerows(rows)
 
 
-def plot_domain_heatmap(summary: list[dict[str, Any]], path: Path) -> None:
-    """Plot all-layer mean dense probabilities for each audited domain."""
+def plot_routing_heatmaps(summary: list[dict[str, Any]], output: Path) -> None:
+    """Plot aggregate and layer-resolved probability/top-1 routing heatmaps."""
     import matplotlib.pyplot as plt
     import pandas as pd
     import seaborn as sns
 
-    rows = [row for row in summary if row["layer"] == "all"]
-    if not rows:
+    aggregate_rows = [row for row in summary if row["layer"] == "all"]
+    layer_rows = [row for row in summary if row["layer"] != "all"]
+    if not aggregate_rows:
         return
-    frame = pd.DataFrame(rows)
+    frame = pd.DataFrame(aggregate_rows)
     pivot = frame.pivot(index="domain", columns="expert", values="mean_probability_mean")
     pivot = pivot.reindex(columns=list(EXPERT_NAMES))
+    uniform = 1.0 / len(EXPERT_NAMES)
+    deviation = pivot - uniform
+    limit = max(float(np.nanmax(np.abs(deviation.to_numpy()))), 1e-6)
     figure, axis = plt.subplots(figsize=(9, max(3.0, 0.65 * len(pivot.index))))
-    sns.heatmap(pivot, annot=True, fmt=".3f", cmap="viridis", vmin=0.0, vmax=1.0, ax=axis)
-    axis.set_title("Same-checkpoint MoT routing probability")
+    sns.heatmap(deviation, annot=True, fmt="+.4f", cmap="vlag", center=0.0, vmin=-limit, vmax=limit, ax=axis)
+    axis.set_title("Mean routing probability deviation from uniform")
     axis.set_xlabel("Transformer expert")
     axis.set_ylabel("Image domain")
     figure.tight_layout()
-    figure.savefig(path, dpi=300, bbox_inches="tight")
+    figure.savefig(output / "routing_probability_heatmap.png", dpi=300, bbox_inches="tight")
+    plt.close(figure)
+
+    if not layer_rows:
+        return
+    layer_frame = pd.DataFrame(layer_rows)
+    layer_frame["domain_layer"] = layer_frame["domain"] + " | " + layer_frame["layer"]
+    probability = layer_frame.pivot(
+        index="domain_layer", columns="expert", values="mean_probability_mean"
+    ).reindex(columns=list(EXPERT_NAMES))
+    probability_deviation = probability - uniform
+    layer_limit = max(float(np.nanmax(np.abs(probability_deviation.to_numpy()))), 1e-6)
+    height = max(5.0, 0.34 * len(probability.index))
+
+    figure, axis = plt.subplots(figsize=(10, height))
+    sns.heatmap(
+        probability_deviation,
+        annot=True,
+        fmt="+.3f",
+        cmap="vlag",
+        center=0.0,
+        vmin=-layer_limit,
+        vmax=layer_limit,
+        ax=axis,
+    )
+    axis.set_title("Layer-resolved routing probability deviation from uniform")
+    axis.set_xlabel("Transformer expert")
+    axis.set_ylabel("Domain | MoT layer")
+    figure.tight_layout()
+    figure.savefig(output / "routing_layer_probability_delta_heatmap.png", dpi=300, bbox_inches="tight")
+    plt.close(figure)
+
+    top1 = layer_frame.pivot(index="domain_layer", columns="expert", values="top1_share_mean").reindex(
+        columns=list(EXPERT_NAMES)
+    )
+    figure, axis = plt.subplots(figsize=(10, height))
+    sns.heatmap(top1, annot=True, fmt=".2f", cmap="viridis", vmin=0.0, vmax=1.0, ax=axis)
+    axis.set_title("Layer-resolved expert top-1 activation share")
+    axis.set_xlabel("Transformer expert")
+    axis.set_ylabel("Domain | MoT layer")
+    figure.tight_layout()
+    figure.savefig(output / "routing_layer_top1_share_heatmap.png", dpi=300, bbox_inches="tight")
     plt.close(figure)
 
 
@@ -687,7 +797,11 @@ def write_recommendations(
         )
 
     finite_pairwise = [
-        row for row in pairwise if row["expert"] != "all_experts" and np.isfinite(row["mean_diff_b_minus_a"])
+        row
+        for row in pairwise
+        if row["expert"] != "all_experts"
+        and row.get("comparison_valid", True)
+        and np.isfinite(row["mean_diff_b_minus_a"])
     ]
     if finite_pairwise:
         strongest = max(finite_pairwise, key=lambda row: abs(row["hedges_g"]) if np.isfinite(row["hedges_g"]) else -1)
@@ -774,7 +888,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch", type=int, default=4)
     parser.add_argument("--max-images", type=int, default=128)
     parser.add_argument("--equalize", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--perturbations", nargs="*", choices=PERTURBATIONS, default=list(PERTURBATIONS))
+    parser.add_argument(
+        "--perturbations",
+        nargs="*",
+        choices=PERTURBATIONS,
+        default=list(PERTURBATIONS),
+        help="Deterministic robustness probes. Passing the flag with no values disables all probes.",
+    )
+    parser.add_argument(
+        "--no-perturbations",
+        action="store_true",
+        help="Explicitly disable robustness probes (preferred over an empty --perturbations argument).",
+    )
     parser.add_argument("--bootstrap-samples", type=int, default=5000)
     parser.add_argument("--permutations", type=int, default=5000)
     parser.add_argument("--alpha", type=float, default=0.05)
@@ -791,6 +916,8 @@ def main() -> int:
         raise SystemExit("--batch and --imgsz must be positive")
     if not 0.0 < args.alpha < 1.0:
         raise SystemExit("--alpha must be between 0 and 1")
+    if args.no_perturbations:
+        args.perturbations = []
 
     domains = parse_domain_specs(args.domain)
     model_path = args.model.expanduser()
@@ -803,12 +930,31 @@ def main() -> int:
     output.mkdir(parents=True, exist_ok=True)
 
     selected = choose_domain_samples(domains, args.max_images, args.seed, args.equalize)
+    sample_rows = []
+    sample_fingerprints: dict[tuple[str, str], str] = {}
+    for domain in domains:
+        for path in selected[domain.name]:
+            image_id = relative_image_id(path, domain.path)
+            content_sha256 = sha256_file(path) if args.hash_samples else ""
+            fingerprint = content_sha256 or hashlib.sha256(str(path.resolve()).encode()).hexdigest()
+            sample_fingerprints[(domain.name, image_id)] = fingerprint
+            sample_rows.append(
+                {
+                    "domain": domain.name,
+                    "image_id": image_id,
+                    "size_bytes": path.stat().st_size,
+                    "sha256": content_sha256,
+                    "sample_fingerprint": fingerprint,
+                }
+            )
+
     device = normalize_torch_device(args.device)
     model = load_model(model_path, device=device, nc=args.nc)
     records = collect_routing(
         model,
         domains,
         selected,
+        sample_fingerprints,
         device=device,
         imgsz=args.imgsz,
         batch_size=args.batch,
@@ -816,29 +962,20 @@ def main() -> int:
     )
     summary = summarize_domains(records)
     pairwise = pairwise_statistics(records, args.bootstrap_samples, args.permutations, args.seed, args.alpha)
+    sample_overlap = sample_overlap_summary(records)
     robustness_detailed, robustness_summary = robustness_statistics(records)
 
     write_csv(output / "routing_detailed.csv", records, DETAIL_FIELDS)
     write_csv(output / "domain_summary.csv", summary)
     write_csv(output / "pairwise_statistics.csv", pairwise)
+    write_csv(output / "sample_overlap.csv", sample_overlap)
     write_csv(output / "robustness_detailed.csv", robustness_detailed)
     write_csv(output / "robustness_summary.csv", robustness_summary)
 
-    sample_rows = []
-    for domain in domains:
-        for path in selected[domain.name]:
-            sample_rows.append(
-                {
-                    "domain": domain.name,
-                    "image_id": relative_image_id(path, domain.path),
-                    "size_bytes": path.stat().st_size,
-                    "sha256": sha256_file(path) if args.hash_samples else "",
-                }
-            )
     write_csv(output / "sample_manifest.csv", sample_rows)
     write_recommendations(output / "recommendations_zh.md", summary, pairwise, robustness_summary)
     if args.plots:
-        plot_domain_heatmap(summary, output / "routing_probability_heatmap.png")
+        plot_routing_heatmaps(summary, output)
 
     model_digest = sha256_file(model_path)
     manifest = {
@@ -862,6 +999,9 @@ def main() -> int:
         "bootstrap_samples": args.bootstrap_samples,
         "permutations": args.permutations,
         "alpha": args.alpha,
+        "overlap_policy": (
+            "Independent bootstrap/permutation/FDR tests are disabled for domain pairs sharing sample fingerprints."
+        ),
         "preprocessing": "robust percentile normalization + RGB conversion + aspect-ratio-preserving letterbox",
         "domains": [
             {

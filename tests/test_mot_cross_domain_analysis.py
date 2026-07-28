@@ -20,8 +20,9 @@ from scripts.analyze_mot_cross_domain import (
     parse_domain_specs,
     permutation_p_value_two_sided,
     robustness_statistics,
+    sample_overlap_summary,
 )
-from scripts.compare_mot_ablation import SPECS, build_model, stability_from_results
+from scripts.compare_mot_ablation import SPECS, build_model, read_best_observed_metrics, stability_from_results
 from ultralytics.nn.modules.mot import MoTBlock
 
 
@@ -139,10 +140,42 @@ def test_pairwise_and_robustness_statistics_use_image_level_units():
     )
     assert local_probability["n_a"] == 5
     assert local_probability["n_b"] == 5
+    assert local_probability["n_shared"] == 0
+    assert local_probability["comparison_valid"] is True
     assert local_probability["mean_diff_b_minus_a"] == pytest.approx(-0.65)
     assert len(detailed) == 20
     assert len(summary) == 2
     assert all(row["dominant_expert_agreement_rate"] == 0.0 for row in summary)
+
+
+def test_pairwise_statistics_rejects_shared_images_as_independent_samples():
+    records = make_routing_records()
+    for row in records:
+        row["sample_fingerprint"] = f"shared-{row['image_id']}"
+
+    comparisons = pairwise_statistics(records, bootstrap_samples=100, permutations=99, seed=42, alpha=0.05)
+    overlaps = sample_overlap_summary(records)
+    local_probability = next(
+        row for row in comparisons if row["expert"] == "LocalConvTransformer" and row["metric"] == "mean_probability"
+    )
+
+    assert local_probability["n_shared"] == 5
+    assert local_probability["shared_fraction_min"] == pytest.approx(1.0)
+    assert local_probability["comparison_valid"] is False
+    assert np.isnan(local_probability["permutation_p_value_two_sided"])
+    assert np.isnan(local_probability["fdr_q_value"])
+    assert local_probability["significant_after_fdr"] is False
+    assert overlaps == [
+        {
+            "domain_a": "aerial",
+            "domain_b": "medical",
+            "n_a": 5,
+            "n_b": 5,
+            "n_shared": 5,
+            "shared_fraction_min": 1.0,
+            "independent_sample_test_valid": False,
+        }
+    ]
 
 
 def test_jensen_shannon_divergence_bounds_and_identity():
@@ -189,3 +222,19 @@ def test_stability_summary_includes_transient_recovery_events(tmp_path: Path):
     assert summary["recovery_events"] == "1"
     assert summary["recovery_reasons"] == "Gradient NaN/Inf"
     assert summary["amp_fallback_triggered"] == "True"
+
+
+def test_best_observed_metrics_are_distinct_from_the_final_row(tmp_path: Path):
+    results = tmp_path / "results.csv"
+    results.write_text(
+        "epoch,metrics/mAP50(B),metrics/mAP50-95(B)\n"
+        "1,0.20,0.10\n"
+        "2,0.25,0.15\n"
+        "3,0.23,0.12\n",
+        encoding="utf-8",
+    )
+
+    best = read_best_observed_metrics(results)
+
+    assert best["epoch"] == "2"
+    assert best["metrics/mAP50-95(B)"] == "0.15"

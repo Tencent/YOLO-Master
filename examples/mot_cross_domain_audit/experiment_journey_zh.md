@@ -114,6 +114,12 @@ SHA-256；实际 FLOPs 也在该模型对象上测量。
 确定性实现。当前做法是固定 seed、数据、机器和软件版本，并完整保留 warning；因此本实验属于
 协议级可复现，不声称跨硬件 bitwise 一致。
 
+### 5.4 checkpoint 与指标行的语义不应混用
+
+完整训练中曾出现某轮指标回落，暴露出初版汇总把末轮 `results.csv` 指标与 `best.pt` 身份放在同一行，
+却没有明确两者关系。正式四组的最佳值最终恰好都出现在第 30 轮，但代码仍增加
+`final_*`、`best_observed_*` 和对应 epoch 字段，避免其他实验在最佳轮不是末轮时误报。
+
 ## 6. 路由解释如何避免伪结论
 
 初版想直接把所有 token 当样本做显著性检验，但同一图像内 token 强相关，会夸大样本量。
@@ -127,6 +133,33 @@ SHA-256；实际 FLOPs 也在该模型对象上测量。
 只有 `q <= 0.05` 且差值 CI 不跨 0，才描述为稳定差异。`irregular_occluded` 由目标密度、尺度和
 长宽比变异构成，只是遮挡/不规则场景代理；DeformableTransformer 激活上升也不能直接证明检测
 更准确。
+
+### 6.1 场景集合重叠使独立检验失效
+
+首次场景审计后检查样本指纹发现：
+
+- `dense` 与 `irregular_occluded` 重叠 104/128；
+- `large_objects` 与 `sparse` 重叠 76/128；
+- `dense`/`sparse` 和 `small_objects`/`large_objects` 两组主比较互斥。
+
+共享图像不满足独立样本 permutation test 的前提。修复后新增 `sample_overlap.csv`；共享样本的组
+只保留描述统计，`comparison_valid=false`，不再生成可引用的 CI、p-value 或 FDR 显著性。两条互斥
+主比较保持有效。
+
+### 6.2 深层 Top-1 路由接近均匀
+
+分层热力图显示最深的两个 `model.23` 路由概率几乎固定为 1/3，Deformable top-1 为 0。参数没有
+冻结；代码检查发现该层使用 `top_k=1`，单个 top-k 值重归一化后恒为 1，主任务梯度主要依赖 2%
+`exploration_eps`。同一随机输入的任务损失探针中，router 梯度范数约为：
+
+| 配置 | router 梯度范数和 |
+|---|---:|
+| top-k=1, exploration=0 | 8.9e-9 |
+| top-k=1, exploration=0.02 | 1.53e-4 |
+| top-k=2, exploration=0.02 | 9.90e-3 |
+
+该结果解释了深层路由弱分化，但尚未证明 straight-through 或更高 exploration 能提升检测精度。
+因此本次把它作为后续消融假设，不在没有重训数据时提交行为改变。
 
 ## 7. 正式实验结果
 

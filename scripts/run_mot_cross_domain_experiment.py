@@ -433,7 +433,7 @@ def run_audit(args: argparse.Namespace, project: Path, datasets: dict[str, dict[
         str(args.permutations),
         "--seed",
         str(args.seed),
-        "--perturbations",
+        "--no-perturbations",
         "--output",
         str(project / "routing/visdrone_scenes"),
     ]
