@@ -324,7 +324,11 @@ class MoTBlock(nn.Module):
                         f"→ output {tuple(expert_out.shape)}. All experts must preserve "
                         f"the input tensor shape."
                     )
-                out[batch_idx] = out[batch_idx] + expert_out * w
+                # Autocast may return an FP16/BF16 expert tensor while the residual
+                # accumulator follows the FP32 input. Advanced-index assignment does
+                # not promote dtypes like an out-of-place addition does.
+                contribution = (expert_out * w).to(dtype=out.dtype)
+                out[batch_idx] = out[batch_idx] + contribution
             selected_experts = int((indices if indices is not None else weights).unique().numel())
             self._last_dispatch_stats = {
                 "mode": "sample_sparse",

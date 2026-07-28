@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import json
 import math
 import os
 import pickle
@@ -412,6 +413,27 @@ class TrainingRecoveryController:
 
         scaler_state = None
         amp_recovery = bool(getattr(trainer, "amp", False)) and (flags[0] or flags[2])
+        LOGGER.warning(
+            f"Recovering non-finite training state ({reason}) from {path}. "
+            f"AMP fallback={'enabled' if amp_recovery else 'not required'}."
+        )
+        event = {
+            "created_at": datetime.now().astimezone().isoformat(),
+            "epoch": int(epoch),
+            "reason": reason,
+            "amp_was_enabled": bool(getattr(trainer, "amp", False)),
+            "amp_fallback_triggered": amp_recovery,
+            "checkpoint": str(path),
+        }
+        trainer.recovery_events = [*getattr(trainer, "recovery_events", []), event]
+        save_dir = getattr(trainer, "save_dir", None)
+        if rank in {-1, 0} and save_dir is not None:
+            try:
+                event_path = Path(save_dir) / "recovery_events.jsonl"
+                with event_path.open("a", encoding="utf-8") as file:
+                    file.write(json.dumps(event, ensure_ascii=False) + "\n")
+            except OSError as exc:
+                LOGGER.warning(f"Could not persist recovery event: {exc}")
         if not amp_recovery and (loss_nonfinite or gradient_nonfinite):
             scaler = getattr(trainer, "scaler", None)
             if scaler is not None:

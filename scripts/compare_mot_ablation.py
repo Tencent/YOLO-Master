@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import math
 import os
@@ -25,13 +26,13 @@ os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-import torch  # noqa: E402
+import torch
 
-from ultralytics import YOLO  # noqa: E402
-from ultralytics.nn.modules.moa import C2fMoA, MoABlock, anneal_moa_temperature  # noqa: E402
-from ultralytics.nn.modules.mot import C2fMoT, MoTBlock, anneal_mot_temperature  # noqa: E402
-from ultralytics.nn.tasks import DetectionModel  # noqa: E402
-from ultralytics.utils.torch_utils import get_flops  # noqa: E402
+from ultralytics import YOLO
+from ultralytics.nn.modules.moa import C2fMoA, MoABlock, anneal_moa_temperature
+from ultralytics.nn.modules.mot import C2fMoT, MoTBlock, anneal_mot_temperature
+from ultralytics.nn.tasks import DetectionModel
+from ultralytics.utils.torch_utils import get_flops
 
 
 @dataclass(frozen=True)
@@ -51,6 +52,11 @@ SPECS = {
         key="v10_mot",
         label="YOLO-Master-v0.10-MoT-N",
         cfg=ROOT / "ultralytics/cfg/models/master/v0_10/det/yolo-master-mot-n.yaml",
+    ),
+    "v10_mot_p5": ModelSpec(
+        key="v10_mot_p5",
+        label="YOLO-Master-v0.10-MoT-P5-N",
+        cfg=ROOT / "ultralytics/cfg/models/master/v0_10/det/yolo-master-mot-p5-n.yaml",
     ),
     "v10_moa": ModelSpec(
         key="v10_moa",
@@ -191,7 +197,7 @@ def profile_flops(model: torch.nn.Module, imgsz: int, actual: bool = False) -> t
         with torch.no_grad(), torch.profiler.profile(with_flops=True) as prof:
             _ = model(x)
         return sum(evt.flops for evt in prof.key_averages()) / 1e9, "torch_profile_actual"
-    except Exception:
+    except (AttributeError, RuntimeError, TypeError, ValueError):
         return float(get_flops(model, imgsz=imgsz)), "thop_stride_scaled_fallback"
 
 
@@ -202,13 +208,14 @@ def build_model(spec: ModelSpec, device: str = "cpu") -> DetectionModel:
     return model
 
 
-def build_row(spec: ModelSpec, device: str = "cpu", imgsz: int = 640, include_flops: bool = False) -> dict[str, str]:
-    model = build_model(spec, device=device)
+def model_structure_row(spec: ModelSpec, model: torch.nn.Module) -> dict[str, str]:
+    """Describe the exact model object used by training or benchmarking."""
     params = sum(p.numel() for p in model.parameters())
-    row = {
+    return {
         "key": spec.key,
         "label": spec.label,
         "cfg": str(spec.cfg.relative_to(ROOT)),
+        "nc": str(getattr(model, "nc", "")),
         "params": str(params),
         "params_m": f"{params / 1e6:.6f}",
         "moablocks": str(count_modules(model, MoABlock)),
@@ -216,10 +223,28 @@ def build_row(spec: ModelSpec, device: str = "cpu", imgsz: int = 640, include_fl
         "motblocks": str(count_modules(model, MoTBlock)),
         "c2fmot": str(count_modules(model, C2fMoT)),
     }
+
+
+def build_row(spec: ModelSpec, device: str = "cpu", imgsz: int = 640, include_flops: bool = False) -> dict[str, str]:
+    model = build_model(spec, device=device)
+    row = model_structure_row(spec, model)
     if include_flops:
         flops, method = profile_flops(model, imgsz=imgsz, actual=False)
         row.update({"imgsz": str(imgsz), "flops_g": f"{flops:.6f}", "flops_method": method})
     return row
+
+
+def sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as file:
+        while chunk := file.read(chunk_size):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def load_checkpoint_model(path: Path, device: str) -> torch.nn.Module:
+    model = YOLO(str(path)).model
+    return model.to(torch.device(normalize_torch_device(device))).eval()
 
 
 def sync_device(device: str) -> None:
@@ -237,9 +262,10 @@ def benchmark_row(
     warmup: int,
     reps: int,
     actual_flops: bool = False,
+    weights: Path | None = None,
 ) -> dict[str, str]:
     torch.set_grad_enabled(False)
-    model = build_model(spec, device=device)
+    model = load_checkpoint_model(weights, device) if weights else build_model(spec, device=device)
     device_name = normalize_torch_device(device)
     x = torch.randn(1, 3, imgsz, imgsz, device=torch.device(device_name))
 
@@ -256,7 +282,7 @@ def benchmark_row(
             times.append((time.perf_counter() - t0) * 1000.0)
 
     flops, flops_method = profile_flops(model, imgsz=imgsz, actual=actual_flops)
-    base = build_row(spec, device=device)
+    base = model_structure_row(spec, model)
     base.update(
         {
             "device": device_name,
@@ -270,6 +296,8 @@ def benchmark_row(
             "flops_g": f"{flops:.6f}",
             "flops_method": flops_method,
             "reps": str(reps),
+            "weights": str(weights) if weights else "",
+            "weights_sha256": sha256_file(weights) if weights else "",
         }
     )
     return base
@@ -277,12 +305,14 @@ def benchmark_row(
 
 def add_mixture_callbacks(model: YOLO, spec: ModelSpec, args: argparse.Namespace) -> None:
     if "moa" in spec.key:
+
         def on_moa_epoch_end(trainer):
             anneal_moa_temperature(trainer.model, factor=args.moa_temp_factor, min_temp=args.moa_min_temp)
 
         model.add_callback("on_train_epoch_end", on_moa_epoch_end)
 
     if "mot" in spec.key:
+
         def on_mot_epoch_end(trainer):
             anneal_mot_temperature(trainer.model, factor=args.mot_temp_factor, min_temp=args.mot_min_temp)
 
@@ -309,10 +339,32 @@ def row_total_loss(row: dict[str, str]) -> float | None:
     return sum(values)
 
 
-def stability_from_results(results_csv: Path) -> dict[str, str]:
+def read_recovery_events(path: Path) -> list[dict[str, object]]:
+    """Read structured non-finite recovery events, ignoring malformed lines."""
+    if not path.exists():
+        return []
+    events = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict):
+            events.append(event)
+    return events
+
+
+def stability_from_results(results_csv: Path, recovery_events_jsonl: Path | None = None) -> dict[str, str]:
+    events = read_recovery_events(recovery_events_jsonl) if recovery_events_jsonl else []
+    recovery = {
+        "recovery_events": str(len(events)),
+        "nonfinite_recovery_detected": str(bool(events)),
+        "recovery_reasons": "|".join(sorted({str(event.get("reason", "")) for event in events if event.get("reason")})),
+        "amp_fallback_triggered": str(any(bool(event.get("amp_fallback_triggered")) for event in events)),
+    }
     rows = read_csv_rows(results_csv)
     if not rows:
-        return {
+        return recovery | {
             "nan_detected": "",
             "loss_diverged": "",
             "final_train_total_loss": "",
@@ -335,7 +387,7 @@ def stability_from_results(results_csv: Path) -> dict[str, str]:
 
     finite_losses = [v for v in train_losses if math.isfinite(v)]
     if not finite_losses:
-        return {
+        return recovery | {
             "nan_detected": str(nan_detected),
             "loss_diverged": str(nan_detected),
             "final_train_total_loss": "",
@@ -347,7 +399,7 @@ def stability_from_results(results_csv: Path) -> dict[str, str]:
     tail = finite_losses[-5:] if len(finite_losses) >= 5 else finite_losses
     tail_mean = sum(tail) / len(tail)
     diverged = nan_detected or (best_loss > 0 and tail_mean > best_loss * 1.5 and final_loss > best_loss * 1.5)
-    return {
+    return recovery | {
         "nan_detected": str(nan_detected),
         "loss_diverged": str(diverged),
         "final_train_total_loss": f"{final_loss:.6f}",
@@ -408,17 +460,28 @@ def write_summary(project: Path, specs: list[ModelSpec]) -> Path:
     for spec in specs:
         run_dir = project / spec.key
         metrics = read_last_metrics(run_dir / "results.csv")
-        row = build_row(spec, device="cpu")
-        row.update({
-            "run_dir": str(run_dir.relative_to(ROOT)) if run_dir.is_relative_to(ROOT) else str(run_dir),
-            "epoch": metrics.get("epoch", ""),
-        })
+        checkpoint = run_dir / "weights/best.pt"
+        if not checkpoint.exists():
+            checkpoint = run_dir / "weights/last.pt"
+        if checkpoint.exists():
+            trained_model = load_checkpoint_model(checkpoint, "cpu")
+            row = model_structure_row(spec, trained_model)
+            row.update({"weights": str(checkpoint), "weights_sha256": sha256_file(checkpoint)})
+        else:
+            row = build_row(spec, device="cpu")
+            row.update({"weights": "", "weights_sha256": ""})
+        row.update(
+            {
+                "run_dir": str(run_dir.relative_to(ROOT)) if run_dir.is_relative_to(ROOT) else str(run_dir),
+                "epoch": metrics.get("epoch", ""),
+            }
+        )
         for key, value in benchmark_rows.get(spec.key, {}).items():
             if key not in {"key", "label", "cfg", "params", "params_m", "moablocks", "c2fmoa", "motblocks", "c2fmot"}:
                 row[key] = value
         for key in METRIC_KEYS:
             row[key] = metrics.get(key, "")
-        row.update(stability_from_results(run_dir / "results.csv"))
+        row.update(stability_from_results(run_dir / "results.csv", run_dir / "recovery_events.jsonl"))
         rows.append(row)
     out = project / "summary.csv"
     write_csv(out, rows)
@@ -434,7 +497,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--imgsz", type=int, default=640)
     parser.add_argument("--check-build", action="store_true")
     parser.add_argument("--benchmark", action="store_true")
-    parser.add_argument("--actual-flops", action="store_true", help="Use torch profiler on the full input size for FLOPs.")
+    parser.add_argument(
+        "--trained-weights",
+        action="store_true",
+        help="Benchmark PROJECT/<key>/weights/best.pt instead of an untrained YAML model.",
+    )
+    parser.add_argument(
+        "--actual-flops", action="store_true", help="Use torch profiler on the full input size for FLOPs."
+    )
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--reps", type=int, default=5)
     parser.add_argument("--train", action="store_true")
@@ -443,12 +513,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--workers", type=int, default=0)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--deterministic", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--resume", action="store_true", help="Resume each model from PROJECT/<key>/weights/last.pt when present.")
+    parser.add_argument(
+        "--resume", action="store_true", help="Resume each model from PROJECT/<key>/weights/last.pt when present."
+    )
     parser.add_argument("--patience", type=int, default=0)
     parser.add_argument("--amp", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--cache", action="store_true")
     parser.add_argument("--plots", action="store_true")
     parser.add_argument("--exist-ok", action="store_true")
+    parser.add_argument(
+        "--no-summary",
+        action="store_true",
+        help="Skip per-model summary writes. Useful when independent model runs share a project directory.",
+    )
     parser.add_argument("--summary-only", action="store_true")
     parser.add_argument("--moa-temp-factor", type=float, default=0.97)
     parser.add_argument("--moa-min-temp", type=float, default=0.3)
@@ -472,7 +549,25 @@ def main() -> int:
         print(f"[build] wrote {out}")
 
     if args.benchmark:
-        rows = [benchmark_row(spec, args.device, args.imgsz, args.warmup, args.reps, args.actual_flops) for spec in specs]
+        weight_paths = {}
+        if args.trained_weights:
+            for spec in specs:
+                path = project / spec.key / "weights/best.pt"
+                if not path.exists():
+                    raise SystemExit(f"trained checkpoint not found for {spec.key}: {path}")
+                weight_paths[spec.key] = path
+        rows = [
+            benchmark_row(
+                spec,
+                args.device,
+                args.imgsz,
+                args.warmup,
+                args.reps,
+                args.actual_flops,
+                weights=weight_paths.get(spec.key),
+            )
+            for spec in specs
+        ]
         out = project / f"latency_{args.device}_{args.imgsz}.csv"
         write_csv(out, rows)
         print(json.dumps(rows, indent=2, ensure_ascii=False))
@@ -482,8 +577,9 @@ def main() -> int:
         project.mkdir(parents=True, exist_ok=True)
         for spec in specs:
             train_spec(args, spec, data_yaml, project)
-            out = write_summary(project, specs)
-            print(f"[summary] wrote {out}")
+            if not args.no_summary:
+                out = write_summary(project, specs)
+                print(f"[summary] wrote {out}")
 
     if args.summary_only:
         out = write_summary(project, specs)
