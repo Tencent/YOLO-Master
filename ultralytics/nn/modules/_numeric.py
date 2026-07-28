@@ -11,8 +11,18 @@ import torch.nn as nn
 
 def disabled_autocast(device_type: str):
     """Return an autocast-disabled context for router-critical numerical work."""
-    if device_type in {"cpu", "cuda", "mps"}:
-        return torch.autocast(device_type=device_type, enabled=False)
+    if device_type not in {"cpu", "cuda", "mps"}:
+        return nullcontext()
+
+    autocast = getattr(torch, "autocast", None)
+    if autocast is not None:
+        return autocast(device_type=device_type, enabled=False)
+
+    if device_type == "cuda":
+        cuda_amp = getattr(getattr(torch, "cuda", None), "amp", None)
+        legacy_autocast = getattr(cuda_amp, "autocast", None)
+        if legacy_autocast is not None:
+            return legacy_autocast(enabled=False)
     return nullcontext()
 
 
