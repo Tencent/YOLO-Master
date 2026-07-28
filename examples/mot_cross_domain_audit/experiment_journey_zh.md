@@ -1,7 +1,7 @@
 # Issue #54 实验与研发链路
 
-本文只记录真实发生的问题、修改和实验。正式指标在 30 epoch 训练、统一测速及路由审计完成后
-从生成文件回填；未完成部分不得提前写结论。
+本文只记录真实发生的问题、修改和实验。指标来自 30 epoch 训练、统一测速及路由审计的原始输出；
+没有被数据支持的假设明确保留为负结果或待验证问题。
 
 ## 1. 从任务要求到研究问题
 
@@ -163,26 +163,74 @@ SHA-256；实际 FLOPs 也在该模型对象上测量。
 
 ## 7. 正式实验结果
 
-> 状态：运行中。结果将从 `runs/mot_cross_domain/` 自动汇总后回填，不手工预估。
+### 7.1 四模型消融
 
-待回填内容：
+| 模型 | mAP50-95 | mAP50 | P50/P95/P99 (ms) | FLOPs (G) | Params (M) |
+|---|---:|---:|---:|---:|---:|
+| EsMoE-N | 0.09014 | 0.17446 | 18.563/18.671/18.959 | 8.505 | 3.420 |
+| MoT-N | 0.08912 | 0.16984 | 47.467/47.714/51.414 | 12.503 | 4.025 |
+| MoA-N | 0.08710 | 0.16837 | 40.650/40.870/43.381 | 9.102 | 3.546 |
+| MoT-P5-N | **0.09164** | 0.17309 | 19.628/19.707/20.539 | 8.632 | 3.494 |
 
-- 四模型 mAP50-95、mAP50、Params、实际 FLOPs、P50/P95/P99 latency；
-- loss/NaN/恢复事件；
-- 同 checkpoint 的 VisDrone、COCO128、brain-tumor 路由统计；
-- VisDrone 密集/稀疏、小/大目标、遮挡代理场景统计；
-- 至少 3 条带数据、置信区间和限制条件的场景建议；
-- P5-MoT 是否达到 `mAP50-95 +1%` 或 `latency -10%` 的 Issue 判据。
+四组最佳观测值均在第 30 轮，未出现 NaN、发散或恢复事件。
+
+MoT-P5 相比完整 MoT 的 P50 降低 58.65%、FLOPs 降低 30.96%，mAP50-95 增加 0.252
+个百分点，说明低分辨率单块设计是更好的 MoT 预算分配。相比 EsMoE，它只增加 0.150 个百分点
+mAP50-95，P50 反而增加 5.74%。Issue 的“mAP 提升 > 1%”若按相对比例计算为 1.66%，若按
+常用的绝对百分点计算则没有达到。维护者确认口径前采用保守结论：“适合替代完整 MoT”，不是
+“已证明与 MoE 协同”。
+
+### 7.2 同 checkpoint 路由结果
+
+在互斥的 `dense -> sparse` 比较中：
+
+- Local mean probability 减少 0.000719，95% CI `[-0.000840, -0.000599]`，
+  `g=-1.470, q=0.00105`；
+- Deformable mean probability 增加 0.000590，95% CI `[0.000451, 0.000734]`，
+  `g=1.018, q=0.00105`；
+- Deformable top-1 share 增加 0.004937，`q=0.04684`。
+
+在互斥的 `large -> small` 比较中，Window top-1 share 增加 0.004537
+（95% CI `[0.000850, 0.008337]`, `q=0.03474`），Local top-1 share 减少 0.004884
+（`q=0.00600`）；对应 mean probability 未通过 FDR，说明这是弱 argmax 排序变化。
+
+从 VisDrone 到 brain-tumor，Deformable top-1 share 增加 0.009824，mean probability
+增加 0.000620（95% CI `[0.000467, 0.000774]`, `q=0.00035`）。这只是同 checkpoint
+面对 OOD 医疗图像的路由信号，不是医疗检测或临床效果。
+
+### 7.3 原始假设的判定
+
+1. **MoT-P5 有更优 MoT 成本折中：支持。** 相比完整 MoT，精度略升且延迟大幅下降。
+2. **MoT-P5 对 EsMoE 产生协同增益：证据不足。** 绝对增益仅 0.150 个百分点，阈值口径待确认。
+3. **稀疏场景提高 Deformable 偏好：弱支持。** 统计方向稳定，但概率绝对差小于 0.001。
+4. **小目标由 Window 专家主导：弱支持。** top-1 有变化，dense probability 无显著变化。
+5. **遮挡/不规则场景显著提高 Deformable 激活：未验证。** 代理组与 dense 共享 104/128 张图，
+   修正后的独立检验无效。
+
+### 7.4 结果之后的新问题与下一轮设计
+
+水平翻转和亮度扰动的主导专家一致率为 96.74% 至 99.87%，平均 JSD 不超过 `5.30e-7`。
+这看似稳定，但结合深层概率近均匀，说明“稳定”可能部分来自路由器缺乏分化，不能单独作为质量证据。
+
+下一轮实验应按优先级进行：
+
+1. 用互斥、密度与尺度匹配的数据重建遮挡对照；
+2. 重训 `top_k=1/2`、`exploration_eps` 和 straight-through 路由消融；
+3. 延长训练并增加 seed，报告均值与方差；
+4. 只有在新结构达到 Issue 阈值后，才把 MoT-P5 作为默认 YAML 提案。
 
 ## 8. 证据与复现入口
 
 | 证据 | 路径 |
 |---|---|
-| 固定提交、命令、设备与数据清单 | `runs/mot_cross_domain/experiment_protocol.json` |
-| 每模型原始训练日志 | `runs/mot_cross_domain/logs/train_*.log` |
-| loss 与检测指标 | `runs/mot_cross_domain/training/*/results.csv` |
-| checkpoint 身份与统一汇总 | `runs/mot_cross_domain/training/summary.csv` |
-| 路由明细、统计检验与样本哈希 | `runs/mot_cross_domain/routing/` |
-| 实现提交 | `58cb439407e2f5f7a6e1c4b6a3a9382499713e88` |
+| 公开协议、环境与抽样设置 | `results/reproducibility.json` |
+| checkpoint 身份与统一指标 | `results/model_comparison.csv` |
+| loss、检测指标和训练曲线 | `results/training/` |
+| 跨域统计、扰动结果与图表 | `results/cross_domain/` |
+| 场景统计、样本重叠审计与图表 | `results/visdrone_scenes/` |
+| 完整结果解释 | `results/README.md` |
+| 训练实现提交 | `58cb439407e2f5f7a6e1c4b6a3a9382499713e88` |
+| 重叠审计实现提交 | `b22af3b2d03b7f3262c2ceb0cb6c2207a779c1ac` |
 
-代码回归测试为 80 passed，覆盖既有 MoT 边界、dtype 修复、TIFF、统计方法、P5 配置和恢复事件。
+代码回归测试为 82 passed，覆盖既有 MoT 边界、dtype 修复、TIFF、统计方法、P5 配置、恢复事件和
+共享样本推断禁用。公开包不包含权重、原始图像、本地绝对路径或私人数据。

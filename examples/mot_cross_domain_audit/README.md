@@ -7,7 +7,7 @@
 > 误解释成“场景导致的路由差异”。
 
 实验包含完整消融、路由解释、混合架构、统计检验、医疗 TIFF 兼容、稳定性测试和一键编排。
-所有结果文件由脚本生成，文档不预填未运行的指标。
+30 epoch 正式结果、原始 CSV 和图表见 [`results/README.md`](results/README.md)。
 
 完整的问题发现、修复与再实验过程见
 [`experiment_journey_zh.md`](experiment_journey_zh.md)。
@@ -234,6 +234,15 @@ runs/mot_cross_domain/
 - DeformableTransformer 激活增加只能说明路由偏好，不证明遮挡检测更准确；
 - brain-tumor 与 VisDrone 的语义标签不同，不做跨数据集 mAP 排名。
 
+### 8.1 本轮实测判定
+
+- MoT-P5 相比完整 MoT：mAP50-95 增加 0.252 个百分点，P50 降低 58.65%，FLOPs
+  降低 30.96%；
+- MoT-P5 相比 EsMoE：mAP50-95 增加 0.150 个百分点，P50 增加 5.74%；
+- 结论：MoT-P5 是完整 MoT 的低预算替代方案；相对 EsMoE 为 +0.150 个百分点或 +1.66%
+  相对增幅，Issue 阈值口径待维护者确认，保守地不声明协同；
+- 遮挡代理组与 dense 共享 104/128 张图，修复后的推断检验无效，原遮挡假设未被验证。
+
 ## 9. 测试
 
 ```bash
@@ -262,5 +271,7 @@ ruff check \
 | `scripts/compare_mot_ablation.py` | 增加 `v10_mot_p5` 与并发安全的 `--no-summary` |
 | `yolo-master-mot-p5-n.yaml` | 低预算 P5-only MoT 混合配置 |
 | `tests/test_mot_cross_domain_analysis.py` | 新增统计、TIFF、配置测试 |
-| `discussion_template_zh.md` | 实验完成后发布 Discussion 的结构化模板 |
+| `discussion_template_zh.md` | 已回填真实结果的 GitHub Discussion 发布草稿 |
+| `pr_description_zh.md` | 上游 Pull Request 说明草稿 |
 | `experiment_journey_zh.md` | 问题、设计、失败、修复与再实验链路 |
+| `results/` | 脱敏后的原始 CSV、图表、协议与正式结论 |
