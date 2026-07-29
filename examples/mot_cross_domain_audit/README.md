@@ -12,6 +12,8 @@ benchmark 和一键编排。30 epoch 结果、修正后的原始 CSV 和图表�
 
 完整的问题发现、修复与再实验过程见
 [`experiment_journey_zh.md`](experiment_journey_zh.md)。
+目标级匹配、检测效用监督、漂移保护与 adaptive K 的后续链路见
+[`utility_router_adaptive_k_zh.md`](utility_router_adaptive_k_zh.md)。
 
 ## 0. 与已合并工作的关系
 
@@ -92,6 +94,15 @@ ultralytics/cfg/models/master/v0_10/det/yolo-master-mot-p5-n.yaml
 benchmark 使用固定 seed 的局部随机生成器，不修改全局 RNG 或梯度模式；每个模型每轮至少
 预热 50 次且不少于 2 秒，执行 3 轮并轮换模型顺序。汇总值取各轮 percentile 的中位数，同时
 保留 run min/max。
+
+### 1.6 检测效用路由与 Adaptive K
+
+新增目标框内路由审计、单层强制专家反事实、utility router、KL 漂移保护和 inference-only
+adaptive K。`K=max` 保持原逐 token Top-K，只有低 K 样本收缩到图像级专家池；调度统计记录
+实际专家-样本调用，而不是理论 K。
+
+当前结果是受控负结论：目标层调用最多下降 50.52%，但 128 图 mAP50-95 下降 0.00048，P50
+未改善；utility router 也未通过独立 test-dev 泛化。代码默认关闭这些实验能力。
 
 ## 2. 实验矩阵
 
@@ -207,6 +218,48 @@ python scripts/analyze_mot_cross_domain.py \
 默认三个域各抽取相同数量图像，并运行三种确定性扰动。图像抽样、bootstrap 和 permutation test 都由
 `--seed` 控制。
 
+### 6.1 目标审计、效用路由与 Adaptive K
+
+```bash
+# 目标级匹配审计
+python scripts/analyze_mot_object_causal.py \
+  --model runs/mot_cross_domain/training/v10_mot/weights/best.pt \
+  --dataset /path/to/VisDrone \
+  --max-images 0 \
+  --output runs/mot_object_causal
+
+# 对目标层构建强制专家检测效用矩阵
+python scripts/build_mot_detection_utility.py \
+  --model runs/mot_cross_domain/training/v10_mot/weights/best.pt \
+  --data ultralytics/cfg/datasets/VisDrone.yaml \
+  --split train \
+  --layer model.14.m.0 \
+  --max-images 2048 \
+  --output runs/mot_detection_utility/train_l14_m0_2048
+
+# 冻结检测器与专家，只训练 utility router
+python scripts/train_mot_utility_router.py \
+  --model runs/mot_cross_domain/training/v10_mot/weights/best.pt \
+  --data ultralytics/cfg/datasets/VisDrone.yaml \
+  --matrix runs/mot_detection_utility/train_l14_m0_2048/detection_utility_matrix.csv \
+  --split train \
+  --layer model.14.m.0 \
+  --enable-scene-head \
+  --output runs/mot_utility_router/l14_m0_scene_2048
+
+# 同图比较 mAP、三轮延迟和实际专家调用
+python scripts/benchmark_mot_adaptive_k.py \
+  --model runs/mot_cross_domain/training/v10_mot/weights/best.pt \
+  --data ultralytics/cfg/datasets/VisDrone.yaml \
+  --matrix runs/mot_detection_utility/val_l14_m0_128/detection_utility_matrix.csv \
+  --router-bundle runs/mot_utility_router/l14_m0_scene_2048/utility_router.pt \
+  --split val \
+  --layer model.14.m.0 \
+  --blend-alpha 0.4 \
+  --rounds 3 \
+  --output runs/mot_adaptive_k/val
+```
+
 ## 7. 输出
 
 ```text
@@ -271,12 +324,24 @@ runs/mot_cross_domain/
 - MoT-P5 相比 EsMoE：mAP50-95 增加 0.099 个百分点，P50 增加 28.03%；
 - 结论：MoT-P5 是完整 MoT 的低预算替代方案，但未证明相对 EsMoE 的协同；
 - 图像级场景差异在视频序列配对后均未通过 FDR+CI；
-- 25 对真实遮挡标注复验中，Deformable 激活未显著上升。
+- 25 对图像级真实遮挡复验中，Deformable 激活未显著上升；
+- 更细的目标级匹配复验显示遮挡产生层相关组合重分配，不支持“统一切到 Deformable”；
+- utility router 未通过独立 test-dev，KL guard 能回退基线但不能创造增益；
+- adaptive K 将单层实际调用降低 50.52%，未达到 10% 端到端延迟改善标准。
 
 ## 9. 测试
 
 ```bash
-pytest tests/test_mot_cross_domain_analysis.py tests/test_mot.py -q
+pytest \
+  tests/test_mot_cross_domain_analysis.py \
+  tests/test_mot.py \
+  tests/test_mot_object_causal.py \
+  tests/test_mot_detection_utility.py \
+  tests/test_mot_utility_router.py \
+  tests/test_mot_utility_evaluation.py \
+  tests/test_mot_utility_deployment.py \
+  tests/test_mot_adaptive_benchmark.py \
+  -q
 ruff check \
   scripts/analyze_mot_cross_domain.py \
   scripts/run_mot_cross_domain_experiment.py \
@@ -303,9 +368,15 @@ ruff check \
 | `scripts/analyze_mot_cross_domain.py` | 同检查点 hook、序列级统计、图表、中文观察 |
 | `scripts/prepare_mot_routing_scenes.py` | 场景划分、真实遮挡解析与序列内协变量匹配 |
 | `scripts/compare_mot_ablation.py` | MoT-P5、checkpoint 指纹、实际 FLOPs 和多轮 latency |
+| `scripts/analyze_mot_object_causal.py` | 目标框投影、遮挡匹配、序列级统计 |
+| `scripts/build_mot_detection_utility.py` | 单层强制专家检测效用矩阵 |
+| `scripts/train_mot_utility_router.py` | 冻结检测器的序列隔离 utility-router 训练 |
+| `scripts/evaluate_mot_utility_router.py` | 独立 split、信任混合与 KL 漂移保护 |
+| `scripts/benchmark_mot_adaptive_k.py` | mAP、三轮延迟与实际调度联合复验 |
 | `yolo-master-mot-p5-n.yaml` | 低预算 P5-only MoT 混合配置 |
 | `tests/test_mot_cross_domain_analysis.py` | 统计、TIFF、遮挡配对、配置与 benchmark 测试 |
 | `discussion_template_zh.md` | 已回填真实结果的 GitHub Discussion 发布草稿 |
 | `pr_description_zh.md` | 上游 Pull Request 说明草稿 |
 | `experiment_journey_zh.md` | 问题、设计、失败、修复与再实验链路 |
+| `utility_router_adaptive_k_zh.md` | 目标审计到 adaptive K 的完整实验链 |
 | `results/` | 脱敏后的原始 CSV、图表、协议与正式结论 |

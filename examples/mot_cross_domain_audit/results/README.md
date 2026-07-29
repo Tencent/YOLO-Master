@@ -181,3 +181,21 @@ brain-tumor 上训练；它只说明 OOD 输入改变了路由分布，不代表
 | 真实遮挡配对审计 | [`visdrone_occlusion/`](visdrone_occlusion/) |
 | 初版图像级结果（审计轨迹） | [`cross_domain/`](cross_domain/)、[`visdrone_scenes/`](visdrone_scenes/) |
 | 逐 epoch 指标与曲线 | [`training/`](training/) |
+
+## 9. 检测效用路由扩展
+
+后续实验不再用“专家激活率”代替检测价值，而是对一个 MoT 层逐专家强制干预，建立检测损失效用
+矩阵，再训练冻结检测器的 utility router。
+
+核心结果：
+
+- 修正帧号、面积 caliper 和 truncation 后，目标级遮挡审计保留 12,296 对、76 个序列；
+- `model.14.m.0` 的 2,048 图矩阵中，原路由平均 regret 为 0.03380；
+- 场景残差 router 在 calibration val 将 regret 从 0.02186 降至 0.01737，但在 test-dev
+  升至 0.05476；
+- KL guard 在 test-dev 回退原路由，避免退化，但没有产生增益；
+- adaptive K 阈值 0.35 将目标层实际专家调用从 3.000 降至 1.484，mAP50-95 从
+  0.08743 降至 0.08695，三轮 P50 中位数从 26.877 ms 升至 28.244 ms。
+
+脱敏统计与三轮原始测速见 [`utility_routing/`](utility_routing/)，完整迭代链见
+[`../utility_router_adaptive_k_zh.md`](../utility_router_adaptive_k_zh.md)。

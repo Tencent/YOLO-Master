@@ -1,4 +1,4 @@
-# PR：MoT 序列级路由审计与 P5 低预算混合架构
+# PR：MoT 序列级/目标级路由审计、检测效用监督与 P5 混合架构
 
 关联 Issue #54。
 
@@ -13,6 +13,10 @@
 - 支持 16-bit/float TIFF、科研灰度图稳健归一化和 letterbox；
 - 修复 MoT sparse expert 在 autocast 下的 dtype 回写错误；
 - 为 AMP 自动恢复增加 warning 与结构化事件记录；
+- 新增目标框内路由审计，并修正帧号、面积 caliper 与 truncation 混杂；
+- 新增单层强制专家 context、检测效用矩阵、冻结检测器的 utility-router 训练和独立 split 评估；
+- 新增概率信任混合、KL 漂移保护，以及默认关闭、最大 K 保持原语义的 adaptive K；
+- benchmark 联合记录同图 mAP、三轮延迟和实际专家-样本调用；
 - 提交脱敏 CSV、曲线、热力图、复现协议及完整中文实验链路。
 
 上游已经包含 Issue 指定的三项 `tests/test_mot.py` 边界测试，本分支负责复验，不将其声明为新增。
@@ -56,12 +60,34 @@ MoT-P5 相比完整 MoT：当前 mAP50-95 增加 0.129 个百分点，P50 降低
 - 深层概率接近均匀且 top-1 对微小数值变化敏感，后续需重训
   `top_k/exploration/straight-through`，不在本 PR 中无实验修改默认行为。
 
+更细的目标级匹配审计保留 12,296 对、76 个序列。`model.14.m.0` 中高遮挡目标的
+LocalConv/Deformable 框内概率分别增加 0.00693/0.00259，Window 降低 0.00952；这说明是
+组合重分配，不支持硬编码“遮挡切 Deformable”。
+
+## 检测效用路由结果
+
+- 对六个 MoTBlock 做同图强制专家筛选，选择效用跨度较大的 `model.14.m.0`；
+- 2,048 图效用矩阵中，原路由平均 regret 为 0.03380，三专家 oracle 占比为
+  36.9%/35.7%/27.4%；
+- 918 参数 scene utility router 在 calibration val 将 regret 从 0.02186 降至 0.01737，
+  但 test-dev 升至 0.05476；
+- KL guard 在 test-dev 触发并恢复基线 0.04556，因此当前不声明跨序列 utility 增益；
+- adaptive K 阈值 0.35 将目标层实际调用从 3.000 降至 1.484，mAP50-95
+  `0.08743 → 0.08695`，P50 `26.877 → 28.244 ms`；
+- 所有新策略默认关闭，未修改现有 YAML 的默认行为。
+
 ## 验证
 
 ```bash
 pytest \
   tests/test_ddp_lifecycle_ema_nan.py \
   tests/test_mot_cross_domain_analysis.py \
+  tests/test_mot_object_causal.py \
+  tests/test_mot_detection_utility.py \
+  tests/test_mot_utility_router.py \
+  tests/test_mot_utility_evaluation.py \
+  tests/test_mot_utility_deployment.py \
+  tests/test_mot_adaptive_benchmark.py \
   tests/test_mot.py \
   tests/test_mot_routing_diagnostics.py -q
 
@@ -73,7 +99,7 @@ ruff check \
   tests/test_mot_cross_domain_analysis.py
 ```
 
-结果：`88 passed, 4 warnings`。4 个 warning 均来自既有 MoA head 数量自动调整。
+结果：`152 passed, 4 warnings`。4 个 warning 均来自既有 MoA head 数量自动调整。
 
 ## 范围与限制
 
@@ -82,3 +108,4 @@ ruff check \
 - 单 GPU PyTorch latency 不外推到 TensorRT、ncnn 或其他硬件；
 - 公开结果不包含权重、原始数据、本地路径、凭据或私人线粒体数据；
 - MoT-P5 未达到相对 EsMoE 的预设增益阈值，不建议直接设为默认配置。
+- utility router 未通过独立 test-dev，adaptive K 也未达到 10% 延迟阈值，均保持实验能力。

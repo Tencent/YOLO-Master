@@ -1,0 +1,24 @@
+{
+  "model_sha256": "a1857c81b7aebd0efb5a56f9d5b37405ef83edcc68890add15c9c480e9fee629",
+  "same_checkpoint_for_all_objects": true,
+  "dataset": "VisDrone",
+  "split": "val",
+  "annotation_source_name": "VisDrone2019-DET-val.zip",
+  "image_size": 640,
+  "selected_images": 548,
+  "valid_objects": 38759,
+  "matched_pairs": 12296,
+  "paired_sequences": 76,
+  "same_image_pairs": 8505,
+  "min_high_occlusion": 1,
+  "exact_match_covariates": [
+    "video_sequence",
+    "category",
+    "truncation"
+  ],
+  "max_log_area_distance": 0.6931471805599453,
+  "bootstrap_samples": 5000,
+  "permutations": 5000,
+  "seed": 42,
+  "significance_rule": "BH-FDR q <= 0.05 and paired bootstrap CI excludes zero"
+}

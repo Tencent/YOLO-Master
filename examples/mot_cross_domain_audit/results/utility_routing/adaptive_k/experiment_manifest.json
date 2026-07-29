@@ -1,0 +1,17 @@
+{
+  "protocol": "same-image end-to-end routing, detection, latency, and dispatch benchmark",
+  "model_sha256": "a1857c81b7aebd0efb5a56f9d5b37405ef83edcc68890add15c9c480e9fee629",
+  "matrix_sha256": "0ac5517e7ff5723539132c1178607a65546dbb347f808251a7f9f36b498a5b9d",
+  "router_bundle_sha256": "1a48f82403a1b97992f96c246d9511ecde13e0a6ee6c984edbf6359df254c063",
+  "data_config_name": "VisDrone.yaml",
+  "split": "val",
+  "layer": "model.14.m.0",
+  "images": 128,
+  "image_size": 640,
+  "blend_alpha": 0.4,
+  "warmup_forwards": 10,
+  "minimum_warmup_seconds": 2.0,
+  "timing_rounds": 3,
+  "variant_order_rotated_each_round": true,
+  "latency_scope": "model forward only, batch=1, synchronized device"
+}

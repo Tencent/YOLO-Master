@@ -1,0 +1,115 @@
+{
+  "protocol": "independent-split utility-router evaluation",
+  "model_sha256": "a1857c81b7aebd0efb5a56f9d5b37405ef83edcc68890add15c9c480e9fee629",
+  "matrix_sha256": "539b0820571c00b0201a08fb21005d6b9e7925e4429b9d8c3079394190cb084a",
+  "router_bundle_sha256": "1a48f82403a1b97992f96c246d9511ecde13e0a6ee6c984edbf6359df254c063",
+  "split": "test",
+  "layer": "model.14.m.0",
+  "images": 128,
+  "sequences": 27,
+  "baseline": {
+    "cross_entropy": 1.0986555814743042,
+    "oracle_accuracy": 0.3828125,
+    "mean_regret": 0.04555560275912285,
+    "p95_regret": 0.10533208400011063,
+    "mean_normalized_entropy": 0.9992246031761169
+  },
+  "raw_utility_router": {
+    "cross_entropy": 1.1273940801620483,
+    "oracle_accuracy": 0.296875,
+    "mean_regret": 0.04800274223089218,
+    "p95_regret": 0.16887922585010529,
+    "mean_normalized_entropy": 0.9829120635986328
+  },
+  "requested_blend_alpha": 0.4,
+  "effective_blend_alpha": 0.0,
+  "mean_utility_to_baseline_kl": 0.015411339700222015,
+  "max_mean_router_kl": 0.00991753,
+  "drift_guard_triggered": true,
+  "deployment_router": {
+    "cross_entropy": 1.0986555814743042,
+    "oracle_accuracy": 0.3828125,
+    "mean_regret": 0.04555560275912285,
+    "p95_regret": 0.10533208400011063,
+    "mean_normalized_entropy": 0.9992246031761169
+  },
+  "blend_alpha_sweep": [
+    {
+      "alpha": 0.0,
+      "cross_entropy": 1.0986555814743042,
+      "oracle_accuracy": 0.3828125,
+      "mean_regret": 0.04555560275912285,
+      "p95_regret": 0.10533208400011063,
+      "mean_normalized_entropy": 0.9992246031761169
+    },
+    {
+      "alpha": 0.2,
+      "cross_entropy": 1.102513313293457,
+      "oracle_accuracy": 0.2734375,
+      "mean_regret": 0.05644562840461731,
+      "p95_regret": 0.1650148332118988,
+      "mean_normalized_entropy": 0.998204231262207
+    },
+    {
+      "alpha": 0.4,
+      "cross_entropy": 1.107300877571106,
+      "oracle_accuracy": 0.28125,
+      "mean_regret": 0.054762572050094604,
+      "p95_regret": 0.1650148332118988,
+      "mean_normalized_entropy": 0.9960631132125854
+    },
+    {
+      "alpha": 0.6,
+      "cross_entropy": 1.1130263805389404,
+      "oracle_accuracy": 0.28125,
+      "mean_regret": 0.05750473588705063,
+      "p95_regret": 0.16887922585010529,
+      "mean_normalized_entropy": 0.9928045272827148
+    },
+    {
+      "alpha": 0.8,
+      "cross_entropy": 1.1197118759155273,
+      "oracle_accuracy": 0.2890625,
+      "mean_regret": 0.059029072523117065,
+      "p95_regret": 0.17904555797576904,
+      "mean_normalized_entropy": 0.9884245991706848
+    },
+    {
+      "alpha": 1.0,
+      "cross_entropy": 1.1273940801620483,
+      "oracle_accuracy": 0.296875,
+      "mean_regret": 0.04800274223089218,
+      "p95_regret": 0.16887922585010529,
+      "mean_normalized_entropy": 0.9829120635986328
+    }
+  ],
+  "mean_regret_reduction": 0.0,
+  "relative_regret_reduction": 0.0,
+  "adaptive_k_threshold_sweep": [
+    {
+      "threshold": 0.35,
+      "mean_k": 1.7578125,
+      "expert_sample_saving_vs_dense": 0.4140625,
+      "expert_sample_saving_vs_fixed_max_k": 0.12109375,
+      "k_1_share": 0.2421875,
+      "k_2_share": 0.7578125
+    },
+    {
+      "threshold": 0.36,
+      "mean_k": 2.0,
+      "expert_sample_saving_vs_dense": 0.33333333333333337,
+      "expert_sample_saving_vs_fixed_max_k": 0.0,
+      "k_1_share": 0.0,
+      "k_2_share": 1.0
+    },
+    {
+      "threshold": 0.38,
+      "mean_k": 2.0,
+      "expert_sample_saving_vs_dense": 0.33333333333333337,
+      "expert_sample_saving_vs_fixed_max_k": 0.0,
+      "k_1_share": 0.0,
+      "k_2_share": 1.0
+    }
+  ],
+  "note": "K sweep reports compute selection only; detection metrics require end-to-end adaptive-K inference."
+}

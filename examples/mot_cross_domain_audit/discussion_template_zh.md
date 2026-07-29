@@ -73,6 +73,23 @@ VisDrone 原始 occlusion 字段，每个视频序列匹配一对低/高遮挡�
 
 当前 checkpoint 不支持“遮挡显著提高 Deformable 激活”的假设。
 
+## 从目标激活到检测效用
+
+进一步把 38,759 个目标按序列、类别、truncation 精确匹配，并限定面积比不超过 2，得到
+12,296 对。浅层 `model.14.m.0` 中，LocalConv/Deformable 框内概率分别增加
+0.00693/0.00259，Window 降低 0.00952。遮挡对应的是层相关组合重分配，不是单专家切换。
+
+随后对同一图逐专家强制 `model.14.m.0`，用 `box+cls+dfl` 构造检测效用矩阵。2,048 图中，
+原路由平均 regret 为 0.03380，而 oracle 的 Local/Window/Deformable 占比为
+36.9%/35.7%/27.4%。
+
+冻结检测器和专家训练的 utility router 在 calibration val 将 regret 从 0.02186 降至
+0.01737，但在 test-dev 恶化到 0.05476。预先由 val 固定的 KL guard 在 test-dev 触发，恢复
+基线 0.04556，说明当前只能安全拒绝，不能声明泛化提升。
+
+adaptive K 阈值 0.35 将目标层实际调用从 3.000 降至 1.484，mAP50-95 从 0.08743 降至
+0.08695；三轮 P50 中位数从 26.877 ms 升至 28.244 ms。局部稀疏成立，端到端加速未成立。
+
 ## OOD 与路由器诊断
 
 VisDrone → brain-tumor 的 Deformable mean probability 增加 `0.000674`，95% CI
@@ -87,7 +104,7 @@ dense probability、entropy 和 margin，不能只看 argmax 热力图。
 
 1. 需要保留 MoT 且控制成本时，选择 MoT-P5；相比完整 MoT，P50 降低 45.01%。
 2. 速度优先仍选择 EsMoE；MoT-P5 相比它的 P50 高 28.03%。
-3. 当前数据不支持按密度、目标尺度或遮挡切换专家；序列级复验和真实遮挡配对均为负结果。
+3. 当前数据不支持按密度、尺度或遮挡硬切单一专家；目标级结果显示的是组合重分配。
 
 ## 复现与限制
 
@@ -100,4 +117,4 @@ python scripts/run_mot_cross_domain_experiment.py \
 ```
 
 这是 30 epoch、单 seed、单类 GPU 的受控实验，不代表充分收敛 SOTA，也不外推到 TensorRT/ncnn。
-相关回归为 `88 passed, 4 warnings`。公开结果不含权重、原始数据、私人线粒体图像或本地路径。
+相关回归为 `152 passed, 4 warnings`。公开结果不含权重、原始数据、私人线粒体图像或本地路径。

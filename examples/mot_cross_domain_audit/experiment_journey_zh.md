@@ -252,3 +252,24 @@ TIFF、dtype、序列配对、FDR+CI、真实遮挡匹配、确定性输入、�
 相关回归共 `88 passed, 4 warnings`，warning 均来自既有 MoA head 数量自动调整。
 
 公开结果包不包含模型权重、原始图像、私人线粒体数据、本地绝对路径或凭据。
+
+## 14. 后续：从激活解释转向检测效用
+
+图像级审计结束后继续追问“激活偏好是否真的有检测价值”，形成了：
+
+```text
+目标框内匹配审计
+→ 单层强制专家检测效用矩阵
+→ 冻结检测器的 utility router
+→ 独立 split 失败与 KL 漂移保护
+→ 保持最大 K 原语义的 adaptive K
+→ 同图 mAP、三轮延迟、实际调用联合复验
+```
+
+过程中再次修正了帧号解析、面积 caliper、truncation 混杂、最大 K 改变基线路由语义以及
+benchmark 中间结果不落盘、观测统计触发 CUDA 同步等问题。最终目标层实际调用下降 50.52%，
+但 mAP50-95 下降 0.00048，P50 未改善；utility router 也未通过独立 test-dev。完整数据、
+失败版本和 GRPO 前置条件见
+[`utility_router_adaptive_k_zh.md`](utility_router_adaptive_k_zh.md)。
+
+当前扩展后的联合回归为 `152 passed, 4 warnings`，warning 均来自既有 MoA head 自动调整。

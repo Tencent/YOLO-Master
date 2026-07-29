@@ -1,0 +1,11 @@
+version,train_images,trainable_parameters,evaluation,baseline_mean_regret,final_mean_regret,blend_alpha,guard_triggered,conclusion
+base_512,512,831,internal_sequence_holdout,0.02118547633290291,0.01224686298519373,,false,internal_gain
+base_512,512,831,val_raw,0.02185504138469696,0.02265937067568302,1.0,false,failed
+base_512,512,831,val_blended,0.02185504138469696,0.019656836986541748,0.4,false,calibration_gain
+base_512,512,831,test_blended,0.04555560275912285,0.05122183635830879,0.4,false,failed
+scene_2048,2048,918,internal_sequence_holdout,0.03354104608297348,0.023449260741472244,,false,internal_gain
+scene_2048,2048,918,val_blended,0.02185504138469696,0.017368536442518234,0.4,false,calibration_gain
+scene_2048,2048,918,test_blended,0.04555560275912285,0.054762572050094604,0.4,false,failed
+scene_2048_guarded,2048,918,test_guarded,0.04555560275912285,0.04555560275912285,0.0,true,safe_fallback
+global_2048,2048,1906,internal_sequence_holdout,0.03354104608297348,0.022876381874084473,,false,internal_gain
+global_2048,2048,1906,val_raw,0.02185504138469696,0.027001215144991875,1.0,false,failed
