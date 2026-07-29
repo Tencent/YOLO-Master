@@ -638,40 +638,15 @@ class MoLoRAModel(nn.Module):
         return self.model(*args, **kwargs)
 
     def compute_aux_loss(self) -> torch.Tensor:
-        """Collect MoLoRA aux losses from MOE_LOSS_REGISTRY.
+        """Collect current-step MoLoRA auxiliary losses.
 
         Call this after forward() in the training loop and add it to the
-        total loss. The registry is automatically cleared by tasks.py
-        before each training forward.
+        total loss. Canonical records are reset before each training forward.
         """
         device = next(self.model.parameters()).device
-        from ultralytics.nn.modules.routing_protocol import current_aux_step, get_aux_record
+        from ultralytics.nn.modules.routing_protocol import collect_aux_loss
 
-        aux_loss = torch.zeros((), device=device)
-        try:
-            from ultralytics.nn.modules.moe.modules import MOE_LOSS_REGISTRY
-        except Exception:
-            MOE_LOSS_REGISTRY = {}
-        for m in self.model.modules():
-            if isinstance(m, MoLoRALayer):
-                record = get_aux_record(m)
-                loss_t = (
-                    record.value
-                    if record is not None
-                    and record.step == current_aux_step()
-                    and record.training
-                    and isinstance(record.value, torch.Tensor)
-                    and record.value.requires_grad
-                    else None
-                )
-                # A stale local value is not a valid fallback after a runtime
-                # reset; legacy registry hooks remain the final compatibility
-                # path for old checkpoints.
-                if record is None and not isinstance(loss_t, torch.Tensor):
-                    loss_t = MOE_LOSS_REGISTRY.get(m)
-                if isinstance(loss_t, torch.Tensor) and torch.isfinite(loss_t).all():
-                    aux_loss = aux_loss + loss_t.to(device)
-        return aux_loss
+        return collect_aux_loss(self.model, device=device, include_kinds=("molora",))
 
     def merge(
         self,

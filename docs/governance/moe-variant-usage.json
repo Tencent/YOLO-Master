@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "snapshots": [
+    {
+      "version": "8.4.101",
+      "yaml_references": [
+        "A2C2fMoE",
+        "AdaptiveGateMoE",
+        "C2fMoA",
+        "C2fMoT",
+        "DetailAwareLowRankHybridAdaptiveGateMoE",
+        "DiversifiedExpertMoE",
+        "ES_MOE",
+        "FusedAdaptiveGateMoE",
+        "GatedFusionMoE",
+        "HybridAdaptiveGateMoE",
+        "HybridAdaptiveGateMoEv2",
+        "LatentMixture",
+        "LowRankHybridAdaptiveGateMoE",
+        "ModularRouterExpertMoE",
+        "MultiHeadRouterMoE",
+        "OptimalHybridGateMoE",
+        "RefinedLowRankHybridAdaptiveGateMoE",
+        "UltimateOptimizedMoE",
+        "UltraOptimizedMoE",
+        "VisualEnhancedAdaptiveGateMoE"
+      ]
+    }
+  ]
+}

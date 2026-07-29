@@ -29,7 +29,7 @@ yolo detect train model=yolov8n.pt data=coco128.yaml \
 | `molora_expert_init` | default | 专家初始化: default / orthogonal / gaussian |
 | `molora_use_rslora` | true | 使用 rsLoRA scaling |
 | `molora_share_moe_registry` | true | 共享 MOE aux loss registry |
-| `molora_capacity_factor` | 1.0 | 容量限制因子（1.0=无限制） |
+| `molora_capacity_factor` | 0.0 | 容量倍数；`<=0` 或 `>=num_experts` 表示无限制 |
 | `molora_expert_dropout` | 0.0 | 专家 dropout 概率 |
 | `molora_top_k_warmup` | null | 启用 top_k warmup（>0 表示启用） |
 | `molora_warmup_steps` | 0 | top_k warmup 从 1 到目标值的总步数 |
@@ -215,7 +215,17 @@ cfg = MoLoRAConfig(
 )
 ```
 
-## 7. 诊断与监控
+## 7. 路由保留导出
+
+默认导出策略保持现有行为。需要避免近似 merge 带来的精度变化时，可以显式保留 router 和全部 LoRA 专家：
+
+```bash
+yolo export model=best.pt format=onnx molora_export_mode=routing_preserved
+```
+
+`routing_preserved` 仅支持 ONNX 和 TorchScript。它保留逐样本 Top-K 路由的数值语义，但静态图仍会执行全部 LoRA 专家，再使用 one-hot 权重聚合输出，因此不会保留 eager 模式的稀疏计算收益。项目 ONNX 包装器和 PyTorch dynamo ONNX exporter 均有数值回归覆盖。
+
+## 8. 诊断与监控
 
 ```python
 # 获取参数统计
@@ -229,10 +239,10 @@ for name, m in wrapper.model.named_modules():
         print(f"{name}: expert_usage={stats['expert_usage'].tolist()}")
 ```
 
-## 8. 与 MoE 协同
+## 9. 与 MoE 协同
 
-MoLoRA 与 MoE 层共享 `MOE_LOSS_REGISTRY`，当 `share_moe_registry=True` 时：
-- MoLoRA 的 balance loss 自动被 `_collect_moe_aux_loss` 收集
+当 `share_moe_registry=True` 时，MoLoRA 继续向 `MOE_LOSS_REGISTRY` 发布兼容值；内部训练损失统一从带 step 的 canonical aux records 收集：
+- MoLoRA 的 balance loss 自动被 `CompositeCriterion` 收集
 - 无需修改 trainer 的 loss 计算逻辑
 
 ```yaml
@@ -242,7 +252,7 @@ moe_num_experts: 4
 molora_num_experts: 4
 ```
 
-## 9. 预期性能
+## 10. 预期性能
 
 | 场景 | mAP50 增益 | 参数量增加 |
 |------|-----------|-----------|

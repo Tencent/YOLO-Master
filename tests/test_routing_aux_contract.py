@@ -101,10 +101,24 @@ def test_canonical_state_does_not_break_deepcopy():
     assert get_aux_record(clone) is None
 
 
-def test_legacy_registry_is_only_a_fallback():
+def test_legacy_registry_is_not_an_internal_loss_source():
     clear_aux_records(step=17)
     module = nn.Linear(2, 2).train()
     value = torch.ones((), requires_grad=True)
     MOE_LOSS_REGISTRY[module] = value
     total = _collect_moe_aux_loss(module, torch.device("cpu"))
-    assert torch.allclose(total, value)
+    assert float(total.detach()) == 0.0
+
+
+def test_registry_adapter_still_dual_publishes_for_legacy_readers():
+    from ultralytics.nn.modules.moe._common import _registry_set
+    from ultralytics.nn.modules.routing_protocol import get_aux_record
+
+    clear_aux_records(step=19)
+    module = nn.Linear(2, 2).train()
+    value = torch.ones((), requires_grad=True)
+    _registry_set(module, value)
+
+    assert MOE_LOSS_REGISTRY.get(module) is value
+    assert torch.allclose(get_aux_record(module).value, value)
+    assert get_aux_record(module).value.requires_grad

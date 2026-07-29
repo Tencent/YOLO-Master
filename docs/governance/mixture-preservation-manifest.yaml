@@ -10745,7 +10745,7 @@ config_keys:
   value_type: float
   target_status: ported
 - name: molora_capacity_factor
-  default: 1.0
+  default: 0.0
   value_type: float
   target_status: ported
 - name: molora_diversity_loss

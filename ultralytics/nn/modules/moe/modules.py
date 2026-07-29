@@ -402,8 +402,8 @@ class AdaptiveCapacityMoE(UltraOptimizedMoE):
 class ES_MOE(nn.Module):
     """General MoE block with a routing network and multiple expert branches."""
 
-    def __init__(self, in_channels, out_channels=None, num_experts=3, reduction=8,
-                 top_k=None, use_sparse_inference=True, dynamic_threshold=0.4,
+    def __init__(self, in_channels, out_channels=None, num_experts=4, reduction=8,
+                 top_k=2, use_sparse_inference=True, dynamic_threshold=0.4,
                  max_kernel_size=15):
         """
         Args:

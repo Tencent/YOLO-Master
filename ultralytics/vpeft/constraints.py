@@ -760,14 +760,6 @@ class ConstraintRegistry:
             registry._soft_constraints = [c for c in resolve_names(cfg["soft_constraints"]) if c is not None]
         return registry
 
-    def hard_constraint_names(self) -> List[str]:
-        """Return canonical names of currently active hard constraints."""
-        return [constraint.name for constraint in self._hard_constraints]
-
-    def soft_constraint_names(self) -> List[str]:
-        """Return canonical names of currently active soft constraints."""
-        return [constraint.name for constraint in self._soft_constraints]
-
     # -- legacy interface (required by policy.py & solver.py) --
 
     def get_hard_mask(
@@ -906,6 +898,7 @@ class ConstraintRegistry:
         variants = variant if isinstance(variant, (list, tuple)) else [variant] * graph.n_nodes
         if len(variants) != graph.n_nodes:
             raise ValueError("per-node variant list must match graph.n_nodes")
+        differentiable = bool(placement.requires_grad or ranks.requires_grad)
         # Aggregate per-node penalties for placed modules
         total_penalties: Dict[str, float] = {}
         for c in self._soft_constraints:

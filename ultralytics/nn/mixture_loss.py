@@ -10,33 +10,18 @@ import torch.nn as nn
 
 from ultralytics.utils import LOGGER
 
+
 def _collect_moe_aux_loss(model: nn.Module | None, device: torch.device) -> torch.Tensor:
-    """Collect canonical MoE and MoLoRA losses with registry fallback semantics."""
+    """Collect canonical current-step MoE and MoLoRA losses."""
     if model is None or not getattr(model, "training", True):
         return torch.tensor(0.0, device=device)
-    from ultralytics.nn.modules.routing_protocol import collect_aux_loss, get_aux_record
+    from ultralytics.nn.modules.routing_protocol import collect_aux_loss
 
     moe_loss = collect_aux_loss(
         model,
         device=device,
         include_kinds=("moe", "molora"),
     )
-    # Compatibility bridge for callers that intentionally populate only the
-    # legacy registry (older hooks/checkpoint tests). Canonical publications
-    # always win, so this cannot double-count normal forwards.
-    try:
-        from ultralytics.nn.modules.moe.modules import MOE_LOSS_REGISTRY
-        for module in model.modules():
-            if get_aux_record(module) is not None:
-                continue
-            value = MOE_LOSS_REGISTRY.get(module)
-            if not isinstance(value, torch.Tensor):
-                continue
-            value = value.to(device)
-            if torch.isfinite(value).all():
-                moe_loss = moe_loss + value
-    except Exception:
-        pass
     if not torch.isfinite(moe_loss):
         LOGGER.warning(f"[NaN guard] canonical MoE/MoLoRA aux_loss is non-finite ({moe_loss}), skipping")
         return moe_loss.new_zeros(())
@@ -82,8 +67,8 @@ def _collect_moa_aux_loss(model: nn.Module | None, device: torch.device) -> torc
 
 
 _MIXTURE_LOSS_EMA_DECAY = 0.99
-_MIXTURE_LOSS_EMA_FLOOR   = 1e-4
-_MIXTURE_LOSS_MAX_ENTRY   = 1e4    # clamp EMA entry to prevent runaway growth
+_MIXTURE_LOSS_EMA_FLOOR = 1e-4
+_MIXTURE_LOSS_MAX_ENTRY = 1e4  # clamp EMA entry to prevent runaway growth
 _MIXTURE_LOSS_EMA_DEFAULTS = {"moe": 1.0, "mot": 0.1, "moa": 0.1, "latent": 0.1}
 # Keys in fixed order for buffer indexing.
 _MIXTURE_LOSS_EMA_KEYS = ("moe", "mot", "moa", "latent")
@@ -191,7 +176,7 @@ def _update_mixture_loss_ema(model: nn.Module | None, key: str, loss_t: torch.Te
         return
     buf = getattr(model, "_mixture_loss_ema_buf", None)
     if buf is None:
-        _get_mixture_loss_ema(model)          # lazy-init buffer
+        _get_mixture_loss_ema(model)  # lazy-init buffer
         buf = model._mixture_loss_ema_buf
     idx = _MIXTURE_LOSS_EMA_KEYS.index(key)
     with torch.no_grad():
@@ -236,7 +221,9 @@ def _collect_mixture_aux_loss(
     # Keep a structured per-kind view for logging/debugging.
     if model is not None:
         _, model._mixture_aux_diagnostics = collect_aux_loss(
-            model, device=device, return_diagnostics=True,
+            model,
+            device=device,
+            return_diagnostics=True,
             include_kinds=("moe", "moa", "mot", "molora", "latent"),
         )
     moe_l = _collect_moe_aux_loss(model, device)
@@ -285,7 +272,9 @@ def _collect_mixture_aux_loss(
     moe_scale_val = float(torch.tensor(moe_scale_val).clamp(min=SAFE_SCALE_RANGE[0], max=SAFE_SCALE_RANGE[1]).item())
     mot_scale_val = float(torch.tensor(mot_scale_val).clamp(min=SAFE_SCALE_RANGE[0], max=SAFE_SCALE_RANGE[1]).item())
     moa_scale_val = float(torch.tensor(moa_scale_val).clamp(min=SAFE_SCALE_RANGE[0], max=SAFE_SCALE_RANGE[1]).item())
-    latent_scale_val = float(torch.tensor(latent_scale_val).clamp(min=SAFE_SCALE_RANGE[0], max=SAFE_SCALE_RANGE[1]).item())
+    latent_scale_val = float(
+        torch.tensor(latent_scale_val).clamp(min=SAFE_SCALE_RANGE[0], max=SAFE_SCALE_RANGE[1]).item()
+    )
 
     terms = (
         moe_l / moe_scale_val * float(moe_gain),

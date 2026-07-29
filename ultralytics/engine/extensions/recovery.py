@@ -308,11 +308,10 @@ class TrainingRecoveryController:
 
     @staticmethod
     def aux_state_is_finite() -> bool:
-        """Check non-checkpointed legacy MoE auxiliary registry entries."""
-        from ultralytics.nn.modules.moe._common import MOE_LOSS_REGISTRY, _MOE_LOSS_REGISTRY_LOCK
+        """Check non-checkpointed canonical routing auxiliary records."""
+        from ultralytics.nn.modules.routing_protocol import iter_aux_records
 
-        with _MOE_LOSS_REGISTRY_LOCK:
-            entries = list(MOE_LOSS_REGISTRY.values())
+        entries = [record.value for _, record in iter_aux_records(None)]
         return TrainingRecoveryController.state_is_finite(entries)
 
     def bootstrap(self) -> None:
@@ -323,7 +322,11 @@ class TrainingRecoveryController:
             try:
                 healthy = all(
                     self.state_is_finite(state)
-                    for state in (unwrap_model(trainer.model), trainer.optimizer.state_dict(), trainer.scaler.state_dict())
+                    for state in (
+                        unwrap_model(trainer.model),
+                        trainer.optimizer.state_dict(),
+                        trainer.scaler.state_dict(),
+                    )
                 ) and trainer._save_healthy_checkpoint(
                     trainer._serialize_checkpoint(include_online_model=True), verify_forward=True
                 )
@@ -337,7 +340,9 @@ class TrainingRecoveryController:
             dist.broadcast(status, src=0)
             healthy = bool(status.item())
         if not healthy:
-            raise RuntimeError("Initial training state is nonfinite; refusing to start without a healthy recovery checkpoint.")
+            raise RuntimeError(
+                "Initial training state is nonfinite; refusing to start without a healthy recovery checkpoint."
+            )
 
     def refresh_healthy(self) -> bool:
         """Atomically refresh the recovery checkpoint from the latest finite online state."""
@@ -376,7 +381,9 @@ class TrainingRecoveryController:
         if not any(flags):
             return False
         reason = ", ".join(
-            name for name, active in zip(("Loss NaN/Inf", "Fitness NaN/Inf", "Gradient NaN/Inf", "EMA NaN/Inf"), flags) if active
+            name
+            for name, active in zip(("Loss NaN/Inf", "Fitness NaN/Inf", "Gradient NaN/Inf", "EMA NaN/Inf"), flags)
+            if active
         )
         path = getattr(trainer, "healthy", None) or getattr(trainer, "last", None)
         payload = None
@@ -392,7 +399,9 @@ class TrainingRecoveryController:
             dist.broadcast_object_list(shared, src=0)
             payload = shared[0]
         if payload is None:
-            raise RuntimeError(f"Global nonfinite training state detected ({reason}) without a healthy recovery checkpoint.")
+            raise RuntimeError(
+                f"Global nonfinite training state detected ({reason}) without a healthy recovery checkpoint."
+            )
 
         trainer.nan_recovery_attempts += 1
         if trainer.nan_recovery_attempts > 3:
@@ -400,7 +409,9 @@ class TrainingRecoveryController:
         checkpoint = torch_load(io.BytesIO(payload), map_location="cpu", weights_only=False)
         snapshot = checkpoint.get("model")
         if snapshot is None:
-            raise RuntimeError("Healthy checkpoint lacks online model state; refusing to restore EMA with optimizer state.")
+            raise RuntimeError(
+                "Healthy checkpoint lacks online model state; refusing to restore EMA with optimizer state."
+            )
         trainer._model_train()
         target = unwrap_model(trainer.model)
         state = snapshot.float().state_dict()
@@ -448,9 +459,7 @@ class TrainingRecoveryController:
         if amp_recovery:
             trainer.amp = False
             trainer.scaler = (
-                torch.amp.GradScaler("cuda", enabled=False)
-                if TORCH_2_4
-                else torch.cuda.amp.GradScaler(enabled=False)
+                torch.amp.GradScaler("cuda", enabled=False) if TORCH_2_4 else torch.cuda.amp.GradScaler(enabled=False)
             )
         elif scaler_state is not None:
             trainer.scaler.load_state_dict(scaler_state)

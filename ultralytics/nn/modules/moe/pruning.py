@@ -572,6 +572,27 @@ def prune_moe_model(
     return pruner.prune(output_path)
 
 
+def prune_moe_module(
+    model: nn.Module,
+    usage_stats: Dict[str, Dict[int, Any]],
+    *,
+    threshold: float = 0.15,
+    keep_top_m: Optional[int] = None,
+) -> Tuple[nn.Module, Dict[str, List[int]]]:
+    """Prune an in-memory MoE module tree using pre-collected usage statistics.
+
+    Export uses this wrapper around the existing surgery engine so calibration
+    never writes the source checkpoint. The returned module is a deep copy and
+    the pruning plan is suitable for JSON manifests.
+    """
+    from types import SimpleNamespace
+
+    pruner = MoEPruner("<in-memory>", threshold=threshold, keep_top_m=keep_top_m, usage_stats=usage_stats)
+    pruner.model = SimpleNamespace(model=model)
+    pruner._create_pruning_plan()
+    return pruner._perform_surgery(), dict(pruner.pruning_plan)
+
+
 def main():
     """Main entry point for CLI"""
     parser = argparse.ArgumentParser(

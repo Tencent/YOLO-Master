@@ -1,7 +1,7 @@
 # MoE-aware PEFT 消融实验与评测脚本 — 执行计划
 
 ## 背景
-基于 AAAI 2026 战略重定位方案，需要在现有 YOLO-Master MoLoRA 基础设施上补充 **MoE-aware PEFT** 的消融实验和评测脚本。
+需要在现有 YOLO-Master MoLoRA 基础设施上补充 **MoE-aware PEFT** 的消融实验和评测脚本。
 
 ## 现有基础设施
 - `ultralytics/nn/peft/molora/` — MoLoRA 核心实现（layer.py, router.py, config.py, model.py, loss.py, utils.py）

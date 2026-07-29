@@ -36,6 +36,14 @@ def test_vpeft_backend_compiles_plan_and_injects_selected_targets():
     assert all(item["rank"] > 0 for item in plan["targets"])
 
 
+def test_lora_config_from_args_preserves_rank_pattern():
+    rank_pattern = {"model.0": 2, "model.1": 4}
+
+    config = LoRAConfig.from_args(lora_rank_pattern=rank_pattern)
+
+    assert config.rank_pattern == rank_pattern
+
+
 def test_vpeft_refusal_falls_back_to_legacy_targets():
     model = apply_lora(
         _model(),

@@ -122,7 +122,10 @@ def recovery_trainer(tmp_path, loss=1.0, fitness=0.0, best_fitness=0.4):
 
 def write_healthy(path):
     model = nn.Linear(1, 1)
-    torch.save({"model": model, "ema": nn.Linear(1, 1), "optimizer": None, "scaler": None, "best_fitness": 0.4, "updates": 0}, path)
+    torch.save(
+        {"model": model, "ema": nn.Linear(1, 1), "optimizer": None, "scaler": None, "best_fitness": 0.4, "updates": 0},
+        path,
+    )
 
 
 def test_nccl_skips_nonpersistent_cpu():
@@ -212,7 +215,9 @@ def test_recovery_controller_resyncs_nonfinite_ema_from_online_model(tmp_path):
 
 def test_recovery_rejects_legacy_checkpoint_without_online_model(tmp_path):
     t = recovery_trainer(tmp_path, loss=float("nan"))
-    torch.save({"ema": nn.Linear(1, 1), "optimizer": None, "scaler": None, "best_fitness": 0.4, "updates": 0}, t.healthy)
+    torch.save(
+        {"ema": nn.Linear(1, 1), "optimizer": None, "scaler": None, "best_fitness": 0.4, "updates": 0}, t.healthy
+    )
     with pytest.raises(RuntimeError, match="lacks online model state"):
         t._handle_nan_recovery(0)
 
@@ -237,6 +242,20 @@ def test_recovery_clears_non_checkpoint_moe_registry(tmp_path):
         assert not list(MOE_LOSS_REGISTRY.items())
     finally:
         MOE_LOSS_REGISTRY.clear()
+
+
+def test_recovery_aux_finite_check_uses_canonical_records():
+    from ultralytics.engine.extensions.recovery import TrainingRecoveryController
+    from ultralytics.nn.modules.moe._common import MOE_LOSS_REGISTRY
+    from ultralytics.nn.modules.routing_protocol import clear_aux_records, publish_aux_loss
+
+    clear_aux_records(step=91)
+    module = nn.Linear(1, 1).train()
+    MOE_LOSS_REGISTRY[module] = torch.tensor(float("nan"))
+    assert TrainingRecoveryController.aux_state_is_finite()
+
+    publish_aux_loss(module, torch.tensor(float("nan"), requires_grad=True), kind="moe", training=True)
+    assert not TrainingRecoveryController.aux_state_is_finite()
 
 
 def test_validate_skips_nonfinite_ema_and_marks_recovery():
@@ -411,9 +430,7 @@ def test_checkpoint_restore_tolerates_missing_lazy_ema_buffer():
     old_ema = nn.Linear(1, 1)
 
     t.model.register_buffer("_mixture_loss_ema_buf", torch.tensor([1.0, 0.1, 0.1]))
-    t._load_checkpoint_state(
-        {"ema": old_ema, "optimizer": None, "scaler": None, "best_fitness": 0.0, "updates": 0}
-    )
+    t._load_checkpoint_state({"ema": old_ema, "optimizer": None, "scaler": None, "best_fitness": 0.0, "updates": 0})
 
     # Legacy three-slot EMA state is migrated when the latent loss channel is
     # introduced; the original values remain unchanged in their slots.
@@ -637,7 +654,9 @@ def test_bootstrap_failure_never_creates_unverified_checkpoint(tmp_path):
     t = bootstrap_trainer(tmp_path)
     with torch.no_grad():
         t.model.weight.fill_(float("nan"))
-    with patch("ultralytics.engine.trainer.RANK", -1), pytest.raises(RuntimeError, match="Initial training state is nonfinite"):
+    with patch("ultralytics.engine.trainer.RANK", -1), pytest.raises(
+        RuntimeError, match="Initial training state is nonfinite"
+    ):
         t._bootstrap_healthy_checkpoint()
     assert not t.healthy.exists()
 

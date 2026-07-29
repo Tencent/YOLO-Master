@@ -10,8 +10,6 @@ Coverage targets:
 Run:
     python -m pytest tests/test_moe_aware_peft.py -v --tb=short
 """
-import math
-from typing import List
 
 import pytest
 import torch
@@ -24,12 +22,13 @@ from ultralytics.nn.peft.molora.moe_aware import (
     MoLoRAMoEAwareLayer,
     build_moe_aware_layer,
 )
-from ultralytics.nn.peft.molora.layer import MoLoRAExpert
+from ultralytics.nn.peft.molora.layer import MoLoRALayer
 
 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
+
 
 class TestMoLoRAMoEAwareConfig:
     def test_default_values(self):
@@ -62,6 +61,7 @@ class TestMoLoRAMoEAwareConfig:
 # ---------------------------------------------------------------------------
 # PerExpertRankAllocator
 # ---------------------------------------------------------------------------
+
 
 class TestPerExpertRankAllocator:
     def test_uniform_mode(self):
@@ -101,6 +101,7 @@ class TestPerExpertRankAllocator:
 # ---------------------------------------------------------------------------
 # RouterCalibration
 # ---------------------------------------------------------------------------
+
 
 class TestRouterCalibration:
     def test_init(self):
@@ -154,6 +155,7 @@ class TestRouterCalibration:
 # MoLoRAMoEAwareLayer
 # ---------------------------------------------------------------------------
 
+
 class TestMoLoRAMoEAwareLayer:
     def _make_layer(self, **kwargs):
         base = nn.Conv2d(16, 32, kernel_size=3, padding=1)
@@ -165,6 +167,28 @@ class TestMoLoRAMoEAwareLayer:
         out = layer(x)
         assert out.shape == (2, 32, 8, 8)
         assert layer._last_routing_stats is not None
+
+    def test_parent_initialization_fields_are_inherited(self):
+        layer = self._make_layer(router_type="hybrid")
+
+        assert layer.router_type == "hybrid"
+        assert layer._last_dispatch_stats == {}
+
+    def test_parent_layer_builds_moe_aware_extensions(self):
+        ranks = [2, 4, 6, 8]
+        calibration = RouterCalibration(in_channels=16, num_experts=4, r_r=2)
+        layer = MoLoRALayer(
+            nn.Conv2d(16, 32, kernel_size=3, padding=1),
+            num_experts=4,
+            top_k=2,
+            expert_ranks=ranks,
+            router_calibration=calibration,
+        )
+
+        assert [expert.r for expert in layer.experts] == ranks
+        assert layer.router_calibration is calibration
+        layer(torch.randn(2, 16, 8, 8))
+        assert layer._last_routing_stats["calibration_applied"] is True
 
     def test_forward_with_calibration(self):
         rc = RouterCalibration(in_channels=16, num_experts=4, r_r=4)
@@ -236,12 +260,17 @@ class TestMoLoRAMoEAwareLayer:
 # Factory
 # ---------------------------------------------------------------------------
 
+
 class TestBuildMoEAwareLayer:
     def test_factory_basic(self):
         base = nn.Conv2d(16, 32, kernel_size=3, padding=1)
         cfg = MoLoRAMoEAwareConfig(
-            r=8, alpha=16, num_experts=4, top_k=2,
-            router_calibration=False, per_expert_rank=False,
+            r=8,
+            alpha=16,
+            num_experts=4,
+            top_k=2,
+            router_calibration=False,
+            per_expert_rank=False,
         )
         layer = build_moe_aware_layer(base, cfg)
         assert isinstance(layer, MoLoRAMoEAwareLayer)
@@ -251,8 +280,12 @@ class TestBuildMoEAwareLayer:
     def test_factory_with_calibration(self):
         base = nn.Conv2d(16, 32, kernel_size=3, padding=1)
         cfg = MoLoRAMoEAwareConfig(
-            r=8, alpha=16, num_experts=4, top_k=2,
-            router_calibration=True, router_calib_rank=4,
+            r=8,
+            alpha=16,
+            num_experts=4,
+            top_k=2,
+            router_calibration=True,
+            router_calib_rank=4,
             per_expert_rank=False,
         )
         layer = build_moe_aware_layer(base, cfg)
@@ -263,10 +296,14 @@ class TestBuildMoEAwareLayer:
     def test_factory_with_frequency_ranks(self):
         base = nn.Conv2d(16, 32, kernel_size=3, padding=1)
         cfg = MoLoRAMoEAwareConfig(
-            r=8, alpha=16, num_experts=4, top_k=2,
+            r=8,
+            alpha=16,
+            num_experts=4,
+            top_k=2,
             per_expert_rank=True,
             rank_allocator_mode="frequency",
-            rank_budget_total=32, rank_min=2,
+            rank_budget_total=32,
+            rank_min=2,
         )
         layer = build_moe_aware_layer(base, cfg)
         assert isinstance(layer, MoLoRAMoEAwareLayer)
@@ -277,8 +314,12 @@ class TestBuildMoEAwareLayer:
     def test_factory_linear_base(self):
         base = nn.Linear(64, 128)
         cfg = MoLoRAMoEAwareConfig(
-            r=8, alpha=16, num_experts=2, top_k=1,
-            router_calibration=True, router_calib_rank=4,
+            r=8,
+            alpha=16,
+            num_experts=2,
+            top_k=1,
+            router_calibration=True,
+            router_calib_rank=4,
         )
         layer = build_moe_aware_layer(base, cfg)
         assert isinstance(layer, MoLoRAMoEAwareLayer)
@@ -291,6 +332,7 @@ class TestBuildMoEAwareLayer:
 # Integration / Compatibility
 # ---------------------------------------------------------------------------
 
+
 class TestIntegration:
     def test_import_from_public_api(self):
         from ultralytics.nn.peft.molora import (
@@ -300,12 +342,23 @@ class TestIntegration:
             MoLoRAMoEAwareLayer,
             build_moe_aware_layer,
         )
-        assert MoLoRAMoEAwareConfig is not None
+
+        assert all(
+            symbol is not None
+            for symbol in (
+                MoLoRAMoEAwareConfig,
+                PerExpertRankAllocator,
+                RouterCalibration,
+                MoLoRAMoEAwareLayer,
+                build_moe_aware_layer,
+            )
+        )
 
     def test_backward_pass(self):
         layer = MoLoRAMoEAwareLayer(
             nn.Conv2d(8, 16, kernel_size=3, padding=1),
-            num_experts=4, top_k=2,
+            num_experts=4,
+            top_k=2,
             router_calibration=RouterCalibration(8, 4, r_r=2),
         )
         x = torch.randn(2, 8, 4, 4, requires_grad=True)

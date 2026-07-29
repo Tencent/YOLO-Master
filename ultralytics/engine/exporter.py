@@ -565,7 +565,15 @@ class Exporter:
             fmt = matches[0]
         from ultralytics.utils.export_preflight import export_preflight
 
-        self.export_preflight_report = export_preflight(model, fmt, strict=True)
+        molora_export_mode = str(getattr(self.args, "molora_export_mode", "dynamic")).lower()
+        if molora_export_mode not in {"dynamic", "routing_preserved"}:
+            raise ValueError("molora_export_mode must be 'dynamic' or 'routing_preserved'")
+        if molora_export_mode == "routing_preserved" and fmt not in {"onnx", "torchscript"}:
+            raise ValueError("molora_export_mode='routing_preserved' is only supported for ONNX/TorchScript export")
+        preflight_kwargs = {}
+        if molora_export_mode == "routing_preserved":
+            preflight_kwargs["routing_preserved"] = True
+        self.export_preflight_report = export_preflight(model, fmt, strict=True, **preflight_kwargs)
         decisions = self.export_preflight_report["decisions"]
         if decisions:
             LOGGER.info(
@@ -786,6 +794,11 @@ class Exporter:
             p.requires_grad = False
         model.eval()
         model.float()
+        for module in model.modules():
+            if type(module).__name__ in {"MoLoRALayer", "MoLoRAMoEAwareLayer"}:
+                module._export_mode = molora_export_mode
+        if getattr(self.args, "pre_export_prune", False):
+            model = self._pre_export_prune(model, im, copy_model=False)
         model = model.fuse()
 
         if fmt == "imx":
@@ -876,6 +889,9 @@ class Exporter:
         }  # model metadata
         if self.export_preflight_report["decisions"]:
             self.metadata["mixture_export_preflight"] = self.export_preflight_report
+        self.metadata["molora_export_mode"] = molora_export_mode
+        if hasattr(self, "moe_prune_manifest"):
+            self.metadata["moe_prune_manifest"] = self.moe_prune_manifest
         if self.dla is not None:
             self.metadata["dla"] = self.dla  # make sure `AutoBackend` uses correct dla device if it has one
         if model.task == "pose":
@@ -898,6 +914,17 @@ class Exporter:
                 f = self.export_edgetpu(tflite_model=Path(f) / f"{self.file.stem}_full_integer_quant.tflite")
         else:
             f = getattr(self, f"export_{fmt}")()
+
+        if hasattr(self, "moe_prune_manifest") and f:
+            artifact = Path(f)
+            manifest_path = (
+                artifact / "moe-prune.json"
+                if artifact.is_dir()
+                else artifact.with_suffix(artifact.suffix + ".prune.json")
+            )
+            self.moe_prune_manifest["output_artifact"] = str(f)
+            manifest_path.write_text(json.dumps(self.moe_prune_manifest, indent=2, sort_keys=True) + "\n")
+            LOGGER.info("MoE pre-export pruning manifest saved to %s", manifest_path)
 
         # Finish
         if f:
@@ -925,6 +952,49 @@ class Exporter:
 
         self.run_callbacks("on_export_end")
         return f  # path to final export artifact
+
+    def _pre_export_prune(self, model, calibration_input, *, copy_model=True):
+        """Calibrate and prune a copied model before graph export."""
+        from ultralytics.nn.modules.moe.analysis import ExpertUsageTracker
+        from ultralytics.nn.modules.moe.pruning import prune_moe_module
+
+        # Keep this helper safe for direct callers as well as the exporter,
+        # whose normal path has already created a deployment copy.
+        if copy_model:
+            model = deepcopy(model)
+        steps = max(int(getattr(self.args, "moe_prune_calibration_steps", 8)), 1)
+        model_root = getattr(model, "model", model)
+        tracker = ExpertUsageTracker(model_root)
+        try:
+            with torch.no_grad():
+                for _ in range(steps):
+                    model(calibration_input)
+        finally:
+            tracker.remove_hooks()
+        usage_stats = dict(tracker.usage_stats)
+        manifest = {
+            "schema_version": 1,
+            "applied": bool(usage_stats),
+            "calibration_steps": steps,
+            "threshold": float(getattr(self.args, "moe_prune_threshold", 0.15)),
+            "keep_top_m": getattr(self.args, "moe_prune_keep_top_m", None),
+            "usage_layers": sorted(usage_stats),
+        }
+        if usage_stats:
+            pruned_model, plan = prune_moe_module(
+                model.model,
+                usage_stats,
+                threshold=manifest["threshold"],
+                keep_top_m=manifest["keep_top_m"],
+            )
+            model.model = pruned_model
+            manifest["pruning_plan"] = plan
+            LOGGER.info("MoE pre-export pruning retained %d routed layers", len(plan))
+        else:
+            manifest["reason"] = "no routed MoE usage observed during calibration"
+            LOGGER.warning("pre_export_prune requested but no MoE routing usage was observed")
+        self.moe_prune_manifest = manifest
+        return model
 
     def get_int8_calibration_dataloader(self, prefix=""):
         """Build and return a dataloader for calibration of INT8 models."""

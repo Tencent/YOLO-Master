@@ -1,7 +1,13 @@
 import io
+import json
 from pathlib import Path
 
 import torch
+from scripts.audit_moe_usage import (
+    deprecation_candidates,
+    registered_mixture_modules,
+    yaml_mixture_references,
+)
 from scripts.check_moe_ssot import find_duplicate_classes
 from ultralytics.utils.patches import torch_load
 
@@ -12,7 +18,14 @@ def test_moe_public_classes_have_one_implementation_source():
 
 def test_legacy_modules_reexport_canonical_class_objects():
     from ultralytics.nn.modules.moe import gated, modules
-    from ultralytics.nn.modules.moe import base, blocks_advanced, experts_advanced, hybrid, integration, routers_advanced
+    from ultralytics.nn.modules.moe import (
+        base,
+        blocks_advanced,
+        experts_advanced,
+        hybrid,
+        integration,
+        routers_advanced,
+    )
 
     aliases = {
         base.UltraOptimizedMoE: modules.UltraOptimizedMoE,
@@ -27,23 +40,53 @@ def test_legacy_modules_reexport_canonical_class_objects():
 
 
 def test_legacy_modules_preserve_historical_class_names():
-    from ultralytics.nn.modules.moe import base, blocks_advanced, experts_advanced, hybrid, integration, routers_advanced
+    from ultralytics.nn.modules.moe import (
+        base,
+        blocks_advanced,
+        experts_advanced,
+        hybrid,
+        integration,
+        routers_advanced,
+    )
 
     expected = {
-        base: {"UltraOptimizedMoE", "AdaptiveCapacityMoE", "ES_MOE", "OptimizedMOE", "OptimizedMOEImproved", "ABlockMoE", "A2C2fMoE"},
+        base: {
+            "UltraOptimizedMoE",
+            "AdaptiveCapacityMoE",
+            "ES_MOE",
+            "OptimizedMOE",
+            "OptimizedMOEImproved",
+            "ABlockMoE",
+            "A2C2fMoE",
+        },
         blocks_advanced: {"AdaptiveGateMoE", "HyperSplitMoE", "HyperFusedMoE"},
         experts_advanced: {"FusedExpertGroup", "LowRankFusedExpertGroup"},
         routers_advanced: {"DualStreamGateRouter", "DualStreamGateRouterV2", "ZeroCostRouter"},
         hybrid: {
-            "VisualDetailGate", "PyramidContextMixer", "FusedAdaptiveGateMoE", "HybridAdaptiveGateMoE",
-            "HybridAdaptiveGateMoEv2", "LowRankHybridAdaptiveGateMoE", "RefinedLowRankHybridAdaptiveGateMoE",
-            "DetailAwareLowRankHybridAdaptiveGateMoE", "ContextRefinedLowRankHybridAdaptiveGateMoE",
-            "VisualEnhancedAdaptiveGateMoE", "AdaptiveBalanceController", "OptimalHybridGateMoE",
+            "VisualDetailGate",
+            "PyramidContextMixer",
+            "FusedAdaptiveGateMoE",
+            "HybridAdaptiveGateMoE",
+            "HybridAdaptiveGateMoEv2",
+            "LowRankHybridAdaptiveGateMoE",
+            "RefinedLowRankHybridAdaptiveGateMoE",
+            "DetailAwareLowRankHybridAdaptiveGateMoE",
+            "ContextRefinedLowRankHybridAdaptiveGateMoE",
+            "VisualEnhancedAdaptiveGateMoE",
+            "AdaptiveBalanceController",
+            "OptimalHybridGateMoE",
         },
         integration: {
-            "MultiHeadRouterV3", "DiversifiedExpertGroup", "CrossPathGate", "MultiHeadRouterMoE",
-            "DiversifiedExpertMoE", "GatedFusionMoE", "UltraLightRouter", "MatMulFusedExperts",
-            "HyperUltimateMoE", "UltimateOptimizedMoE",
+            "MultiHeadRouterV3",
+            "DiversifiedExpertGroup",
+            "CrossPathGate",
+            "MultiHeadRouterMoE",
+            "DiversifiedExpertMoE",
+            "GatedFusionMoE",
+            "UltraLightRouter",
+            "MatMulFusedExperts",
+            "HyperUltimateMoE",
+            "UltimateOptimizedMoE",
         },
     }
     assert all(all(hasattr(module, name) for name in names) for module, names in expected.items())
@@ -54,6 +97,43 @@ def test_moe_alias_uses_es_moe_stability_tier():
 
     assert is_stable_moe("MOE")
     assert not is_experimental_moe("MOE")
+
+
+def test_moe_api_tiers_include_disjoint_deprecated_state():
+    from ultralytics.nn.modules.moe import (
+        DEPRECATED_MOE_CLASSES,
+        EXPERIMENTAL_MOE_CLASSES,
+        LEGACY_MOE_CLASSES,
+        STABLE_MOE_CLASSES,
+        is_deprecated_moe,
+    )
+
+    tiers = (STABLE_MOE_CLASSES, EXPERIMENTAL_MOE_CLASSES, DEPRECATED_MOE_CLASSES, LEGACY_MOE_CLASSES)
+    for index, tier in enumerate(tiers):
+        assert not any(tier & other for other in tiers[index + 1 :])
+    assert not DEPRECATED_MOE_CLASSES
+    assert not is_deprecated_moe("RefinedLowRankHybridAdaptiveGateMoE")
+
+
+def test_deprecation_candidates_require_two_consecutive_version_snapshots():
+    experimental = {"ActiveMoE", "ZombieMoE", "ReturnedMoE"}
+    one_snapshot = [{"version": "1.0", "yaml_references": ["ActiveMoE"]}]
+    two_snapshots = [
+        *one_snapshot,
+        {"version": "1.1", "yaml_references": ["ActiveMoE", "ReturnedMoE"]},
+    ]
+
+    assert deprecation_candidates(experimental, one_snapshot, window=2) == set()
+    assert deprecation_candidates(experimental, two_snapshots, window=2) == {"ZombieMoE"}
+
+
+def test_moe_variant_usage_ledger_has_current_baseline():
+    ledger_path = Path(__file__).parents[1] / "docs/governance/moe-variant-usage.json"
+    ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+
+    assert ledger["schema_version"] == 1
+    assert ledger["snapshots"][-1]["version"] == "8.4.101"
+    assert ledger["snapshots"][-1]["yaml_references"] == sorted(yaml_mixture_references(registered_mixture_modules()))
 
 
 def test_base_debug_switch_still_controls_canonical_ablock(monkeypatch):
@@ -126,6 +206,13 @@ def test_visual_gated_helpers_preserve_legacy_exports_and_checkpoint_paths():
 
 def test_legacy_modules_contain_no_public_class_definitions():
     moe_root = Path(__file__).parents[1] / "ultralytics/nn/modules/moe"
-    for name in ("base.py", "blocks_advanced.py", "experts_advanced.py", "hybrid.py", "integration.py", "routers_advanced.py"):
+    for name in (
+        "base.py",
+        "blocks_advanced.py",
+        "experts_advanced.py",
+        "hybrid.py",
+        "integration.py",
+        "routers_advanced.py",
+    ):
         source = (moe_root / name).read_text(encoding="utf-8")
         assert "\nclass " not in source

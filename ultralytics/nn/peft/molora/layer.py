@@ -152,11 +152,13 @@ class MoLoRALayer(nn.Module):
         expert_init: str = "default",
         share_moe_registry: bool = True,
         router_hidden_dim: Optional[int] = None,
-        capacity_factor: float = 1.0,
+        capacity_factor: float = 0.0,
         expert_dropout: float = 0.0,
         top_k_warmup: Optional[int] = None,
         warmup_steps: int = 0,
         domain_experts: Optional[Dict[str, List[int]]] = None,
+        expert_ranks: Optional[List[int]] = None,
+        router_calibration: Optional[nn.Module] = None,
     ):
         super().__init__()
         self.base_layer = base_layer
@@ -168,11 +170,21 @@ class MoLoRALayer(nn.Module):
         self.scaling = _molora_scales(r, alpha, use_rslora)
         self.share_moe_registry = share_moe_registry
         self.merged = False
-        self.capacity_factor = capacity_factor
+        self.capacity_factor = float(capacity_factor)
+        if not math.isfinite(self.capacity_factor):
+            raise ValueError(f"capacity_factor must be finite, got {self.capacity_factor}")
         self.expert_dropout = expert_dropout
         self.top_k_warmup = top_k_warmup
         self.warmup_steps = warmup_steps
         self.domain_experts = domain_experts
+        if expert_ranks is not None:
+            if len(expert_ranks) != num_experts:
+                raise ValueError(f"expert_ranks length ({len(expert_ranks)}) != num_experts ({num_experts})")
+            if any(not isinstance(rank, int) or rank < 1 for rank in expert_ranks):
+                raise ValueError(f"expert_ranks must contain positive integers, got {expert_ranks}")
+            expert_ranks = list(expert_ranks)
+        self._expert_ranks = expert_ranks
+        self.router_calibration = router_calibration
         self.register_buffer("_step_count", torch.tensor(0, dtype=torch.long), persistent=True)
         self.register_buffer(
             "_usage_ema", torch.full((num_experts,), 1.0 / num_experts, dtype=torch.float32), persistent=True
@@ -187,17 +199,18 @@ class MoLoRALayer(nn.Module):
         for p in self.base_layer.parameters():
             p.requires_grad = False
 
-        # Build experts
+        # Build uniform-rank or per-expert-rank adapters through one initialization path.
+        ranks = expert_ranks if expert_ranks is not None else [r] * num_experts
         self.experts = nn.ModuleList(
             MoLoRAExpert(
                 base_layer,
-                r=r,
+                r=rank,
                 alpha=alpha,
                 dropout=dropout,
                 use_rslora=use_rslora,
                 init_type=expert_init,
             )
-            for _ in range(num_experts)
+            for rank in ranks
         )
 
         # Build router
@@ -229,6 +242,7 @@ class MoLoRALayer(nn.Module):
         self._last_routing_stats: Optional[Dict[str, Any]] = None
         self.last_routing_snapshot: dict = {}
         self._last_dispatch_stats: dict = {}
+        self._last_aux_loss = torch.zeros(())
         self._merge_metadata: dict = {"mode": "dynamic", "approximate": True, "expert_weights": []}
         self._merge_calibration_usage: Optional[torch.Tensor] = None
         self._merge_calibration_batches = 0
@@ -244,11 +258,14 @@ class MoLoRALayer(nn.Module):
     def export_capabilities(self) -> dict:
         capabilities = _export_routing_capabilities(self)
         eager_sparse = bool(not self.merged and self.top_k < self.num_experts)
+        routing_preserved = getattr(self, "_export_mode", "dynamic") == "routing_preserved"
         capabilities.update(
             routing_kind="molora",
             sparse_dispatch=eager_sparse,
             eager_sparse_dispatch=eager_sparse,
             training_sparse_dispatch=eager_sparse,
+            routing_preserved_export=routing_preserved,
+            onnx_routing_preserved=True,
             sparse_export_limitation=(
                 "Unmerged MoLoRA dispatches sample-level Top-K experts in eager execution; "
                 "exported graphs execute every expert through a dense fallback."
@@ -263,17 +280,12 @@ class MoLoRALayer(nn.Module):
 
     @property
     def aux_loss(self) -> torch.Tensor:
-        """Auxiliary loss from the most recent forward pass.
+        """Return the canonical auxiliary loss from the most recent forward pass."""
+        from ultralytics.nn.modules.routing_protocol import get_aux_record
 
-        Reads from ``MOE_LOSS_REGISTRY`` when ``share_moe_registry`` is True,
-        otherwise returns the internally stored ``_last_aux_loss``.
-        """
-        if self.share_moe_registry:
-            from ultralytics.nn.modules.moe.modules import MOE_LOSS_REGISTRY
-
-            val = MOE_LOSS_REGISTRY.get(self)
-            if val is not None:
-                return val
+        record = get_aux_record(self)
+        if record is not None:
+            return record.value
         return getattr(self, "_last_aux_loss", torch.zeros(()))
 
     # ------------------------------------------------------------------
@@ -345,6 +357,10 @@ class MoLoRALayer(nn.Module):
     # Capacity factor
     # ------------------------------------------------------------------
 
+    def _capacity_limit_enabled(self) -> bool:
+        """Return whether the configured factor imposes a real expert capacity."""
+        return 0.0 < self.capacity_factor < float(self.num_experts)
+
     def _apply_capacity_limit(
         self,
         top_k_weights: torch.Tensor,
@@ -355,7 +371,7 @@ class MoLoRALayer(nn.Module):
         When an expert is selected by more than ``capacity_factor * B * K / E`` slots
         in the batch, its Top-K weights are scaled down and renormalized.
         """
-        if self.capacity_factor <= 0 or self.capacity_factor >= 1.0:
+        if not self._capacity_limit_enabled():
             return top_k_weights
         B, K = top_k_weights.shape
         max_slots = max(1, int(math.ceil(self.capacity_factor * B * K / self.num_experts)))
@@ -490,6 +506,8 @@ class MoLoRALayer(nn.Module):
         Returns:
             y: same shape as x, adapted by top-k experts
         """
+        exporting = torch.jit.is_tracing() or torch.onnx.is_in_onnx_export()
+
         # Base output (always frozen)
         base_out = self.base_layer(x)
 
@@ -502,6 +520,9 @@ class MoLoRALayer(nn.Module):
 
         # Router
         router_logits = self.router(x)  # [B, E]
+        calibration_applied = self.router_calibration is not None
+        if calibration_applied:
+            router_logits = self.router_calibration(x, router_logits)
 
         # Apply domain restriction if set
         if self._domain_active_mask is not None:
@@ -524,14 +545,17 @@ class MoLoRALayer(nn.Module):
         top_k_weights, top_k_indices = torch.topk(router_probs, effective_k, dim=-1)  # [B, K]
         top_k_weights = top_k_weights / top_k_weights.sum(dim=-1, keepdim=True).clamp_min(1e-6)
 
-        # Apply capacity limit (1.0 = no limit per config convention)
-        if 0 < self.capacity_factor < 1.0:
+        # Apply a soft limit for factors in (0, num_experts).
+        if self._capacity_limit_enabled():
             top_k_weights = self._apply_capacity_limit(top_k_weights, top_k_indices)
 
-        self._record_routing_contribution(top_k_weights, top_k_indices)
+        if not exporting:
+            self._record_routing_contribution(top_k_weights, top_k_indices)
 
         # Compute sparse expert outputs
         adapted = self._compute_sparse_experts(x, top_k_weights, top_k_indices, base_out)
+        if exporting:
+            return base_out + adapted
 
         # Auxiliary loss (graph-connected to router_logits)
         aux_loss = (
@@ -563,6 +587,8 @@ class MoLoRALayer(nn.Module):
             "expert_usage": self._expert_usage(top_k_indices),
             "effective_k": effective_k,
             "domain_mask": self._domain_active_mask,
+            "calibration_applied": calibration_applied,
+            "expert_ranks": self._expert_ranks,
         }
 
         # ── RoutedModule protocol: routing snapshot ────────────────────
@@ -600,12 +626,6 @@ class MoLoRALayer(nn.Module):
                 out_e = expert(x)
                 shape = (-1,) + (1,) * (out_e.dim() - 1)
                 expert_out = expert_out + out_e * dense_weights[:, expert_idx].view(shape)
-            self._last_dispatch_stats = {
-                "mode": "dense_export",
-                "expert_calls": self.num_experts,
-                "selected_samples": B,
-                "top_k": K,
-            }
             return expert_out
         grouped = B >= 4
         calls = 0

@@ -9,7 +9,6 @@ Contains:
   - HybridTrainingProtocol : SL warm-start + RL fine-tuning entry points
 
 All implementations follow `method_placement.md` and `method_rank_allocation.md`.
-Target venue: AAAI 2026.
 
 Backward-compatibility notes:
   - GreedyRankAllocator.allocate() accepts an optional ``utilities`` kwarg so

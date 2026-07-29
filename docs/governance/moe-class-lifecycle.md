@@ -16,6 +16,23 @@ Run the usage audit with:
 python scripts/audit_moe_usage.py
 ```
 
+Record the YAML-visible mixture usage for a release with an explicit version:
+
+```bash
+python scripts/audit_moe_usage.py --record-version 8.4.101
+```
+
+The versioned ledger is `docs/governance/moe-variant-usage.json`. An
+experimental YAML-visible class becomes eligible for `DEPRECATED_MOE_CLASSES`
+only after it is absent from two consecutive recorded versions. The audit does
+not edit the runtime API tier: release owners must first review external Python
+imports and historical checkpoint pickle paths, then declare the class
+deprecated for one release window. CI can detect ledger/tier drift with:
+
+```bash
+python scripts/audit_moe_usage.py --check-deprecated
+```
+
 The 2026-07-17 audit found 74 canonical public class definitions:
 
 - 51 `retain`: referenced by YAML or directly covered by tests.

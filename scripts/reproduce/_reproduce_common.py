@@ -145,9 +145,11 @@ _WANDB_METRICS = {
     "train/box_loss": "train/box_loss",
     "train/cls_loss": "train/cls_loss",
     "train/moe_loss": "train/moe_loss",
+    "train/mixture_aux_loss": "train/mixture_aux_loss",
     "val/box_loss": "val/box_loss",
     "val/cls_loss": "val/cls_loss",
     "val/moe_loss": "val/moe_loss",
+    "val/mixture_aux_loss": "val/mixture_aux_loss",
 }
 
 

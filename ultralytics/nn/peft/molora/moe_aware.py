@@ -6,9 +6,8 @@ Provides:
   - MoLoRAMoEAwareLayer: extends MoLoRALayer with per-expert ranks + router calibration
   - MoLoRAMoEAwareConfig: configuration dataclass
   - build_moe_aware_layer: factory function
-
-Reference: AAAI 2026 MoE-aware PEFT strategy (Sec. 3.7 extension).
 """
+
 from __future__ import annotations
 
 import math
@@ -17,19 +16,15 @@ from typing import Any, Dict, List, Optional, Union
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from .config import MoLoRAConfig
-from .layer import MoLoRALayer, MoLoRAExpert
-from .router import build_router
-from .loss import MoLoRALoss
-from .utils import _molora_scales
-from ultralytics.nn.modules.routing_protocol import publish_aux_loss
+from .layer import MoLoRALayer
 
 
 # ---------------------------------------------------------------------------
 # Per-Expert Rank Allocator
 # ---------------------------------------------------------------------------
+
 
 class PerExpertRankAllocator:
     """Allocate per-expert LoRA rank budget based on activation frequency.
@@ -54,8 +49,7 @@ class PerExpertRankAllocator:
             raise ValueError(f"num_experts must be >= 1, got {num_experts}")
         if total_budget < num_experts * min_rank:
             raise ValueError(
-                f"total_budget ({total_budget}) must be >= num_experts * min_rank "
-                f"({num_experts * min_rank})"
+                f"total_budget ({total_budget}) must be >= num_experts * min_rank ({num_experts * min_rank})"
             )
         if mode not in ("uniform", "frequency"):
             raise ValueError(f"mode must be 'uniform' or 'frequency', got '{mode}'")
@@ -77,9 +71,7 @@ class PerExpertRankAllocator:
         """
         usage = usage_history.float().cpu()
         if usage.numel() != self.num_experts:
-            raise ValueError(
-                f"usage_history size ({usage.numel()}) != num_experts ({self.num_experts})"
-            )
+            raise ValueError(f"usage_history size ({usage.numel()}) != num_experts ({self.num_experts})")
 
         if self.mode == "uniform":
             base = self.total_budget // self.num_experts
@@ -128,6 +120,7 @@ class PerExpertRankAllocator:
 # ---------------------------------------------------------------------------
 # Router Calibration ΔW_r
 # ---------------------------------------------------------------------------
+
 
 class RouterCalibration(nn.Module):
     """Low-rank calibration term applied to frozen router logits.
@@ -188,6 +181,7 @@ class RouterCalibration(nn.Module):
 # MoE-aware Config
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class MoLoRAMoEAwareConfig(MoLoRAConfig):
     """Extended MoLoRA configuration with MoE-aware PEFT options.
@@ -214,10 +208,7 @@ class MoLoRAMoEAwareConfig(MoLoRAConfig):
         if self.router_calib_rank < 1:
             raise ValueError(f"router_calib_rank must be >= 1, got {self.router_calib_rank}")
         if self.rank_allocator_mode not in ("uniform", "frequency"):
-            raise ValueError(
-                f"rank_allocator_mode must be 'uniform' or 'frequency', "
-                f"got '{self.rank_allocator_mode}'"
-            )
+            raise ValueError(f"rank_allocator_mode must be 'uniform' or 'frequency', got '{self.rank_allocator_mode}'")
         if self.rank_budget_total < self.num_experts * self.rank_min:
             raise ValueError(
                 f"rank_budget_total ({self.rank_budget_total}) must be >= "
@@ -228,6 +219,7 @@ class MoLoRAMoEAwareConfig(MoLoRAConfig):
 # ---------------------------------------------------------------------------
 # MoE-aware MoLoRA Layer
 # ---------------------------------------------------------------------------
+
 
 class MoLoRAMoEAwareLayer(MoLoRALayer):
     """Extends MoLoRALayer with per-expert rank allocation and router calibration.
@@ -243,220 +235,17 @@ class MoLoRAMoEAwareLayer(MoLoRALayer):
     ``per_expert_rank`` and ``router_calibration`` are disabled.
     """
 
-    def __init__(
-        self,
-        base_layer: nn.Module,
-        r: int = 8,
-        alpha: int = 16,
-        num_experts: int = 4,
-        top_k: int = 2,
-        router_type: str = "linear",
-        dropout: float = 0.0,
-        use_rslora: bool = True,
-        balance_loss_coef: float = 0.01,
-        z_loss_coef: float = 0.001,
-        diversity_loss_coef: float = 0.0,
-        expert_init: str = "default",
-        share_moe_registry: bool = True,
-        router_hidden_dim: Optional[int] = None,
-        capacity_factor: float = 1.0,
-        expert_dropout: float = 0.0,
-        top_k_warmup: Optional[int] = None,
-        warmup_steps: int = 0,
-        domain_experts: Optional[Dict[str, List[int]]] = None,
-        # MoE-aware extensions
-        router_calibration: Optional[RouterCalibration] = None,
-        expert_ranks: Optional[List[int]] = None,
-    ):
-        # If per-expert ranks are provided, we cannot use the parent __init__
-        # directly because it builds experts with uniform rank. We manually
-        # replicate the parent init logic here with per-expert rank support.
-        nn.Module.__init__(self)
-        self.base_layer = base_layer
-        self.r = r  # base / default rank (used when expert_ranks is None)
-        self.alpha = alpha
-        self.num_experts = num_experts
-        self.top_k = top_k
-        self.scaling = _molora_scales(r, alpha, use_rslora)
-        self.share_moe_registry = share_moe_registry
-        self.merged = False
-        self.capacity_factor = capacity_factor
-        self.expert_dropout = expert_dropout
-        self.top_k_warmup = top_k_warmup
-        self.warmup_steps = warmup_steps
-        self.domain_experts = domain_experts
-        self.register_buffer("_step_count", torch.tensor(0, dtype=torch.long), persistent=True)
-        self._step_count_cpu: int = 0
-        self._domain_active_mask: Optional[torch.Tensor] = None
-        self._expert_frozen_mask: Optional[torch.Tensor] = None
-
-        # merge_weights weighting: EMA of per-expert routing usage.
-        # Must mirror MoLoRALayer.__init__ since we skip super().__init__.
-        self.register_buffer(
-            "_usage_ema", torch.full((num_experts,), 1.0 / num_experts), persistent=True
-        )
-        self.usage_ema_decay = 0.99
-        self._merge_calibration_usage: Optional[torch.Tensor] = None
-        self._merge_calibration_batches = 0
-        self._merge_metadata: dict = {"mode": "dynamic", "approximate": True, "expert_weights": []}
-
-        # MoE-aware additions
-        self.router_calibration = router_calibration
-        self._expert_ranks = expert_ranks  # cached for inspection
-
-        # Freeze base layer
-        for p in self.base_layer.parameters():
-            p.requires_grad = False
-
-        # Build experts — uniform or per-expert rank
-        if expert_ranks is not None:
-            if len(expert_ranks) != num_experts:
-                raise ValueError(
-                    f"expert_ranks length ({len(expert_ranks)}) != num_experts ({num_experts})"
-                )
-            self.experts = nn.ModuleList(
-                MoLoRAExpert(
-                    base_layer,
-                    r=expert_ranks[e],
-                    alpha=alpha,
-                    dropout=dropout,
-                    use_rslora=use_rslora,
-                    init_type=expert_init,
-                )
-                for e in range(num_experts)
-            )
-        else:
-            self.experts = nn.ModuleList(
-                MoLoRAExpert(
-                    base_layer,
-                    r=r,
-                    alpha=alpha,
-                    dropout=dropout,
-                    use_rslora=use_rslora,
-                    init_type=expert_init,
-                )
-                for _ in range(num_experts)
-            )
-
-        # Build router (same as parent)
-        if isinstance(base_layer, nn.Conv2d):
-            in_channels = base_layer.in_channels
-        elif isinstance(base_layer, nn.Linear):
-            in_channels = base_layer.in_features
-        else:
-            raise TypeError(f"Unsupported base layer: {type(base_layer)}")
-
-        self.router = build_router(
-            router_type=router_type,
-            in_channels=in_channels,
-            num_experts=num_experts,
-            hidden_dim=router_hidden_dim,
-        )
-
-        # Auxiliary loss module
-        self.loss_fn = MoLoRALoss(
-            num_experts=num_experts,
-            top_k=top_k,
-            balance_loss_coef=balance_loss_coef,
-            z_loss_coef=z_loss_coef,
-            diversity_loss_coef=diversity_loss_coef,
-            reduce_ddp=True,
-        )
-
-        self._last_routing_stats: Optional[Dict[str, Any]] = None
-        self._last_aux_loss: torch.Tensor = torch.zeros((), requires_grad=False)
-        self.last_routing_snapshot: dict = {}
-
-    # ------------------------------------------------------------------
-    # Forward override with calibration
-    # ------------------------------------------------------------------
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        base_out = self.base_layer(x)
-
-        if self.merged:
-            return base_out
-
-        if self.training:
-            self._step_count.add_(1)
-
-        # Router logits
-        router_logits = self.router(x)  # [B, E]
-
-        # Apply router calibration if present
-        calibration_applied = False
-        if self.router_calibration is not None:
-            router_logits = self.router_calibration(x, router_logits)
-            calibration_applied = True
-
-        # Domain restriction
-        if self._domain_active_mask is not None:
-            device = router_logits.device
-            mask = self._domain_active_mask.to(device).to(router_logits.dtype)
-            router_logits = router_logits + (1.0 - mask) * torch.finfo(router_logits.dtype).min
-
-        router_probs = F.softmax(router_logits, dim=-1)
-        router_probs = self._apply_expert_dropout(router_probs)
-        effective_k = self._current_top_k()
-
-        top_k_weights, top_k_indices = torch.topk(router_probs, effective_k, dim=-1)
-        top_k_weights = top_k_weights / top_k_weights.sum(dim=-1, keepdim=True).clamp_min(1e-6)
-
-        if 0 < self.capacity_factor < 1.0:
-            top_k_weights = self._apply_capacity_limit(top_k_weights, top_k_indices)
-
-        self._record_routing_contribution(top_k_weights, top_k_indices)
-
-        adapted = self._compute_sparse_experts(x, top_k_weights, top_k_indices, base_out)
-
-        aux_loss = (
-            self.loss_fn(
-                router_probs=router_probs,
-                router_logits=router_logits,
-                expert_indices=top_k_indices,
-                expert_outputs=None,
-            )
-            if self.training
-            else base_out.new_zeros(())
-        )
-
-        if self.share_moe_registry and self.training:
-            try:
-                from ultralytics.nn.modules.moe.modules import _registry_set
-                _registry_set(self, aux_loss)
-            except Exception:
-                pass
-
-        self._last_aux_loss = aux_loss
-        publish_aux_loss(self, aux_loss, kind="molora", training=self.training)
-
-        # Enhanced diagnostics for MoE-aware mode
-        self._last_routing_stats = {
-            "top_k_indices": top_k_indices.detach(),
-            "top_k_weights": top_k_weights.detach(),
-            "expert_usage": self._expert_usage(top_k_indices),
-            "effective_k": effective_k,
-            "domain_mask": self._domain_active_mask,
-            "calibration_applied": calibration_applied,
-            "expert_ranks": self._expert_ranks,
-        }
-
-        return base_out + adapted
-
     def extra_repr(self) -> str:
         base = super().extra_repr()
         calib = f"calib={self.router_calibration is not None}"
         per_rank = f"per_rank={self._expert_ranks is not None}"
         return f"{base}, moe_aware=True, {calib}, {per_rank}"
 
-    def __getattr__(self, name: str):
-        """Reuse the hardened MoLoRALayer proxy for PyTorch internals and geometry."""
-        return MoLoRALayer.__getattr__(self, name)
-
 
 # ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
+
 
 def build_moe_aware_layer(
     base_layer: nn.Module,
@@ -476,7 +265,9 @@ def build_moe_aware_layer(
         MoLoRAMoEAwareLayer instance.
     """
     if isinstance(config, dict):
-        cfg = MoLoRAMoEAwareConfig(**{k: v for k, v in config.items() if k in MoLoRAMoEAwareConfig.__dataclass_fields__})
+        cfg = MoLoRAMoEAwareConfig(
+            **{k: v for k, v in config.items() if k in MoLoRAMoEAwareConfig.__dataclass_fields__}
+        )
     else:
         cfg = config
 

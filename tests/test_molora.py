@@ -1,4 +1,5 @@
 """MoLoRA (Mixture-of-LoRA) unit tests — 55 tests covering core + integration."""
+
 import os
 import tempfile
 
@@ -39,6 +40,7 @@ from ultralytics.nn.modules.moe.modules import MOE_LOSS_REGISTRY
 # TestMoLoRAConfig (8 tests)
 # =============================================================================
 
+
 class TestMoLoRAConfig:
     """Test MoLoRAConfig dataclass and builder."""
 
@@ -50,11 +52,13 @@ class TestMoLoRAConfig:
         assert cfg.balance_loss_coef == 0.01
         assert cfg.z_loss_coef == 0.001
         assert cfg.diversity_loss_coef == 0.0
+        assert cfg.capacity_factor == 0.0
         assert cfg.expert_init == "default"
         assert cfg.share_moe_registry is True
 
     def test_from_lora_config(self):
         from ultralytics.utils.lora.config import LoRAConfig
+
         lora = LoRAConfig(r=16, alpha=32, dropout=0.1)
         molora = MoLoRAConfig.from_lora_config(lora, num_experts=8, top_k=2)
         assert molora.r == 16
@@ -105,10 +109,16 @@ class TestMoLoRAConfig:
         with pytest.raises(ValueError, match="balance_loss_coef"):
             MoLoRAConfig(balance_loss_coef=-0.1)
 
+    @pytest.mark.parametrize("capacity_factor", [float("nan"), float("inf"), float("-inf")])
+    def test_nonfinite_capacity_factor_raises(self, capacity_factor):
+        with pytest.raises(ValueError, match="capacity_factor"):
+            MoLoRAConfig(capacity_factor=capacity_factor)
+
 
 # =============================================================================
 # TestRouters (7 tests)
 # =============================================================================
+
 
 class TestRouters:
     """Test CNN-Native routers."""
@@ -164,6 +174,7 @@ class TestRouters:
 # TestMoLoRAExpert (6 tests)
 # =============================================================================
 
+
 class TestMoLoRAExpert:
     """Test single LoRA expert."""
 
@@ -190,7 +201,7 @@ class TestMoLoRAExpert:
     def test_rs_lora_scaling(self):
         s1 = _molora_scales(8, 16, use_rslora=True)
         s2 = _molora_scales(8, 16, use_rslora=False)
-        assert s1 == 16 / (8 ** 0.5)
+        assert s1 == 16 / (8**0.5)
         assert s2 == 16 / 8
 
     def test_three_init_types(self):
@@ -212,6 +223,7 @@ class TestMoLoRAExpert:
 # =============================================================================
 # TestMoLoRALayer (11 tests)
 # =============================================================================
+
 
 class TestMoLoRALayer:
     """Test MoLoRA wrapper layer."""
@@ -344,6 +356,7 @@ class TestMoLoRALayer:
 # TestMoLoRALoss (6 tests)
 # =============================================================================
 
+
 class TestMoLoRALoss:
     """Test auxiliary loss functions."""
 
@@ -364,10 +377,7 @@ class TestMoLoRALoss:
         assert loss.item() > 0
 
     def test_diversity_loss(self):
-        loss_fn = MoLoRALoss(
-            num_experts=4, top_k=2,
-            balance_loss_coef=0.0, z_loss_coef=0.0, diversity_loss_coef=1.0
-        )
+        loss_fn = MoLoRALoss(num_experts=4, top_k=2, balance_loss_coef=0.0, z_loss_coef=0.0, diversity_loss_coef=1.0)
         probs = F.softmax(torch.randn(8, 4), dim=-1)
         logits = torch.randn(8, 4)
         indices = torch.randint(0, 4, (8, 2))
@@ -413,6 +423,7 @@ class TestMoLoRALoss:
 # TestMoLoRAModelWrapper (5 tests)
 # =============================================================================
 
+
 class TestMoLoRAModelWrapper:
     """Test PEFT-style model wrapper."""
 
@@ -423,29 +434,25 @@ class TestMoLoRAModelWrapper:
                 self.conv1 = nn.Conv2d(3, 8, 3, padding=1)
                 self.conv2 = nn.Conv2d(8, 16, 3, padding=1)
                 self.fc = nn.Linear(16, 4)
+
             def forward(self, x):
                 x = torch.relu(self.conv1(x))
                 x = torch.relu(self.conv2(x))
                 x = x.mean(dim=[2, 3])
                 return self.fc(x)
+
         return TinyModel()
 
     def test_get_peft_molora_model(self):
         model = self._make_model()
-        cfg = MoLoRAConfig(
-            r=4, alpha=8, num_experts=4, top_k=2,
-            target_modules=["conv1", "conv2", "fc"]
-        )
+        cfg = MoLoRAConfig(r=4, alpha=8, num_experts=4, top_k=2, target_modules=["conv1", "conv2", "fc"])
         m = get_peft_molora_model(model, cfg)
         assert hasattr(m, "molora_enabled")
         assert m.molora_enabled is True
 
     def test_trainable_params_frozen(self):
         model = self._make_model()
-        cfg = MoLoRAConfig(
-            r=4, alpha=8, num_experts=4, top_k=2,
-            target_modules=["conv1", "conv2", "fc"]
-        )
+        cfg = MoLoRAConfig(r=4, alpha=8, num_experts=4, top_k=2, target_modules=["conv1", "conv2", "fc"])
         m = get_peft_molora_model(model, cfg)
         mark_only_molora_as_trainable(m)
         for name, p in m.named_parameters():
@@ -458,8 +465,12 @@ class TestMoLoRAModelWrapper:
     def test_configured_experts_frozen_after_wrap(self):
         model = self._make_model()
         cfg = MoLoRAConfig(
-            r=4, alpha=8, num_experts=3, top_k=1,
-            target_modules=["conv1", "conv2", "fc"], freeze_experts=[1],
+            r=4,
+            alpha=8,
+            num_experts=3,
+            top_k=1,
+            target_modules=["conv1", "conv2", "fc"],
+            freeze_experts=[1],
         )
 
         wrapped = get_peft_molora_model(model, cfg)
@@ -475,10 +486,7 @@ class TestMoLoRAModelWrapper:
 
     def test_aux_loss(self):
         model = self._make_model()
-        cfg = MoLoRAConfig(
-            r=4, alpha=8, num_experts=4, top_k=2,
-            target_modules=["conv1", "conv2", "fc"]
-        )
+        cfg = MoLoRAConfig(r=4, alpha=8, num_experts=4, top_k=2, target_modules=["conv1", "conv2", "fc"])
         wrapper = MoLoRAModel(model, cfg)
         x = torch.randn(2, 3, 8, 8)
         wrapper.model.train()
@@ -488,10 +496,7 @@ class TestMoLoRAModelWrapper:
 
     def test_merge_unmerge(self):
         model = self._make_model()
-        cfg = MoLoRAConfig(
-            r=4, alpha=8, num_experts=4, top_k=2,
-            target_modules=["conv1", "conv2", "fc"]
-        )
+        cfg = MoLoRAConfig(r=4, alpha=8, num_experts=4, top_k=2, target_modules=["conv1", "conv2", "fc"])
         wrapper = MoLoRAModel(model, cfg)
         x = torch.randn(2, 3, 8, 8)
         wrapper.merge()
@@ -523,10 +528,7 @@ class TestMoLoRAModelWrapper:
 
     def test_save_load_checkpoint(self):
         model = self._make_model()
-        cfg = MoLoRAConfig(
-            r=4, alpha=8, num_experts=4, top_k=2,
-            target_modules=["conv1", "conv2", "fc"]
-        )
+        cfg = MoLoRAConfig(r=4, alpha=8, num_experts=4, top_k=2, target_modules=["conv1", "conv2", "fc"])
         wrapper = MoLoRAModel(model, cfg)
         with tempfile.NamedTemporaryFile(suffix=".pt", delete=False) as f:
             path = f.name
@@ -539,14 +541,14 @@ class TestMoLoRAModelWrapper:
             os.unlink(path)
 
     def test_checkpoint_rejects_config_mismatch(self):
-        wrapper = MoLoRAModel(self._make_model(), MoLoRAConfig(
-            r=4, alpha=8, num_experts=4, top_k=2,
-            target_modules=["conv1", "conv2", "fc"]
-        ))
-        other = MoLoRAModel(self._make_model(), MoLoRAConfig(
-            r=2, alpha=4, num_experts=4, top_k=2,
-            target_modules=["conv1", "conv2", "fc"]
-        ))
+        wrapper = MoLoRAModel(
+            self._make_model(),
+            MoLoRAConfig(r=4, alpha=8, num_experts=4, top_k=2, target_modules=["conv1", "conv2", "fc"]),
+        )
+        other = MoLoRAModel(
+            self._make_model(),
+            MoLoRAConfig(r=2, alpha=4, num_experts=4, top_k=2, target_modules=["conv1", "conv2", "fc"]),
+        )
         with tempfile.NamedTemporaryFile(suffix=".pt", delete=False) as f:
             path = f.name
         try:
@@ -557,10 +559,10 @@ class TestMoLoRAModelWrapper:
             os.unlink(path)
 
     def test_checkpoint_rejects_partial_state(self):
-        wrapper = MoLoRAModel(self._make_model(), MoLoRAConfig(
-            r=4, alpha=8, num_experts=4, top_k=2,
-            target_modules=["conv1", "conv2", "fc"]
-        ))
+        wrapper = MoLoRAModel(
+            self._make_model(),
+            MoLoRAConfig(r=4, alpha=8, num_experts=4, top_k=2, target_modules=["conv1", "conv2", "fc"]),
+        )
         with tempfile.NamedTemporaryFile(suffix=".pt", delete=False) as f:
             path = f.name
         try:
@@ -601,10 +603,7 @@ class TestMoLoRAModelWrapper:
 
     def test_checkpoint_without_usage_ema_loads_with_uniform_fallback(self):
         model = self._make_model()
-        cfg = MoLoRAConfig(
-            r=4, alpha=8, num_experts=4, top_k=2,
-            target_modules=["conv1", "conv2", "fc"]
-        )
+        cfg = MoLoRAConfig(r=4, alpha=8, num_experts=4, top_k=2, target_modules=["conv1", "conv2", "fc"])
         wrapper = MoLoRAModel(model, cfg)
         with tempfile.NamedTemporaryFile(suffix=".pt", delete=False) as f:
             path = f.name
@@ -629,6 +628,7 @@ class TestMoLoRAModelWrapper:
 # =============================================================================
 # TestUtils (7 tests)
 # =============================================================================
+
 
 class TestUtils:
     """Test utility functions."""
@@ -658,6 +658,7 @@ class TestUtils:
 
     def test_mark_only_molora_as_trainable(self):
         from ultralytics.nn.peft.molora.layer import MoLoRALayer
+
         base = nn.Conv2d(3, 8, 1)
         layer = MoLoRALayer(base, r=4, alpha=8, num_experts=2, top_k=1)
         m = nn.Sequential(layer)
@@ -670,10 +671,7 @@ class TestUtils:
                 assert p.requires_grad, name
 
     def test_count_parameters(self):
-        m = nn.Sequential(
-            nn.Conv2d(3, 8, 3),
-            nn.Linear(8, 4)
-        )
+        m = nn.Sequential(nn.Conv2d(3, 8, 3), nn.Linear(8, 4))
         stats = count_parameters(m)
         assert stats["total"] > 0
         assert stats["trainable"] == stats["total"]
@@ -698,14 +696,13 @@ class TestUtils:
 # TestRegistryIntegration (2 tests)
 # =============================================================================
 
+
 class TestRegistryIntegration:
     """Test MoLoRA integration with MOE_LOSS_REGISTRY."""
 
     def test_registry_write(self):
         conv = nn.Conv2d(16, 32, 3, padding=1)
-        layer = MoLoRALayer(
-            conv, r=4, alpha=8, num_experts=4, top_k=2, share_moe_registry=True
-        )
+        layer = MoLoRALayer(conv, r=4, alpha=8, num_experts=4, top_k=2, share_moe_registry=True)
         x = torch.randn(2, 16, 8, 8)
         layer.train()
         MOE_LOSS_REGISTRY.clear()
@@ -718,9 +715,7 @@ class TestRegistryIntegration:
 
     def test_registry_cleared(self):
         conv = nn.Conv2d(16, 32, 3, padding=1)
-        layer = MoLoRALayer(
-            conv, r=4, alpha=8, num_experts=4, top_k=2, share_moe_registry=True
-        )
+        layer = MoLoRALayer(conv, r=4, alpha=8, num_experts=4, top_k=2, share_moe_registry=True)
         x = torch.randn(2, 16, 8, 8)
         layer.train()
         MOE_LOSS_REGISTRY.clear()
@@ -731,9 +726,7 @@ class TestRegistryIntegration:
 
     def test_eval_no_registry_write(self):
         conv = nn.Conv2d(16, 32, 3, padding=1)
-        layer = MoLoRALayer(
-            conv, r=4, alpha=8, num_experts=4, top_k=2, share_moe_registry=True
-        )
+        layer = MoLoRALayer(conv, r=4, alpha=8, num_experts=4, top_k=2, share_moe_registry=True)
         x = torch.randn(2, 16, 8, 8)
         layer.eval()
         MOE_LOSS_REGISTRY.clear()
@@ -748,15 +741,13 @@ class TestRegistryIntegration:
 # TestDynamicRouting (5 tests)
 # =============================================================================
 
+
 class TestDynamicRouting:
     """Test MoLoRA dynamic routing enhancements."""
 
     def test_top_k_warmup(self):
         conv = nn.Conv2d(16, 32, 3, padding=1)
-        layer = MoLoRALayer(
-            conv, r=4, alpha=8, num_experts=4, top_k=2,
-            top_k_warmup=10, warmup_steps=10
-        )
+        layer = MoLoRALayer(conv, r=4, alpha=8, num_experts=4, top_k=2, top_k_warmup=10, warmup_steps=10)
         layer.train()
         # Step 0: should return 1
         assert layer._current_top_k() == 1
@@ -769,9 +760,7 @@ class TestDynamicRouting:
 
     def test_expert_dropout(self):
         conv = nn.Conv2d(16, 32, 3, padding=1)
-        layer = MoLoRALayer(
-            conv, r=4, alpha=8, num_experts=4, top_k=2, expert_dropout=0.5
-        )
+        layer = MoLoRALayer(conv, r=4, alpha=8, num_experts=4, top_k=2, expert_dropout=0.5)
         layer.train()
         x = torch.randn(2, 16, 8, 8)
         out = layer(x)
@@ -779,19 +768,30 @@ class TestDynamicRouting:
 
     def test_capacity_factor(self):
         conv = nn.Conv2d(16, 32, 3, padding=1)
-        layer = MoLoRALayer(
-            conv, r=4, alpha=8, num_experts=4, top_k=2, capacity_factor=0.5
-        )
+        layer = MoLoRALayer(conv, r=4, alpha=8, num_experts=4, top_k=2, capacity_factor=0.5)
         x = torch.randn(2, 16, 8, 8)
         out = layer(x)
         assert out.shape == (2, 32, 8, 8)
 
+    def test_capacity_factor_boundaries(self):
+        layer = MoLoRALayer(nn.Linear(4, 4), r=2, num_experts=4, top_k=2)
+        weights = torch.tensor([[0.8, 0.2], [0.8, 0.2], [0.8, 0.2], [0.8, 0.2]])
+        indices = torch.tensor([[0, 1], [0, 1], [0, 2], [0, 3]])
+
+        assert layer.capacity_factor == 0.0
+        assert torch.equal(layer._apply_capacity_limit(weights, indices), weights)
+
+        layer.capacity_factor = 1.0
+        limited = layer._apply_capacity_limit(weights, indices)
+        assert not torch.allclose(limited, weights)
+        assert torch.allclose(limited.sum(dim=-1), torch.ones(4))
+
+        layer.capacity_factor = float(layer.num_experts)
+        assert torch.equal(layer._apply_capacity_limit(weights, indices), weights)
+
     def test_domain_preallocation(self):
         conv = nn.Conv2d(16, 32, 3, padding=1)
-        layer = MoLoRALayer(
-            conv, r=4, alpha=8, num_experts=4, top_k=2,
-            domain_experts={"day": [0, 1], "night": [2, 3]}
-        )
+        layer = MoLoRALayer(conv, r=4, alpha=8, num_experts=4, top_k=2, domain_experts={"day": [0, 1], "night": [2, 3]})
         layer.set_domain("day")
         x = torch.randn(2, 16, 8, 8)
         out = layer(x)
@@ -803,10 +803,7 @@ class TestDynamicRouting:
 
     def test_domain_clear(self):
         conv = nn.Conv2d(16, 32, 3, padding=1)
-        layer = MoLoRALayer(
-            conv, r=4, alpha=8, num_experts=4, top_k=2,
-            domain_experts={"day": [0, 1], "night": [2, 3]}
-        )
+        layer = MoLoRALayer(conv, r=4, alpha=8, num_experts=4, top_k=2, domain_experts={"day": [0, 1], "night": [2, 3]})
         layer.set_domain("day")
         layer.clear_domain()
         x = torch.randn(2, 16, 8, 8)
@@ -818,6 +815,7 @@ class TestDynamicRouting:
 # =============================================================================
 # TestContinualLearning (4 tests)
 # =============================================================================
+
 
 class TestContinualLearning:
     """Test MoLoRA continual learning features."""
@@ -853,14 +851,13 @@ class TestContinualLearning:
                 super().__init__()
                 self.conv1 = nn.Conv2d(3, 8, 3, padding=1)
                 self.conv2 = nn.Conv2d(8, 16, 3, padding=1)
+
             def forward(self, x):
                 x = torch.relu(self.conv1(x))
                 return torch.relu(self.conv2(x))
+
         model = TinyModel()
-        cfg = MoLoRAConfig(
-            r=4, alpha=8, num_experts=4, top_k=2,
-            target_modules=["conv1", "conv2"]
-        )
+        cfg = MoLoRAConfig(r=4, alpha=8, num_experts=4, top_k=2, target_modules=["conv1", "conv2"])
         wrapper = MoLoRAModel(model, cfg)
         # Save replay buffer
         buf = wrapper.save_expert_replay_buffer("day")

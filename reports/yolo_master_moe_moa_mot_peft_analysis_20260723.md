@@ -146,7 +146,7 @@ VisDrone 50e：EsMoE-N **mAP50-95 = 0.12023**，P50 13.5ms，7.85 GFLOPs，3.45M
 │ 运行时工具层  agent/runtime/cli/{lora_tools, peft_compare,│
 │              moe_tools}.py + examples/lora_examples/*.yaml│
 ├─────────────────────────────────────────────────────────┤
-│ 规划层       ultralytics/vpeft/（研究原型，AAAI 2026 目标） │
+│ 规划层       ultralytics/vpeft/（研究原型）                 │
 │             ultralytics/utils/lora/planner.py（2686 行）  │
 ├─────────────────────────────────────────────────────────┤
 │ 内核层       ultralytics/utils/lora/（7743 行：api/config/ │
@@ -179,7 +179,7 @@ Mixture-of-LoRA：多专家 LoRA + 可学习路由。
 
 > 用户提到的 "planer" 即 **Adapter Planner**。注意：代码里实际有**两个规划器**——研究级的 `vpeft` 包和工程级的 `utils/lora/planner.py`（2686 行）。
 
-V-PEFT 定位为 **"constraint-aware optimization solver framework"**（docstring 注明 *Target venue: AAAI 2026*），把"LoRA 插在哪、每层 rank 给多少"形式化为组合优化问题：
+V-PEFT 定位为 **"constraint-aware optimization solver framework"**，把"LoRA 插在哪、每层 rank 给多少"形式化为组合优化问题：
 
 **四模块流水线**：模型 → 图构建 → 约束校验 → 策略/求解 → 放置方案（`PlacementDecision`）。
 
@@ -278,7 +278,7 @@ V-PEFT 定位为 **"constraint-aware optimization solver framework"**（docstrin
 2. **MoT 的出路在 scene-aware 实证的**：当前路由行为与"场景自适应"假设不符，建议先用 `analyze_mot_routing.py` 在密集/稀疏场景分组统计上验证 scene residual 分支是否真的改变了路由分布，再决定是否扩大投入；CPU 部署直接 top_k=1 或仅 P5。
 3. **MoA 定位应改为"低成本即插即用件"**：+3% 参数 +4% 延迟换持平精度，作为可选增强件合理，不要再期待它独立涨点。
 4. **MoLoRA 需要一次"收敛冲刺"**：fp16 bug、merge 语义不等价、保存链路未接通是三个硬问题，建议按 tests 中 routing-aware merge 用例为验收标准逐个收口——这是 PEFT 故事能否讲圆的关键。
-5. **V-PEFT（Adapter Planner）是最有研究品位的资产**：GATv2 架构编码 + PPO rank 分配 + MIP 精确求解的组合在 PEFT 自动化方向很完整（AAAI 2026 目标）。建议：(a) 先接 `eval_moe_peft.py` 做端到端"规划→训练→评测"闭环；(b) 与 `utils/lora/planner.py`（2686 行工程版）做职责切分——研究版探索策略空间，工程版服务生产配置；(c) `SEMANTIC_UTILITY` 先验（attention=1.2 > head=1.0 > neck=0.8 > backbone=0.5）本身值得一组消融验证。
+5. **V-PEFT（Adapter Planner）是最有研究品位的资产**：GATv2 架构编码 + PPO rank 分配 + MIP 精确求解的组合在 PEFT 自动化方向很完整。建议：(a) 先接 `eval_moe_peft.py` 做端到端"规划→训练→评测"闭环；(b) 与 `utils/lora/planner.py`（2686 行工程版）做职责切分——研究版探索策略空间，工程版服务生产配置；(c) `SEMANTIC_UTILITY` 先验（attention=1.2 > head=1.0 > neck=0.8 > backbone=0.5）本身值得一组消融验证。
 6. **统一路由基础设施是隐藏的技术债务清偿亮点**：`routing_protocol.py` + `mixture_loss.py` 把五类 aux loss 收口，这套机制本身（EMA 归一化 + aux 预算 + NaN 隔离 + DDP 安全）值得写进论文附录或单独工程博客。
 
 ---

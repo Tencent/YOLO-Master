@@ -42,7 +42,10 @@ def run_visual_hybrid_moe_forward(module, x, detail_gate=None, context_mixer=Non
 
     x_static = x[:, : module.static_channels, :, :] * gate_static
     x_dynamic = x[:, module.static_channels :, :, :] * gate_dynamic
-    if detail_gate is not None:
+    configured_hooks = bool(getattr(module, "router_hooks", ()))
+    if configured_hooks:
+        x_dynamic = module._apply_router_hooks("pre_route", x_dynamic)
+    elif detail_gate is not None:
         x_dynamic = detail_gate(x_dynamic)
 
     out_static = module.static_net(x_static)
@@ -55,9 +58,11 @@ def run_visual_hybrid_moe_forward(module, x, detail_gate=None, context_mixer=Non
     out_dynamic = module.fused_experts(x_dynamic, routing_weights, routing_indices, adaptive_top_k)
 
     out_concat = module._channel_shuffle(torch.cat([out_static, out_dynamic], dim=1))
-    if context_mixer is not None:
+    if configured_hooks:
+        out_concat = module._apply_router_hooks("post_fusion", out_concat)
+    elif context_mixer is not None:
         out_concat = context_mixer(out_concat)
-    if refine_features and hasattr(module, "_refine_features"):
+    if not configured_hooks and refine_features and hasattr(module, "_refine_features"):
         out_concat = module._refine_features(out_concat)
 
     out = module.bn(module.proj(out_concat)) + x

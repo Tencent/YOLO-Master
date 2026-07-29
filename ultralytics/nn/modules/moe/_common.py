@@ -5,25 +5,47 @@ This module centralizes all common infrastructure used by base.py, advanced.py,
 hybrid.py, and integration.py: device-agnostic autocast, the global auxiliary-loss
 registry, snapshot recording, robust deepcopy, and the consolidated import block.
 """
+
 import os
-import math
+import threading as _threading
+import weakref
 from contextlib import nullcontext
+from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import weakref
-from typing import Tuple, Dict, Optional, Union
-from .utils import FlopsUtils, get_safe_groups, BatchedExpertComputation
-from .experts import (
-    OptimizedSimpleExpert, FusedGhostExpert, SimpleExpert, GhostExpert,
-    InvertedResidualExpert, EfficientExpertGroup, SpatialExpert, SharedInvertedExpertGroup
+
+from ultralytics.nn.modules.block import A2C2f, ABlock, C3k  # noqa: F401 - preserve compatibility attributes
+from ultralytics.nn.modules.utils import robust_deepcopy as _robust_deepcopy  # noqa: F401
+
+from ..routing_protocol import get_aux_record, publish_aux_loss
+from .experts import (  # noqa: F401 - preserve compatibility attributes
+    OptimizedSimpleExpert,
+    FusedGhostExpert,
+    SimpleExpert,
+    GhostExpert,
+    InvertedResidualExpert,
+    EfficientExpertGroup,
+    SpatialExpert,
+    SharedInvertedExpertGroup,
 )
-from .routers import (
-    UltraEfficientRouter, EfficientSpatialRouter, LocalRoutingLayer,
-    AdaptiveRoutingLayer, DynamicRoutingLayer, AdvancedRoutingLayer
+from .loss import (  # noqa: F401 - preserve compatibility attributes
+    MoELoss,
+    all_reduce_mean,
+    differentiable_balance_loss,
+    gshard_balance_loss,
+    weighted_gshard_balance_loss,
 )
-from ultralytics.nn.modules.block import ABlock, A2C2f, C3k
+from .routers import (  # noqa: F401 - preserve compatibility attributes
+    UltraEfficientRouter,
+    EfficientSpatialRouter,
+    LocalRoutingLayer,
+    AdaptiveRoutingLayer,
+    DynamicRoutingLayer,
+    AdvancedRoutingLayer,
+)
+from .scheduler import MoEDynamicScheduler, MoEDynamicSchedulerConfig  # noqa: F401
+from .utils import BatchedExpertComputation, FlopsUtils, get_safe_groups  # noqa: F401
 
 try:
     from torch.amp import autocast as _device_autocast
@@ -43,18 +65,13 @@ def autocast(enabled=True, **kwargs):
         return _device_autocast("mps", enabled=enabled, **kwargs)
     # On CPU, autocast is not fully supported; disable to avoid warnings/errors
     return nullcontext()
-from .loss import MoELoss, gshard_balance_loss, weighted_gshard_balance_loss, differentiable_balance_loss, all_reduce_mean
-from .scheduler import MoEDynamicScheduler, MoEDynamicSchedulerConfig
-from ..routing_protocol import publish_aux_loss
-from ultralytics.nn.modules.utils import robust_deepcopy as _robust_deepcopy
+
 
 # Global registry to store auxiliary losses for MoE modules
 # This prevents storing non-leaf tensors in the module instance, avoiding deepcopy errors.
 # Guarded by a lock: WeakKeyDictionary mutation is not atomic, and concurrent
 # forward passes (e.g. multi-threaded eval / hook callbacks) could otherwise
 # corrupt its internal weakref bookkeeping.
-import threading as _threading
-
 MOE_LOSS_REGISTRY = weakref.WeakKeyDictionary()
 _MOE_LOSS_REGISTRY_LOCK = _threading.Lock()
 
@@ -69,9 +86,10 @@ def _registry_set(module: nn.Module, value: torch.Tensor) -> None:
 
 
 def _registry_get(module: nn.Module):
-    """Thread-safe read from the MoE aux-loss registry."""
-    with _MOE_LOSS_REGISTRY_LOCK:
-        return MOE_LOSS_REGISTRY.get(module)
+    """Read the canonical step-aware MoE auxiliary-loss record."""
+    record = get_aux_record(module)
+    return record.value if record is not None else None
+
 
 # Diagnostic snapshot sampling: only every Nth forward per module records the
 # latest routing summary. Tensors stay on their current device; diagnostic
@@ -136,7 +154,9 @@ def _flatten_moe_topk(topk_tensor: Optional[torch.Tensor]) -> Optional[torch.Ten
     return topk_tensor.reshape(topk_tensor.shape[0], -1)
 
 
-def _compute_usage_from_topk(topk_indices: Optional[torch.Tensor], num_experts: int) -> Tuple[torch.Tensor, torch.Tensor]:
+def _compute_usage_from_topk(
+    topk_indices: Optional[torch.Tensor], num_experts: int
+) -> Tuple[torch.Tensor, torch.Tensor]:
     """Return normalized usage share and raw hit counts from Top-K indices."""
     if topk_indices is None or num_experts <= 0:
         zero = torch.zeros(max(num_experts, 0), dtype=torch.float32)
@@ -202,7 +222,9 @@ def _record_moe_snapshot(
 
     snapshot = {
         "num_experts": int(getattr(module, "num_experts", 0)),
-        "top_k": int(_flatten_moe_topk(topk_indices).shape[1]) if isinstance(topk_indices, torch.Tensor) else int(getattr(module, "top_k", 0)),
+        "top_k": int(_flatten_moe_topk(topk_indices).shape[1])
+        if isinstance(topk_indices, torch.Tensor)
+        else int(getattr(module, "top_k", 0)),
         "expert_usage": usage_tensor,
         "topk_counts": counts_tensor,
         "mean_router_probs": mean_probs,
@@ -217,6 +239,7 @@ def _record_moe_snapshot(
             snapshot["mean_topk_weight"] = weights.mean(dim=0)
 
     module.last_routing_snapshot = snapshot
+
 
 # ==========================================
 # Ultra-optimized MoE module

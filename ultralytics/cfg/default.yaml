@@ -90,6 +90,11 @@ simplify: True # (bool) ONNX/engine only; run graph simplifier for cleaner ONNX 
 opset: # (int, optional) ONNX/engine only; opset version for export; leave unset to use a tested default
 workspace: # (float, optional) engine (TensorRT) only; workspace size in GiB, e.g. 4
 nms: False # (bool) fuse NMS into exported model when backend supports; if True, conf/iou apply (agnostic_nms except coreml)
+pre_export_prune: False # (bool) run an explicit, auditable MoE expert-pruning pass before export
+moe_prune_threshold: 0.15 # (float) minimum calibrated expert usage share to retain during pre-export pruning
+moe_prune_keep_top_m: # (int, optional) always retain this many top-scoring experts per MoE layer
+moe_prune_calibration_steps: 8 # (int) synthetic export-input calibration forwards for pre-export pruning
+molora_export_mode: dynamic # (str) MoLoRA export policy: dynamic or routing_preserved (ONNX/TorchScript)
 
 # Hyperparameters ------------------------------------------------------------------------------------------------------
 lr0: 0.01 # (float) initial learning rate (SGD=1e-2, Adam/AdamW=1e-3)
@@ -160,6 +165,7 @@ lora_planner_backend: "legacy" # (str) Planner backend: legacy or vpeft (opt-in)
 lora_include_head: False # (bool) Include YOLO detection head layers in LoRA targeting
 lora_freeze_bn: False # (bool) Freeze BatchNorm layers during LoRA training
 lora_target_modules: # (list[str], optional) LoRA target modules
+lora_rank_pattern: # (dict[str, int], optional) Per-target LoRA rank overrides
 lora_save_adapters: True # (bool) Save LoRA adapters
 lora_adapter_dir: "lora_adapter" # (str) Directory name for adapters
 lora_auto_r_ratio: 0.0 # (float) Auto calculate LoRA rank based on params ratio
@@ -282,7 +288,7 @@ molora_diversity_loss: 0.0 # (float) Diversity loss coefficient for MoLoRA
 molora_expert_init: default # (str) Expert init: default, orthogonal, gaussian
 molora_use_rslora: true # (bool) Use rsLoRA scaling
 molora_share_moe_registry: true # (bool) Share MOE_LOSS_REGISTRY with MoLoRA
-molora_capacity_factor: 1.0 # (float) Capacity factor for MoLoRA expert selection (1.0 = no limit)
+molora_capacity_factor: 0.0 # (float) Capacity multiplier; <=0 or >=num_experts disables the limit
 molora_expert_dropout: 0.0 # (float) Probability of disabling an expert during training
 molora_top_k_warmup: # (int, optional) Steps used to ramp top_k from 1 to the target value
 molora_warmup_steps: 0 # (int) Steps to gradually increase top_k from 1 to target

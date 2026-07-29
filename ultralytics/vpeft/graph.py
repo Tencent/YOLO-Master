@@ -3,8 +3,6 @@
 Provides a typed heterogeneous computation graph builder and a GATv2-based
 architecture encoder that replaces the static 10-D ArchitectureFingerprint
 with differentiable, topology-aware node and global embeddings.
-
-Target: AAAI 2026, Section 4.1.
 """
 
 from __future__ import annotations

@@ -1,5 +1,5 @@
 """
-V-PEFT Solver Module — Constraint-aware Optimization Framework for AAAI 2026.
+V-PEFT Solver Module — Constraint-aware Optimization Framework.
 
 Implements three solvers for the combinatorial PEFT placement problem:
 1. AlternatingOptimizationSolver (AO) — block-coordinate ascent with greedy sub-routines.
@@ -407,9 +407,9 @@ class AlternatingOptimizationSolver(ConstraintSolver):
                 break
 
         # --- post-processing -----------------------------------------------
-        pi, r = _project_discrete_solution(graph, pi, r, variant, constraints, self.rank_set)
-        pi, r = constraints.enforce_moe_consistency(graph, pi, r, variant, self.rank_set)
-        pi, r = _project_budget(graph, pi, r, budget, variant, utilities)
+        pi, r = _project_discrete_solution(graph, pi, r, xi, constraints, self.rank_set)
+        pi, r, xi = constraints.enforce_moe_consistency(graph, pi, r, xi, self.rank_set)
+        pi, r = _project_budget(graph, pi, r, budget, xi, utilities)
         budget_used = int(constraints.get_budget_usage(graph, pi, r, xi))
         budget_remaining = max(0, budget - budget_used)
         target_modules = [

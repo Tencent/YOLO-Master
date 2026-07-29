@@ -3,10 +3,11 @@
 MoLoRAConfig extends the standard LoRAConfig with Mixture-of-LoRA specific
 parameters: num_experts, top_k, router_type, and balance-loss coefficients.
 """
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Union
 
-import torch
+import math
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
+
 import torch.nn as nn
 
 from ultralytics.utils import LOGGER
@@ -33,7 +34,7 @@ class MoLoRAConfig(LoRAConfig):
     diversity_loss_coef: float = 0.0
 
     # Routing behaviour
-    capacity_factor: float = 1.0  # dynamic capacity limit (E=1 means no limit)
+    capacity_factor: float = 0.0  # <=0 or >=num_experts disables the soft capacity limit
     expert_dropout: float = 0.0  # training-time probability of disabling an expert
     top_k_warmup: Optional[int] = None  # gradually increase K from 1 to top_k over N steps
     warmup_steps: int = 0  # number of steps for warmup
@@ -55,23 +56,20 @@ class MoLoRAConfig(LoRAConfig):
         if self.num_experts < 1:
             raise ValueError(f"num_experts must be >= 1, got {self.num_experts}")
         if self.top_k < 1 or self.top_k > self.num_experts:
-            raise ValueError(
-                f"top_k must be in [1, num_experts={self.num_experts}], got {self.top_k}"
-            )
+            raise ValueError(f"top_k must be in [1, num_experts={self.num_experts}], got {self.top_k}")
         if self.router_type not in ("linear", "spatial", "hybrid"):
-            raise ValueError(
-                f"router_type must be 'linear', 'spatial', or 'hybrid', got {self.router_type}"
-            )
+            raise ValueError(f"router_type must be 'linear', 'spatial', or 'hybrid', got {self.router_type}")
         if self.balance_loss_coef < 0:
             raise ValueError(f"balance_loss_coef must be >= 0, got {self.balance_loss_coef}")
         if self.z_loss_coef < 0:
             raise ValueError(f"z_loss_coef must be >= 0, got {self.z_loss_coef}")
         if self.diversity_loss_coef < 0:
             raise ValueError(f"diversity_loss_coef must be >= 0, got {self.diversity_loss_coef}")
+        self.capacity_factor = float(self.capacity_factor)
+        if not math.isfinite(self.capacity_factor):
+            raise ValueError(f"capacity_factor must be finite, got {self.capacity_factor}")
         if self.expert_init not in ("default", "orthogonal", "gaussian"):
-            raise ValueError(
-                f"expert_init must be 'default', 'orthogonal', or 'gaussian', got {self.expert_init}"
-            )
+            raise ValueError(f"expert_init must be 'default', 'orthogonal', or 'gaussian', got {self.expert_init}")
 
     @classmethod
     def from_lora_config(cls, lora_config: LoRAConfig, **molora_overrides) -> "MoLoRAConfig":
@@ -166,7 +164,9 @@ class MoLoRAConfigBuilder(LoRAConfigBuilder):
             "to_layer": kwargs.get("to_layer"),
             "allow_depthwise": kwargs.get("allow_depthwise", False),
             "kernels": kwargs.get("kernels"),
-            "skip_stem": kwargs.get("skip_stem", True),  # Default to True: skip un-normalized stem layers (prevents FP16 NaN)
+            "skip_stem": kwargs.get(
+                "skip_stem", True
+            ),  # Default to True: skip un-normalized stem layers (prevents FP16 NaN)
             "min_channels": kwargs.get("min_channels", 0),
             "only_3x3": kwargs.get("only_3x3", False),
         }
@@ -198,6 +198,7 @@ class MoLoRAConfigBuilder(LoRAConfigBuilder):
 # ---------------------------------------------------------------------------
 # Preset factory
 # ---------------------------------------------------------------------------
+
 
 def get_molora_preset(name: str) -> Dict[str, Any]:
     """Return a named preset configuration dict.
