@@ -18,6 +18,17 @@
 上游已经包含 Issue 指定的三项 `tests/test_mot.py` 边界测试，本分支负责复验，不将其声明为新增。
 新增测试聚焦 TIFF、dtype、统计、序列配对、遮挡匹配和 benchmark 状态隔离。
 
+## 与已合并 PR 的差异
+
+- [#96](https://github.com/Tencent/YOLO-Master/pull/96) 已完成基础 MoT/MoA+MoT 配置、消融
+  和边界测试；本 PR 的结构增量是 P5-only MoT；
+- [#146](https://github.com/Tencent/YOLO-Master/pull/146) 已完成 VisDrone 消融与跨域路由，
+  并在限制中指出 COCO/VisDrone 使用不同训练域模型；
+- 本 PR 固定同一个 MoT checkpoint，直接消除上述参数混杂；
+- 本 PR 进一步修正连续视频帧伪重复，加入原始遮挡标注配对和三轮稳定 benchmark。
+
+因此建议将本 PR 作为 #54 的方法学修正与增量结果评审，而不是重复合入已有基础实现。
+
 ## 受控实验
 
 四模型均从 YAML 初始化，在 VisDrone 上训练 30 epoch，640，batch 16，seed 42，FP32。

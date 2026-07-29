@@ -14,6 +14,10 @@ MoT checkpoint 分析自然图像、航拍场景和 brain-tumor OOD 输入。
 - 训练协议：`30 epoch / imgsz=640 / batch=16 / seed=42 / FP32`
 - MoT 权重 SHA-256：`a1857c81b7aebd0efb5a56f9d5b37405ef83edcc68890add15c9c480e9fee629`
 
+上游 #96 已完成基础 MoT/MoA+MoT 配置和边界测试，#146 已完成 VisDrone 消融，但其跨域比较
+使用不同训练域模型。本实验的增量是固定 checkpoint、按视频序列配对、使用真实遮挡标注，并量化
+多轮 benchmark 波动。
+
 ## 消融结果
 
 训练提交的最佳结果：

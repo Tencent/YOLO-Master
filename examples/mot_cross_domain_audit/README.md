@@ -13,6 +13,19 @@ benchmark 和一键编排。30 epoch 结果、修正后的原始 CSV 和图表�
 完整的问题发现、修复与再实验过程见
 [`experiment_journey_zh.md`](experiment_journey_zh.md)。
 
+## 0. 与已合并工作的关系
+
+上游 PR [#96](https://github.com/Tencent/YOLO-Master/pull/96) 已提供 MoT/MoA+MoT 配置、
+基础消融和边界测试；PR [#146](https://github.com/Tencent/YOLO-Master/pull/146) 已提供
+VisDrone 消融及跨域路由报告，并明确记录其 COCO/VisDrone 比较使用了不同训练域的模型。这里
+不重复声明这些基础能力，增量聚焦于：
+
+- 用同一个 checkpoint 消除 #146 已指出的模型参数混杂；
+- 用视频序列 cluster 修正连续帧伪重复；
+- 用原始 occlusion 标注和协变量匹配直接复验遮挡假设；
+- 用 P5-only MoT 探索不同于既有 MoA+MoT 的低预算组合；
+- 用确定性输入、时长预热、顺序轮换和 3 轮结果量化 benchmark 波动。
+
 ## 1. 贡献与创新
 
 ### 1.1 同检查点跨域审计
