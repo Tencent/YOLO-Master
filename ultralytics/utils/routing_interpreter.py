@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -881,6 +882,61 @@ class RoutingInterpreter:
         forward_fn: Callable[[nn.Module, Any], Any] | None = None,
     ) -> RoutingCausalReport:
         """Compare natural routing with a temporary forced-expert counterfactual."""
+        self._forced_expert_target(layer_name, expert_idx)
+
+        training_flags = self._training_flags()
+        snapshots = {
+            routed: dict(getattr(routed, "last_routing_snapshot", {}))
+            for routed in self.model.modules()
+            if hasattr(routed, "last_routing_snapshot")
+        }
+        try:
+            self.model.eval()
+            with torch.no_grad():
+                natural = self._forward(batch, forward_fn)
+            with self.force_expert(layer_name, expert_idx, eval_mode=False), torch.no_grad():
+                forced = self._forward(batch, forward_fn)
+            return self._compare_outputs(layer_name, expert_idx, natural, forced)
+        finally:
+            for routed, snapshot in snapshots.items():
+                routed.last_routing_snapshot = snapshot
+            self._restore_training_flags(training_flags)
+
+    @contextmanager
+    def force_expert(
+        self,
+        layer_name: str,
+        expert_idx: int,
+        *,
+        eval_mode: bool = True,
+    ) -> Iterator[nn.Module]:
+        """Temporarily route every token to one expert and restore all model state."""
+        router, num_experts = self._forced_expert_target(layer_name, expert_idx)
+        training_flags = self._training_flags()
+        snapshots = {
+            routed: dict(getattr(routed, "last_routing_snapshot", {}))
+            for routed in self.model.modules()
+            if hasattr(routed, "last_routing_snapshot")
+        }
+
+        def force_hook(_router, _inputs, output):
+            return self._force_router_output(output, num_experts, expert_idx)
+
+        handle = None
+        try:
+            if eval_mode:
+                self.model.eval()
+            handle = router.register_forward_hook(force_hook)
+            yield router
+        finally:
+            if handle is not None:
+                handle.remove()
+            for routed, snapshot in snapshots.items():
+                routed.last_routing_snapshot = snapshot
+            self._restore_training_flags(training_flags)
+
+    def _forced_expert_target(self, layer_name: str, expert_idx: int) -> tuple[nn.Module, int]:
+        """Validate a forced-routing request and return its router metadata."""
         modules = self._routed_modules(layer_name=layer_name, leaf_only=False)
         if layer_name not in modules:
             raise ValueError(f"routed layer {layer_name!r} was not found")
@@ -891,32 +947,7 @@ class RoutingInterpreter:
         router = self._router_for(module)
         if router is None:
             raise ValueError(f"routed layer {layer_name!r} has no supported router or routing submodule")
-
-        training_flags = self._training_flags()
-        snapshots = {
-            routed: dict(getattr(routed, "last_routing_snapshot", {}))
-            for routed in self.model.modules()
-            if hasattr(routed, "last_routing_snapshot")
-        }
-        handle = None
-        try:
-            self.model.eval()
-            with torch.no_grad():
-                natural = self._forward(batch, forward_fn)
-
-            def force_hook(_router, _inputs, output):
-                return self._force_router_output(output, num_experts, expert_idx)
-
-            handle = router.register_forward_hook(force_hook)
-            with torch.no_grad():
-                forced = self._forward(batch, forward_fn)
-            return self._compare_outputs(layer_name, expert_idx, natural, forced)
-        finally:
-            if handle is not None:
-                handle.remove()
-            for routed, snapshot in snapshots.items():
-                routed.last_routing_snapshot = snapshot
-            self._restore_training_flags(training_flags)
+        return router, num_experts
 
     def _routed_modules(self, *, layer_name: str | None = None, leaf_only: bool) -> dict[str, nn.Module]:
         routed = {
@@ -1239,7 +1270,10 @@ class RoutingInterpreter:
             weights, indices, axis = sparse_pair
             forced_weights = torch.zeros_like(weights)
             selection = [slice(None)] * weights.ndim
-            selection[axis] = 0
+            # K==E may be an expert-aligned dense tensor (as in MoT). Selecting
+            # the requested channel is also valid for position-aligned sparse
+            # outputs because every returned index is forced to the same expert.
+            selection[axis] = expert_idx if weights.shape[axis] == num_experts else 0
             forced_weights[tuple(selection)] = 1
             replacements = {
                 id(weights): forced_weights,

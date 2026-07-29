@@ -199,6 +199,129 @@ def test_mot_router_warns_when_exploration_eps_is_clamped():
     assert block.router.exploration_eps == 0.2
 
 
+def test_mot_adaptive_k_selects_minimum_probability_mass_and_pads_indices():
+    from ultralytics.nn.modules.mot.router import _MoTRouter
+
+    router = _MoTRouter(
+        8,
+        num_experts=3,
+        top_k=2,
+        use_spatial=False,
+        adaptive_k=True,
+        adaptive_k_threshold=0.6,
+    ).eval()
+    with torch.no_grad():
+        router.router[-1].weight.zero_()
+        router.router[-1].bias.copy_(torch.tensor([2.0, 1.0, 0.0]))
+
+    weights, indices = router(torch.randn(2, 8, 4, 5))
+
+    assert router.last_selected_k.tolist() == [1, 1]
+    assert torch.equal(indices[:, 1], torch.full_like(indices[:, 1], -1))
+    assert torch.equal((weights > 0).sum(dim=1), torch.ones_like(weights[:, 0], dtype=torch.long))
+    router.configure_adaptive_k(True, threshold=0.8)
+    weights, indices = router(torch.randn(2, 8, 4, 5))
+    assert router.last_selected_k.tolist() == [2, 2]
+    assert (indices >= 0).all()
+    assert torch.equal((weights > 0).sum(dim=1), torch.full_like(weights[:, 0], 2, dtype=torch.long))
+
+
+def test_mot_adaptive_k_is_disabled_during_training_and_validates_threshold():
+    from ultralytics.nn.modules.mot.router import _MoTRouter
+
+    with pytest.raises(ValueError, match="adaptive_k_threshold"):
+        _MoTRouter(8, adaptive_k=True, adaptive_k_threshold=0.0)
+    router = _MoTRouter(8, top_k=2, adaptive_k=True, adaptive_k_threshold=0.1).train()
+
+    _, indices = router(torch.randn(1, 8, 3, 3))
+
+    assert router.last_selected_k.tolist() == [2]
+    assert (indices >= 0).all()
+
+
+def test_mot_adaptive_k_max_k_is_exact_fixed_k_fallback():
+    from ultralytics.nn.modules.mot.router import _MoTRouter
+
+    torch.manual_seed(4)
+    router = _MoTRouter(8, num_experts=3, top_k=2, use_spatial=True).eval()
+    features = torch.randn(2, 8, 5, 7)
+    fixed_weights, fixed_indices = router(features)
+
+    router.configure_adaptive_k(True, threshold=1.0)
+    adaptive_weights, adaptive_indices = router(features)
+
+    assert router.last_selected_k.tolist() == [2, 2]
+    assert torch.equal(adaptive_indices, fixed_indices)
+    assert torch.allclose(adaptive_weights, fixed_weights)
+
+
+def test_mot_adaptive_k_is_disabled_during_onnx_export(monkeypatch):
+    from ultralytics.nn.modules.mot.router import _MoTRouter
+
+    router = _MoTRouter(
+        8,
+        num_experts=3,
+        top_k=2,
+        use_spatial=False,
+        adaptive_k=True,
+        adaptive_k_threshold=0.1,
+    ).eval()
+    monkeypatch.setattr(torch.onnx, "is_in_onnx_export", lambda: True)
+
+    weights, indices = router(torch.randn(1, 8, 3, 3))
+
+    assert router.last_selected_k.tolist() == [2]
+    assert (indices >= 0).all()
+    assert torch.equal((weights > 0).sum(dim=1), torch.full_like(weights[:, 0], 2, dtype=torch.long))
+
+
+def test_mot_adaptive_k_usage_and_dispatch_ignore_padded_slots():
+    from ultralytics.nn.modules.mot.router import _MoTRouter
+
+    indices = torch.tensor([[[[0]], [[-1]]], [[[2]], [[-1]]]])
+    usage = _MoTRouter.expert_usage_from_indices(indices, num_experts=3)
+    assert usage.tolist() == pytest.approx([0.5, 0.0, 0.5])
+
+    block = MoTBlock(
+        24,
+        num_heads=3,
+        top_k=2,
+        window_size=4,
+        n_points=2,
+        adaptive_k=True,
+        adaptive_k_threshold=0.6,
+    ).eval()
+    with torch.no_grad():
+        block.router.router[-1].weight.zero_()
+        block.router.router[-1].bias.copy_(torch.tensor([2.0, 1.0, 0.0]))
+        output, _ = block(torch.randn(2, 24, 6, 6))
+
+    stats = block._last_dispatch_stats
+    assert torch.isfinite(output).all()
+    assert stats["expert_calls"] == 1
+    assert stats["expert_sample_calls"] == 2
+    assert stats["dense_expert_sample_calls"] == 6
+    assert stats["sample_sparsity_ratio"] == pytest.approx(2 / 3)
+    assert stats["selected_k"].tolist() == [1, 1]
+
+
+def test_c2fmot_propagates_adaptive_k_configuration():
+    module = C2fMoT(
+        24,
+        24,
+        n=1,
+        num_heads=3,
+        top_k=2,
+        window_size=4,
+        n_points=2,
+        adaptive_k=True,
+        adaptive_k_threshold=0.7,
+    )
+
+    assert module.m[0].router.adaptive_k is True
+    assert module.m[0].router.adaptive_k_threshold == pytest.approx(0.7)
+
+
 def test_mot_scene_consistency_rejects_unsupported_expert_count():
     from ultralytics.nn.modules.mot.router import _MoTRouter
 
@@ -206,6 +329,32 @@ def test_mot_scene_consistency_rejects_unsupported_expert_count():
     weights = torch.full((1, 4, 1, 1), 0.25)
     with pytest.raises(ValueError, match="exactly 3 experts"):
         router.scene_consistency_loss(weights, torch.ones(1, 3))
+
+
+def test_mot_scene_head_inherits_router_device_when_enabled_late():
+    from ultralytics.nn.modules.mot.router import _MoTRouter
+
+    router = _MoTRouter(8, num_experts=3, top_k=2).to("meta")
+    router.enable_scene_aware(hidden_dim=5)
+
+    assert next(router.scene_projector.parameters()).device.type == "meta"
+
+
+def test_mot_global_utility_head_is_zero_initialized_and_supports_legacy_router():
+    from ultralytics.nn.modules.mot.router import _MoTRouter
+
+    router = _MoTRouter(8, num_experts=3, top_k=2).eval()
+    features = torch.randn(2, 8, 4, 4)
+    baseline = router._compute_logits(features)
+    del router.utility_input_dim
+    del router.utility_projector
+
+    router.enable_global_utility_head(hidden_dim=6)
+    updated = router._compute_logits(features)
+
+    assert torch.allclose(updated, baseline)
+    assert router.utility_projector[0].in_features == 8
+    assert router.utility_projector[0].out_features == 6
 
 
 def test_mot_deformable_attention_falls_back_for_non_grid_tokens():

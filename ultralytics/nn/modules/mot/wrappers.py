@@ -56,6 +56,8 @@ class C2fMoT(nn.Module):
         scene_consistency_coeff: float = 0.0,
         sparse_train_warmup_steps: int = 0,
         scene_inference_mode: str = "dynamic",
+        adaptive_k: bool = False,
+        adaptive_k_threshold: float = 0.5,
     ):
         super().__init__()
         self.c = int(c2 * e)
@@ -95,6 +97,8 @@ class C2fMoT(nn.Module):
                 scene_consistency_coeff=scene_consistency_coeff,
                 sparse_train_warmup_steps=sparse_train_warmup_steps,
                 scene_inference_mode=scene_inference_mode,
+                adaptive_k=adaptive_k,
+                adaptive_k_threshold=adaptive_k_threshold,
             )
             for i in range(n)
         )
@@ -123,6 +127,11 @@ class C2fMoT(nn.Module):
                 self.last_routing_snapshot = {
                     "num_experts": MoTBlock.NUM_EXPERTS,
                     "top_k": self.m[0].top_k if self.m else 0,
+                    "adaptive_k": bool(getattr(self.m[0].router, "adaptive_k", False)) if self.m else False,
+                    "adaptive_k_threshold": (
+                        float(getattr(self.m[0].router, "adaptive_k_threshold", 0.5)) if self.m else 0.5
+                    ),
+                    "selected_k": [s.get("selected_k") for s in child_snaps],
                     "expert_usage": mean_usage,
                     "mean_router_probs": mean_usage,
                     "aux_loss": float(aux_total.detach()),
@@ -178,6 +187,9 @@ class C2fMoT(nn.Module):
             ddp_sparse_train_safe=child_capabilities.get("ddp_sparse_train_safe", True),
             ddp_contract_source=child_capabilities.get("ddp_contract_source", "unconfigured"),
             ddp_fallback_reason=child_capabilities.get("ddp_fallback_reason"),
+            adaptive_k=child_capabilities.get("adaptive_k", False),
+            adaptive_k_threshold=child_capabilities.get("adaptive_k_threshold", 0.5),
+            adaptive_k_export_supported=child_capabilities.get("adaptive_k_export_supported", False),
             sparse_export_limitation=(
                 "C2fMoT eager execution supports Top-K sparse dispatch; ONNX and TorchScript tracing use dense blending."
             ),

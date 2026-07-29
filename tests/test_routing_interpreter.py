@@ -259,6 +259,39 @@ def test_causal_analysis_forces_expert_and_restores_router():
     assert torch.allclose(natural, restored)
 
 
+def test_force_expert_context_restores_state_after_exception():
+    model = ToyModel().train()
+    interpreter = RoutingInterpreter(model)
+    batch = torch.ones(1, 1, 2, 2)
+    natural = model(batch).detach()
+    original_snapshot = dict(model.routed.last_routing_snapshot)
+
+    with pytest.raises(RuntimeError, match="stop"), interpreter.force_expert("routed", expert_idx=1):
+        forced = model(batch).detach()
+        assert model.training is False
+        assert not torch.allclose(forced, natural)
+        raise RuntimeError("stop")
+
+    assert model.training is True
+    assert model.routed.training is True
+    assert model.routed.last_routing_snapshot.keys() == original_snapshot.keys()
+    assert torch.allclose(model(batch).detach(), natural)
+
+
+def test_force_router_output_handles_top_k_equal_to_expert_count():
+    weights = torch.tensor([[[[0.2]], [[0.3]], [[0.5]]]])
+    indices = torch.tensor([[[[0]], [[1]], [[2]]]])
+
+    forced_weights, forced_indices = RoutingInterpreter._force_router_output(
+        (weights, indices),
+        num_experts=3,
+        expert_idx=2,
+    )
+
+    assert torch.equal(forced_weights, torch.tensor([[[[0.0]], [[0.0]], [[1.0]]]]))
+    assert torch.equal(forced_indices, torch.full_like(indices, 2))
+
+
 @pytest.mark.parametrize(
     ("module", "batch", "expected_shape"),
     [

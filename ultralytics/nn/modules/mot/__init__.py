@@ -11,6 +11,13 @@ Provides three Transformer expert variants and their C2f-style wrapper:
 
 from .block import MoTBlock
 from .router import anneal_mot_temperature
+from .utility import UtilityRouterDeployment
 from .wrappers import C2fMoT, collect_mot_aux_loss
 
-__all__ = ("MoTBlock", "C2fMoT", "collect_mot_aux_loss", "anneal_mot_temperature")
+__all__ = (
+    "C2fMoT",
+    "MoTBlock",
+    "UtilityRouterDeployment",
+    "anneal_mot_temperature",
+    "collect_mot_aux_loss",
+)

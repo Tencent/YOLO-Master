@@ -70,6 +70,8 @@ class MoTBlock(nn.Module):
         scene_consistency_coeff: float = 0.0,
         sparse_train_warmup_steps: int = 0,
         scene_inference_mode: str = "dynamic",
+        adaptive_k: bool = False,
+        adaptive_k_threshold: float = 0.5,
     ):
         super().__init__()
         if not 1 <= top_k <= self.NUM_EXPERTS:
@@ -120,6 +122,8 @@ class MoTBlock(nn.Module):
             scene_aware=scene_aware_router,
             scene_hidden_dim=scene_hidden_dim,
             scene_inference_mode=scene_inference_mode,
+            adaptive_k=adaptive_k,
+            adaptive_k_threshold=adaptive_k_threshold,
         )
 
         # Final output norm & projection
@@ -187,6 +191,9 @@ class MoTBlock(nn.Module):
             ddp_sparse_train_safe=ddp_sparse_safe,
             ddp_contract_source=self._ddp_contract_source,
             ddp_fallback_reason=ddp_fallback_reason,
+            adaptive_k=bool(getattr(self.router, "adaptive_k", False)),
+            adaptive_k_threshold=float(getattr(self.router, "adaptive_k_threshold", 0.5)),
+            adaptive_k_export_supported=False,
             sparse_export_limitation=(
                 "MoT eager execution supports Top-K sparse dispatch; ONNX and TorchScript tracing use dense blending "
                 "because expert selection is data-dependent."
@@ -307,6 +314,7 @@ class MoTBlock(nn.Module):
         B = x.shape[0]
         if use_sparse:
             expert_calls = 0
+            expert_sample_calls = 0
             for e_idx, expert in enumerate(self.experts):
                 if indices is not None:
                     active = (indices == e_idx).reshape(B, -1).any(dim=1)
@@ -316,6 +324,7 @@ class MoTBlock(nn.Module):
                 if batch_idx.numel() == 0:
                     continue
                 expert_calls += 1
+                expert_sample_calls += int(batch_idx.numel())
                 w = weights[batch_idx, e_idx:e_idx + 1]
                 expert_out = expert(x[batch_idx])
                 if expert_out.shape != x[batch_idx].shape:
@@ -329,13 +338,26 @@ class MoTBlock(nn.Module):
                 # not promote dtypes like an out-of-place addition does.
                 contribution = (expert_out * w).to(dtype=out.dtype)
                 out[batch_idx] = out[batch_idx] + contribution
-            selected_experts = int((indices if indices is not None else weights).unique().numel())
+            if indices is not None:
+                valid_indices = indices[(indices >= 0) & (indices < len(self.experts))]
+                selected_experts = int(valid_indices.unique().numel()) if valid_indices.numel() else 0
+            else:
+                selected_experts = int((weights > 0).any(dim=tuple(range(2, weights.ndim))).sum())
+            dense_expert_sample_calls = B * len(self.experts)
+            selected_k = getattr(self.router, "last_selected_k", None)
             self._last_dispatch_stats = {
                 "mode": "sample_sparse",
                 "expert_calls": expert_calls,
+                "expert_sample_calls": expert_sample_calls,
+                "dense_expert_sample_calls": dense_expert_sample_calls,
                 "selected_samples": B,
                 "selected_experts": selected_experts,
                 "sparsity_ratio": 1.0 - expert_calls / max(len(self.experts), 1),
+                "sample_sparsity_ratio": 1.0
+                - expert_sample_calls / max(dense_expert_sample_calls, 1),
+                # Keep this as a tensor: scalar conversion here would synchronize
+                # CUDA inside the timed model forward.
+                "selected_k": selected_k.detach() if selected_k is not None else None,
                 "policy": dispatch_policy,
                 "warmup_step": warmup_step,
                 "warmup_steps": self.sparse_train_warmup_steps,
@@ -360,9 +382,13 @@ class MoTBlock(nn.Module):
             self._last_dispatch_stats = {
                 "mode": "dense",
                 "expert_calls": len(self.experts),
+                "expert_sample_calls": B * len(self.experts),
+                "dense_expert_sample_calls": B * len(self.experts),
                 "selected_samples": B,
                 "selected_experts": len(self.experts),
                 "sparsity_ratio": 0.0,
+                "sample_sparsity_ratio": 0.0,
+                "selected_k": getattr(self.router, "last_selected_k", None),
                 "policy": "dense_export" if exporting else dispatch_policy,
                 "warmup_step": warmup_step,
                 "warmup_steps": self.sparse_train_warmup_steps,
@@ -433,12 +459,17 @@ class MoTBlock(nn.Module):
             self.last_routing_snapshot = {
                 "num_experts": self.NUM_EXPERTS,
                 "top_k": self.top_k,
+                "adaptive_k": bool(getattr(self.router, "adaptive_k", False)),
+                "adaptive_k_threshold": float(getattr(self.router, "adaptive_k_threshold", 0.5)),
+                "selected_k": getattr(self.router, "last_selected_k", None),
                 "expert_usage": mean_w,
                 "mean_router_probs": mean_w,
                 "aux_loss": float(aux.detach()),
                 "scene_aware": self.router.scene_aware,
                 "scene_stats": self.router.last_scene_stats,
                 "scene_bias": self.router.last_scene_bias,
+                "utility_bias": getattr(self.router, "last_utility_bias", None),
+                "global_utility_head": getattr(self.router, "utility_projector", None) is not None,
                 "scene_inference_mode": self.router.scene_inference_mode,
                 "scene_aware_applied": self.router.last_scene_applied,
                 "scene_bypass_reason": self.router.last_scene_bypass_reason,
