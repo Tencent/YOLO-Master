@@ -185,15 +185,35 @@ def percentile(values: list[float], q: float) -> float:
     return ordered[lo] + (ordered[hi] - ordered[lo]) * (rank - lo)
 
 
-def profile_flops(model: torch.nn.Module, imgsz: int, actual: bool = False) -> tuple[float, str]:
+def deterministic_benchmark_input(model: torch.nn.Module, imgsz: int, seed: int) -> torch.Tensor:
+    """Create one reproducible synthetic input without changing global RNG state."""
+    parameter = next(model.parameters())
+    target_device = parameter.device
+    generator_device = target_device if target_device.type in {"cpu", "cuda"} else torch.device("cpu")
+    generator = torch.Generator(device=generator_device)
+    generator.manual_seed(seed)
+    inputs = torch.randn(
+        (1, 3, imgsz, imgsz),
+        device=generator_device,
+        dtype=parameter.dtype,
+        generator=generator,
+    )
+    return inputs if generator_device == target_device else inputs.to(target_device)
+
+
+def profile_flops(
+    model: torch.nn.Module,
+    imgsz: int,
+    actual: bool = False,
+    input_seed: int = 0,
+) -> tuple[float, str]:
     """Return GFLOPs and method; actual=True uses torch profiler on full input size."""
     if not actual:
         return float(get_flops(model, imgsz=imgsz)), "thop_stride_scaled"
 
     try:
         model = model.eval()
-        param = next(model.parameters())
-        x = torch.empty((1, 3, imgsz, imgsz), device=param.device)
+        x = deterministic_benchmark_input(model, imgsz=imgsz, seed=input_seed)
         with torch.no_grad(), torch.profiler.profile(with_flops=True) as prof:
             _ = model(x)
         return sum(evt.flops for evt in prof.key_averages()) / 1e9, "torch_profile_actual"
@@ -263,11 +283,11 @@ def benchmark_row(
     reps: int,
     actual_flops: bool = False,
     weights: Path | None = None,
+    input_seed: int = 0,
 ) -> dict[str, str]:
-    torch.set_grad_enabled(False)
     model = load_checkpoint_model(weights, device) if weights else build_model(spec, device=device)
     device_name = normalize_torch_device(device)
-    x = torch.randn(1, 3, imgsz, imgsz, device=torch.device(device_name))
+    x = deterministic_benchmark_input(model, imgsz=imgsz, seed=input_seed)
 
     with torch.inference_mode():
         for _ in range(warmup):
@@ -281,7 +301,7 @@ def benchmark_row(
             sync_device(device)
             times.append((time.perf_counter() - t0) * 1000.0)
 
-    flops, flops_method = profile_flops(model, imgsz=imgsz, actual=actual_flops)
+    flops, flops_method = profile_flops(model, imgsz=imgsz, actual=actual_flops, input_seed=input_seed)
     base = model_structure_row(spec, model)
     base.update(
         {
@@ -296,6 +316,8 @@ def benchmark_row(
             "flops_g": f"{flops:.6f}",
             "flops_method": flops_method,
             "reps": str(reps),
+            "input_seed": str(input_seed),
+            "input_distribution": "standard_normal",
             "weights": str(weights) if weights else "",
             "weights_sha256": sha256_file(weights) if weights else "",
         }
@@ -528,6 +550,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--reps", type=int, default=5)
+    parser.add_argument("--benchmark-seed", type=int, default=0)
     parser.add_argument("--train", action="store_true")
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--batch", type=int, default=8)
@@ -558,6 +581,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    if args.imgsz <= 0 or args.warmup < 0 or args.reps <= 0:
+        raise SystemExit("--imgsz and --reps must be positive; --warmup must be non-negative")
     specs = select_specs(args.models)
     project = args.project if args.project.is_absolute() else ROOT / args.project
     data_yaml = args.data if args.data.is_absolute() else ROOT / args.data
@@ -586,6 +611,7 @@ def main() -> int:
                 args.reps,
                 args.actual_flops,
                 weights=weight_paths.get(spec.key),
+                input_seed=args.benchmark_seed,
             )
             for spec in specs
         ]

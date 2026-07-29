@@ -26,6 +26,7 @@ ROUTING_SCRIPT = ROOT / "scripts/analyze_mot_cross_domain.py"
 SCENE_SCRIPT = ROOT / "scripts/prepare_mot_routing_scenes.py"
 DEFAULT_MODELS = ("v10", "v10_mot", "v10_moa", "v10_mot_p5")
 STAGES = ("prepare", "check", "train", "benchmark", "audit")
+VISDRONE_CLUSTER_REGEX = r"(?:^|__)(?P<cluster>[0-9]{7})_"
 
 
 def resolve_dataset_yaml(value: str | Path) -> Path:
@@ -146,8 +147,12 @@ def write_protocol(project: Path, args: argparse.Namespace, datasets: dict[str, 
         "benchmark_device": args.benchmark_device,
         "benchmark_warmup": args.warmup,
         "benchmark_repetitions": args.reps,
+        "benchmark_input_seed": args.benchmark_seed,
         "audit_device": args.audit_device,
         "audit_images_per_domain": args.audit_images,
+        "scene_audit": args.scene_audit,
+        "occlusion_audit": args.occlusion_audit,
+        "visdrone_cluster_regex": VISDRONE_CLUSTER_REGEX,
         "smoke": args.smoke,
         "datasets": datasets,
     }
@@ -327,6 +332,8 @@ def run_benchmark(args: argparse.Namespace, project: Path) -> None:
         str(args.warmup),
         "--reps",
         str(args.reps),
+        "--benchmark-seed",
+        str(args.benchmark_seed),
     ]
     run_logged(command, project / "logs/benchmark.log")
     summary_command = [
@@ -411,9 +418,13 @@ def run_audit(args: argparse.Namespace, project: Path, datasets: dict[str, dict[
         "--max-images-per-scene",
         str(args.audit_images),
     ]
+    if args.occlusion_audit:
+        scene_command.append("--occlusion-pairs")
+        if args.visdrone_annotations is not None:
+            scene_command.extend(("--visdrone-annotations", str(args.visdrone_annotations)))
     run_logged(scene_command, project / "logs/prepare_visdrone_scenes.log")
 
-    scene_names = ("dense", "sparse", "small_objects", "large_objects", "irregular_occluded")
+    scene_names = ("dense", "sparse", "large_objects", "small_objects", "irregular_occluded")
     scene_audit_command = [
         sys.executable,
         str(ROUTING_SCRIPT),
@@ -434,12 +445,47 @@ def run_audit(args: argparse.Namespace, project: Path, datasets: dict[str, dict[
         "--seed",
         str(args.seed),
         "--no-perturbations",
+        "--cluster-regex",
+        VISDRONE_CLUSTER_REGEX,
         "--output",
         str(project / "routing/visdrone_scenes"),
     ]
     for scene in scene_names:
         scene_audit_command.extend(("--domain", f"{scene}={scene_root / scene}"))
     run_logged(scene_audit_command, project / "logs/audit_visdrone_scenes.log")
+
+    if not args.occlusion_audit:
+        return
+    occlusion_audit_command = [
+        sys.executable,
+        str(ROUTING_SCRIPT),
+        "--model",
+        str(checkpoint),
+        "--device",
+        args.audit_device,
+        "--imgsz",
+        str(args.imgsz),
+        "--batch",
+        str(args.audit_batch),
+        "--max-images",
+        str(args.audit_images),
+        "--bootstrap-samples",
+        str(args.bootstrap_samples),
+        "--permutations",
+        str(args.permutations),
+        "--seed",
+        str(args.seed),
+        "--no-perturbations",
+        "--cluster-regex",
+        VISDRONE_CLUSTER_REGEX,
+        "--output",
+        str(project / "routing/visdrone_occlusion"),
+        "--domain",
+        f"lower_occlusion={scene_root / 'lower_occlusion'}",
+        "--domain",
+        f"higher_occlusion={scene_root / 'higher_occlusion'}",
+    ]
+    run_logged(occlusion_audit_command, project / "logs/audit_visdrone_occlusion.log")
 
 
 def parse_args() -> argparse.Namespace:
@@ -464,15 +510,29 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--benchmark-device", default="0")
     parser.add_argument("--warmup", type=int, default=50)
     parser.add_argument("--reps", type=int, default=200)
+    parser.add_argument("--benchmark-seed", type=int, default=0)
     parser.add_argument("--audit-device", default="0")
     parser.add_argument("--audit-batch", type=int, default=4)
     parser.add_argument("--audit-images", type=int, default=128)
     parser.add_argument("--bootstrap-samples", type=int, default=5000)
     parser.add_argument("--permutations", type=int, default=5000)
     parser.add_argument("--scene-audit", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--occlusion-audit", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--visdrone-annotations",
+        type=Path,
+        default=None,
+        help="Optional original VisDrone annotation directory or ZIP; auto-detected under the dataset root.",
+    )
     parser.add_argument("--smoke", action="store_true", help="Use a one-epoch, low-resolution COCO128 protocol.")
     parser.add_argument("--project", type=Path, default=ROOT / "runs/mot_cross_domain")
     args = parser.parse_args()
+    if args.epochs <= 0 or args.imgsz <= 0 or args.batch <= 0 or args.workers < 0:
+        raise SystemExit("--epochs, --imgsz and --batch must be positive; --workers must be non-negative")
+    if args.warmup < 0 or args.reps <= 0 or args.audit_batch <= 0:
+        raise SystemExit("--reps and --audit-batch must be positive; --warmup must be non-negative")
+    if args.bootstrap_samples <= 0 or args.permutations <= 0:
+        raise SystemExit("--bootstrap-samples and --permutations must be positive")
     if args.smoke:
         args.data = "coco128.yaml"
         args.epochs = 1

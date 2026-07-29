@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import numpy as np
@@ -9,6 +10,7 @@ import pytest
 import torch
 from PIL import Image
 
+import scripts.compare_mot_ablation as mot_ablation
 from scripts.analyze_mot_cross_domain import (
     EXPERT_NAMES,
     benjamini_hochberg,
@@ -19,10 +21,24 @@ from scripts.analyze_mot_cross_domain import (
     pairwise_statistics,
     parse_domain_specs,
     permutation_p_value_two_sided,
+    resolve_cluster_id,
     robustness_statistics,
     sample_overlap_summary,
 )
-from scripts.compare_mot_ablation import SPECS, build_model, read_best_observed_metrics, stability_from_results
+from scripts.compare_mot_ablation import (
+    SPECS,
+    benchmark_row,
+    build_model,
+    deterministic_benchmark_input,
+    read_best_observed_metrics,
+    stability_from_results,
+)
+from scripts.prepare_mot_routing_scenes import (
+    ImageStats,
+    OcclusionStats,
+    match_paired_occlusion_scenes,
+    parse_visdrone_occlusion,
+)
 from ultralytics.nn.modules.mot import MoTBlock
 
 
@@ -80,6 +96,14 @@ def test_statistical_helpers_are_deterministic_and_directional():
     assert 0.0 < p_value_1 <= 1.0
     q_values = benjamini_hochberg([0.01, 0.04, 0.03])
     assert q_values == pytest.approx([0.03, 0.04, 0.04])
+
+
+def test_cluster_regex_uses_capture_and_falls_back_to_sample_identity():
+    pattern = re.compile(r"(?:^|__)(?P<cluster>[0-9]{7})_")
+
+    assert resolve_cluster_id("images__val__0000291_01001_d_1.jpg", "sha-a", pattern) == "0000291"
+    assert resolve_cluster_id("unclustered.jpg", "sha-b", pattern) == "sha-b"
+    assert resolve_cluster_id("anything.jpg", "sha-c", None) == "sha-c"
 
 
 def make_routing_records() -> list[dict]:
@@ -178,6 +202,36 @@ def test_pairwise_statistics_rejects_shared_images_as_independent_samples():
     ]
 
 
+def test_pairwise_statistics_uses_paired_sequence_clusters():
+    records = make_routing_records()
+    for row in records:
+        row["sample_fingerprint"] = f"{row['domain']}-{row['image_id']}"
+        row["cluster_id"] = f"sequence-{row['image_id']}"
+
+    comparisons = pairwise_statistics(
+        records,
+        bootstrap_samples=200,
+        permutations=199,
+        seed=42,
+        alpha=0.05,
+        cluster_aware=True,
+    )
+    overlaps = sample_overlap_summary(records, cluster_aware=True)
+    local_probability = next(
+        row for row in comparisons if row["expert"] == "LocalConvTransformer" and row["metric"] == "mean_probability"
+    )
+
+    assert local_probability["analysis_unit"] == "sequence_cluster"
+    assert local_probability["comparison_design"] == "paired_sequence_clusters"
+    assert local_probability["n_paired_clusters"] == 5
+    assert local_probability["n_a"] == local_probability["n_b"] == 5
+    assert local_probability["mean_diff_b_minus_a"] == pytest.approx(-0.65)
+    assert local_probability["bootstrap_ci95_high"] < 0
+    assert overlaps[0]["n_shared"] == 0
+    assert overlaps[0]["n_shared_clusters"] == 5
+    assert overlaps[0]["paired_cluster_test_available"] is True
+
+
 def test_jensen_shannon_divergence_bounds_and_identity():
     distribution = np.array([0.2, 0.3, 0.5])
 
@@ -189,6 +243,27 @@ def test_mot_p5_budget_config_builds_with_one_router():
     model = build_model(SPECS["v10_mot_p5"], device="cpu")
 
     assert sum(isinstance(module, MoTBlock) for module in model.modules()) == 1
+
+
+def test_benchmark_input_is_reproducible_and_grad_mode_does_not_leak(monkeypatch: pytest.MonkeyPatch):
+    model = torch.nn.Conv2d(3, 4, 1).eval()
+    first = deterministic_benchmark_input(model, imgsz=8, seed=17)
+    second = deterministic_benchmark_input(model, imgsz=8, seed=17)
+    third = deterministic_benchmark_input(model, imgsz=8, seed=18)
+    assert torch.equal(first, second)
+    assert not torch.equal(first, third)
+
+    monkeypatch.setattr(mot_ablation, "build_model", lambda *_args, **_kwargs: model)
+    monkeypatch.setattr(mot_ablation, "profile_flops", lambda *_args, **_kwargs: (1.0, "test"))
+    previous_grad_mode = torch.is_grad_enabled()
+    try:
+        torch.set_grad_enabled(True)
+        row = benchmark_row(SPECS["v10"], "cpu", imgsz=8, warmup=0, reps=1, input_seed=17)
+        assert torch.is_grad_enabled()
+    finally:
+        torch.set_grad_enabled(previous_grad_mode)
+    assert row["input_seed"] == "17"
+    assert row["input_distribution"] == "standard_normal"
 
 
 def test_mot_sparse_eval_handles_autocast_dtype_transition():
@@ -238,3 +313,59 @@ def test_best_observed_metrics_are_distinct_from_the_final_row(tmp_path: Path):
 
     assert best["epoch"] == "2"
     assert best["metrics/mAP50-95(B)"] == "0.15"
+
+
+def test_original_visdrone_occlusion_pairs_are_sequence_matched():
+    parsed = parse_visdrone_occlusion(
+        "0,0,10,10,1,1,0,0\n"
+        "0,0,10,10,1,2,0,1\n"
+        "0,0,10,10,1,10,0,2\n"
+        "0,0,10,10,0,1,0,2\n"
+        "0,0,10,10,1,11,0,2\n"
+    )
+    assert parsed is not None
+    assert parsed.valid_objects == 3
+    assert parsed.occluded_fraction == pytest.approx(2 / 3)
+    assert parsed.heavy_occluded_fraction == pytest.approx(1 / 3)
+
+    stats = []
+    occlusion = {}
+    for sequence_index in range(4):
+        sequence = f"{sequence_index:07d}"
+        for frame, fraction, objects, area in (
+            ("00100", 0.1, 20 + sequence_index, 0.0010),
+            ("00200", 0.9, 21 + sequence_index, 0.0011),
+        ):
+            image = Path(f"{sequence}_{frame}_d_0000001.jpg")
+            stats.append(
+                ImageStats(
+                    image=image,
+                    label=image.with_suffix(".txt"),
+                    objects=objects,
+                    mean_area=area,
+                    median_area=area,
+                    area_cv=0.1,
+                    aspect_cv=0.1,
+                )
+            )
+            occlusion[image.stem] = OcclusionStats(
+                valid_objects=objects,
+                occluded_fraction=fraction,
+                heavy_occluded_fraction=max(fraction - 0.5, 0.0),
+                mean_occlusion_level=fraction,
+            )
+
+    pairs, metadata = match_paired_occlusion_scenes(
+        stats,
+        occlusion,
+        limit=8,
+        q_low=0.25,
+        q_high=0.75,
+    )
+
+    assert len(pairs) == 4
+    assert all(pair.sequence_id == pair.lower.image.stem.split("_", 1)[0] for pair in pairs)
+    assert all(pair.sequence_id == pair.higher.image.stem.split("_", 1)[0] for pair in pairs)
+    assert all(pair.lower.image != pair.higher.image for pair in pairs)
+    assert all(pair.lower_occlusion.occluded_fraction < pair.higher_occlusion.occluded_fraction for pair in pairs)
+    assert metadata["paired_sequences"] == 4

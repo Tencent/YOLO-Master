@@ -15,6 +15,7 @@ import itertools
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -42,6 +43,7 @@ DETAIL_FIELDS = (
     "perturbation",
     "image_id",
     "sample_fingerprint",
+    "cluster_id",
     "layer",
     "expert_id",
     "expert",
@@ -254,6 +256,7 @@ class RouterCollector:
             batch, experts = probabilities.shape[:2]
             image_ids = self.context.get("image_ids", [])
             sample_fingerprints = self.context.get("sample_fingerprints", [])
+            cluster_ids = self.context.get("cluster_ids", [])
             top1 = probabilities.argmax(dim=1)
             entropy_map = -(probabilities.clamp_min(1e-12).log() * probabilities).sum(dim=1)
             entropy = entropy_map.mean(dim=(1, 2))
@@ -269,6 +272,11 @@ class RouterCollector:
                     if batch_index < len(sample_fingerprints)
                     else stable_fallback_fingerprint(self.context.get("domain", "unknown"), str(image_id))
                 )
+                cluster_id = (
+                    cluster_ids[batch_index]
+                    if batch_index < len(cluster_ids)
+                    else sample_fingerprint
+                )
                 token_count = int(top1[batch_index].numel())
                 counts = torch.bincount(top1[batch_index].reshape(-1).long(), minlength=experts).float()
                 routed_mean = weights[batch_index].mean(dim=(1, 2))
@@ -281,6 +289,7 @@ class RouterCollector:
                             "perturbation": self.context.get("perturbation", "base"),
                             "image_id": str(image_id),
                             "sample_fingerprint": sample_fingerprint,
+                            "cluster_id": str(cluster_id),
                             "layer": layer_name,
                             "expert_id": expert_id,
                             "expert": expert_name,
@@ -329,11 +338,32 @@ def stable_fallback_fingerprint(domain: str, image_id: str) -> str:
     return hashlib.sha256(f"{domain}\0{image_id}".encode()).hexdigest()
 
 
+def resolve_cluster_id(
+    image_id: str,
+    sample_fingerprint: str,
+    cluster_pattern: re.Pattern[str] | None,
+) -> str:
+    """Map an image to an optional repeated-measures cluster such as a video sequence."""
+    if cluster_pattern is None:
+        return sample_fingerprint
+    match = cluster_pattern.search(image_id)
+    if match is None:
+        return sample_fingerprint
+    if "cluster" in match.groupdict():
+        cluster_id = match.group("cluster")
+    elif match.lastindex:
+        cluster_id = match.group(1)
+    else:
+        cluster_id = match.group(0)
+    return cluster_id or sample_fingerprint
+
+
 def collect_routing(
     model: torch.nn.Module,
     domains: list[DomainSpec],
     selected: dict[str, list[Path]],
     sample_fingerprints: dict[tuple[str, str], str],
+    sample_clusters: dict[tuple[str, str], str],
     device: str,
     imgsz: int,
     batch_size: int,
@@ -353,12 +383,14 @@ def collect_routing(
                         sample_fingerprints[(domain.name, image_id)]
                         for image_id in image_ids
                     ]
+                    cluster_ids = [sample_clusters[(domain.name, image_id)] for image_id in image_ids]
                     for perturbation in ("base", *perturbations):
                         collector.context = {
                             "domain": domain.name,
                             "perturbation": perturbation,
                             "image_ids": image_ids,
                             "sample_fingerprints": fingerprints,
+                            "cluster_ids": cluster_ids,
                         }
                         _ = model(apply_perturbation(tensor, perturbation))
     finally:
@@ -394,12 +426,56 @@ def image_level_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         sample_fingerprint = str(
             items[0].get("sample_fingerprint") or stable_fallback_fingerprint(domain, image_id)
         )
+        cluster_id = str(items[0].get("cluster_id") or sample_fingerprint)
         output.append(
             {
                 "domain": domain,
                 "image_id": image_id,
                 "sample_fingerprint": sample_fingerprint,
+                "cluster_id": cluster_id,
                 "expert": expert,
+                **{metric: float(np.mean([item[metric] for item in items])) for metric in metrics},
+            }
+        )
+    return output
+
+
+def statistical_unit_records(
+    records: list[dict[str, Any]],
+    cluster_aware: bool,
+) -> list[dict[str, Any]]:
+    """Aggregate images within repeated-measures clusters when requested."""
+    image_rows = image_level_records(records)
+    if not cluster_aware:
+        return [
+            {
+                **row,
+                "unit_id": row["sample_fingerprint"],
+                "n_images_in_unit": 1,
+            }
+            for row in image_rows
+        ]
+
+    grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    for row in image_rows:
+        grouped.setdefault((row["domain"], row["cluster_id"], row["expert"]), []).append(row)
+    metrics = (
+        "top1_share",
+        "mean_weight",
+        "mean_probability",
+        "normalized_entropy",
+        "effective_experts",
+        "top1_margin",
+    )
+    output = []
+    for (domain, cluster_id, expert), items in sorted(grouped.items()):
+        output.append(
+            {
+                "domain": domain,
+                "cluster_id": cluster_id,
+                "unit_id": cluster_id,
+                "expert": expert,
+                "n_images_in_unit": len(items),
                 **{metric: float(np.mean([item[metric] for item in items])) for metric in metrics},
             }
         )
@@ -475,6 +551,42 @@ def permutation_p_value_two_sided(
     return float((hits + 1) / (permutations + 1))
 
 
+def bootstrap_paired_mean_diff_ci(
+    values_a: np.ndarray,
+    values_b: np.ndarray,
+    samples: int,
+    seed: int,
+) -> tuple[float, float]:
+    """Bootstrap a paired 95% CI for ``mean(B - A)``."""
+    if values_a.size == 0 or values_a.size != values_b.size or samples <= 0:
+        return float("nan"), float("nan")
+    differences = values_b - values_a
+    rng = np.random.default_rng(seed)
+    sampled = np.empty(samples, dtype=np.float64)
+    for index in range(samples):
+        sampled[index] = rng.choice(differences, size=differences.size, replace=True).mean()
+    return float(np.quantile(sampled, 0.025)), float(np.quantile(sampled, 0.975))
+
+
+def paired_permutation_p_value_two_sided(
+    values_a: np.ndarray,
+    values_b: np.ndarray,
+    permutations: int,
+    seed: int,
+) -> float:
+    """Return a paired sign-flip randomization p-value."""
+    if values_a.size == 0 or values_a.size != values_b.size or permutations <= 0:
+        return float("nan")
+    differences = values_b - values_a
+    observed = abs(float(differences.mean()))
+    rng = np.random.default_rng(seed)
+    hits = 0
+    for _ in range(permutations):
+        signs = rng.choice((-1.0, 1.0), size=differences.size)
+        hits += abs(float((differences * signs).mean())) >= observed
+    return float((hits + 1) / (permutations + 1))
+
+
 def hedges_g(values_a: np.ndarray, values_b: np.ndarray) -> float:
     """Return small-sample-corrected effect size for ``B - A``."""
     if values_a.size < 2 or values_b.size < 2:
@@ -487,6 +599,18 @@ def hedges_g(values_a: np.ndarray, values_b: np.ndarray) -> float:
         return 0.0 if np.isclose(values_a.mean(), values_b.mean()) else float("inf")
     correction = 1.0 - 3.0 / (4.0 * degrees - 1.0)
     return float(correction * (values_b.mean() - values_a.mean()) / math.sqrt(pooled_variance))
+
+
+def paired_hedges_g(values_a: np.ndarray, values_b: np.ndarray) -> float:
+    """Return bias-corrected standardized mean change for paired units."""
+    if values_a.size < 2 or values_a.size != values_b.size:
+        return float("nan")
+    differences = values_b - values_a
+    spread = differences.std(ddof=1)
+    if spread <= 0:
+        return 0.0 if np.isclose(differences.mean(), 0.0) else float("inf")
+    correction = 1.0 - 3.0 / (4.0 * (differences.size - 1) - 1.0)
+    return float(correction * differences.mean() / spread)
 
 
 def benjamini_hochberg(p_values: list[float]) -> list[float]:
@@ -512,56 +636,106 @@ def pairwise_statistics(
     permutations: int,
     seed: int,
     alpha: float,
+    cluster_aware: bool = False,
 ) -> list[dict[str, Any]]:
-    """Compare domain routing with image-level units and explicit overlap guards."""
+    """Compare routing with image or sequence-cluster units and overlap guards."""
     image_rows = image_level_records(records)
-    observations: dict[tuple[str, str, str], dict[str, float]] = {}
+    unit_rows = statistical_unit_records(records, cluster_aware=cluster_aware)
+    image_samples: dict[tuple[str, str, str], set[str]] = {}
     for row in image_rows:
-        fingerprint = row["sample_fingerprint"]
         for metric in ("top1_share", "mean_probability"):
-            observations.setdefault((row["domain"], row["expert"], metric), {})[fingerprint] = row[metric]
+            image_samples.setdefault((row["domain"], row["expert"], metric), set()).add(row["sample_fingerprint"])
         if row["expert"] == EXPERT_NAMES[0]:
-            observations.setdefault((row["domain"], "all_experts", "normalized_entropy"), {})[fingerprint] = row[
+            image_samples.setdefault((row["domain"], "all_experts", "normalized_entropy"), set()).add(
+                row["sample_fingerprint"]
+            )
+
+    observations: dict[tuple[str, str, str], dict[str, float]] = {}
+    for row in unit_rows:
+        unit_id = row["unit_id"]
+        for metric in ("top1_share", "mean_probability"):
+            observations.setdefault((row["domain"], row["expert"], metric), {})[unit_id] = row[metric]
+        if row["expert"] == EXPERT_NAMES[0]:
+            observations.setdefault((row["domain"], "all_experts", "normalized_entropy"), {})[unit_id] = row[
                 "normalized_entropy"
             ]
 
     rows: list[dict[str, Any]] = []
-    domains = sorted({row["domain"] for row in image_rows})
+    domains = list(dict.fromkeys(row["domain"] for row in records if row["perturbation"] == "base"))
     targets = [(expert, metric) for expert in EXPERT_NAMES for metric in ("top1_share", "mean_probability")]
     targets.append(("all_experts", "normalized_entropy"))
     for domain_a, domain_b in itertools.combinations(domains, 2):
         for expert, metric in targets:
-            samples_a = observations.get((domain_a, expert, metric), {})
-            samples_b = observations.get((domain_b, expert, metric), {})
-            values_a = np.asarray(list(samples_a.values()), dtype=np.float64)
-            values_b = np.asarray(list(samples_b.values()), dtype=np.float64)
-            shared_samples = set(samples_a).intersection(samples_b)
-            comparison_valid = not shared_samples
+            units_a = observations.get((domain_a, expert, metric), {})
+            units_b = observations.get((domain_b, expert, metric), {})
+            fingerprints_a = image_samples.get((domain_a, expert, metric), set())
+            fingerprints_b = image_samples.get((domain_b, expert, metric), set())
+            shared_samples = fingerprints_a.intersection(fingerprints_b)
+            shared_units = set(units_a).intersection(units_b) if cluster_aware else set()
             comparison_seed = stable_seed(seed, domain_a, domain_b, expert, metric)
-            if comparison_valid:
+            invalid_reason = ""
+            if shared_samples:
+                values_a = np.asarray(list(units_a.values()), dtype=np.float64)
+                values_b = np.asarray(list(units_b.values()), dtype=np.float64)
+                comparison_design = "invalid_shared_images"
+                invalid_reason = "shared_samples_require_distinct_images"
+                comparison_valid = False
+            elif cluster_aware and shared_units:
+                paired_ids = sorted(shared_units)
+                values_a = np.asarray([units_a[unit_id] for unit_id in paired_ids], dtype=np.float64)
+                values_b = np.asarray([units_b[unit_id] for unit_id in paired_ids], dtype=np.float64)
+                comparison_design = "paired_sequence_clusters"
+                comparison_valid = values_a.size >= 2
+                if not comparison_valid:
+                    invalid_reason = "at_least_two_paired_clusters_required"
+            else:
+                values_a = np.asarray(list(units_a.values()), dtype=np.float64)
+                values_b = np.asarray(list(units_b.values()), dtype=np.float64)
+                comparison_design = "independent_clusters" if cluster_aware else "independent_images"
+                comparison_valid = values_a.size >= 2 and values_b.size >= 2
+                if not comparison_valid:
+                    invalid_reason = "at_least_two_units_per_group_required"
+
+            if comparison_valid and comparison_design == "paired_sequence_clusters":
+                ci_low, ci_high = bootstrap_paired_mean_diff_ci(
+                    values_a, values_b, bootstrap_samples, comparison_seed
+                )
+                p_value = paired_permutation_p_value_two_sided(values_a, values_b, permutations, comparison_seed)
+                effect_size = paired_hedges_g(values_a, values_b)
+                effect_size_type = "paired_hedges_g"
+            elif comparison_valid:
                 ci_low, ci_high = bootstrap_mean_diff_ci(values_a, values_b, bootstrap_samples, comparison_seed)
                 p_value = permutation_p_value_two_sided(values_a, values_b, permutations, comparison_seed)
                 effect_size = hedges_g(values_a, values_b)
+                effect_size_type = "independent_hedges_g"
             else:
                 ci_low, ci_high = float("nan"), float("nan")
                 p_value = float("nan")
                 effect_size = float("nan")
+                effect_size_type = ""
             rows.append(
                 {
                     "domain_a": domain_a,
                     "domain_b": domain_b,
                     "expert": expert,
                     "metric": metric,
+                    "analysis_unit": "sequence_cluster" if cluster_aware else "image",
+                    "comparison_design": comparison_design,
                     "n_a": int(values_a.size),
                     "n_b": int(values_b.size),
+                    "n_images_a": len(fingerprints_a),
+                    "n_images_b": len(fingerprints_b),
+                    "n_clusters_a": len(units_a) if cluster_aware else 0,
+                    "n_clusters_b": len(units_b) if cluster_aware else 0,
+                    "n_paired_clusters": len(shared_units) if cluster_aware and not shared_samples else 0,
                     "n_shared": len(shared_samples),
                     "shared_fraction_min": (
-                        len(shared_samples) / min(values_a.size, values_b.size)
-                        if values_a.size and values_b.size
+                        len(shared_samples) / min(len(fingerprints_a), len(fingerprints_b))
+                        if fingerprints_a and fingerprints_b
                         else float("nan")
                     ),
                     "comparison_valid": comparison_valid,
-                    "invalid_reason": "" if comparison_valid else "shared_samples_require_paired_or_disjoint_design",
+                    "invalid_reason": invalid_reason,
                     "mean_a": float(values_a.mean()) if values_a.size else float("nan"),
                     "mean_b": float(values_b.mean()) if values_b.size else float("nan"),
                     "mean_diff_b_minus_a": (
@@ -570,6 +744,7 @@ def pairwise_statistics(
                     "bootstrap_ci95_low": ci_low,
                     "bootstrap_ci95_high": ci_high,
                     "hedges_g": effect_size,
+                    "effect_size_type": effect_size_type,
                     "permutation_p_value_two_sided": p_value,
                 }
             )
@@ -577,31 +752,58 @@ def pairwise_statistics(
     q_values = benjamini_hochberg([row["permutation_p_value_two_sided"] for row in rows])
     for row, q_value in zip(rows, q_values):
         row["fdr_q_value"] = q_value
-        row["significant_after_fdr"] = bool(row["comparison_valid"] and np.isfinite(q_value) and q_value <= alpha)
+        ci_excludes_zero = bool(
+            np.isfinite(row["bootstrap_ci95_low"])
+            and np.isfinite(row["bootstrap_ci95_high"])
+            and (row["bootstrap_ci95_low"] > 0.0 or row["bootstrap_ci95_high"] < 0.0)
+        )
+        row["ci_excludes_zero"] = ci_excludes_zero
+        row["significant_after_fdr"] = bool(
+            row["comparison_valid"] and np.isfinite(q_value) and q_value <= alpha and ci_excludes_zero
+        )
         row["alpha"] = alpha
     return rows
 
 
-def sample_overlap_summary(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def sample_overlap_summary(
+    records: list[dict[str, Any]],
+    cluster_aware: bool = False,
+) -> list[dict[str, Any]]:
     """Summarize shared image identities so domain-comparison assumptions are auditable."""
     samples: dict[str, set[str]] = {}
+    clusters: dict[str, set[str]] = {}
     for row in image_level_records(records):
         samples.setdefault(row["domain"], set()).add(row["sample_fingerprint"])
+        clusters.setdefault(row["domain"], set()).add(row["cluster_id"])
     rows = []
     for domain_a, domain_b in itertools.combinations(sorted(samples), 2):
         shared = samples[domain_a].intersection(samples[domain_b])
         denominator = min(len(samples[domain_a]), len(samples[domain_b]))
-        rows.append(
-            {
-                "domain_a": domain_a,
-                "domain_b": domain_b,
-                "n_a": len(samples[domain_a]),
-                "n_b": len(samples[domain_b]),
-                "n_shared": len(shared),
-                "shared_fraction_min": len(shared) / denominator if denominator else float("nan"),
-                "independent_sample_test_valid": not shared,
-            }
-        )
+        row = {
+            "domain_a": domain_a,
+            "domain_b": domain_b,
+            "n_a": len(samples[domain_a]),
+            "n_b": len(samples[domain_b]),
+            "n_shared": len(shared),
+            "shared_fraction_min": len(shared) / denominator if denominator else float("nan"),
+            "independent_sample_test_valid": not shared,
+        }
+        if cluster_aware:
+            shared_clusters = clusters[domain_a].intersection(clusters[domain_b])
+            cluster_denominator = min(len(clusters[domain_a]), len(clusters[domain_b]))
+            row.update(
+                {
+                    "n_clusters_a": len(clusters[domain_a]),
+                    "n_clusters_b": len(clusters[domain_b]),
+                    "n_shared_clusters": len(shared_clusters),
+                    "shared_cluster_fraction_min": (
+                        len(shared_clusters) / cluster_denominator if cluster_denominator else float("nan")
+                    ),
+                    "independent_sample_test_valid": not shared and not shared_clusters,
+                    "paired_cluster_test_available": bool(not shared and shared_clusters),
+                }
+            )
+        rows.append(row)
     return rows
 
 
@@ -803,20 +1005,31 @@ def write_recommendations(
         and row.get("comparison_valid", True)
         and np.isfinite(row["mean_diff_b_minus_a"])
     ]
-    if finite_pairwise:
-        strongest = max(finite_pairwise, key=lambda row: abs(row["hedges_g"]) if np.isfinite(row["hedges_g"]) else -1)
+    stable_pairwise = [row for row in finite_pairwise if row.get("significant_after_fdr", False)]
+    if stable_pairwise:
+        strongest = max(stable_pairwise, key=lambda row: abs(row["hedges_g"]) if np.isfinite(row["hedges_g"]) else -1)
         lines.extend(
             [
                 "",
-                "## 最大跨域差异",
+                "## 通过复合显著性判据的最大差异",
                 "",
                 (
                     f"- `{strongest['domain_a']}` → `{strongest['domain_b']}` 的 "
                     f"**{strongest['expert']} / {strongest['metric']}** 差值为 "
                     f"{strongest['mean_diff_b_minus_a']:+.4f}，95% bootstrap CI "
                     f"[{strongest['bootstrap_ci95_low']:+.4f}, {strongest['bootstrap_ci95_high']:+.4f}]，"
-                    f"FDR q={strongest['fdr_q_value']:.4g}。"
+                    f"FDR q={strongest['fdr_q_value']:.4g}，设计为 "
+                    f"`{strongest['comparison_design']}`。"
                 ),
+            ]
+        )
+    elif finite_pairwise:
+        lines.extend(
+            [
+                "",
+                "## 推断结论",
+                "",
+                "- 没有专家差异同时满足 FDR q ≤ alpha 且 bootstrap CI 不跨 0；仅保留描述统计。",
             ]
         )
 
@@ -904,6 +1117,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--permutations", type=int, default=5000)
     parser.add_argument("--alpha", type=float, default=0.05)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--cluster-regex",
+        default=None,
+        help=(
+            "Optional regex applied to image_id. Its named 'cluster' group or first capture group identifies "
+            "repeated-measures units such as VisDrone video sequences."
+        ),
+    )
     parser.add_argument("--hash-samples", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--plots", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--output", type=Path, default=ROOT / "runs/mot_cross_domain/routing")
@@ -916,8 +1137,14 @@ def main() -> int:
         raise SystemExit("--batch and --imgsz must be positive")
     if not 0.0 < args.alpha < 1.0:
         raise SystemExit("--alpha must be between 0 and 1")
+    if args.bootstrap_samples <= 0 or args.permutations <= 0:
+        raise SystemExit("--bootstrap-samples and --permutations must be positive")
     if args.no_perturbations:
         args.perturbations = []
+    try:
+        cluster_pattern = re.compile(args.cluster_regex) if args.cluster_regex else None
+    except re.error as error:
+        raise SystemExit(f"invalid --cluster-regex: {error}") from error
 
     domains = parse_domain_specs(args.domain)
     model_path = args.model.expanduser()
@@ -932,16 +1159,20 @@ def main() -> int:
     selected = choose_domain_samples(domains, args.max_images, args.seed, args.equalize)
     sample_rows = []
     sample_fingerprints: dict[tuple[str, str], str] = {}
+    sample_clusters: dict[tuple[str, str], str] = {}
     for domain in domains:
         for path in selected[domain.name]:
             image_id = relative_image_id(path, domain.path)
             content_sha256 = sha256_file(path) if args.hash_samples else ""
             fingerprint = content_sha256 or hashlib.sha256(str(path.resolve()).encode()).hexdigest()
+            cluster_id = resolve_cluster_id(image_id, fingerprint, cluster_pattern)
             sample_fingerprints[(domain.name, image_id)] = fingerprint
+            sample_clusters[(domain.name, image_id)] = cluster_id
             sample_rows.append(
                 {
                     "domain": domain.name,
                     "image_id": image_id,
+                    "cluster_id": cluster_id,
                     "size_bytes": path.stat().st_size,
                     "sha256": content_sha256,
                     "sample_fingerprint": fingerprint,
@@ -955,14 +1186,22 @@ def main() -> int:
         domains,
         selected,
         sample_fingerprints,
+        sample_clusters,
         device=device,
         imgsz=args.imgsz,
         batch_size=args.batch,
         perturbations=args.perturbations,
     )
     summary = summarize_domains(records)
-    pairwise = pairwise_statistics(records, args.bootstrap_samples, args.permutations, args.seed, args.alpha)
-    sample_overlap = sample_overlap_summary(records)
+    pairwise = pairwise_statistics(
+        records,
+        args.bootstrap_samples,
+        args.permutations,
+        args.seed,
+        args.alpha,
+        cluster_aware=cluster_pattern is not None,
+    )
+    sample_overlap = sample_overlap_summary(records, cluster_aware=cluster_pattern is not None)
     robustness_detailed, robustness_summary = robustness_statistics(records)
 
     write_csv(output / "routing_detailed.csv", records, DETAIL_FIELDS)
@@ -999,8 +1238,11 @@ def main() -> int:
         "bootstrap_samples": args.bootstrap_samples,
         "permutations": args.permutations,
         "alpha": args.alpha,
+        "analysis_unit": "sequence_cluster" if cluster_pattern is not None else "image",
+        "cluster_regex": args.cluster_regex,
         "overlap_policy": (
-            "Independent bootstrap/permutation/FDR tests are disabled for domain pairs sharing sample fingerprints."
+            "Exact shared images invalidate inference. Shared sequence clusters use paired cluster bootstrap and "
+            "sign-flip permutation tests when --cluster-regex is set."
         ),
         "preprocessing": "robust percentile normalization + RGB conversion + aspect-ratio-preserving letterbox",
         "domains": [
