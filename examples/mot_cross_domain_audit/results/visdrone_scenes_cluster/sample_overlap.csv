@@ -1,0 +1,11 @@
+domain_a,domain_b,independent_sample_test_valid,n_a,n_b,n_clusters_a,n_clusters_b,n_shared,n_shared_clusters,paired_cluster_test_available,shared_cluster_fraction_min,shared_fraction_min
+dense,irregular_occluded,False,128,128,37,37,104,33,False,0.8918918918918919,0.8125
+dense,large_objects,False,128,128,37,36,8,15,False,0.4166666666666667,0.0625
+dense,small_objects,False,128,128,37,44,46,26,False,0.7027027027027027,0.359375
+dense,sparse,False,128,128,37,34,0,10,True,0.29411764705882354,0.0
+irregular_occluded,large_objects,False,128,128,37,36,5,15,False,0.4166666666666667,0.0390625
+irregular_occluded,small_objects,False,128,128,37,44,48,26,False,0.7027027027027027,0.375
+irregular_occluded,sparse,False,128,128,37,34,0,11,True,0.3235294117647059,0.0
+large_objects,small_objects,False,128,128,36,44,0,21,True,0.5833333333333334,0.0
+large_objects,sparse,False,128,128,36,34,76,27,False,0.7941176470588235,0.59375
+small_objects,sparse,False,128,128,44,34,22,20,False,0.5882352941176471,0.171875

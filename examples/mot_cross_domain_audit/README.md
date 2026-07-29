@@ -6,8 +6,9 @@
 > 跨数据域比较时固定同一个 MoT checkpoint，只改变输入图像域，避免把“训练数据不同导致的参数差异”
 > 误解释成“场景导致的路由差异”。
 
-实验包含完整消融、路由解释、混合架构、统计检验、医疗 TIFF 兼容、稳定性测试和一键编排。
-30 epoch 正式结果、原始 CSV 和图表见 [`results/README.md`](results/README.md)。
+实验包含完整消融、路由解释、混合架构、序列级统计、真实遮挡配对、医疗 TIFF 兼容、稳定
+benchmark 和一键编排。30 epoch 结果、修正后的原始 CSV 和图表见
+[`results/README.md`](results/README.md)。
 
 完整的问题发现、修复与再实验过程见
 [`experiment_journey_zh.md`](experiment_journey_zh.md)。
@@ -19,11 +20,12 @@
 `scripts/analyze_mot_cross_domain.py` 在一个进程内只加载一次模型，并为实验清单写入 checkpoint
 的 SHA-256。VisDrone、COCO128 和 brain-tumor 均通过这一模型实例，消除 checkpoint 混杂因素。
 
-统计单位是“图像”：先在图像内跨 MoT 层聚合，再做 bootstrap 和 permutation test，避免把大量 token
-当成独立样本造成伪显著。
+基础统计单位是“图像”：先在图像内跨 MoT 层聚合，避免把大量 token 当成独立样本。对于
+VisDrone 连续视频帧，再以视频序列为 cluster；场景间有共有序列时使用配对 cluster bootstrap
+和 sign-flip permutation，避免把相邻帧当作独立重复。
 
-脚本还会按样本指纹审计场景集合重叠。若两个场景共享图像，仍输出描述性均值，但自动禁用独立样本
-bootstrap、permutation test 和 FDR 结论；密集/稀疏、小目标/大目标主比较使用互斥集合。
+脚本同时审计精确图像重叠和 cluster 重叠。若组间既不能独立比较也不能按共有 cluster 配对，
+只输出描述统计并标记 `comparison_valid=false`。显著性必须同时满足 BH-FDR 和 bootstrap CI。
 
 ### 1.2 MoT-P5 低计算预算混合架构
 
@@ -66,6 +68,18 @@ ultralytics/cfg/models/master/v0_10/det/yolo-master-mot-p5-n.yaml
 - 主导专家一致率；
 - 归一化路由熵变化。
 
+### 1.4 真实遮挡标注与协变量平衡
+
+`scripts/prepare_mot_routing_scenes.py` 可读取 VisDrone 原始 8 列标注中的 occlusion 字段。它在
+每个视频序列内选择一对低/高遮挡图，并匹配目标数量和中位框面积；全局平衡步骤避免把“更遮挡”
+误写成“目标更多或更小”。本轮得到 25 对序列，目标数和面积 SMD 分别为 0.027 和 -0.017。
+
+### 1.5 可复验 benchmark
+
+benchmark 使用固定 seed 的局部随机生成器，不修改全局 RNG 或梯度模式；每个模型每轮至少
+预热 50 次且不少于 2 秒，执行 3 轮并轮换模型顺序。汇总值取各轮 percentile 的中位数，同时
+保留 run min/max。
+
 ## 2. 实验矩阵
 
 训练数据统一为 VisDrone，随机种子、epoch、分辨率和增强参数保持一致。
@@ -84,7 +98,7 @@ ultralytics/cfg/models/master/v0_10/det/yolo-master-mot-p5-n.yaml
 - 实际 FLOPs、Params；
 - loss 曲线、NaN 和发散检测；
 - 路由 top-1 share、dense probability、entropy、effective experts、margin；
-- bootstrap 95% CI、双侧置换检验、Benjamini-Hochberg FDR；
+- 图像或视频序列级 bootstrap 95% CI、双侧置换检验、Benjamini-Hochberg FDR；
 - 扰动前后的路由稳定性。
 
 ## 3. 数据
@@ -93,7 +107,7 @@ ultralytics/cfg/models/master/v0_10/det/yolo-master-mot-p5-n.yaml
 
 | 数据集 | 用途 | 规模 |
 |---|---|---:|
-| VisDrone | 四模型训练、验证、密集/稀疏及大小目标场景审计 | 6,471 train / 548 val |
+| VisDrone | 四模型训练、验证、场景及真实遮挡审计 | 6,471 train / 548 val |
 | COCO128 | 通用自然图像域外路由审计 | 128 |
 | brain-tumor | 稀疏灰度医疗域外路由审计 | 893 train / 223 val |
 
@@ -135,7 +149,7 @@ python scripts/run_mot_cross_domain_experiment.py \
   --project runs/mot_cross_domain
 ```
 
-四个训练进程并行运行；benchmark 在 GPU 0 串行执行，保证延迟可比。
+四个训练进程并行运行；benchmark 在 GPU 0 串行执行 3 轮，轮间旋转模型顺序。
 
 本机 RTX 5090 + PyTorch 2.9 校准中，四个变体的首个 AMP epoch 都触发非有限梯度保护，
 训练器随后恢复健康 checkpoint 并降级到 FP32。正式参考协议因此显式使用 `--no-amp`，
@@ -156,7 +170,7 @@ python scripts/run_mot_cross_domain_experiment.py \
   --no-amp \
   --project runs/mot_cross_domain
 
-# 串行测速与路由审计
+# 三轮串行测速、序列级场景审计与真实遮挡审计
 python scripts/run_mot_cross_domain_experiment.py \
   --stages benchmark audit \
   --project runs/mot_cross_domain
@@ -191,6 +205,7 @@ runs/mot_cross_domain/
 ├── training/
 │   ├── summary.csv
 │   ├── latency_0_640.csv
+│   ├── latency_rounds_0_640.csv
 │   ├── v10/
 │   ├── v10_mot/
 │   ├── v10_moa/
@@ -209,7 +224,8 @@ runs/mot_cross_domain/
 │   │   ├── routing_layer_probability_delta_heatmap.png
 │   │   ├── routing_layer_top1_share_heatmap.png
 │   │   └── recommendations_zh.md
-│   └── visdrone_scenes/
+│   ├── visdrone_scenes/
+│   └── visdrone_occlusion/
 └── logs/
 ```
 
@@ -229,19 +245,20 @@ runs/mot_cross_domain/
 路由解释采用以下约束：
 
 - 只有 FDR 校正后 `q <= 0.05` 且 bootstrap CI 不跨 0，才称为稳定跨域差异；
-- `comparison_valid=false` 表示场景共享样本，不得引用该行的独立样本显著性；
+- VisDrone 以视频序列为 cluster；有共有序列时使用配对检验；
+- `comparison_valid=false` 表示没有合法的独立或配对推断设计；
 - effect size 与差值必须同时报告，不能只写 p-value；
 - DeformableTransformer 激活增加只能说明路由偏好，不证明遮挡检测更准确；
 - brain-tumor 与 VisDrone 的语义标签不同，不做跨数据集 mAP 排名。
 
-### 8.1 本轮实测判定
+### 8.1 本轮最终判定
 
-- MoT-P5 相比完整 MoT：mAP50-95 增加 0.252 个百分点，P50 降低 58.65%，FLOPs
-  降低 30.96%；
-- MoT-P5 相比 EsMoE：mAP50-95 增加 0.150 个百分点，P50 增加 5.74%；
-- 结论：MoT-P5 是完整 MoT 的低预算替代方案；相对 EsMoE 为 +0.150 个百分点或 +1.66%
-  相对增幅，Issue 阈值口径待维护者确认，保守地不声明协同；
-- 遮挡代理组与 dense 共享 104/128 张图，修复后的推断检验无效，原遮挡假设未被验证。
+- 当前代码复验中，MoT-P5 相比完整 MoT：mAP50-95 增加 0.129 个百分点，P50 降低
+  45.01%，FLOPs 降低 32.22%；
+- MoT-P5 相比 EsMoE：mAP50-95 增加 0.099 个百分点，P50 增加 28.03%；
+- 结论：MoT-P5 是完整 MoT 的低预算替代方案，但未证明相对 EsMoE 的协同；
+- 图像级场景差异在视频序列配对后均未通过 FDR+CI；
+- 25 对真实遮挡标注复验中，Deformable 激活未显著上升。
 
 ## 9. 测试
 
@@ -251,6 +268,7 @@ ruff check \
   scripts/analyze_mot_cross_domain.py \
   scripts/run_mot_cross_domain_experiment.py \
   scripts/compare_mot_ablation.py \
+  scripts/prepare_mot_routing_scenes.py \
   tests/test_mot_cross_domain_analysis.py
 ```
 
@@ -258,7 +276,9 @@ ruff check \
 
 - `window_size` 超过特征图、奇数尺寸 shift、eval 禁用 exploration 等既有边界；
 - 16-bit TIFF 与灰度三通道转换；
-- bootstrap/permutation/FDR 的确定性；
+- 图像级和视频序列配对 bootstrap/permutation/FDR 的确定性；
+- 原始 VisDrone 遮挡字段解析、序列内配对与协变量平衡；
+- 确定性 benchmark 输入、梯度状态保持和多轮汇总；
 - JSD 与扰动稳定性；
 - MoT-P5 配置仅包含一个 MoTBlock。
 
@@ -266,11 +286,12 @@ ruff check \
 
 | 文件 | 作用 |
 |---|---|
-| `scripts/run_mot_cross_domain_experiment.py` | 数据准备、四卡训练、串行 benchmark、双路由审计 |
-| `scripts/analyze_mot_cross_domain.py` | 同检查点 hook、统计检验、图表、中文观察 |
-| `scripts/compare_mot_ablation.py` | 增加 `v10_mot_p5` 与并发安全的 `--no-summary` |
+| `scripts/run_mot_cross_domain_experiment.py` | 数据准备、四卡训练、三轮 benchmark、三类路由审计 |
+| `scripts/analyze_mot_cross_domain.py` | 同检查点 hook、序列级统计、图表、中文观察 |
+| `scripts/prepare_mot_routing_scenes.py` | 场景划分、真实遮挡解析与序列内协变量匹配 |
+| `scripts/compare_mot_ablation.py` | MoT-P5、checkpoint 指纹、实际 FLOPs 和多轮 latency |
 | `yolo-master-mot-p5-n.yaml` | 低预算 P5-only MoT 混合配置 |
-| `tests/test_mot_cross_domain_analysis.py` | 新增统计、TIFF、配置测试 |
+| `tests/test_mot_cross_domain_analysis.py` | 统计、TIFF、遮挡配对、配置与 benchmark 测试 |
 | `discussion_template_zh.md` | 已回填真实结果的 GitHub Discussion 发布草稿 |
 | `pr_description_zh.md` | 上游 Pull Request 说明草稿 |
 | `experiment_journey_zh.md` | 问题、设计、失败、修复与再实验链路 |

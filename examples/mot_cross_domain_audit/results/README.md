@@ -1,147 +1,183 @@
-# Issue #54 正式实验结果
+# Issue #54 最终实验结果
 
-本页汇总 YOLO-Master-EsMoE-N、MoT-N、MoA-N 和新增 MoT-P5-N 的统一消融，以及固定
-MoT checkpoint 的跨域路由审计。这里报告的是同一预算下的受控实验，不是充分收敛后的 SOTA
-复现；所有数值均来自本目录中的原始 CSV，未运行的结论不作推断。
+本页汇总 EsMoE-N、MoT-N、MoA-N、MoT-P5-N 的受控消融，以及同一个 MoT checkpoint 的
+路由审计。结论以修正后的序列级统计和三轮 benchmark 为准；初版结果保留用于说明方法如何被
+问题推动迭代，不再作为最终证据。
 
-完整的问题发现、设计修正和复验过程见
+完整的“现象 → 原因 → 修正 → 复验 → 新问题”见
 [`../experiment_journey_zh.md`](../experiment_journey_zh.md)。
 
-## 1. 实验协议
+## 1. 三层证据
 
-- 数据：VisDrone，6,471 张训练图、548 张验证图；
-- 训练：从 YAML 初始化，30 epoch，`imgsz=640`，batch 16，seed 42，FP32；
-- 设备：4 张 RTX 5090 各训练一个变体；
-- 测速：同一张 RTX 5090，batch 1，50 次 warmup、200 次计时；
-- 路由：同一个 `v10_mot/best.pt`，每个域或场景固定抽样 128 张图；
-- 统计：5,000 次 bootstrap、5,000 次双侧 permutation test、BH-FDR；
-- 路由 checkpoint SHA-256：
-  `a1857c81b7aebd0efb5a56f9d5b37405ef83edcc68890add15c9c480e9fee629`。
+| 层次 | 目的 | 固定条件 |
+|---|---|---|
+| 训练实验 | 比较四种结构 | VisDrone、30 epoch、640、batch 16、seed 42、FP32 |
+| 当前代码复验 | 检查合并上游后 checkpoint 是否兼容 | 同一批 `best.pt`、VisDrone 548 val |
+| benchmark v2 | 比较当前推理成本 | 同卡、固定输入、3 轮、每轮 200 次、顺序轮换 |
 
-公开复现元数据见 [`reproducibility.json`](reproducibility.json)，模型身份和原始指标见
-[`model_comparison.csv`](model_comparison.csv)。
+训练提交为 `58cb439`，方法修正提交为 `9eb5076`，合入的上游提交为 `d5afc4b`。MoT
+checkpoint SHA-256 为
+`a1857c81b7aebd0efb5a56f9d5b37405ef83edcc68890add15c9c480e9fee629`。
 
-## 2. 消融结果
+公开协议见 [`reproducibility_v2.json`](reproducibility_v2.json)，统一表见
+[`model_comparison_v2.csv`](model_comparison_v2.csv)。
 
-| 模型 | mAP50-95 | mAP50 | P50 / P95 / P99 (ms) | 实际 FLOPs (G) | Params (M) | 训练时间 |
-|---|---:|---:|---:|---:|---:|---:|
-| EsMoE-N | 0.09014 | 0.17446 | 18.563 / 18.671 / 18.959 | 8.505 | 3.420 | 0.945 h |
-| MoT-N | 0.08912 | 0.16984 | 47.467 / 47.714 / 51.414 | 12.503 | 4.025 | 1.381 h |
-| MoA-N | 0.08710 | 0.16837 | 40.650 / 40.870 / 43.381 | 9.102 | 3.546 | 1.274 h |
-| **MoT-P5-N** | **0.09164** | **0.17309** | **19.628 / 19.707 / 20.539** | **8.632** | **3.494** | **1.066 h** |
+## 2. 消融与兼容性复验
 
-四组最佳观测值均出现在第 30 轮；训练指标均为有限值，未出现 NaN、发散或恢复事件。训练曲线和
-逐 epoch CSV 位于 [`training/`](training/)。
+### 2.1 原训练提交
 
-### 2.1 混合架构判定
+| 模型 | mAP50-95 | mAP50 | 训练时间 | NaN/发散/恢复 |
+|---|---:|---:|---:|---|
+| EsMoE-N | 0.09014 | 0.17446 | 0.945 h | 0 |
+| MoT-N | 0.08912 | 0.16984 | 1.381 h | 0 |
+| MoA-N | 0.08710 | 0.16837 | 1.274 h | 0 |
+| **MoT-P5-N** | **0.09164** | 0.17309 | 1.066 h | 0 |
 
-MoT-P5 相对完整 MoT：
+四组最佳观测值均出现在第 30 轮。逐 epoch CSV 和曲线位于 [`training/`](training/)。
+这是同预算架构比较，不是充分收敛的 SOTA 复现。
 
-- mAP50-95 增加 0.252 个百分点；
-- P50/P95/P99 分别降低 58.65%/58.70%/60.05%；
-- 实际 FLOPs 降低 30.96%，参数量降低 13.20%。
+### 2.2 合并当前上游后的复验
 
-这说明把 MoT 限制在低分辨率 P5 是完整 MoT 的有效低预算替代方案。但相对 EsMoE 基线，
-MoT-P5 的 mAP50-95 只增加 0.150 个百分点，P50 反而增加 5.74%。Issue 中“mAP 提升 > 1%”
-存在口径歧义：按绝对百分点没有达到，按相对比例则提升 1.66%。在维护者确认口径前，本报告采用
-更保守的绝对百分点解释，不声称“MoE + MoT 已产生协同增益”。
+| 模型 | mAP50-95 | mAP50 |
+|---|---:|---:|
+| EsMoE-N | 0.086933 | 0.168935 |
+| MoT-N | 0.086633 | 0.167121 |
+| MoA-N | 0.084307 | 0.163315 |
+| **MoT-P5-N** | **0.087923** | **0.167885** |
 
-![MoT-P5 训练曲线](training/v10_mot_p5_results.png)
+绝对值相对训练日志下降，但四个 checkpoint 均能加载，MoT-P5 的排序仍保持第一。原始值见
+[`benchmark_v2/post_merge_validation.csv`](benchmark_v2/post_merge_validation.csv)。
+报告不把训练提交的 mAP 与当前代码的延迟伪装成同一次运行，而是同时保留两层身份。
 
-其余三组的同格式曲线和逐 epoch CSV 也保存在 [`training/`](training/)。
+## 3. benchmark 如何被修正
 
-## 3. 路由复验
+第一次 benchmark 使用单轮、固定 50 次预热，并以未初始化张量测实际 FLOPs。代码复查还发现
+benchmark 在函数内部修改了全局梯度模式。这些问题不会改变模型参数，但会让输入、执行顺序和调用者
+状态成为隐藏变量。
 
-### 3.1 VisDrone 密集与稀疏场景
+修正后：
 
-`dense` 与 `sparse` 没有共享图像，推断检验有效。由 dense 到 sparse：
+1. 使用局部随机生成器和固定 seed 0 创建输入；
+2. 不修改全局 RNG 与梯度模式；
+3. 每轮至少预热 50 次且不少于 2 秒；
+4. 运行 3 轮，每轮旋转模型顺序；
+5. 汇总各轮 percentile 的中位数，同时保留 run min/max；
+6. profiler 与 latency 使用同一确定性输入。
 
-| 专家/指标 | 差值 | bootstrap 95% CI | Hedges' g | FDR q |
+| 模型 | P50 / P95 / P99 (ms) | P50 run min-max | 实际 FLOPs (G) | Params (M) |
 |---|---:|---:|---:|---:|
-| Local mean probability | -0.000719 | [-0.000840, -0.000599] | -1.470 | 0.00105 |
-| Window mean probability | +0.000129 | [+0.000023, +0.000231] | +0.292 | 0.04304 |
-| Deformable mean probability | +0.000590 | [+0.000451, +0.000734] | +1.018 | 0.00105 |
-| Deformable top-1 share | +0.004937 | [+0.000521, +0.009321] | +0.266 | 0.04684 |
+| EsMoE-N | 13.284 / 13.338 / 13.795 | 11.084-13.418 | 8.016 | 3.420 |
+| MoT-N | 30.928 / 31.262 / 32.177 | 30.879-31.106 | 12.014 | 4.025 |
+| MoA-N | 26.382 / 26.514 / 27.796 | 26.268-26.457 | 8.613 | 3.546 |
+| **MoT-P5-N** | **17.008 / 17.065 / 17.180** | **16.989-17.058** | **8.143** | **3.494** |
 
-方向上，稀疏场景把少量概率从 Local 路由到 Deformable；但最大概率差仅 0.000719，实际幅度很小，
-不能仅凭显著性宣称形成了强专家分工。
+EsMoE 首轮 P50 为 11.084 ms，后两轮为 13.418/13.284 ms，证明单轮测速不足以描述波动。
+原始 12 行数据见 [`benchmark_v2/latency_rounds.csv`](benchmark_v2/latency_rounds.csv)。
 
-### 3.2 VisDrone 大目标与小目标
+### 3.1 混合架构判定
 
-`large_objects` 与 `small_objects` 也没有共享图像。由 large 到 small，Window top-1 share
-增加 0.004537，95% CI `[0.000850, 0.008337]`，`q=0.03474`；Local top-1 share 减少
-0.004884，95% CI `[-0.007986, -0.001846]`，`q=0.00600`。三类专家的 mean probability
-差异均未通过 FDR，因此这里只能描述为弱 top-1 排序变化。
+按当前代码复验，MoT-P5 相对完整 MoT：
 
-### 3.3 遮挡代理假设未被验证
+- mAP50-95 增加 0.129 个百分点；
+- P50/P95/P99 降低 45.01%/45.41%/46.61%；
+- FLOPs 降低 32.22%，Params 降低 13.20%。
 
-初版把 `dense` 与 `irregular_occluded` 当作独立场景比较。样本指纹复查发现两组共享
-104/128 张图，独立样本 permutation test 的前提不成立。修复后这些行标记为
-`comparison_valid=false`，CI、p-value 和 q-value 均不再生成。
+相对 EsMoE，MoT-P5 的 mAP50-95 增加 0.099 个百分点，但 P50 增加 28.03%，FLOPs 增加
+1.58%。因此它是完整 MoT 的明确低预算替代，不是比 EsMoE 更快的协同结构。Issue 的
+“mAP 提升 > 1%”若指绝对百分点也未达到，本报告不声明协同增益。
 
-因此本实验不能证明 DeformableTransformer 在遮挡/不规则目标中显著增加。下一轮需要构建互斥且
-按密度、尺度匹配的遮挡数据，或使用配对统计模型。
+## 4. 场景统计为何被推翻
 
-### 3.4 医疗域外输入
+### 4.1 初版图像级结果
 
-同一 VisDrone checkpoint 从 VisDrone 切换到 brain-tumor 后，Deformable top-1 share 增加
-0.009824，mean probability 增加 0.000620（95% CI `[0.000467, 0.000774]`，
-`q=0.00035`）。这是可重复的域外路由变化，但绝对概率变化仍很小，且模型没有在 brain-tumor
-上训练或验证，不能外推为医疗检测性能或临床价值。
+初版以图像为独立单位，得到 sparse 相对 dense 的 Deformable mean probability
+`+0.000590 (q=0.00105)`，small 相对 large 的 Window top-1 share
+`+0.004537 (q=0.03474)`。
 
-![跨域路由概率](cross_domain/routing_probability_heatmap.png)
+进一步检查文件名发现，VisDrone 验证图来自连续视频。不同图像即使没有精确重叠，也可能属于同一
+视频序列；把相邻帧当 128 个独立样本会夸大有效样本量，这是伪重复。
 
-![VisDrone 分层路由](visdrone_scenes/routing_layer_top1_share_heatmap.png)
+### 4.2 序列级配对复验
 
-## 4. 第二次复验发现的新问题
+脚本现在先按视频序列聚合，再对两组共有序列做 paired bootstrap 和 paired sign-flip
+permutation，并同时要求 `q <= 0.05` 且 CI 不跨 0。
 
-分层热力图显示，`model.23.m.0` 的 Window top-1 share 为 1，`model.23.m.1` 的 Local top-1
-share 为 1，但两层三专家概率都接近 1/3、归一化熵为 1。这不是清晰的专家专业化，而是近均匀
-概率下微小数值差异决定 argmax。
+| 比较 | 配对序列 | 代表性变化 | 95% CI | q | 最终判定 |
+|---|---:|---:|---:|---:|---|
+| dense → sparse | 10 | Deformable top-1 `+0.004057` | `[-0.003558, 0.011606]` | 0.683 | 不显著 |
+| dense → sparse | 10 | Window mean prob `+0.000261` | `[0.000030, 0.000495]` | 0.359 | 不显著 |
+| large → small | 21 | Window mean prob `-0.000203` | `[-0.000330, -0.000074]` | 0.126 | 不显著 |
 
-代码与梯度探针进一步定位到 `top_k=1`：唯一入选权重重归一化后恒为 1，router 的主任务梯度很弱。
-随机输入探针得到的 router 梯度范数和为：
+修正后没有任何场景路由指标同时通过 FDR 和 CI 条件。初版的“稀疏偏好 Deformable”和“小目标
+偏好 Window”均降级为探索性观察，不能作为场景推荐。证据见
+[`visdrone_scenes_cluster/`](visdrone_scenes_cluster/)。
 
-| 配置 | 梯度范数和 |
+## 5. 用真实遮挡标注重做假设
+
+初版 `irregular_occluded` 只是密度、尺度、长宽比代理，并与 dense 重叠 104/128 张图。为直接
+检验遮挡假设，第二轮读取 VisDrone 原始 8 列标注中的 occlusion 字段：
+
+1. 取遮挡比例上下四分位候选；
+2. 每个视频序列各选一张低遮挡和一张高遮挡图；
+3. 以 `log1p(目标数)` 和 `log(中位框面积)` 匹配；
+4. 用全局平衡目标再次优化配对。
+
+第一次最近邻匹配后，目标数标准化差异 SMD 为 0.301，说明遮挡仍与密度混杂。全局平衡后保留
+25 对序列，目标数 SMD 降至 0.027，目标面积 SMD 为 -0.017；平均遮挡比例由 0.284 增至
+0.753。
+
+复验中 Deformable top-1 仅增加 `0.001575`，95% CI
+`[-0.005933, 0.009746]`，`q=0.703`；Deformable mean probability 增加
+`0.000040`，CI 也跨 0。当前 checkpoint 不支持“复杂遮挡显著提高 Deformable 激活”的假设。
+配对与平衡证据见 [`visdrone_occlusion/`](visdrone_occlusion/)。
+
+## 6. 跨域与路由器新问题
+
+同一 MoT checkpoint 从 VisDrone 切换到 brain-tumor 后，Deformable mean probability 增加
+`0.000674`，95% CI `[0.000520, 0.000834]`，`q=0.000233`。绝对变化小，且模型未在
+brain-tumor 上训练；它只说明 OOD 输入改变了路由分布，不代表医疗检测或临床价值。
+
+重跑时 Deformable top-1 差值由初版 `+0.009824` 变为 `+0.043936`，而 dense probability
+变化仅从 `+0.000620` 变为 `+0.000674`。结合深层各专家概率接近 1/3，这说明 argmax 会被微小
+数值差异放大，top-1 share 不应单独承担解释。
+
+梯度探针也发现 `top_k=1` 时唯一权重归一化为 1，router 主任务梯度很弱：
+
+| 配置 | router 梯度范数和 |
 |---|---:|
-| top-k=1, exploration=0 | 8.9e-9 |
-| top-k=1, exploration=0.02 | 1.53e-4 |
-| top-k=2, exploration=0.02 | 9.90e-3 |
+| top-k=1, exploration=0 | `8.9e-9` |
+| top-k=1, exploration=0.02 | `1.53e-4` |
+| top-k=2, exploration=0.02 | `9.90e-3` |
 
-这解释了深层路由弱分化，但不能证明修改 `top_k` 会提升检测。正确的下一步是重训
-`top_k / exploration_eps / straight-through` 消融，而不是在当前 checkpoint 上直接改行为。
+这解释了弱分化，但没有证明改为 top-k=2 会提高检测；需要重训消融，不能直接修改现有 checkpoint
+的推理行为。
 
-## 5. 场景化建议
+## 7. 数据支持的建议
 
-1. **资源受限但希望保留 MoT 时选 MoT-P5。** 相比完整 MoT，P50 降低 58.65%、FLOPs
-   降低 30.96%，同时 mAP50-95 增加 0.252 个百分点；它尚不能替代 EsMoE 作为速度基线。
-2. **稀疏航拍场景只能视为弱 Deformable 偏好。** Deformable mean probability 增加
-   0.000590、top-1 share 增加 0.004937，统计稳定但实际幅度小。
-3. **小目标场景出现弱 Window argmax 偏移。** Window top-1 share 增加 0.004537，但
-   mean probability 未显著变化，不应写成“Window 专家显著主导小目标”。
-4. **遮挡结论暂缓。** 当前代理组与 dense 重叠 81.25%，只能报告描述统计，不能支持原假设。
-5. **医疗图像只用于 OOD 审计。** brain-tumor 的 Deformable top-1 增加 0.982 个百分点，
-   不能替代医疗数据微调、检测评估或临床验证。
+1. **低预算保留 MoT：选 MoT-P5。** 相比完整 MoT，当前 P50 降低 45.01%、FLOPs 降低
+   32.22%，mAP50-95 增加 0.129 个百分点。
+2. **速度优先：仍选 EsMoE。** MoT-P5 相比 EsMoE 的 P50 高 28.03%，当前没有速度协同。
+3. **不要按密集/稀疏或大小目标切换专家。** 序列级复验没有指标通过复合显著性标准。
+4. **不要用 top-1 热力图单独解释路由。** 应同时报告 dense probability、entropy、margin 和
+   运行间稳定性。
+5. **遮挡假设当前为负结果。** 25 对真实标注、密度与尺度平衡后，Deformable 激活未显著上升。
 
-## 6. 稳健性与限制
+## 8. 限制与证据索引
 
-水平翻转及亮度扰动下，主导专家一致率为 96.74% 至 99.87%，平均 JSD 不超过
-`5.30e-7`。路由对这些扰动稳定，但该结果部分来自整体概率接近均匀，不能单独当作路由质量证据。
-
-主要限制：
-
-- 30 epoch 受控预算不足以代表充分收敛上限；
-- 单 seed、单硬件测速不能外推到 TensorRT、ncnn 或其他 GPU；
-- CUDA attention/pooling 存在 warn-only 非确定性算子，不声称跨硬件 bitwise 一致；
-- 路由激活与检测精度尚无因果证据；
-- 公开结果包不包含模型权重、原始数据或本地绝对路径。
-
-## 7. 证据索引
+- 30 epoch、单 seed，不能代表充分收敛上限；
+- 场景比较只有 10/21 个配对序列，统计功效有限；
+- 遮挡配对有 25 个序列，仍需更多数据和 route-aware 重训；
+- 单张 RTX 5090 的 PyTorch 延迟不能外推到 TensorRT、ncnn 或其他硬件；
+- 水平翻转和亮度扰动下主导专家一致率为 97.79%-99.61%，但概率近均匀使“稳定”不等于“专业化”；
+- 公开包不含权重、原始图像、私人线粒体数据或本地绝对路径。
 
 | 内容 | 文件 |
 |---|---|
-| 四模型汇总与 checkpoint 哈希 | [`model_comparison.csv`](model_comparison.csv) |
-| 环境、协议与抽样设置 | [`reproducibility.json`](reproducibility.json) |
-| 跨域聚合、检验与扰动 | [`cross_domain/`](cross_domain/) |
-| VisDrone 场景聚合、检验与重叠审计 | [`visdrone_scenes/`](visdrone_scenes/) |
-| 四模型逐 epoch 指标与曲线 | [`training/`](training/) |
+| 训练指标与初版单轮测速（历史） | [`model_comparison.csv`](model_comparison.csv) |
+| 当前兼容性验证与三轮测速 | [`model_comparison_v2.csv`](model_comparison_v2.csv) |
+| 当前复现协议 | [`reproducibility_v2.json`](reproducibility_v2.json) |
+| 当前跨域审计 | [`cross_domain_v2/`](cross_domain_v2/) |
+| 序列级场景审计 | [`visdrone_scenes_cluster/`](visdrone_scenes_cluster/) |
+| 真实遮挡配对审计 | [`visdrone_occlusion/`](visdrone_occlusion/) |
+| 初版图像级结果（审计轨迹） | [`cross_domain/`](cross_domain/)、[`visdrone_scenes/`](visdrone_scenes/) |
+| 逐 epoch 指标与曲线 | [`training/`](training/) |

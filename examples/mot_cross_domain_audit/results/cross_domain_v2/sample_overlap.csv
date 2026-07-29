@@ -1,0 +1,4 @@
+domain_a,domain_b,independent_sample_test_valid,n_a,n_b,n_shared,shared_fraction_min
+COCO128,VisDrone,True,128,128,0,0.0
+COCO128,brain-tumor,True,128,128,0,0.0
+VisDrone,brain-tumor,True,128,128,0,0.0

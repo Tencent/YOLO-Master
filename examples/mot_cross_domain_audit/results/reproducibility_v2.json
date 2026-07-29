@@ -1,0 +1,70 @@
+{
+  "experiment": "YOLO-Master Issue #54 corrected sequence-aware MoT audit",
+  "branch": "rhino-2026/issue-54-medical-routing",
+  "training_git_commit": "58cb439407e2f5f7a6e1c4b6a3a9382499713e88",
+  "methodology_git_commit": "9eb5076b0c7ed77a976b2efb0ff3d0e988e6be8a",
+  "merged_upstream_commit": "d5afc4b442aed815506914505064c5ef946de5ef",
+  "training": {
+    "dataset": "VisDrone",
+    "train_images": 6471,
+    "validation_images": 548,
+    "epochs": 30,
+    "image_size": 640,
+    "batch_size_per_model": 16,
+    "seed": 42,
+    "amp": false,
+    "models": [
+      "v10",
+      "v10_mot",
+      "v10_moa",
+      "v10_mot_p5"
+    ]
+  },
+  "post_merge_validation": {
+    "dataset": "VisDrone",
+    "validation_images": 548,
+    "image_size": 640,
+    "purpose": "Verify that saved checkpoints still load and preserve model ranking after merging current upstream/main."
+  },
+  "benchmark": {
+    "device": "NVIDIA GeForce RTX 5090 32GB",
+    "image_size": 640,
+    "batch_size": 1,
+    "warmup_iterations_minimum": 50,
+    "warmup_seconds_minimum": 2.0,
+    "measured_iterations_per_round": 200,
+    "rounds": 3,
+    "model_order": "rotated once per round",
+    "input_seed": 0,
+    "input_distribution": "torch.rand with a local generator",
+    "aggregation": "median of each round's percentile",
+    "dispersion": "run minimum and maximum retained",
+    "flops_method": "torch profiler on the same deterministic input"
+  },
+  "routing_audit": {
+    "checkpoint_sha256": "a1857c81b7aebd0efb5a56f9d5b37405ef83edcc68890add15c9c480e9fee629",
+    "same_checkpoint_for_all_domains": true,
+    "images_per_domain": 128,
+    "bootstrap_samples": 5000,
+    "permutations": 5000,
+    "seed": 42,
+    "significance_rule": "BH-FDR q <= 0.05 and bootstrap CI excludes zero",
+    "visdrone_analysis_unit": "video sequence cluster",
+    "visdrone_cluster_pattern": "^(\\d{5})_",
+    "paired_cluster_method": "within-sequence mean, paired bootstrap, paired sign-flip permutation",
+    "occlusion_source": "original VisDrone 8-column annotations",
+    "occlusion_pairs": 25,
+    "occlusion_pairing": "one lower/higher-occlusion image pair per video sequence, balanced on log object count and log median box area"
+  },
+  "environment": {
+    "gpu": "4 x NVIDIA GeForce RTX 5090 32GB",
+    "python": "3.12.12",
+    "pytorch": "2.9.0+cu128",
+    "ultralytics": "8.4.101"
+  },
+  "notes": [
+    "The original image-level reports are retained as an audit trail, but sequence-aware reports are the primary result.",
+    "Brain-tumor images are used only for out-of-distribution routing analysis, not medical detection evaluation.",
+    "Model weights, raw images, private mitochondrial data and local absolute paths are excluded."
+  ]
+}
