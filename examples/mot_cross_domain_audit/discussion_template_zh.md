@@ -1,6 +1,10 @@
 # [Issue #54] MoT 消融、序列级路由解释与 P5 混合架构
 
-本文是 GitHub Discussion 发布草稿。所有数值均有公开 CSV；初版结论被复验推翻的过程也予以保留。
+所有数值均有公开 CSV；初版结论被复验推翻的过程也予以保留。
+
+- 实验 PR：<https://github.com/Tencent/YOLO-Master/pull/190>
+- 实验脚本与结果：
+  <https://github.com/blues-kun/YOLO-Master/tree/rhino-2026/issue-54-medical-routing/examples/mot_cross_domain_audit>
 
 ## 摘要
 
