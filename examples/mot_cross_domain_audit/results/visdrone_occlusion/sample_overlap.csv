@@ -1,0 +1,2 @@
+domain_a,domain_b,independent_sample_test_valid,n_a,n_b,n_clusters_a,n_clusters_b,n_shared,n_shared_clusters,paired_cluster_test_available,shared_cluster_fraction_min,shared_fraction_min
+higher_occlusion,lower_occlusion,False,25,25,25,25,0,25,True,1.0,0.0

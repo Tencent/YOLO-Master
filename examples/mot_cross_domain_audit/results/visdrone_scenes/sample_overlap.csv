@@ -1,0 +1,11 @@
+domain_a,domain_b,independent_sample_test_valid,n_a,n_b,n_shared,shared_fraction_min
+dense,irregular_occluded,False,128,128,104,0.8125
+dense,large_objects,False,128,128,8,0.0625
+dense,small_objects,False,128,128,46,0.359375
+dense,sparse,True,128,128,0,0.0
+irregular_occluded,large_objects,False,128,128,5,0.0390625
+irregular_occluded,small_objects,False,128,128,48,0.375
+irregular_occluded,sparse,True,128,128,0,0.0
+large_objects,small_objects,True,128,128,0,0.0
+large_objects,sparse,False,128,128,76,0.59375
+small_objects,sparse,False,128,128,22,0.171875

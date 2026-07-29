@@ -1,0 +1,47 @@
+# YOLO-Master v0.10 MoT-P5 AGPL-3.0 License - https://ultralytics.com/license
+# 低计算预算混合架构：保留 EsMoE backbone，仅在低分辨率 P5 neck 使用一个 MoT block。
+# 设计目的：验证 Transformer 专家能否以较小延迟代价补充全局上下文，而不是在三个尺度堆叠 MoT。
+
+nc: 80
+scales:
+  n: [0.50, 0.25, 1024]
+
+backbone:
+  - [-1, 1, Conv, [64, 3, 2]]
+  - [-1, 1, Conv, [128, 3, 2]]
+  - [-1, 2, C3k2, [256, False, 0.25]]
+
+  - [-1, 1, Conv, [256, 3, 2]]
+  - [-1, 2, C3k2, [512, False, 0.25]]
+
+  - [-1, 1, VisualEnhancedAdaptiveGateMoE, [512, 4, 2, 0.5]]
+
+  - [-1, 1, Conv, [512, 3, 2]]
+  - [-1, 4, A2C2f, [512, True, 4]]
+
+  - [-1, 1, VisualEnhancedAdaptiveGateMoE, [512, 8, 2, 0.5]]
+
+  - [-1, 1, Conv, [1024, 3, 2]]
+  - [-1, 4, A2C2f, [1024, True, 1]]
+
+  - [-1, 1, VisualEnhancedAdaptiveGateMoE, [1024, 16, 2, 0.5]]
+
+head:
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
+  - [[-1, 8], 1, Concat, [1]]
+  - [-1, 2, C3k2, [512, True]]
+
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
+  - [[-1, 5], 1, Concat, [1]]
+  - [-1, 2, C3k2, [256, True]]
+
+  - [-1, 1, Conv, [256, 3, 2]]
+  - [[-1, 14], 1, Concat, [1]]
+  - [-1, 2, C3k2, [512, True]]
+
+  - [-1, 1, Conv, [512, 3, 2]]
+  - [[-1, 11], 1, Concat, [1]]
+  # P5 为 1/32 分辨率；top_k=2 保留专家互补，单 block 控制额外计算量。
+  - [-1, 2, C2fMoT, [512, 8, 2, 7, 4, 2.0, 0.8, 0.01, 0.5]]
+
+  - [[17, 20, 23], 1, Detect, [nc]]

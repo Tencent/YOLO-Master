@@ -87,12 +87,16 @@ class _MoTRouter(FP32RouterMixin, nn.Module):
         scene_aware: bool = False,
         scene_hidden_dim: Optional[int] = None,
         scene_inference_mode: str = "dynamic",
+        adaptive_k: bool = False,
+        adaptive_k_threshold: float = 0.5,
     ):
         super().__init__()
         if num_experts < 1:
             raise ValueError(f"num_experts must be positive, got {num_experts}")
         if not 1 <= top_k <= num_experts:
             raise ValueError(f"top_k must be in [1, {num_experts}], got {top_k}")
+        if not 0.0 < float(adaptive_k_threshold) <= 1.0:
+            raise ValueError("adaptive_k_threshold must be in (0, 1]")
         if not 0.0 <= exploration_eps <= 0.2:
             warnings.warn(
                 f"exploration_eps={exploration_eps} clamped to the supported range [0.0, 0.2].",
@@ -106,6 +110,12 @@ class _MoTRouter(FP32RouterMixin, nn.Module):
         # preserves annealing progress (Python float would be lost).
         self.register_buffer("temperature", torch.tensor(max(temperature, 0.1)), persistent=True)
         self.exploration_eps = exploration_eps
+        self.adaptive_k = bool(adaptive_k)
+        self.adaptive_k_threshold = float(adaptive_k_threshold)
+        self.last_selected_k: Optional[torch.Tensor] = None
+        self.utility_input_dim = int(dim)
+        self.utility_projector: Optional[nn.Sequential] = None
+        self.last_utility_bias: Optional[torch.Tensor] = None
 
         hidden = max(dim // 8, num_experts * 4)
         if use_spatial:
@@ -160,8 +170,98 @@ class _MoTRouter(FP32RouterMixin, nn.Module):
             )
             nn.init.zeros_(self.scene_projector[-1].weight)
             nn.init.zeros_(self.scene_projector[-1].bias)
+            reference = next(self.router.parameters())
+            self.scene_projector.to(device=reference.device, dtype=torch.float32)
             self.scene_hidden_dim = hidden
         self.scene_aware = True
+
+    def configure_adaptive_k(self, enabled: bool, threshold: Optional[float] = None) -> None:
+        """Configure image-level adaptive expert count for eager evaluation."""
+        if threshold is not None:
+            if not 0.0 < float(threshold) <= 1.0:
+                raise ValueError("adaptive_k_threshold must be in (0, 1]")
+            self.adaptive_k_threshold = float(threshold)
+        self.adaptive_k = bool(enabled)
+
+    def enable_global_utility_head(self, hidden_dim: int = 16) -> None:
+        """Add a zero-initialized normalized global residual to router logits."""
+        if getattr(self, "utility_projector", None) is None:
+            hidden = int(hidden_dim)
+            if hidden <= 0:
+                raise ValueError("utility hidden_dim must be positive")
+            input_dim = getattr(self, "utility_input_dim", None)
+            if input_dim is None:
+                first_projection = next(
+                    module
+                    for module in self.router.modules()
+                    if isinstance(module, (nn.Conv2d, nn.Linear))
+                )
+                input_dim = (
+                    first_projection.in_channels
+                    if isinstance(first_projection, nn.Conv2d)
+                    else first_projection.in_features
+                )
+                self.utility_input_dim = int(input_dim)
+            self.utility_projector = nn.Sequential(
+                nn.Linear(int(input_dim), hidden, bias=False),
+                nn.SiLU(inplace=False),
+                nn.Linear(hidden, self.num_experts),
+            )
+            nn.init.zeros_(self.utility_projector[-1].weight)
+            nn.init.zeros_(self.utility_projector[-1].bias)
+            reference = next(self.router.parameters())
+            self.utility_projector.to(device=reference.device, dtype=torch.float32)
+
+    def _adaptive_top_k(self, dense_weights: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Reduce confident images to a global expert pool and preserve fixed-K fallback."""
+        spatial_dims = tuple(range(2, dense_weights.ndim))
+        image_probabilities = (
+            dense_weights.mean(dim=spatial_dims) if spatial_dims else dense_weights
+        )
+        sorted_probabilities, sorted_indices = image_probabilities.sort(dim=1, descending=True)
+        cumulative = sorted_probabilities.cumsum(dim=1)
+        threshold = float(getattr(self, "adaptive_k_threshold", 0.5))
+        selected_k = (cumulative < threshold).sum(dim=1) + 1
+        selected_k = selected_k.clamp(min=1, max=self.top_k)
+        self.last_selected_k = selected_k.detach()
+
+        if self.top_k < self.num_experts:
+            fixed_values, fixed_indices = dense_weights.topk(self.top_k, dim=1)
+            fixed_weights = torch.zeros_like(dense_weights)
+            fixed_weights.scatter_(1, fixed_indices, stable_normalize(fixed_values, dim=1))
+        else:
+            fixed_weights = dense_weights
+            fixed_indices = (
+                torch.arange(self.num_experts, device=dense_weights.device)
+                .view(1, -1, *((1,) * len(spatial_dims)))
+                .expand(dense_weights.shape[0], -1, *dense_weights.shape[2:])
+            )
+
+        positions = torch.arange(self.top_k, device=dense_weights.device).unsqueeze(0)
+        valid = positions < selected_k.unsqueeze(1)
+        selected_indices = sorted_indices[:, : self.top_k]
+        global_mask = torch.zeros_like(image_probabilities)
+        global_mask.scatter_(1, selected_indices, valid.to(global_mask.dtype))
+        expand_shape = (dense_weights.shape[0], dense_weights.shape[1]) + (1,) * len(spatial_dims)
+        masked = dense_weights * global_mask.reshape(expand_shape)
+        reduced_weights = stable_normalize(masked, dim=1)
+
+        padded_indices = selected_indices.masked_fill(~valid, -1)
+        index_shape = (dense_weights.shape[0], self.top_k) + (1,) * len(spatial_dims)
+        target_shape = (dense_weights.shape[0], self.top_k, *dense_weights.shape[2:])
+        reduced_indices = padded_indices.reshape(index_shape).expand(target_shape)
+
+        # 安全回退：K=max 时严格复用原逐 token Top-K；只有低 K 样本才收缩到图像级专家池。
+        reduced_samples = selected_k < self.top_k
+        weight_selector = reduced_samples.reshape(
+            (dense_weights.shape[0], 1) + (1,) * len(spatial_dims)
+        )
+        index_selector = reduced_samples.reshape(
+            (dense_weights.shape[0], 1) + (1,) * len(spatial_dims)
+        )
+        weights = torch.where(weight_selector, reduced_weights, fixed_weights)
+        indices = torch.where(index_selector, reduced_indices, fixed_indices)
+        return weights, indices
 
     @staticmethod
     def compute_scene_stats(x: torch.Tensor) -> torch.Tensor:
@@ -228,6 +328,15 @@ class _MoTRouter(FP32RouterMixin, nn.Module):
                 self._last_scene_stats_for_loss = None
                 self.last_scene_stats = None
                 self.last_scene_bias = None
+            utility_projector = getattr(self, "utility_projector", None)
+            if utility_projector is not None:
+                pooled = F.adaptive_avg_pool2d(route_input, 1).flatten(1)
+                pooled = F.layer_norm(pooled, (pooled.shape[1],))
+                utility_bias = utility_projector(pooled).float()
+                logits = logits + utility_bias.unsqueeze(-1).unsqueeze(-1)
+                self.last_utility_bias = utility_bias.detach()
+            else:
+                self.last_utility_bias = None
         return logits
 
     @staticmethod
@@ -257,8 +366,17 @@ class _MoTRouter(FP32RouterMixin, nn.Module):
             weights = F.softmax(logits / temp.float(), dim=1)  # [B, E, H, W]
         dense_weights = weights
 
-        # Top-K mask
-        if self.top_k < self.num_experts:
+        # Adaptive K is eager-inference-only: training and export keep the
+        # established fixed-K path and its DDP/export behavior.
+        adaptive_eval = (
+            bool(getattr(self, "adaptive_k", False))
+            and not self.training
+            and not torch.jit.is_tracing()
+            and not torch.onnx.is_in_onnx_export()
+        )
+        if adaptive_eval:
+            weights, indices = self._adaptive_top_k(dense_weights)
+        elif self.top_k < self.num_experts:
             # get top-k indices [B, K, H, W]
             topk_vals, topk_idx = weights.topk(self.top_k, dim=1)
             # renormalize selected weights
@@ -277,6 +395,13 @@ class _MoTRouter(FP32RouterMixin, nn.Module):
                 .view(1, -1, 1, 1)
                 .expand(x.shape[0], -1, x.shape[2], x.shape[3])
             )
+        if not adaptive_eval:
+            self.last_selected_k = torch.full(
+                (x.shape[0],),
+                self.top_k,
+                dtype=torch.long,
+                device=x.device,
+            )
 
         weights = weights.to(dtype=x.dtype)
 
@@ -288,8 +413,11 @@ class _MoTRouter(FP32RouterMixin, nn.Module):
     def expert_usage_from_indices(indices: torch.Tensor, num_experts: int) -> torch.Tensor:
         """Discrete expert usage share from Top-K index tensor (any rank ≥ 2)."""
         flat = indices.reshape(-1).to(torch.long)
+        flat = flat[(flat >= 0) & (flat < num_experts)]
+        if flat.numel() == 0:
+            return torch.zeros(num_experts, dtype=torch.float32, device=indices.device)
         counts = torch.bincount(flat, minlength=num_experts).float()
-        return counts / max(flat.numel(), 1)
+        return counts / flat.numel()
 
     def router_z_loss(self, x: torch.Tensor) -> torch.Tensor:
         """Z-loss for load balance: encourages router logits to be small."""

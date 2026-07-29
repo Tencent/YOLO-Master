@@ -1,0 +1,68 @@
+{
+  "experiment": "YOLO-Master Issue #54 same-checkpoint MoT routing audit",
+  "training_git_commit": "58cb439407e2f5f7a6e1c4b6a3a9382499713e88",
+  "analysis_git_commit": "b22af3b2d03b7f3262c2ceb0cb6c2207a779c1ac",
+  "branch": "rhino-2026/issue-54-medical-routing",
+  "training": {
+    "dataset": "VisDrone",
+    "train_images": 6471,
+    "validation_images": 548,
+    "epochs": 30,
+    "image_size": 640,
+    "batch_size_per_model": 16,
+    "seed": 42,
+    "amp": false,
+    "models": [
+      "v10",
+      "v10_mot",
+      "v10_moa",
+      "v10_mot_p5"
+    ],
+    "devices": [
+      0,
+      1,
+      2,
+      3
+    ]
+  },
+  "benchmark": {
+    "device": 0,
+    "image_size": 640,
+    "batch_size": 1,
+    "warmup_iterations": 50,
+    "measured_iterations": 200,
+    "flops_method": "torch_profile_actual"
+  },
+  "routing_audit": {
+    "checkpoint_sha256": "a1857c81b7aebd0efb5a56f9d5b37405ef83edcc68890add15c9c480e9fee629",
+    "same_checkpoint_for_all_domains": true,
+    "images_per_domain": 128,
+    "bootstrap_samples": 5000,
+    "permutations": 5000,
+    "seed": 42,
+    "cross_domains": [
+      "VisDrone",
+      "COCO128",
+      "brain-tumor"
+    ],
+    "visdrone_scenes": [
+      "dense",
+      "sparse",
+      "small_objects",
+      "large_objects",
+      "irregular_occluded"
+    ],
+    "overlap_policy": "Independent inferential tests are disabled for domain pairs sharing sample fingerprints."
+  },
+  "environment": {
+    "gpu": "4 x NVIDIA GeForce RTX 5090 32GB",
+    "python": "3.12.12",
+    "pytorch": "2.9.0+cu128",
+    "ultralytics": "8.4.101"
+  },
+  "notes": [
+    "Models were trained from YAML initialization under one controlled 30-epoch budget.",
+    "CUDA attention and pooling emitted warn-only deterministic-kernel notices; cross-hardware bitwise identity is not claimed.",
+    "Local absolute paths and model weights are intentionally excluded from the public result package."
+  ]
+}
