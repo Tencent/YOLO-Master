@@ -37,7 +37,7 @@ from ultralytics.data.utils import check_cls_dataset, check_det_dataset, convert
 from ultralytics.nn.distill_model import DistillationModel
 from ultralytics.nn.mixture_loss import has_routed_modules
 from ultralytics.nn.tasks import load_checkpoint
-from ultralytics.optim import MuSGD
+from ultralytics.optim import MuSGD, audit_optimizer_param_groups
 from ultralytics.utils import (
     DEFAULT_CFG,
     LOCAL_RANK,
@@ -135,12 +135,7 @@ def _optimizer_state_family(state_dict) -> str | None:
     groups = state_dict.get("param_groups", ())
     if any("use_muon" in group for group in groups):
         return "musgd"
-    state_keys = {
-        key
-        for state in state_dict.get("state", {}).values()
-        if isinstance(state, dict)
-        for key in state
-    }
+    state_keys = {key for state in state_dict.get("state", {}).values() if isinstance(state, dict) for key in state}
     if {"exp_avg", "exp_avg_sq"} <= state_keys:
         return "adam"
     if "square_avg" in state_keys:
@@ -365,6 +360,39 @@ class BaseTrainer:
             self.lf = lambda x: max(1 - x / self.epochs, 0) * (1.0 - self.args.lrf) + self.args.lrf  # linear
         self.scheduler = optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=self.lf)
 
+    def _audit_optimizer_groups(self):
+        """Capture and log a read-only snapshot of finalized optimizer parameter groups."""
+        audit = audit_optimizer_param_groups(self.model, self.optimizer, strict=False)
+        self.optimizer_group_audit = audit
+        if RANK not in {-1, 0}:
+            return audit
+        group_summary = ", ".join(
+            f"{group['index']}:{group['name']}"
+            f"(tensors={group['tensor_count']}, elements={group['total_element_count']}, "
+            f"lr={group['lr']}, decay={group['weight_decay']})"
+            for group in audit["groups"]
+        )
+        LOGGER.info(
+            f"{colorstr('optimizer audit:')} groups={audit['group_count']}, "
+            f"coverage={'complete' if audit['trainable_coverage_complete'] else 'incomplete'}, "
+            f"missing={audit['missing_trainable_count']}, duplicates={audit['duplicated_count']}, "
+            f"frozen={audit['frozen_in_optimizer_count']}, "
+            f"unknown={audit['unknown_optimizer_parameter_count']}; {group_summary}"
+        )
+        issue_samples = []
+        for issue_name in (
+            "missing_trainable",
+            "duplicated",
+            "frozen_in_optimizer",
+            "unknown_optimizer_parameters",
+        ):
+            if audit[issue_name]:
+                names = ", ".join(item["name"] for item in audit[issue_name][:5])
+                issue_samples.append(f"{issue_name}=[{names}]")
+        if issue_samples:
+            LOGGER.warning(f"{colorstr('optimizer audit:')} " + "; ".join(issue_samples))
+        return audit
+
     def _setup_ddp(self):
         """Initialize and set the DistributedDataParallel parameters for training."""
         index = int(self.args.device.split(",")[LOCAL_RANK])  # world_size > 1 guarantees a multi-device string
@@ -404,6 +432,7 @@ class BaseTrainer:
             iterations=iterations,
         )
         self.adapter_controller.configure_optimizer(self.optimizer)
+        self._audit_optimizer_groups()
         self.args.effective_optimizer = type(self.optimizer).__name__
         self.args.effective_optimizer_lrs = [float(group["lr"]) for group in self.optimizer.param_groups]
         self._save_run_args()
