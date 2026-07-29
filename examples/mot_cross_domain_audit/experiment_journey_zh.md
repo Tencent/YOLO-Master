@@ -79,8 +79,9 @@ CSV 有限，但耗时已经包含额外计算。
 
 **现象**：汇总行同时写 `best.pt` 身份和末轮 CSV 指标，最佳轮不是末轮时会产生歧义。
 
-**设计**：分开记录 `final_*`、`best_observed_*` 和 best epoch。此次四组最佳值恰好都在第
-30 轮，但代码不再依赖这个巧合。
+**设计**：分开记录 `final_*`、`best_observed_*` 和 best epoch，并固定以 mAP50-95 选择整行，
+不拼接不同 epoch 的单指标峰值。四组被选行都在第 30 轮；MoT-P5 的 mAP50 单指标峰值则在
+第 28 轮，故表中使用与第 30 轮 mAP50-95 配对的 0.17309。
 
 ## 5. 第一轮路由统计：从 token 修正到图像
 
@@ -272,4 +273,18 @@ benchmark 中间结果不落盘、观测统计触发 CUDA 同步等问题。最�
 失败版本和 GRPO 前置条件见
 [`utility_router_adaptive_k_zh.md`](utility_router_adaptive_k_zh.md)。
 
-当前扩展后的联合回归为 `152 passed, 4 warnings`，warning 均来自既有 MoA head 自动调整。
+## 15. 交付前跨版本复验
+
+**现象**：在项目声明支持的 Python 3.9 环境中，新增 utility 部署模块因
+`from typing import Self` 在测试收集阶段失败；Python 3.11 以上不会暴露该问题。
+
+**原因与修复**：实现误把开发环境版本当成项目最低版本。改用
+`typing_extensions.Self`，不改变运行逻辑；同时新增结果包一致性测试，自动从逐 epoch、
+逐轮 latency、检测指标与 utility report 复算公开汇总，并扫描本地路径和凭据。
+
+**复验**：2026-07-29 在 Python 3.9.25、PyTorch 2.8.0+cu128 上为
+`134 passed, 18 warnings`。14 条 warning 来自 Matplotlib/pyparsing 弃用提示，4 条来自既有
+MoA head 自动调整，无失败。结果一致性测试还纠正了一个文字歧义：四组按 mAP50-95 选中的行均
+在第 30 轮，但 MoT-P5 的 mAP50 单指标峰值在第 28 轮，不能表述为“所有单指标峰值都在第 30
+轮”。RTX 5090 CUDA smoke 进一步确认同一 checkpoint 与 utility bundle 可加载，目标层实际
+选择 `K=1`，退出部署上下文后恢复原固定-K 配置；该 smoke 不替代 128 图正式评测。

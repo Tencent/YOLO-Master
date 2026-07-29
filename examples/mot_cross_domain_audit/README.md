@@ -333,6 +333,7 @@ runs/mot_cross_domain/
 
 ```bash
 pytest \
+  tests/test_mot_audit_results.py \
   tests/test_mot_cross_domain_analysis.py \
   tests/test_mot.py \
   tests/test_mot_object_causal.py \
@@ -359,6 +360,7 @@ ruff check \
 - 确定性 benchmark 输入、梯度状态保持和多轮汇总；
 - JSD 与扰动稳定性；
 - MoT-P5 配置仅包含一个 MoTBlock。
+- 公开结果表与逐 epoch、逐轮 latency、mAP 和 utility guard 原始证据一致，且不含本地路径或凭据。
 
 ## 10. 文件索引
 
@@ -375,6 +377,7 @@ ruff check \
 | `scripts/benchmark_mot_adaptive_k.py` | mAP、三轮延迟与实际调度联合复验 |
 | `yolo-master-mot-p5-n.yaml` | 低预算 P5-only MoT 混合配置 |
 | `tests/test_mot_cross_domain_analysis.py` | 统计、TIFF、遮挡配对、配置与 benchmark 测试 |
+| `tests/test_mot_audit_results.py` | 公开汇总与原始 CSV/JSON 的一致性及脱敏检查 |
 | `discussion_template_zh.md` | 已回填真实结果的 GitHub Discussion 发布草稿 |
 | `pr_description_zh.md` | 上游 Pull Request 说明草稿 |
 | `experiment_journey_zh.md` | 问题、设计、失败、修复与再实验链路 |

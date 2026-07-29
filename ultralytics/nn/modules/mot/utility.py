@@ -5,9 +5,10 @@ from __future__ import annotations
 import copy
 from collections.abc import Mapping
 from types import TracebackType
-from typing import Any, Self
+from typing import Any
 
 import torch
+from typing_extensions import Self
 
 from ultralytics.nn.modules._numeric import stable_normalize
 from ultralytics.nn.modules.mot.router import _MoTRouter

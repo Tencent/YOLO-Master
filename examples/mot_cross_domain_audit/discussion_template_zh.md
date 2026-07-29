@@ -117,4 +117,6 @@ python scripts/run_mot_cross_domain_experiment.py \
 ```
 
 这是 30 epoch、单 seed、单类 GPU 的受控实验，不代表充分收敛 SOTA，也不外推到 TensorRT/ncnn。
-相关回归为 `152 passed, 4 warnings`。公开结果不含权重、原始数据、私人线粒体图像或本地路径。
+2026-07-29 在 Python 3.9.25、PyTorch 2.8.0+cu128 上复验为
+`134 passed, 18 warnings`：14 条为 Matplotlib/pyparsing 弃用提示，4 条为既有 MoA head
+自动调整，无失败。公开结果不含权重、原始数据、私人线粒体图像或本地路径。

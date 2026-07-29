@@ -81,6 +81,7 @@ LocalConv/Deformable 框内概率分别增加 0.00693/0.00259，Window 降低 0.
 ```bash
 pytest \
   tests/test_ddp_lifecycle_ema_nan.py \
+  tests/test_mot_audit_results.py \
   tests/test_mot_cross_domain_analysis.py \
   tests/test_mot_object_causal.py \
   tests/test_mot_detection_utility.py \
@@ -93,13 +94,24 @@ pytest \
 
 ruff check \
   scripts/analyze_mot_cross_domain.py \
+  scripts/analyze_mot_object_causal.py \
+  scripts/benchmark_mot_adaptive_k.py \
+  scripts/build_mot_detection_utility.py \
+  scripts/evaluate_mot_utility_router.py \
+  scripts/train_mot_utility_router.py \
   scripts/run_mot_cross_domain_experiment.py \
   scripts/compare_mot_ablation.py \
   scripts/prepare_mot_routing_scenes.py \
-  tests/test_mot_cross_domain_analysis.py
+  tests/test_mot_audit_results.py \
+  tests/test_mot_cross_domain_analysis.py \
+  ultralytics/nn/modules/mot/utility.py
 ```
 
-结果：`152 passed, 4 warnings`。4 个 warning 均来自既有 MoA head 数量自动调整。
+2026-07-29 在 Python 3.9.25、PyTorch 2.8.0+cu128 上复验：`134 passed, 18 warnings`。
+其中 14 个 warning 是热力图测试触发的 Matplotlib/pyparsing 弃用提示，4 个来自既有 MoA head
+数量自动调整；无失败。复验同时修复了 Python 3.8/3.9 不支持 `typing.Self` 的导入问题。
+RTX 5090 CUDA smoke 能加载同一 checkpoint 与 utility bundle，目标层选出 `K=1`，上下文退出后
+恢复原固定-K 配置。
 
 ## 范围与限制
 
