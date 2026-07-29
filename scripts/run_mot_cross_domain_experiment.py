@@ -146,6 +146,7 @@ def write_protocol(project: Path, args: argparse.Namespace, datasets: dict[str, 
         "seed": args.seed,
         "benchmark_device": args.benchmark_device,
         "benchmark_warmup": args.warmup,
+        "benchmark_warmup_seconds": args.warmup_seconds,
         "benchmark_repetitions": args.reps,
         "benchmark_input_seed": args.benchmark_seed,
         "audit_device": args.audit_device,
@@ -330,6 +331,8 @@ def run_benchmark(args: argparse.Namespace, project: Path) -> None:
         str(args.imgsz),
         "--warmup",
         str(args.warmup),
+        "--warmup-seconds",
+        str(args.warmup_seconds),
         "--reps",
         str(args.reps),
         "--benchmark-seed",
@@ -509,6 +512,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--benchmark-device", default="0")
     parser.add_argument("--warmup", type=int, default=50)
+    parser.add_argument("--warmup-seconds", type=float, default=2.0)
     parser.add_argument("--reps", type=int, default=200)
     parser.add_argument("--benchmark-seed", type=int, default=0)
     parser.add_argument("--audit-device", default="0")
@@ -529,8 +533,8 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.epochs <= 0 or args.imgsz <= 0 or args.batch <= 0 or args.workers < 0:
         raise SystemExit("--epochs, --imgsz and --batch must be positive; --workers must be non-negative")
-    if args.warmup < 0 or args.reps <= 0 or args.audit_batch <= 0:
-        raise SystemExit("--reps and --audit-batch must be positive; --warmup must be non-negative")
+    if args.warmup < 0 or args.warmup_seconds < 0 or args.reps <= 0 or args.audit_batch <= 0:
+        raise SystemExit("--reps and --audit-batch must be positive; warmup values must be non-negative")
     if args.bootstrap_samples <= 0 or args.permutations <= 0:
         raise SystemExit("--bootstrap-samples and --permutations must be positive")
     if args.smoke:

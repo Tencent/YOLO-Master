@@ -284,15 +284,19 @@ def benchmark_row(
     actual_flops: bool = False,
     weights: Path | None = None,
     input_seed: int = 0,
+    min_warmup_seconds: float = 0.0,
 ) -> dict[str, str]:
     model = load_checkpoint_model(weights, device) if weights else build_model(spec, device=device)
     device_name = normalize_torch_device(device)
     x = deterministic_benchmark_input(model, imgsz=imgsz, seed=input_seed)
 
     with torch.inference_mode():
-        for _ in range(warmup):
+        warmup_started = time.perf_counter()
+        warmup_iterations = 0
+        while warmup_iterations < warmup or time.perf_counter() - warmup_started < min_warmup_seconds:
             _ = model(x)
             sync_device(device)
+            warmup_iterations += 1
 
         times = []
         for _ in range(reps):
@@ -316,6 +320,8 @@ def benchmark_row(
             "flops_g": f"{flops:.6f}",
             "flops_method": flops_method,
             "reps": str(reps),
+            "warmup_iterations": str(warmup_iterations),
+            "warmup_seconds_minimum": f"{min_warmup_seconds:.3f}",
             "input_seed": str(input_seed),
             "input_distribution": "standard_normal",
             "weights": str(weights) if weights else "",
@@ -549,6 +555,7 @@ def parse_args() -> argparse.Namespace:
         "--actual-flops", action="store_true", help="Use torch profiler on the full input size for FLOPs."
     )
     parser.add_argument("--warmup", type=int, default=2)
+    parser.add_argument("--warmup-seconds", type=float, default=2.0)
     parser.add_argument("--reps", type=int, default=5)
     parser.add_argument("--benchmark-seed", type=int, default=0)
     parser.add_argument("--train", action="store_true")
@@ -581,8 +588,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    if args.imgsz <= 0 or args.warmup < 0 or args.reps <= 0:
-        raise SystemExit("--imgsz and --reps must be positive; --warmup must be non-negative")
+    if args.imgsz <= 0 or args.warmup < 0 or args.warmup_seconds < 0 or args.reps <= 0:
+        raise SystemExit("--imgsz and --reps must be positive; warmup values must be non-negative")
     specs = select_specs(args.models)
     project = args.project if args.project.is_absolute() else ROOT / args.project
     data_yaml = args.data if args.data.is_absolute() else ROOT / args.data
@@ -612,6 +619,7 @@ def main() -> int:
                 args.actual_flops,
                 weights=weight_paths.get(spec.key),
                 input_seed=args.benchmark_seed,
+                min_warmup_seconds=args.warmup_seconds,
             )
             for spec in specs
         ]

@@ -258,7 +258,15 @@ def test_benchmark_input_is_reproducible_and_grad_mode_does_not_leak(monkeypatch
     previous_grad_mode = torch.is_grad_enabled()
     try:
         torch.set_grad_enabled(True)
-        row = benchmark_row(SPECS["v10"], "cpu", imgsz=8, warmup=0, reps=1, input_seed=17)
+        row = benchmark_row(
+            SPECS["v10"],
+            "cpu",
+            imgsz=8,
+            warmup=0,
+            reps=1,
+            input_seed=17,
+            min_warmup_seconds=0.0,
+        )
         assert torch.is_grad_enabled()
     finally:
         torch.set_grad_enabled(previous_grad_mode)
