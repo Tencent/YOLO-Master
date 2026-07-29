@@ -331,6 +331,38 @@ def benchmark_row(
     return base
 
 
+def aggregate_benchmark_rounds(
+    round_rows: list[dict[str, str]],
+    specs: list[ModelSpec],
+) -> list[dict[str, str]]:
+    """Aggregate repeated benchmark rounds without hiding run-to-run dispersion."""
+    latency_keys = (
+        "latency_ms_mean",
+        "latency_ms_p50",
+        "latency_ms_p95",
+        "latency_ms_p99",
+        "latency_ms_min",
+        "latency_ms_max",
+    )
+    rows = []
+    for spec in specs:
+        candidates = [row for row in round_rows if row["key"] == spec.key]
+        if not candidates:
+            continue
+        aggregate = dict(candidates[0])
+        for key in latency_keys:
+            values = [float(row[key]) for row in candidates]
+            aggregate[key] = f"{percentile(values, 0.5):.3f}"
+            aggregate[f"{key}_run_min"] = f"{min(values):.3f}"
+            aggregate[f"{key}_run_max"] = f"{max(values):.3f}"
+        warmup_iterations = [float(row["warmup_iterations"]) for row in candidates]
+        aggregate["warmup_iterations"] = str(round(percentile(warmup_iterations, 0.5)))
+        aggregate["benchmark_round"] = "aggregate"
+        aggregate["benchmark_rounds"] = str(len(candidates))
+        rows.append(aggregate)
+    return rows
+
+
 def add_mixture_callbacks(model: YOLO, spec: ModelSpec, args: argparse.Namespace) -> None:
     if "moa" in spec.key:
 
@@ -558,6 +590,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--warmup-seconds", type=float, default=2.0)
     parser.add_argument("--reps", type=int, default=5)
     parser.add_argument("--benchmark-seed", type=int, default=0)
+    parser.add_argument("--benchmark-rounds", type=int, default=1)
     parser.add_argument("--train", action="store_true")
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--batch", type=int, default=8)
@@ -588,7 +621,13 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    if args.imgsz <= 0 or args.warmup < 0 or args.warmup_seconds < 0 or args.reps <= 0:
+    if (
+        args.imgsz <= 0
+        or args.warmup < 0
+        or args.warmup_seconds < 0
+        or args.reps <= 0
+        or args.benchmark_rounds <= 0
+    ):
         raise SystemExit("--imgsz and --reps must be positive; warmup values must be non-negative")
     specs = select_specs(args.models)
     project = args.project if args.project.is_absolute() else ROOT / args.project
@@ -609,23 +648,31 @@ def main() -> int:
                 if not path.exists():
                     raise SystemExit(f"trained checkpoint not found for {spec.key}: {path}")
                 weight_paths[spec.key] = path
-        rows = [
-            benchmark_row(
-                spec,
-                args.device,
-                args.imgsz,
-                args.warmup,
-                args.reps,
-                args.actual_flops,
-                weights=weight_paths.get(spec.key),
-                input_seed=args.benchmark_seed,
-                min_warmup_seconds=args.warmup_seconds,
-            )
-            for spec in specs
-        ]
+        round_rows = []
+        for round_index in range(args.benchmark_rounds):
+            offset = round_index % len(specs)
+            ordered_specs = specs[offset:] + specs[:offset]
+            for spec in ordered_specs:
+                row = benchmark_row(
+                    spec,
+                    args.device,
+                    args.imgsz,
+                    args.warmup,
+                    args.reps,
+                    args.actual_flops,
+                    weights=weight_paths.get(spec.key),
+                    input_seed=args.benchmark_seed,
+                    min_warmup_seconds=args.warmup_seconds,
+                )
+                row["benchmark_round"] = str(round_index + 1)
+                round_rows.append(row)
+        rows = aggregate_benchmark_rounds(round_rows, specs)
+        raw_out = project / f"latency_rounds_{args.device}_{args.imgsz}.csv"
+        write_csv(raw_out, round_rows)
         out = project / f"latency_{args.device}_{args.imgsz}.csv"
         write_csv(out, rows)
         print(json.dumps(rows, indent=2, ensure_ascii=False))
+        print(f"[benchmark] wrote {raw_out}")
         print(f"[benchmark] wrote {out}")
 
     if args.train:

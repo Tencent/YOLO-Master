@@ -148,6 +148,7 @@ def write_protocol(project: Path, args: argparse.Namespace, datasets: dict[str, 
         "benchmark_warmup": args.warmup,
         "benchmark_warmup_seconds": args.warmup_seconds,
         "benchmark_repetitions": args.reps,
+        "benchmark_rounds": args.benchmark_rounds,
         "benchmark_input_seed": args.benchmark_seed,
         "audit_device": args.audit_device,
         "audit_images_per_domain": args.audit_images,
@@ -337,6 +338,8 @@ def run_benchmark(args: argparse.Namespace, project: Path) -> None:
         str(args.reps),
         "--benchmark-seed",
         str(args.benchmark_seed),
+        "--benchmark-rounds",
+        str(args.benchmark_rounds),
     ]
     run_logged(command, project / "logs/benchmark.log")
     summary_command = [
@@ -515,6 +518,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--warmup-seconds", type=float, default=2.0)
     parser.add_argument("--reps", type=int, default=200)
     parser.add_argument("--benchmark-seed", type=int, default=0)
+    parser.add_argument("--benchmark-rounds", type=int, default=3)
     parser.add_argument("--audit-device", default="0")
     parser.add_argument("--audit-batch", type=int, default=4)
     parser.add_argument("--audit-images", type=int, default=128)
@@ -533,7 +537,13 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.epochs <= 0 or args.imgsz <= 0 or args.batch <= 0 or args.workers < 0:
         raise SystemExit("--epochs, --imgsz and --batch must be positive; --workers must be non-negative")
-    if args.warmup < 0 or args.warmup_seconds < 0 or args.reps <= 0 or args.audit_batch <= 0:
+    if (
+        args.warmup < 0
+        or args.warmup_seconds < 0
+        or args.reps <= 0
+        or args.benchmark_rounds <= 0
+        or args.audit_batch <= 0
+    ):
         raise SystemExit("--reps and --audit-batch must be positive; warmup values must be non-negative")
     if args.bootstrap_samples <= 0 or args.permutations <= 0:
         raise SystemExit("--bootstrap-samples and --permutations must be positive")
@@ -545,6 +555,7 @@ def parse_args() -> argparse.Namespace:
         args.workers = min(args.workers, 2)
         args.warmup = min(args.warmup, 2)
         args.reps = min(args.reps, 5)
+        args.benchmark_rounds = 1
         args.audit_images = min(args.audit_images, 8)
         args.bootstrap_samples = min(args.bootstrap_samples, 200)
         args.permutations = min(args.permutations, 200)

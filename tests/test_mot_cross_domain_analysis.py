@@ -27,6 +27,7 @@ from scripts.analyze_mot_cross_domain import (
 )
 from scripts.compare_mot_ablation import (
     SPECS,
+    aggregate_benchmark_rounds,
     benchmark_row,
     build_model,
     deterministic_benchmark_input,
@@ -272,6 +273,36 @@ def test_benchmark_input_is_reproducible_and_grad_mode_does_not_leak(monkeypatch
         torch.set_grad_enabled(previous_grad_mode)
     assert row["input_seed"] == "17"
     assert row["input_distribution"] == "standard_normal"
+
+
+def test_benchmark_rounds_report_median_and_dispersion():
+    rows = []
+    for round_index, p50 in enumerate((12.0, 10.0, 11.0), start=1):
+        rows.append(
+            {
+                "key": "v10",
+                "benchmark_round": str(round_index),
+                "warmup_iterations": str(50 + round_index),
+                **{
+                    key: str(value)
+                    for key, value in {
+                        "latency_ms_mean": p50 + 0.1,
+                        "latency_ms_p50": p50,
+                        "latency_ms_p95": p50 + 1.0,
+                        "latency_ms_p99": p50 + 2.0,
+                        "latency_ms_min": p50 - 1.0,
+                        "latency_ms_max": p50 + 3.0,
+                    }.items()
+                },
+            }
+        )
+
+    aggregate = aggregate_benchmark_rounds(rows, [SPECS["v10"]])[0]
+
+    assert aggregate["latency_ms_p50"] == "11.000"
+    assert aggregate["latency_ms_p50_run_min"] == "10.000"
+    assert aggregate["latency_ms_p50_run_max"] == "12.000"
+    assert aggregate["benchmark_rounds"] == "3"
 
 
 def test_mot_sparse_eval_handles_autocast_dtype_transition():
