@@ -2,6 +2,9 @@
 
 关联 Issue #54。
 
+技术总结 Discussion：
+<https://github.com/Tencent/YOLO-Master/discussions/191>
+
 ## 改动摘要
 
 - 新增 MoT-P5 YAML：保留 EsMoE backbone，仅在低分辨率 P5 neck 放置一个 MoTBlock；
