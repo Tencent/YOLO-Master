@@ -97,14 +97,54 @@ Common optional arguments:
 
 W&B report：[Issue_49 VisDrone_and_GlobalWheat2020](https://api.wandb.ai/links/zheliang-/ljtd5vog)
 
-| Dataset | Model | Key Hparams                         | 	mAP50 | mAP50-95 | Runtime |
-| --- | --- |-------------------------------------| --- | --- |---------|
-| `VisDrone` | `YOLO-Master-v0.1-N` | `Default`                           | `0.30571` | `0.17569` | `8h 46m 33s` |
+| Dataset | Model | Key Hparams | mAP50 | mAP50-95 | Runtime |
+| --- | --- | --- | --- | --- | --- |
+| `VisDrone` | `YOLO-Master-v0.1-N` | `Default` | `0.30571` | `0.17569` | `8h 46m 33s` |
 | `VisDrone` | `YOLO-Master-EsMoE-N` | `Default` | `0.09246` | `0.03875` | `7h 54m 0s` |
-| `VisDrone` | `YOLO-Master-EsMoE-N` | `dense eval`  | `0.32282` | `0.18649` | `7h 49m 9s` |
-| `GlobalWheat2020` | `YOLO-Master-v0.1-N` | `Default`              | `0.96843` | `0.63372` | `2h 49m 49s` |
+| `VisDrone` | `YOLO-Master-EsMoE-N` | `dense eval` | `0.32282` | `0.18649` | `7h 49m 9s` |
+| `GlobalWheat2020` | `YOLO-Master-v0.1-N` | `Default` | `0.96843` | `0.63372` | `2h 49m 49s` |
 | `GlobalWheat2020` | `YOLO-Master-EsMoE-N` | `Default` | `0.82249` | `0.44471` | `2h 15m 2s` |
-| `GlobalWheat2020` | `YOLO-Master-EsMoE-N` | `dense eval`  | `0.96473` | `0.62405` | `2h 15m 56s` |
+| `GlobalWheat2020` | `YOLO-Master-EsMoE-N` | `dense eval` | `0.96473` | `0.62405` | `2h 15m 56s` |
+
+## Reproduction Results (This PR)
+
+**Hardware:** NVIDIA GeForce RTX 4080 Laptop GPU (12GB), Windows 11, Python 3.12, PyTorch 2.5.1+cu124
+
+**Training Configuration:** `imgsz=640`, `batch=12~13`, `epochs=100`, `workers=2`
+
+**Commands:**
+```bash
+# VisDrone + v0.1-N
+python scripts/issue49/yolo_master_issue_49.py --dataset VisDrone --model YOLO-Master-v0.1-N --batch 12 --epochs 100 --workers 2
+
+# VisDrone + EsMoE-N (dense eval — REQUIRED)
+python scripts/issue49/yolo_master_issue_49.py --dataset VisDrone --model YOLO-Master-EsMoE-N --batch 12 --epochs 100 --workers 2 --dense-eval-for-esmoe
+
+# SKU-110K + v0.1-N
+python scripts/issue49/yolo_master_issue_49.py --dataset SKU-110K --model YOLO-Master-v0.1-N --batch 13 --epochs 100 --workers 2
+
+# SKU-110K + EsMoE-N (dense eval — REQUIRED)
+python scripts/issue49/yolo_master_issue_49.py --dataset SKU-110K --model YOLO-Master-EsMoE-N --batch 13 --epochs 100 --workers 2 --dense-eval-for-esmoe
+```
+
+**Results:**
+
+| Dataset | Model | mAP50 | mAP50-95 | box_loss | cls_loss | moe_loss* | Runtime |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `VisDrone` | `YOLO-Master-v0.1-N` | `0.3044` | `0.1712` | `1.388` | `0.936` | `1.000` | ~4.9h |
+| `VisDrone` | `YOLO-Master-EsMoE-N` | `0.3098` | `0.1744` | `1.397` | `0.952` | `1.000` | ~4.6h |
+| `SKU-110K` | `YOLO-Master-v0.1-N` | `0.8827` | `0.5415` | `1.301` | `0.553` | `1.000` | ~4.1h |
+| `SKU-110K` | `YOLO-Master-EsMoE-N` | TBD | TBD | TBD | TBD | TBD | ~4h |
+
+*\*moe_loss recorded as `mixture_aux_loss` in CSV/W&B — this is the MoE auxiliary loss.*
+
+**W&B Project:** https://wandb.ai/acjojo2-communication-university-of-china-nanjing/yolo_master_issue49
+
+### Key Observations
+
+1. **Dense eval is critical for EsMoE-N on dense scenes.** Without `--dense-eval-for-esmoe`, VisDrone mAP50 drops from ~0.31 to ~0.09 due to sparse inference approximating away location-specific expert specialization.
+
+2. **Batch size is GPU-memory sensitive.** RTX 4080 Laptop (12GB) OOMs at `batch=16`. `batch=12~13` is the safe upper bound (~8.5-9G VRAM).
 
 ## Known Issues
 
