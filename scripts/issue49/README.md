@@ -134,7 +134,7 @@ python scripts/issue49/yolo_master_issue_49.py --dataset SKU-110K --model YOLO-M
 | `VisDrone` | `YOLO-Master-v0.1-N` | `0.3044` | `0.1712` | `1.388` | `0.936` | `1.000` | ~4.9h |
 | `VisDrone` | `YOLO-Master-EsMoE-N` | `0.3098` | `0.1744` | `1.397` | `0.952` | `1.000` | ~4.6h |
 | `SKU-110K` | `YOLO-Master-v0.1-N` | `0.8827` | `0.5415` | `1.301` | `0.553` | `1.000` | ~4.1h |
-| `SKU-110K` | `YOLO-Master-EsMoE-N` | TBD | TBD | TBD | TBD | TBD | ~4h |
+| `SKU-110K` | `YOLO-Master-EsMoE-N` | `0.8835` | `0.5442` | `1.305` | `0.550` | `1.000` | ~4.7h |
 
 *\*moe_loss recorded as `mixture_aux_loss` in CSV/W&B — this is the MoE auxiliary loss.*
 
