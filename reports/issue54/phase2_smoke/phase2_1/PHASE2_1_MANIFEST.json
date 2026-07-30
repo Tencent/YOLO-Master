@@ -1,0 +1,49 @@
+{
+  "checkpoint": {
+    "path": "${REMOTE_PHASE2_1_RESULTS}/training/A_mot_amp_fixed/weights/best.pt",
+    "sha256": "9f40d2d56e0b6019deef25a7f12b0629dfd2e4c801c849075b0f16ca51d13d5f",
+    "size_bytes": 8710926
+  },
+  "code_commit": "85d4f910c9c1a9ea8b7035635462c0984c404f13",
+  "comparison": {
+    "aligned_image_layer_rows": 192,
+    "entropy_difference_amp_minus_fp32": 3.302537676663775e-07,
+    "mean_jsd": 4.845192365902818e-08,
+    "same_seed_independent_runs": false,
+    "top1_agreement": 0.625
+  },
+  "dataset_inventory_sha256": "4a7a03b08cf21d913ab85a86b40a75eee13579881fba9bc0d979b72b7f0a96fa",
+  "evidence_label": "diagnostic_not_formal_evidence",
+  "routing": {
+    "deterministic_repeats": true,
+    "expert_names": [
+      "DeformableTransformer",
+      "LocalConvTransformer",
+      "WindowTransformer"
+    ],
+    "hooks_cleaned": true,
+    "images": 32,
+    "layers": 6,
+    "probabilities_valid": true,
+    "records": 384
+  },
+  "run": {
+    "actual_batch": 8,
+    "duration_seconds": 115.94367768242955,
+    "epochs": 3,
+    "failure_reason": null,
+    "fraction": 0.05,
+    "imgsz": 640,
+    "loss": 13.54409,
+    "map50": 0.0,
+    "map50_95": 0.0,
+    "nan_or_inf": false,
+    "peak_gpu_memory_bytes": 8448366592,
+    "precision_mode": "amp",
+    "requested_batch": 8,
+    "seconds_per_epoch": 27.0304,
+    "seed": 0,
+    "status": "passed_diagnostic",
+    "training_time_seconds": 81.0912
+  }
+}

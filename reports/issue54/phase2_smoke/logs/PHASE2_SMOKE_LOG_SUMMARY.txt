@@ -1,0 +1,17 @@
+evidence_label=diagnostic_not_formal_evidence
+final_output=${REMOTE_PHASE2_RESULTS}
+controller_exit_code=1 (expected because one required run failed)
+A_mot_amp=failed: expected scalar type Float but found Half during validation
+B_mot_fp32=passed_diagnostic
+C_esmoe_amp=passed_diagnostic
+D_moa_amp=passed_diagnostic
+oom=false
+batch_reduction=false
+nan_or_inf=false
+stalled=false
+old_train_cache_absent=true
+routing_fp32=passed: 32 images, 6 layers, 2 deterministic repeats, hooks cleaned
+routing_amp=not available because AMP run failed
+push=false
+pr=false
+formal_training=false
