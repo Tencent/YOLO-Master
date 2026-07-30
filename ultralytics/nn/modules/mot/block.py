@@ -292,7 +292,7 @@ class MoTBlock(nn.Module):
             blending during export.  For TorchScript, use ``torch.jit.script``
             (not ``trace``) or set ``sparse_train=False`` and eval before export.
         """
-        out = x.new_zeros(x.shape)
+        out: Optional[torch.Tensor] = None
         # Export tracing always uses dense blending because nonzero/any control flow is input-dependent.
         exporting = torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()
         sparse_train_ready = False if exporting else self._sparse_training_ready()
@@ -324,6 +324,9 @@ class MoTBlock(nn.Module):
                         f"→ output {tuple(expert_out.shape)}. All experts must preserve "
                         f"the input tensor shape."
                     )
+                if out is None:
+                    out = expert_out.new_zeros(x.shape)
+                w = w.to(device=expert_out.device, dtype=expert_out.dtype)
                 out[batch_idx] = out[batch_idx] + expert_out * w
             selected_experts = int((indices if indices is not None else weights).unique().numel())
             self._last_dispatch_stats = {
@@ -352,6 +355,9 @@ class MoTBlock(nn.Module):
                         f"→ output {tuple(expert_out.shape)}. All experts must preserve "
                         f"the input tensor shape."
                     )
+                if out is None:
+                    out = expert_out.new_zeros(x.shape)
+                w = w.to(device=expert_out.device, dtype=expert_out.dtype)
                 out = out + expert_out * w
             self._last_dispatch_stats = {
                 "mode": "dense",
@@ -371,7 +377,7 @@ class MoTBlock(nn.Module):
             }
         if self.training and self.sparse_train and not exporting:
             self._sparse_train_step.add_(1)
-        return out
+        return x.new_zeros(x.shape) if out is None else out
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
