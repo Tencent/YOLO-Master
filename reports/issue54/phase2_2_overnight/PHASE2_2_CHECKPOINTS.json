@@ -1,0 +1,120 @@
+{
+  "evidence_label": "diagnostic_not_formal_evidence",
+  "remote_result_root": "/root/autodl-tmp/MoT/results/phase2_2_overnight_20260730T025854Z",
+  "validation": {
+    "sha256_recomputed_at_acceptance": true,
+    "all_files_loadable_with_yolo": true,
+    "accepted_checkpoint_kind": "best",
+    "accepted_runs_are_not_classified_as_passed_pilot": true
+  },
+  "checkpoints": [
+    {
+      "run": "calibration_mot_amp",
+      "file": "training/calibration_mot_amp/weights/best.pt",
+      "size_bytes": 8711054,
+      "sha256": "70ff9e97539a772cb009539f16159d7eb9a623d1a8df28c8f5ee68af2ab19b8b",
+      "checkpoint_epoch": -1,
+      "loadable": true,
+      "accepted": true
+    },
+    {
+      "run": "calibration_mot_amp",
+      "file": "training/calibration_mot_amp/weights/epoch0.pt",
+      "size_bytes": 31041517,
+      "sha256": "a87ff2a000c87c827b1c687e6e92d0bd2d62d6e9503ae2fb73dd5d117d4eafa2",
+      "checkpoint_epoch": 0,
+      "loadable": true,
+      "accepted": false
+    },
+    {
+      "run": "calibration_mot_amp",
+      "file": "training/calibration_mot_amp/weights/epoch1.pt",
+      "size_bytes": 32847964,
+      "sha256": "158b59e7c7360c966389f14f8de9d0557db8bc41e80ecbf36781dc4a116ec8d0",
+      "checkpoint_epoch": 1,
+      "loadable": true,
+      "accepted": false
+    },
+    {
+      "run": "calibration_mot_amp",
+      "file": "training/calibration_mot_amp/weights/epoch2.pt",
+      "size_bytes": 33650936,
+      "sha256": "322c0e7b2edd94f1fd84cfefbda5dd39f2a060df8600207e20a6df6df8925a63",
+      "checkpoint_epoch": 2,
+      "loadable": true,
+      "accepted": false
+    },
+    {
+      "run": "calibration_mot_amp",
+      "file": "training/calibration_mot_amp/weights/last.pt",
+      "size_bytes": 8711054,
+      "sha256": "e6c4e20c85eb9313a821e4aea7a1f4bbc5ef3e4fece39ddf38369a8de850acef",
+      "checkpoint_epoch": -1,
+      "loadable": true,
+      "accepted": false
+    },
+    {
+      "run": "calibration_mot_amp",
+      "file": "training/calibration_mot_amp/weights/last_healthy.pt",
+      "size_bytes": 42383468,
+      "sha256": "263a1b0482d97fb22d658e53d7fc80f0978b14222bbe11c4d9972564d8622e66",
+      "checkpoint_epoch": 2,
+      "loadable": true,
+      "accepted": false
+    },
+    {
+      "run": "calibration_mot_fp32",
+      "file": "training/calibration_mot_fp32/weights/best.pt",
+      "size_bytes": 8710478,
+      "sha256": "d2d81d184519ca0dc14a78b93e1c2ca310a6aeb7557cbe505639842903d99361",
+      "checkpoint_epoch": -1,
+      "loadable": true,
+      "accepted": true
+    },
+    {
+      "run": "calibration_mot_fp32",
+      "file": "training/calibration_mot_fp32/weights/epoch0.pt",
+      "size_bytes": 33649976,
+      "sha256": "060fe3ba267eb5643685b313180b4d0476cddef287a7991b7d9587a1149c8a21",
+      "checkpoint_epoch": 0,
+      "loadable": true,
+      "accepted": false
+    },
+    {
+      "run": "calibration_mot_fp32",
+      "file": "training/calibration_mot_fp32/weights/epoch1.pt",
+      "size_bytes": 33650104,
+      "sha256": "d0a4cfe7ebc825f44956c7c9905b032ea4eee71960e55d5ec7a9962c2823df01",
+      "checkpoint_epoch": 1,
+      "loadable": true,
+      "accepted": false
+    },
+    {
+      "run": "calibration_mot_fp32",
+      "file": "training/calibration_mot_fp32/weights/epoch2.pt",
+      "size_bytes": 33650296,
+      "sha256": "d3d8da9618af365d20d585930a4e208429025d69907948f071153746c6a7ae05",
+      "checkpoint_epoch": 2,
+      "loadable": true,
+      "accepted": false
+    },
+    {
+      "run": "calibration_mot_fp32",
+      "file": "training/calibration_mot_fp32/weights/last.pt",
+      "size_bytes": 8710478,
+      "sha256": "66928641c16c4ecd1a01d6f533e5d5b83a56d3e63206e9de744cedd1b276ab3f",
+      "checkpoint_epoch": -1,
+      "loadable": true,
+      "accepted": false
+    },
+    {
+      "run": "calibration_mot_fp32",
+      "file": "training/calibration_mot_fp32/weights/last_healthy.pt",
+      "size_bytes": 42383084,
+      "sha256": "60623dd1b742844e3b02b138616857cbb11129218a99b42d7c7512cbcb27386b",
+      "checkpoint_epoch": 2,
+      "loadable": true,
+      "accepted": false
+    }
+  ]
+}

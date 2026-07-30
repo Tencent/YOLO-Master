@@ -1,0 +1,15 @@
+evidence_label=diagnostic_not_formal_evidence
+controller_status=complete
+controller_wall_seconds=1634.30
+gpu_process_and_routing_seconds=1630.24
+precision_selected=fp32
+mot_calibrations_retrained=false
+mot_amp_route_records=384
+mot_fp32_route_records=384
+routing_deterministic=true
+routing_hooks_cleaned=true
+routing_probabilities_valid=true
+esmoe_amp_status=passed_pilot
+moa_amp_status=passed_pilot
+formal_long_runs_started=0
+gpu_idle_after_completion=true

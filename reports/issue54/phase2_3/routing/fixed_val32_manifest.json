@@ -1,0 +1,198 @@
+{
+  "evidence_label": "diagnostic_not_formal_evidence",
+  "images": [
+    {
+      "image_id": "visdrone-val-000-fc80a9305b38",
+      "image_path": "images/val/0000001_02999_d_0000005.jpg",
+      "image_sha256": "fc80a9305b38af026091cbe0a1d4cfe059964852253b93f01fee17b7443e5514",
+      "scene_groups": {}
+    },
+    {
+      "image_id": "visdrone-val-001-e8585cff10c9",
+      "image_path": "images/val/0000001_03499_d_0000006.jpg",
+      "image_sha256": "e8585cff10c927e5d08c23d46c50c798889d6f8979aa71a56a5b9bb4af628672",
+      "scene_groups": {}
+    },
+    {
+      "image_id": "visdrone-val-002-d308e68fe81e",
+      "image_path": "images/val/0000001_03999_d_0000007.jpg",
+      "image_sha256": "d308e68fe81e3f88502ac8d71b8297a8c80ca1d0d744d6cac25727fd567d2b3f",
+      "scene_groups": {}
+    },
+    {
+      "image_id": "visdrone-val-003-74673492dafd",
+      "image_path": "images/val/0000001_04527_d_0000008.jpg",
+      "image_sha256": "74673492dafdaa226a76a63240b127c8c04ede388d250f51f51c9eed1bf01907",
+      "scene_groups": {}
+    },
+    {
+      "image_id": "visdrone-val-004-928dbbfea2fe",
+      "image_path": "images/val/0000001_05249_d_0000009.jpg",
+      "image_sha256": "928dbbfea2fed8a461d5b81059da509169861e52bed4fb71876ed772848b0004",
+      "scene_groups": {}
+    },
+    {
+      "image_id": "visdrone-val-005-5a0883d0e877",
+      "image_path": "images/val/0000001_05499_d_0000010.jpg",
+      "image_sha256": "5a0883d0e8773b0717c4e89e5719aeace55f1d8f14884984bab837a623a51732",
+      "scene_groups": {}
+    },
+    {
+      "image_id": "visdrone-val-006-26cad57325bf",
+      "image_path": "images/val/0000001_05999_d_0000011.jpg",
+      "image_sha256": "26cad57325bfedce8cf0ab69fa05992e2089d60e34f768d524c9cd2f4948ffd2",
+      "scene_groups": {}
+    },
+    {
+      "image_id": "visdrone-val-007-31cb7d532a8a",
+      "image_path": "images/val/0000001_07999_d_0000012.jpg",
+      "image_sha256": "31cb7d532a8a3519d1f715504690b835cba16571ce3cf0b6d7c4ee8eeefcddba",
+      "scene_groups": {}
+    },
+    {
+      "image_id": "visdrone-val-008-4b45f869b490",
+      "image_path": "images/val/0000001_08414_d_0000013.jpg",
+      "image_sha256": "4b45f869b490c04ea79f5c09f9dde05fdaf59afbc337ae1210c463b00a120b9a",
+      "scene_groups": {}
+    },
+    {
+      "image_id": "visdrone-val-009-75fdfa479023",
+      "image_path": "images/val/0000021_00000_d_0000001.jpg",
+      "image_sha256": "75fdfa4790236cee64f2e0cba7be9d1693648a07346de5e8858fc3c8c8d0b82a",
+      "scene_groups": {}
+    },
+    {
+      "image_id": "visdrone-val-010-9425b639d79c",
+      "image_path": "images/val/0000021_00500_d_0000002.jpg",
+      "image_sha256": "9425b639d79cbbb99e686178b5035bf2fd252436baa776cfe2440a38e4f0c94c",
+      "scene_groups": {}
+    },
+    {
+      "image_id": "visdrone-val-011-088d30785f0f",
+      "image_path": "images/val/0000021_00800_d_0000003.jpg",
+      "image_sha256": "088d30785f0f8defbbf4b0de8c20c1a200a74758532435cd2936e63be6711154",
+      "scene_groups": {}
+    },
+    {
+      "image_id": "visdrone-val-012-0bea9d13456e",
+      "image_path": "images/val/0000022_00000_d_0000004.jpg",
+      "image_sha256": "0bea9d13456e6aa7a92ad1af21a89960eb66916855ed8a2c3d0371b1d7d37bd0",
+      "scene_groups": {}
+    },
+    {
+      "image_id": "visdrone-val-013-d0edc550a710",
+      "image_path": "images/val/0000022_00500_d_0000005.jpg",
+      "image_sha256": "d0edc550a71096c2c459c7d060bf45e72af51deb1dfb88ad45d25ebedb700ade",
+      "scene_groups": {}
+    },
+    {
+      "image_id": "visdrone-val-014-b444df958364",
+      "image_path": "images/val/0000022_01036_d_0000006.jpg",
+      "image_sha256": "b444df95836457c96613401bd1367095daf3c63f0fc891ba8b4a9d2211aa0ba4",
+      "scene_groups": {}
+    },
+    {
+      "image_id": "visdrone-val-015-a5666fe77fa8",
+      "image_path": "images/val/0000022_01251_d_0000007.jpg",
+      "image_sha256": "a5666fe77fa867840bcee14035519cabfce020ecb71a73df6f355740f6577c41",
+      "scene_groups": {}
+    },
+    {
+      "image_id": "visdrone-val-016-0bea9d13456e",
+      "image_path": "images/val/0000023_00000_d_0000008.jpg",
+      "image_sha256": "0bea9d13456e6aa7a92ad1af21a89960eb66916855ed8a2c3d0371b1d7d37bd0",
+      "scene_groups": {}
+    },
+    {
+      "image_id": "visdrone-val-017-6923df068512",
+      "image_path": "images/val/0000023_00300_d_0000009.jpg",
+      "image_sha256": "6923df0685125ca0b0e0cb8b62f6bd2deae981abca0cedf775de054b2c4c58d0",
+      "scene_groups": {}
+    },
+    {
+      "image_id": "visdrone-val-018-f16fb88896d0",
+      "image_path": "images/val/0000023_00868_d_0000010.jpg",
+      "image_sha256": "f16fb88896d0b56355a486b9447bc09668e7f79af520b56f36cfafe1b0e6c115",
+      "scene_groups": {}
+    },
+    {
+      "image_id": "visdrone-val-019-0745a2292c92",
+      "image_path": "images/val/0000023_01233_d_0000011.jpg",
+      "image_sha256": "0745a2292c92123fbce7d8e314cc11e1dd3ea3e6cbb9aeb216de479a71c7a7cd",
+      "scene_groups": {}
+    },
+    {
+      "image_id": "visdrone-val-020-943bc6364329",
+      "image_path": "images/val/0000024_00000_d_0000012.jpg",
+      "image_sha256": "943bc63643293d864d0181611abc4cf7468a67cfe9cf01ab0723046d278202bd",
+      "scene_groups": {}
+    },
+    {
+      "image_id": "visdrone-val-021-8ea3964ff560",
+      "image_path": "images/val/0000024_00500_d_0000013.jpg",
+      "image_sha256": "8ea3964ff560446af331cb11ba50c1391f3929b3cec9b33f16053f9be2e1b0e0",
+      "scene_groups": {}
+    },
+    {
+      "image_id": "visdrone-val-022-0633cf1f0ab2",
+      "image_path": "images/val/0000024_01000_d_0000014.jpg",
+      "image_sha256": "0633cf1f0ab2c2d8fcde55d014465d875433cac69edbb643e8b9485f60ba1269",
+      "scene_groups": {}
+    },
+    {
+      "image_id": "visdrone-val-023-060a42ec3ff7",
+      "image_path": "images/val/0000024_01543_d_0000015.jpg",
+      "image_sha256": "060a42ec3ff7f4f601f91dadcc2acb2dadea6a1ab05ad79525c8784dc586e3ff",
+      "scene_groups": {}
+    },
+    {
+      "image_id": "visdrone-val-024-be751662933a",
+      "image_path": "images/val/0000026_00000_d_0000024.jpg",
+      "image_sha256": "be751662933a2f2d4d30adc4e47334cc66b14c93450e067ccf8a97d8da8729f6",
+      "scene_groups": {}
+    },
+    {
+      "image_id": "visdrone-val-025-993376b691f2",
+      "image_path": "images/val/0000026_00500_d_0000025.jpg",
+      "image_sha256": "993376b691f28c6f424bd6545df84e2d87c69ebe7075cd2d55faace64b474f5d",
+      "scene_groups": {}
+    },
+    {
+      "image_id": "visdrone-val-026-69b1ce6d57e0",
+      "image_path": "images/val/0000026_01000_d_0000026.jpg",
+      "image_sha256": "69b1ce6d57e0e1b9d587bf4312a3234f2eeab1212d13d5b4835e09f2b3f61add",
+      "scene_groups": {}
+    },
+    {
+      "image_id": "visdrone-val-027-a2f3bcfd7293",
+      "image_path": "images/val/0000026_01500_d_0000027.jpg",
+      "image_sha256": "a2f3bcfd7293caae0210b5823b15aea03ef0820c182c59e5ddc7f9f1cc7d86a7",
+      "scene_groups": {}
+    },
+    {
+      "image_id": "visdrone-val-028-3dcf3b446661",
+      "image_path": "images/val/0000026_02000_d_0000028.jpg",
+      "image_sha256": "3dcf3b446661f47473cbfaefa4837be5ce19d71aa8f0a19c9eaaa16602fd77dc",
+      "scene_groups": {}
+    },
+    {
+      "image_id": "visdrone-val-029-e05a504c45eb",
+      "image_path": "images/val/0000026_02500_d_0000029.jpg",
+      "image_sha256": "e05a504c45eb933ea1dce333cdec75f44572754f3c61e2b2502bf84db2cc1d3a",
+      "scene_groups": {}
+    },
+    {
+      "image_id": "visdrone-val-030-b36f63c82d1f",
+      "image_path": "images/val/0000026_03000_d_0000030.jpg",
+      "image_sha256": "b36f63c82d1f3c7b7b586e18f925ec823b29ca524f2338ce1085d662d9c0c312",
+      "scene_groups": {}
+    },
+    {
+      "image_id": "visdrone-val-031-e034523aa5f2",
+      "image_path": "images/val/0000026_03500_d_0000031.jpg",
+      "image_sha256": "e034523aa5f2933503fd40e426bd3f60aaca0cd036cfa43eace271ecd2b418de",
+      "scene_groups": {}
+    }
+  ],
+  "manifest_sha256": "76503282eb1a130a10157f334c29fe1029358bc0437312936af1d40e71612b03"
+}

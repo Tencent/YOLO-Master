@@ -1,0 +1,25 @@
+{
+  "data_root": "/root/autodl-tmp/datasets/VisDrone",
+  "dataset": "VisDrone2019-DET",
+  "evidence_label": "diagnostic_not_formal_evidence",
+  "execution_view": "/root/autodl-tmp/MoT/results/phase2_2_overnight_20260730T025854Z/dataset_view",
+  "execution_view_policy": "images symlinked read-only; labels copied so Ultralytics cache stays under MoT",
+  "inventory_sha256": "4a7a03b08cf21d913ab85a86b40a75eee13579881fba9bc0d979b72b7f0a96fa",
+  "read_only_reuse": true,
+  "splits": {
+    "test": {
+      "images": 1610,
+      "labels": 1610
+    },
+    "train": {
+      "images": 6471,
+      "labels": 6471
+    },
+    "val": {
+      "images": 548,
+      "labels": 548
+    }
+  },
+  "yaml_path": "/root/autodl-tmp/MoT/results/phase2_2_overnight_20260730T025854Z/configs/visdrone_diagnostic.yaml",
+  "yaml_sha256": "46df499d207d50bf67593186039eadef513df8122b72b5328780a093c9d23f46"
+}

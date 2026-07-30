@@ -1,0 +1,237 @@
+{
+  "admission_decisions": [
+    {
+      "admitted": true,
+      "available_seconds": 20997.36469592899,
+      "experiment_id": "calibration_mot_amp",
+      "kind": "initial",
+      "predicted_seconds_with_buffers": 3600.0,
+      "timestamp": "2026-07-30T03:17:39.044275Z"
+    },
+    {
+      "admitted": true,
+      "available_seconds": 19737.120448756963,
+      "experiment_id": "calibration_mot_fp32",
+      "kind": "initial",
+      "predicted_seconds_with_buffers": 3600.0,
+      "timestamp": "2026-07-30T03:38:39.288521Z"
+    }
+  ],
+  "budget": {
+    "admission_buffer": 1.2,
+    "expected_end_at": "2026-07-30T09:37:36.408980Z",
+    "no_new_training_after_seconds": 21000,
+    "started_at": "2026-07-30T03:17:36.408968Z",
+    "total_seconds": 22800,
+    "uncalibrated_model_buffer": 1.3
+  },
+  "controller_failure": "RuntimeError: FP32 calibration/routing was not stable; protocol calibration is incomplete",
+  "dataset": {
+    "data_root": "/root/autodl-tmp/datasets/VisDrone",
+    "dataset": "VisDrone2019-DET",
+    "evidence_label": "diagnostic_not_formal_evidence",
+    "execution_view": "/root/autodl-tmp/MoT/results/phase2_2_overnight_20260730T025854Z/dataset_view",
+    "execution_view_policy": "images symlinked read-only; labels copied so Ultralytics cache stays under MoT",
+    "inventory_sha256": "4a7a03b08cf21d913ab85a86b40a75eee13579881fba9bc0d979b72b7f0a96fa",
+    "manifest_path": "/root/autodl-tmp/MoT/results/phase2_2_overnight_20260730T025854Z/configs/visdrone_manifest.json",
+    "manifest_sha256": "974ac49d01ba606120f4f737373d82ebee3f3360ba7ceff6bf5677caeeae40de",
+    "read_only_reuse": true,
+    "source_manifest_path": "/root/autodl-tmp/MoT/results/phase2_smoke_20260730T015316Z/configs/visdrone_manifest.json",
+    "source_manifest_sha256": "1781db149db322a2e18704fda13dea01df84c28893b975074db9762346fc36a3",
+    "splits": {
+      "test": {
+        "images": 1610,
+        "labels": 1610
+      },
+      "train": {
+        "images": 6471,
+        "labels": 6471
+      },
+      "val": {
+        "images": 548,
+        "labels": 548
+      }
+    },
+    "yaml_path": "/root/autodl-tmp/MoT/results/phase2_2_overnight_20260730T025854Z/configs/visdrone_diagnostic.yaml",
+    "yaml_sha256": "46df499d207d50bf67593186039eadef513df8122b72b5328780a093c9d23f46"
+  },
+  "environment": {
+    "cuda_available": true,
+    "free_disk_bytes_at_start": 46012026880,
+    "gpu": {
+      "driver": "580.76.05",
+      "memory_total_mib": 24564,
+      "name": "NVIDIA GeForce RTX 4090"
+    },
+    "hostname": "autodl-container-29e34aa8c9-7f86c093",
+    "python": "/root/miniconda3/bin/python",
+    "python_version": "3.12.5",
+    "torch": "2.5.1+cu124",
+    "torch_cuda": "12.4"
+  },
+  "evidence_label": "diagnostic_not_formal_evidence",
+  "git_commit": "cf233abb630ab6490bb2fb7a47e4b80cb9ab4822",
+  "precision_selection": {
+    "amp_over_fp32_speed_ratio": null,
+    "amp_seconds_per_epoch": null,
+    "amp_stable": false,
+    "fp32_seconds_per_epoch": null,
+    "fp32_stable": false,
+    "interpretation": "precision calibration only; AMP and FP32 are not independent seeds",
+    "reason": "FP32 calibration/routing was not stable; protocol calibration is incomplete",
+    "same_seed_independent_runs": false,
+    "selected": null,
+    "threshold_amp_max_speed_ratio": 0.9
+  },
+  "routing": [],
+  "runs": [
+    {
+      "actual_batch": 8,
+      "attempts": [
+        {
+          "attempt": 0,
+          "command": [
+            "/root/miniconda3/bin/python",
+            "/root/autodl-tmp/MoT/YOLO-Master/scripts/issue54/run_phase2_2_overnight.py",
+            "--child-run",
+            "--model",
+            "/root/autodl-tmp/MoT/YOLO-Master/ultralytics/cfg/models/master/v0_10/det/yolo-master-mot-n.yaml",
+            "--data",
+            "/root/autodl-tmp/MoT/results/phase2_2_overnight_20260730T025854Z/configs/visdrone_diagnostic.yaml",
+            "--project",
+            "/root/autodl-tmp/MoT/results/phase2_2_overnight_20260730T025854Z/training",
+            "--name",
+            "calibration_mot_amp",
+            "--epochs",
+            "3",
+            "--seed",
+            "0",
+            "--amp",
+            "True",
+            "--child-result",
+            "/root/autodl-tmp/MoT/results/phase2_2_overnight_20260730T025854Z/logs/calibration_mot_amp.result.json"
+          ],
+          "ended_at": "2026-07-30T03:38:39.245491Z",
+          "exit_code": 1,
+          "interrupted": false,
+          "log_path": "logs/calibration_mot_amp.log",
+          "pid": 49537,
+          "started_at": "2026-07-30T03:17:39.045198Z"
+        }
+      ],
+      "checkpoint": {
+        "index_path": "/root/autodl-tmp/MoT/results/phase2_2_overnight_20260730T025854Z/checkpoints/calibration_mot_amp_best.pt",
+        "kind": "best",
+        "path": "/root/autodl-tmp/MoT/results/phase2_2_overnight_20260730T025854Z/training/calibration_mot_amp/weights/best.pt",
+        "sha256": "70ff9e97539a772cb009539f16159d7eb9a623d1a8df28c8f5ee68af2ab19b8b",
+        "size_bytes": 8711054
+      },
+      "checkpoint_loadable": false,
+      "config_path": "ultralytics/cfg/models/master/v0_10/det/yolo-master-mot-n.yaml",
+      "config_sha256": "c23d37b9f5ab31b88f470cad2b1b270a6a6b39400c99ceefaa79a83cb117a4ab",
+      "dataset_manifest_path": "/root/autodl-tmp/MoT/results/phase2_2_overnight_20260730T025854Z/configs/visdrone_manifest.json",
+      "dataset_manifest_sha256": "974ac49d01ba606120f4f737373d82ebee3f3360ba7ceff6bf5677caeeae40de",
+      "ended_at": "2026-07-30T03:38:39.245491Z",
+      "epochs_completed": 0,
+      "epochs_requested": 3,
+      "evidence_label": "diagnostic_not_formal_evidence",
+      "exit_code": 1,
+      "experiment_id": "calibration_mot_amp",
+      "failure_reason": "TypeError: update expected at most 1 argument, got 2",
+      "git_commit": "cf233abb630ab6490bb2fb7a47e4b80cb9ab4822",
+      "imgsz": 640,
+      "loss": null,
+      "lr0": 0.01,
+      "map50": null,
+      "map50_95": null,
+      "model_variant": "mot",
+      "nan_or_inf": false,
+      "optimizer": "auto",
+      "peak_gpu_memory_bytes": 8482816512,
+      "phase": "calibration",
+      "precision": "amp",
+      "requested_batch": 8,
+      "seconds_per_epoch": null,
+      "seed": 0,
+      "started_at": "2026-07-30T03:17:39.045198Z",
+      "status": "failed",
+      "total_duration_seconds": 1260.2427902892232,
+      "training_time_seconds": null
+    },
+    {
+      "actual_batch": 8,
+      "attempts": [
+        {
+          "attempt": 0,
+          "command": [
+            "/root/miniconda3/bin/python",
+            "/root/autodl-tmp/MoT/YOLO-Master/scripts/issue54/run_phase2_2_overnight.py",
+            "--child-run",
+            "--model",
+            "/root/autodl-tmp/MoT/YOLO-Master/ultralytics/cfg/models/master/v0_10/det/yolo-master-mot-n.yaml",
+            "--data",
+            "/root/autodl-tmp/MoT/results/phase2_2_overnight_20260730T025854Z/configs/visdrone_diagnostic.yaml",
+            "--project",
+            "/root/autodl-tmp/MoT/results/phase2_2_overnight_20260730T025854Z/training",
+            "--name",
+            "calibration_mot_fp32",
+            "--epochs",
+            "3",
+            "--seed",
+            "0",
+            "--amp",
+            "False",
+            "--child-result",
+            "/root/autodl-tmp/MoT/results/phase2_2_overnight_20260730T025854Z/logs/calibration_mot_fp32.result.json"
+          ],
+          "ended_at": "2026-07-30T03:54:39.433788Z",
+          "exit_code": 1,
+          "interrupted": false,
+          "log_path": "logs/calibration_mot_fp32.log",
+          "pid": 55023,
+          "started_at": "2026-07-30T03:38:39.289614Z"
+        }
+      ],
+      "checkpoint": {
+        "index_path": "/root/autodl-tmp/MoT/results/phase2_2_overnight_20260730T025854Z/checkpoints/calibration_mot_fp32_best.pt",
+        "kind": "best",
+        "path": "/root/autodl-tmp/MoT/results/phase2_2_overnight_20260730T025854Z/training/calibration_mot_fp32/weights/best.pt",
+        "sha256": "d2d81d184519ca0dc14a78b93e1c2ca310a6aeb7557cbe505639842903d99361",
+        "size_bytes": 8710478
+      },
+      "checkpoint_loadable": false,
+      "config_path": "ultralytics/cfg/models/master/v0_10/det/yolo-master-mot-n.yaml",
+      "config_sha256": "c23d37b9f5ab31b88f470cad2b1b270a6a6b39400c99ceefaa79a83cb117a4ab",
+      "dataset_manifest_path": "/root/autodl-tmp/MoT/results/phase2_2_overnight_20260730T025854Z/configs/visdrone_manifest.json",
+      "dataset_manifest_sha256": "974ac49d01ba606120f4f737373d82ebee3f3360ba7ceff6bf5677caeeae40de",
+      "ended_at": "2026-07-30T03:54:39.433788Z",
+      "epochs_completed": 0,
+      "epochs_requested": 3,
+      "evidence_label": "diagnostic_not_formal_evidence",
+      "exit_code": 1,
+      "experiment_id": "calibration_mot_fp32",
+      "failure_reason": "TypeError: update expected at most 1 argument, got 2",
+      "git_commit": "cf233abb630ab6490bb2fb7a47e4b80cb9ab4822",
+      "imgsz": 640,
+      "loss": null,
+      "lr0": 0.01,
+      "map50": null,
+      "map50_95": null,
+      "model_variant": "mot",
+      "nan_or_inf": false,
+      "optimizer": "auto",
+      "peak_gpu_memory_bytes": 8459157504,
+      "phase": "calibration",
+      "precision": "fp32",
+      "requested_batch": 8,
+      "seconds_per_epoch": null,
+      "seed": 0,
+      "started_at": "2026-07-30T03:38:39.289614Z",
+      "status": "failed",
+      "total_duration_seconds": 960.1784735098481,
+      "training_time_seconds": null
+    }
+  ],
+  "status": "implementation_failed",
+  "updated_at": "2026-07-30T03:54:39.471240Z"
+}

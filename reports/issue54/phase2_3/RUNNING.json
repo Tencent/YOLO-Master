@@ -1,0 +1,28 @@
+{
+  "admission_decisions": [],
+  "controller_failure": null,
+  "controller_pid": 65800,
+  "current_task": "complete",
+  "elapsed_seconds": 1634.304320126772,
+  "evidence_label": "diagnostic_not_formal_evidence",
+  "expected_end_at": "2026-07-30T17:35:19.306176Z",
+  "precision_selection": {
+    "amp_over_fp32_speed_ratio": 1.280702255372859,
+    "amp_seconds_per_epoch": 373.7366666666667,
+    "amp_stable": true,
+    "fp32_seconds_per_epoch": 291.82166666666666,
+    "fp32_stable": true,
+    "interpretation": "precision calibration only; AMP and FP32 are not independent seeds",
+    "reason": "AMP speed advantage was below 10% or AMP was slower",
+    "same_seed_independent_runs": false,
+    "selected": "fp32",
+    "threshold_amp_max_speed_ratio": 0.9
+  },
+  "remaining_total_seconds": 21165.695679228753,
+  "remaining_training_admission_seconds": 19365.695677906275,
+  "routing_exports_recorded": 2,
+  "runs_recorded": 8,
+  "started_at": "2026-07-30T11:15:19.306164Z",
+  "status": "complete",
+  "updated_at": "2026-07-30T11:42:33.610466Z"
+}

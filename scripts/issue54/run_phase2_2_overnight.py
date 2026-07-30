@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Run the bounded Issue #54 Phase 2.2 overnight pilot on one CUDA GPU.
 
 The controller is self-contained once launched on the remote host. It owns
@@ -12,6 +11,7 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import importlib
 import json
 import math
 import os
@@ -30,16 +30,15 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.issue54.run_phase2_one_hour_smoke import (  # noqa: E402
-    DIAGNOSTIC_LABEL,
-    IMAGE_SUFFIXES,
-    compare_routes,
-    create_dataset_snapshot,
-    discover_official_configs,
-    export_routing,
-    parse_last_results_row,
-    sha256_file,
-)
+_SMOKE = importlib.import_module("scripts.issue54.run_phase2_one_hour_smoke")
+DIAGNOSTIC_LABEL = _SMOKE.DIAGNOSTIC_LABEL
+IMAGE_SUFFIXES = _SMOKE.IMAGE_SUFFIXES
+compare_routes = _SMOKE.compare_routes
+create_dataset_snapshot = _SMOKE.create_dataset_snapshot
+discover_official_configs = _SMOKE.discover_official_configs
+export_routing = _SMOKE.export_routing
+parse_last_results_row = _SMOKE.parse_last_results_row
+sha256_file = _SMOKE.sha256_file
 
 ALLOWED_ROOT = Path("/root/autodl-tmp/MoT").resolve()
 ALLOWED_RESULTS_ROOT = ALLOWED_ROOT / "results"
@@ -261,7 +260,7 @@ def recover_training_payload(
                 checkpoint_loader = YOLO
             checkpoint_loader(checkpoint["path"])
             payload["checkpoint_loadable"] = True
-        except Exception as error:  # Recovery evidence must preserve loader failures.
+        except Exception as error:  # noqa: BLE001  # Recovery evidence must preserve loader failures.
             checkpoint_error = f"{type(error).__name__}: {error}"
             failures.append(checkpoint_error)
 
@@ -357,7 +356,7 @@ def child_train(args: argparse.Namespace) -> int:
                 torch.cuda.empty_cache()
                 YOLO(checkpoint["path"])
                 checkpoint_loadable = True
-            except Exception as error:  # Diagnostic result, never swallowed.
+            except Exception as error:  # noqa: BLE001  # Diagnostic result, never swallowed.
                 checkpoint_error = f"{type(error).__name__}: {error}"
         raw = parsed.get("raw_last_row", {})
         completed = int(float(parsed["epoch"])) if parsed.get("epoch") is not None else 0
@@ -914,7 +913,7 @@ class OvernightController:
                     "precision": run["precision"],
                 }
             )
-        except BaseException as error:
+        except BaseException as error:  # noqa: BLE001
             result = {
                 "experiment_id": run["experiment_id"],
                 "status": "implementation_failed",
@@ -1281,14 +1280,16 @@ class OvernightController:
                 f"- Two-seed MoT comparison: `{seed_comparison}`",
                 f"- Ready for an explicitly approved formal MVP: `{pilot_ready}`",
                 "",
-                "Metrics are pilot-only. Two seeds, if available, are still insufficient for a formal aggregate "
-                "claim. No formal 5-run protocol was launched.",
+                (
+                    "Metrics are pilot-only. Two seeds, if available, are still insufficient for a formal aggregate "
+                    "claim. No formal 5-run protocol was launched."
+                ),
                 "",
             ]
         )
         atomic_text(self.output / "reports" / self.report_names["markdown"], "\n".join(lines))
         repo_report_dir = ROOT / "reports/issue54"
-        for key, filename in self.report_names.items():
+        for filename in self.report_names.values():
             destination = repo_report_dir / filename
             if destination.exists():
                 raise FileExistsError(f"refusing to overwrite repository report: {destination}")
@@ -1346,14 +1347,14 @@ class OvernightController:
                     final_status = "failed"
                     self.controller_failure = "one or more EsMoE/MoA calibrations failed"
             self.record_not_started_formal_runs(selected or "unselected")
-        except BaseException as error:
+        except BaseException as error:  # noqa: BLE001
             final_status = "implementation_failed"
             self.controller_failure = f"{type(error).__name__}: {error}"
         finally:
             self.current_task = "finalizing_reports"
             try:
                 self.render_reports(final_status, seed_comparison)
-            except BaseException as error:
+            except BaseException as error:  # noqa: BLE001
                 final_status = "implementation_failed"
                 report_error = f"{type(error).__name__}: {error}"
                 self.controller_failure = (
@@ -1474,14 +1475,14 @@ class OvernightController:
                     if self.route_is_stable(route):
                         long_mot_routes.append(route)
             seed_comparison = self.compare_mot_seeds(long_mot_routes)
-        except BaseException as error:
+        except BaseException as error:  # noqa: BLE001
             final_status = "implementation_failed"
             self.controller_failure = f"{type(error).__name__}: {error}"
         finally:
             self.current_task = "finalizing_reports"
             try:
                 self.render_reports(final_status, seed_comparison)
-            except BaseException as error:
+            except BaseException as error:  # noqa: BLE001
                 final_status = "implementation_failed"
                 report_error = f"{type(error).__name__}: {error}"
                 self.controller_failure = (

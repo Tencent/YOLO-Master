@@ -1,0 +1,13 @@
+evidence_label=diagnostic_not_formal_evidence
+controller_status=implementation_failed
+controller_wall_seconds=2223.1
+gpu_process_and_routing_seconds=2220.4
+final_heartbeat_utc=2026-07-30T03:54:39Z
+controller_error=RuntimeError: FP32 calibration/routing was not stable; protocol calibration is incomplete
+child_error=TypeError: update expected at most 1 argument, got 2
+root_cause=child post-processing called payload.update with two positional mappings after model.train and validation completed
+calibration_mot_amp=training_completed_3_of_3; postprocessing_failed
+calibration_mot_fp32=training_completed_3_of_3; postprocessing_failed
+routing_exports=0
+long_runs_started=0
+gpu_idle_at_acceptance=true
