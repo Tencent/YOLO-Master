@@ -1,22 +1,49 @@
 {
+  "issue": 49,
+  "title": "垂类数据集基线训练与 MoE 对比 (VisDrone)",
+  "dataset": "VisDrone2019-DET",
+  "device": "cpu (torch 2.3.1+cpu; 本环境无 CUDA/GPU)",
+  "imgsz": 640,
+  "epochs_trained": 5,
+  "epochs_recommended": "100-300",
+  "seed": 42,
+  "maintainer_full_train_reference": {
+    "v0.1-N": {"mAP50": 0.3443, "mAP50-95": 0.2009},
+    "EsMoE-N": {"mAP50": 0.3499, "mAP50-95": 0.2029}
+  },
   "v01": {
+    "model": "YOLO-Master-v0.1-N",
+    "config": "ultralytics/cfg/models/master/v0_1/det/yolo-master-n.yaml",
+    "moe_block": "ModularRouterExpertMoE",
     "params": 7516742,
     "epochs_trained": 5,
-    "mAP50": "0.08116",
-    "mAP50-95": "0.03719",
-    "train_moe_loss": "0.00849",
-    "train_box_loss": "2.32631",
-    "train_cls_loss": "2.15734",
-    "val_box_loss": "2.21806"
+    "mAP50": 0.08116,
+    "mAP50-95": 0.03719,
+    "train_moe_loss": 0.00849,
+    "train_box_loss": 2.32631,
+    "train_cls_loss": 2.15734,
+    "val_box_loss": 2.21806,
+    "mAP50_per_epoch": [0.01614, 0.04271, 0.06327, 0.07160, 0.08116]
   },
   "esmoe": {
+    "model": "YOLO-Master-EsMoE-N",
+    "config": "ultralytics/cfg/models/master/v0/det/yolo-master-n.yaml",
+    "moe_block": "ES_MOE (use_sparse_inference=True, as-shipped reproduction)",
     "params": 2690000,
     "epochs_trained": 5,
-    "mAP50": "0.07454",
-    "mAP50-95": "0.03282",
-    "train_moe_loss": "0.00234",
-    "train_box_loss": "2.327",
-    "train_cls_loss": "2.1616",
-    "val_box_loss": "2.25856"
-  }
+    "mAP50": 0.07454,
+    "mAP50-95": 0.03282,
+    "train_moe_loss": 0.00234,
+    "train_box_loss": 2.327,
+    "train_cls_loss": 2.1616,
+    "val_box_loss": 2.25856,
+    "mAP50_per_epoch": [0.01740, null, 0.06215, 0.06843, 0.07454],
+    "note": "第 2 epoch 日志缺失（训练中断续训导致 results.csv 缺一行）"
+  },
+  "summary": "早期 5-epoch 基线：v0.1-N 的 mAP50 略高于 EsMoE-N；EsMoE-N 参数量约 1/3 且 moe_loss 更低。两种 MoE 路由均端到端可训练。受 CPU/网络限制，epoch 数与 SKU-110K 未达理想要求，复现命令与日志已齐备。",
+  "limitations": [
+    "仅 VisDrone，未含 SKU-110K（13.6GB 数据下载受网络配额限制）",
+    "epochs=5，远低于推荐 100-300（CPU 每 epoch 需 1-3.6 小时）",
+    "未使用 W&B 在线看板（环境无网络/登录），改用本地 results.csv 记录逐 epoch 指标"
+  ]
 }
