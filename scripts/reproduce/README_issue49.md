@@ -73,8 +73,13 @@ PYTHONPATH=D:/YOLO-Master python scripts/reproduce/reproduce_sku110k.py \
 ```bash
 cd D:/YOLO-Master
 PYTHONPATH=D:/YOLO-Master python scripts/reproduce/reproduce_visdrone.py \
-  --epochs 5 --batch 8 --imgsz 640 --device cpu --seed 42
+  --model both --epochs 5 --batch 8 --imgsz 640 \
+  --device cpu --no-amp --no-sparse-eval --no-wandb --seed 42
 ```
+
+> `--no-sparse-eval` 是本次对比成立的关键：EsMoE-N 默认 `use_sparse_inference=True` 会让验证
+> 阶段的 mAP 塌缩，与 v0.1-N 不可比。本报告中 EsMoE-N 的所有 mAP 均在稠密评测(train==eval)
+> 下取得。`--no-amp` 因 CPU 不支持混合精度。
 
 配置要点说明：`reproduce_visdrone.py` 默认 `lora_r=0`（关闭 LoRA，纯从零训练，避免默认配置
 悄悄只训 24% 参数）并 `optimizer=auto`（→ SGD@0.01，匹配 VisDrone/SKU 基线；仓库默认 AdamW@0.01
