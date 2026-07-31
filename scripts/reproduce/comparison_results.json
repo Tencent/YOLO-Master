@@ -37,8 +37,8 @@
     "train_box_loss": 2.327,
     "train_cls_loss": 2.1616,
     "val_box_loss": 2.25856,
-    "mAP50_per_epoch": [0.01740, null, 0.06215, 0.06843, 0.07454],
-    "note": "第 2 epoch 日志缺失（训练中断续训导致 results.csv 缺一行）"
+    "mAP50_per_epoch": [0.01740, 0.04180, 0.06215, 0.06843, 0.07454],
+    "note": "第 2 epoch 日志缺失，已由 epoch2.pt 权重 dense-eval 实测补齐（mAP50=0.0418）；results.csv 现已完整 1-5 轮"
   },
   "summary": "早期 5-epoch 基线：v0.1-N 的 mAP50 略高于 EsMoE-N；EsMoE-N 参数量约 1/3 且 moe_loss 更低。两种 MoE 路由均端到端可训练。受 CPU/网络限制，epoch 数与 SKU-110K 未达理想要求，复现命令与日志已齐备。",
   "limitations": [

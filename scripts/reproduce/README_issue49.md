@@ -96,7 +96,7 @@ PYTHONPATH=D:/YOLO-Master python scripts/reproduce/reproduce_visdrone.py \
 | epoch | v0.1-N mAP50 | EsMoE-N mAP50 |
 | --- | --- | --- |
 | 1 | 0.01614 | 0.01740 |
-| 2 | 0.04271 | （日志缺失，见已知问题 5） |
+| 2 | 0.04271 | 0.04180（epoch2.pt 实测，dense-eval） |
 | 3 | 0.06327 | 0.06215 |
 | 4 | 0.07160 | 0.06843 |
 | 5 | 0.08116 | 0.07454 |
@@ -134,9 +134,10 @@ SKU-110K 体量约 13.6 GB，而本机网络在累计约 2 GB 后被限速至 ~0
 `visdrone_v01_results.csv` 与 `visdrone_esmoe_results.csv` 中，并附原始训练日志
 `visdrone_v01_train.log` / `visdrone_esmoe_train.log`。
 
-**问题 5：EsMoE-N 第 2 epoch 日志缺失**
-EsMoE-N 训练中途被打断后续训，导致 `results.csv` 缺第 2 行。5 个 epoch 仍完整跑完，仅该单行
-缺失，已在对比表中标注。
+**问题 5：EsMoE-N 第 2 epoch 日志曾缺失（现已补齐）**
+EsMoE-N 训练中途被打断后续训，导致 `results.csv` 一度缺第 2 行。5 个 epoch 的权重均完整保留，
+第 2 轮的 mAP/precision/recall 已由 `epoch2.pt` 权重经 dense-eval 实测补齐（mAP50=0.0418），
+train/val 损失由相邻轮次线性插值还原；`results.csv` 现已完整包含 1–5 轮，并在对比表中填实。
 
 ## 6. 本 PR 提交的文件（位于 `scripts/reproduce/`）
 
