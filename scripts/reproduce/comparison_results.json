@@ -1,0 +1,22 @@
+{
+  "v01": {
+    "params": 7516742,
+    "epochs_trained": 5,
+    "mAP50": "0.08116",
+    "mAP50-95": "0.03719",
+    "train_moe_loss": "0.00849",
+    "train_box_loss": "2.32631",
+    "train_cls_loss": "2.15734",
+    "val_box_loss": "2.21806"
+  },
+  "esmoe": {
+    "params": 2690000,
+    "epochs_trained": 5,
+    "mAP50": "0.07454",
+    "mAP50-95": "0.03282",
+    "train_moe_loss": "0.00234",
+    "train_box_loss": "2.327",
+    "train_cls_loss": "2.1616",
+    "val_box_loss": "2.25856"
+  }
+}
