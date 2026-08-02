@@ -18,6 +18,15 @@ from .router import _MoTRouter, _mot_router_aux_loss
 from ultralytics.utils import LOGGER
 
 
+def _routing_mask_usage(route_mask: torch.Tensor) -> Tuple[torch.Tensor, int]:
+    """Return per-sample and batch-union expert counts using legacy-safe reductions."""
+    batch_size, num_experts = route_mask.shape[:2]
+    experts_used = route_mask.reshape(batch_size, num_experts, -1).any(dim=2)
+    experts_per_sample = experts_used.sum(dim=1)
+    batch_expert_union = int(experts_used.any(dim=0).sum().item())
+    return experts_per_sample, batch_expert_union
+
+
 class MoTBlock(nn.Module):
     """Mixture-of-Transformers Block.
 
@@ -293,6 +302,8 @@ class MoTBlock(nn.Module):
             return "dense_warmup"
         if ddp_active and not ddp_sparse_safe:
             return "dense_ddp_fallback"
+        if self.router.exploration_eps > 0:
+            return "dense_exploration"
         return "sparse_train"
 
     def _blend_experts(
@@ -303,8 +314,10 @@ class MoTBlock(nn.Module):
     ) -> torch.Tensor:
         """Blend expert outputs; sparse when eval or ``sparse_train``.
 
-        Sparse dispatch keys off discrete Top-K ``indices`` so training-time
-        ``exploration_eps`` blending does not force every expert to run.
+        Training-time ``exploration_eps`` gives every expert positive routing
+        weight, so it uses dense execution to preserve the corresponding real
+        gradient path. Explicit sparse training is used only once exploration
+        is disabled.
 
         .. warning::
             The sparse path uses ``torch.nonzero`` which produces **data-dependent
@@ -325,7 +338,10 @@ class MoTBlock(nn.Module):
             ddp_active=ddp_active,
             ddp_sparse_safe=ddp_sparse_safe,
         )
-        use_sparse = (not self.training or (sparse_train_ready and ddp_sparse_safe)) and not exporting
+        exploration_active = self.training and self.router.exploration_eps > 0
+        use_sparse = (
+            not self.training or (sparse_train_ready and ddp_sparse_safe and not exploration_active)
+        ) and not exporting
         warmup_step = 0 if exporting else int(self._sparse_train_step.item())
         B = x.shape[0]
         route_ids = indices if indices is not None else weights.argmax(dim=1, keepdim=True)
@@ -333,8 +349,7 @@ class MoTBlock(nn.Module):
             torch.zeros_like(weights).scatter(1, route_ids, torch.ones_like(route_ids, dtype=weights.dtype)).bool()
         )
         token_mask_sparsity = 1.0 - float(route_mask.float().mean())
-        experts_per_sample = route_mask.reshape(B, self.NUM_EXPERTS, -1).any(dim=2).sum(dim=1)
-        batch_expert_union = int(route_mask.any(dim=(0, 2, 3)).sum())
+        experts_per_sample, batch_expert_union = _routing_mask_usage(route_mask)
         routing_metrics = {
             "token_mask_sparsity": token_mask_sparsity,
             "experts_per_sample": experts_per_sample.detach().cpu(),

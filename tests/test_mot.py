@@ -7,6 +7,7 @@ import torch
 from ultralytics.engine.trainer import BaseTrainer
 from ultralytics.nn.modules.moa import C2fMoA, MoABlock
 from ultralytics.nn.modules.mot import C2fMoT, MoTBlock, anneal_mot_temperature, collect_mot_aux_loss
+from ultralytics.nn.modules.mot.block import _routing_mask_usage
 from ultralytics.nn.tasks import DetectionModel
 from ultralytics.utils.loss import _collect_mot_aux_loss
 
@@ -351,7 +352,9 @@ def test_mot_router_z_loss_handles_extreme_logits():
 def test_mot_sparse_train_mode():
     """sparse_train=True must only dispatch to selected experts."""
     torch.manual_seed(0)
-    block = MoTBlock(24, num_heads=3, top_k=1, window_size=4, n_points=2, sparse_train=True).train()
+    block = MoTBlock(
+        24, num_heads=3, top_k=1, window_size=4, n_points=2, sparse_train=True, exploration_eps=0.0
+    ).train()
     x = torch.randn(1, 24, 6, 6)
     out, aux = block(x)
     assert out.shape == x.shape
@@ -469,10 +472,107 @@ def test_mot_block_shift_odd_spatial_train():
     assert out.shape == x.shape
     assert torch.isfinite(out).all()
 
-    (out.sum() + aux).backward()
+    # GroupNorm makes a plain output sum analytically degenerate; use a
+    # non-degenerate objective so this test measures the actual gradient path
+    # instead of platform-dependent reduction roundoff.
+    (out.square().sum() + aux).backward()
     assert _has_grad(block.router)
     for expert in block.experts:
         assert _has_grad(expert)
+        assert all(
+            parameter.grad is not None and torch.isfinite(parameter.grad).all()
+            for parameter in expert.parameters()
+            if parameter.requires_grad
+        )
+
+
+def test_mot_exploration_executes_all_experts_outside_discrete_topk():
+    """Positive exploration weights must create real gradients for every expert."""
+    torch.manual_seed(0)
+    block = MoTBlock(
+        32,
+        num_heads=4,
+        top_k=2,
+        window_size=5,
+        n_points=2,
+        window_shift=True,
+        balance_loss_coeff=0.01,
+        sparse_train=True,
+        exploration_eps=0.2,
+    ).train()
+    with torch.no_grad():
+        block.router.router[-1].weight.zero_()
+        block.router.router[-1].bias.copy_(torch.tensor([2.0, 1.0, -2.0]))
+
+    x = torch.randn(2, 32, 9, 11)
+    weights, indices = block.router(x)
+    assert set(indices.unique().tolist()) == {0, 1}
+    assert (weights[:, 2] > 0).all()
+
+    out, aux = block(x)
+    (out.square().sum() + aux).backward()
+
+    assert block._last_dispatch_stats["policy"] == "dense_exploration"
+    assert block._last_dispatch_stats["actual_expert_calls"] == block.NUM_EXPERTS
+    assert _has_grad(block.router)
+    for expert in block.experts:
+        assert _has_grad(expert)
+        assert all(
+            parameter.grad is not None and torch.isfinite(parameter.grad).all()
+            for parameter in expert.parameters()
+            if parameter.requires_grad
+        )
+
+
+def test_mot_zero_exploration_preserves_sparse_training_dispatch():
+    """Disabling exploration must retain discrete Top-K sparse training."""
+    torch.manual_seed(0)
+    block = MoTBlock(
+        32,
+        num_heads=4,
+        top_k=2,
+        window_size=5,
+        n_points=2,
+        window_shift=True,
+        balance_loss_coeff=0.0,
+        sparse_train=True,
+        exploration_eps=0.0,
+    ).train()
+    with torch.no_grad():
+        block.router.router[-1].weight.zero_()
+        block.router.router[-1].bias.copy_(torch.tensor([2.0, 1.0, -2.0]))
+
+    out, aux = block(torch.randn(2, 32, 9, 11))
+    (out.square().sum() + aux).backward()
+
+    assert block._last_dispatch_stats["policy"] == "sparse_train"
+    assert block._last_dispatch_stats["actual_expert_calls"] == 2
+    assert _has_grad(block.experts[0])
+    assert _has_grad(block.experts[1])
+    assert all(parameter.grad is None for parameter in block.experts[2].parameters())
+
+
+@pytest.mark.parametrize(
+    ("route_ids", "num_experts", "expected_per_sample", "expected_union"),
+    [
+        ([[[[0, 0], [0, 0]]]], 3, [1], 1),
+        ([[[[0, 1], [0, 1]]], [[[1, 1], [1, 1]]]], 3, [2, 1], 2),
+        ([[[[0, 1], [0, 1]]], [[[2, 2], [2, 2]]]], 3, [2, 1], 3),
+    ],
+)
+def test_mot_routing_mask_usage_matches_mathematical_definition(
+    route_ids, num_experts, expected_per_sample, expected_union
+):
+    """Legacy-safe reductions must preserve single/multi-batch union counts."""
+    indices = torch.tensor(route_ids, dtype=torch.long)
+    route_mask = torch.zeros(indices.shape[0], num_experts, *indices.shape[2:]).scatter(
+        1, indices, torch.ones_like(indices, dtype=torch.float32)
+    )
+
+    experts_per_sample, batch_expert_union = _routing_mask_usage(route_mask.bool())
+
+    assert experts_per_sample.tolist() == expected_per_sample
+    assert batch_expert_union == expected_union
 
 
 def test_mot_exploration_eps_active_in_train_disabled_in_eval():

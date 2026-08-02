@@ -31,7 +31,7 @@ def test_mot_dense_export_path_records_all_experts():
 
 
 def test_mot_sparse_dispatch_reports_policy_and_sparsity():
-    block = MoTBlock(24, num_heads=3, top_k=1, sparse_train=True, balance_loss_coeff=0.0).train()
+    block = MoTBlock(24, num_heads=3, top_k=1, sparse_train=True, exploration_eps=0.0, balance_loss_coeff=0.0).train()
     block(torch.randn(2, 24, 4, 4))
     dispatch = block.last_routing_snapshot["dispatch"]
 
@@ -47,6 +47,7 @@ def test_mot_sparse_training_uses_persistent_dense_warmup_before_switching():
         num_heads=3,
         top_k=1,
         sparse_train=True,
+        exploration_eps=0.0,
         sparse_train_warmup_steps=2,
     ).train()
     x = torch.randn(2, 24, 4, 4)
@@ -68,6 +69,7 @@ def test_mot_sparse_training_uses_persistent_dense_warmup_before_switching():
         num_heads=3,
         top_k=1,
         sparse_train=True,
+        exploration_eps=0.0,
         sparse_train_warmup_steps=2,
     ).train()
     restored.load_state_dict(block.state_dict())
@@ -76,7 +78,7 @@ def test_mot_sparse_training_uses_persistent_dense_warmup_before_switching():
 
     legacy_state = block.state_dict()
     legacy_state.pop("_sparse_train_step")
-    legacy = MoTBlock(24, num_heads=3, top_k=1, sparse_train=True, sparse_train_warmup_steps=2)
+    legacy = MoTBlock(24, num_heads=3, top_k=1, sparse_train=True, exploration_eps=0.0, sparse_train_warmup_steps=2)
     legacy.load_state_dict(legacy_state, strict=True)
     assert int(legacy._sparse_train_step) == 0
 
@@ -99,7 +101,7 @@ def test_mot_ddp_sparse_training_falls_back_until_find_unused_is_confirmed():
 
 
 def test_mot_ddp_sparse_training_runs_after_safe_handshake():
-    block = MoTBlock(24, num_heads=3, top_k=1, sparse_train=True, balance_loss_coeff=0.0).train()
+    block = MoTBlock(24, num_heads=3, top_k=1, sparse_train=True, exploration_eps=0.0, balance_loss_coeff=0.0).train()
     block.configure_ddp_sparse_training(find_unused_parameters=True, source="trainer")
     with patch("torch.distributed.is_available", return_value=True), patch(
         "torch.distributed.is_initialized", return_value=True
