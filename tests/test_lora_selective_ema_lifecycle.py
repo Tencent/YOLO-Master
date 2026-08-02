@@ -44,6 +44,31 @@ class TinyFallbackGraph(nn.Module):
         return self.layer(x)
 
 
+class TinyPeftLayer(nn.Module):
+    """Minimal PEFT-like layer whose scaling dictionary is absent from state_dict."""
+
+    def __init__(self):
+        super().__init__()
+        self.lora_A = nn.ModuleDict({"default": nn.Linear(2, 2, bias=False)})
+        self.lora_B = nn.ModuleDict({"default": nn.Linear(2, 2, bias=False)})
+        self.scaling = {"default": 0.0}
+
+    def forward(self, inputs):
+        return self.lora_B["default"](self.lora_A["default"](inputs)) * self.scaling["default"]
+
+
+class TinyPeftGraph(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.layer = TinyPeftLayer()
+        self.lora_enabled = True
+        self.lora_backend = "peft"
+        self.lora_runtime_metadata = {"effective_backend": "peft"}
+
+    def forward(self, inputs):
+        return self.layer(inputs)
+
+
 def _trainer(model: nn.Module, *, warmup: int) -> SimpleNamespace:
     optimizer = torch.optim.SGD((parameter for parameter in model.parameters() if parameter.requires_grad), lr=0.1)
     trainer = SimpleNamespace(
@@ -110,13 +135,39 @@ def test_resume_restores_scheduled_scaling_online_and_ema(start_epoch: int):
     assert trainer.ema.ema.layer.scaling == pytest.approx(expected)
 
 
-def test_non_fallback_backend_does_not_rewrite_ema_treatment():
-    model = TinyFallbackGraph(backend="peft")
-    trainer, controller = _controller(model, warmup=0)
-    trainer.ema.ema.layer.scaling = 0.0
+def test_peft_backend_syncs_scaling_dictionary_to_ema():
+    model = TinyPeftGraph()
+    trainer = _trainer(model, warmup=0)
+    controller = AdapterRuntimeController(trainer)
+    trainer.adapter_controller = controller
+    trainer.ema = ModelEMA(model)
+    model.layer.scaling["default"] = 3.0
 
-    assert controller.sync_ema_treatment() == 0
-    assert trainer.ema.ema.layer.scaling == 0.0
+    assert controller.sync_ema_treatment() == 1
+    assert trainer.ema.ema.layer.scaling["default"] == 3.0
+
+
+def test_validation_syncs_peft_treatment_before_selecting_ema_model():
+    model = TinyPeftGraph()
+    trainer = _trainer(model, warmup=0)
+    controller = AdapterRuntimeController(trainer)
+    trainer.adapter_controller = controller
+    trainer.ema = ModelEMA(model)
+    model.layer.scaling["default"] = 3.0
+    trainer._sync_ema_buffers_for_validation = lambda: None
+    trainer._state_is_finite = lambda _value: True
+    trainer.best_fitness = None
+    trainer.loss = torch.tensor(1.0)
+
+    def validator(runtime_trainer):
+        assert runtime_trainer.ema.ema.layer.scaling["default"] == 3.0
+        return {"fitness": 1.0}
+
+    trainer.validator = validator
+    metrics, fitness = BaseTrainer.validate(trainer)
+
+    assert metrics == {}
+    assert fitness == 1.0
 
 
 def test_validation_syncs_fallback_treatment_before_selecting_ema_model():
@@ -157,3 +208,21 @@ def test_checkpoint_serialization_syncs_fallback_treatment():
 
     assert checkpoint["ema"].layer.scaling == model.layer.scaling
     assert checkpoint["ema"].layer.use_rslora is True
+
+
+def test_checkpoint_serialization_syncs_peft_treatment():
+    model = TinyPeftGraph()
+    trainer = _trainer(model, warmup=0)
+    trainer.adapter_controller = AdapterRuntimeController(trainer)
+    trainer.ema = ModelEMA(model)
+    model.layer.scaling["default"] = 3.0
+    trainer.scaler = SimpleNamespace(state_dict=lambda: {})
+    trainer.epoch = trainer.start_epoch = 0
+    trainer.best_fitness = trainer.fitness = 0.0
+    trainer.metrics = {}
+    trainer.read_results_csv = lambda: {}
+
+    serialized = TrainingRecoveryController(trainer).serialize_checkpoint(include_online_model=True)
+    checkpoint = torch.load(io.BytesIO(serialized), map_location="cpu", weights_only=False)
+
+    assert checkpoint["ema"].layer.scaling["default"] == 3.0

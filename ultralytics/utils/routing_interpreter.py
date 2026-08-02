@@ -796,12 +796,7 @@ class RoutingInterpreter:
                 spread_lists[name].extend(spread.tolist())
 
                 # --- accumulate probs for collapse report ---
-                if probs.ndim > 2:
-                    accumulated_probs[name] += probs.double().mean(
-                        dim=(0, 2, 3)
-                    )
-                else:
-                    accumulated_probs[name] += probs.double().mean(dim=0)
+                accumulated_probs[name] += spatial_mean.double().sum(dim=0)
 
             processed += B
             if max_samples is not None and processed >= max_samples:
@@ -836,9 +831,9 @@ class RoutingInterpreter:
                 module_type=module_types[name],
                 num_samples=sample_counts[name],
                 mean_kl_divergence=float(kl_t.mean()),
-                std_kl_divergence=float(kl_t.std()),
+                std_kl_divergence=float(kl_t.std(unbiased=False)),
                 mean_weight_spread=float(ws_t.mean()),
-                std_weight_spread=float(ws_t.std()),
+                std_weight_spread=float(ws_t.std(unbiased=False)),
             )
 
         # --- build collapse reports from accumulated usage ---

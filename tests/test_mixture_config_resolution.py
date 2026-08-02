@@ -21,6 +21,7 @@ def _args(**overrides):
         moe_temperature=0.6,
         moe_weight_threshold=0.03,
         moa_local_window_size=9,
+        moa_regional_max_kv_tokens=8192,
         moa_aux_loss_coeff=0.2,
         moa_sparse_inference=True,
         moa_sparse_inference_threshold=0.15,
@@ -53,10 +54,34 @@ def test_yaml_explicit_values_override_cli_and_are_inherited_by_children():
     apply_mixture_config(model, resolved)
     assert model.m[0].router.temperature == 1.0
     assert model.m[0].local_head.window_size == 11
+    assert model.m[0].region_head.max_kv_tokens == 8192
     assert model.sparse_inference is True
     assert model.sparse_inference_threshold == 0.15
     assert model.m[0].sparse_inference is True
     assert model.m[0].sparse_inference_threshold == 0.15
+
+
+def test_moa_yaml_positional_mapping_includes_regional_and_sparse_fields():
+    """Regional insertion must not shift the two sparse YAML fields."""
+    wrapper = C2fMoA(64, 64, n=1)
+    annotate_mixture_yaml_config(
+        wrapper,
+        "C2fMoA",
+        [64, 6, 2.0, 1.0, True, 0.5, 0.01, 7, True, 2048, True, 0.15],
+    )
+    assert wrapper._mixture_config_explicit["regional_max_kv_tokens"] == 2048
+    assert wrapper._mixture_config_explicit["sparse_inference"] is True
+    assert wrapper._mixture_config_explicit["sparse_inference_threshold"] == 0.15
+
+    block = wrapper.m[0]
+    annotate_mixture_yaml_config(
+        block,
+        "MoABlock",
+        [64, 6, 2.0, 1.0, 0.0, True, 0.01, 0, 7, True, 1024, True, 0.1],
+    )
+    assert block._mixture_config_explicit["regional_max_kv_tokens"] == 1024
+    assert block._mixture_config_explicit["sparse_inference"] is True
+    assert block._mixture_config_explicit["sparse_inference_threshold"] == 0.1
 
 
 def test_mot_cli_values_apply_to_wrapper_and_nested_blocks():
@@ -92,9 +117,7 @@ def test_moe_module_receives_cli_values_and_audit_records_sources():
 
 def test_yaml_only_cli_only_and_resume_like_resolution_are_deterministic():
     """Repeated resolution from equivalent args produces identical results."""
-    yaml_model = DetectionModel(
-        "ultralytics/cfg/models/master/v0_10/det/yolo-master-moa-mot-n.yaml", verbose=False
-    )
+    yaml_model = DetectionModel("ultralytics/cfg/models/master/v0_10/det/yolo-master-moa-mot-n.yaml", verbose=False)
     args = _args()
     first = resolve_mixture_config(args, yaml_model).to_dict()
     resumed = resolve_mixture_config(SimpleNamespace(**vars(args)), yaml_model).to_dict()
@@ -110,6 +133,7 @@ def test_resolver_has_safe_defaults_without_args_or_model():
     assert resolved.values["moe"]["temperature"] == 1.0
     assert resolved.values["moe"]["router_z_loss_coeff"] == 0.1
     assert resolved.values["moa"]["local_window_size"] == 7
+    assert resolved.values["moa"]["regional_max_kv_tokens"] == 4096
     assert resolved.values["moa"]["sparse_inference"] is False
     assert resolved.values["moa"]["sparse_inference_threshold"] == 0.02
     assert resolved.values["mot"]["sparse_train"] is False

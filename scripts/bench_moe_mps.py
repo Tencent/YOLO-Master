@@ -34,6 +34,18 @@ CFGS = [
 ]
 
 
+def mps_device_info():
+    """Return optional MPS metadata without assuming backend APIs exist."""
+    backend = getattr(torch.backends, "mps", None)
+    if backend is None:
+        return None, None
+    get_name = getattr(backend, "get_name", None)
+    get_core_count = getattr(backend, "get_core_count", None)
+    name = get_name() if callable(get_name) else None
+    core_count = get_core_count() if callable(get_core_count) else None
+    return name, core_count
+
+
 def pick_device():
     if torch.backends.mps.is_available():
         return torch.device("mps")
@@ -84,8 +96,13 @@ def main():
     dev = pick_device()
     print(f"[bench] device = {dev}, torch = {torch.__version__}")
     if dev.type == "mps":
-        print(f"[bench] mps name = {torch.backends.mps.get_name()}, "
-              f"core count = {torch.backends.mps.get_core_count()}")
+        name, core_count = mps_device_info()
+        details = []
+        if name is not None:
+            details.append(f"name = {name}")
+        if core_count is not None:
+            details.append(f"core count = {core_count}")
+        print(f"[bench] mps {', '.join(details) if details else 'metadata unavailable'}")
     print(f"[bench] bs={args.bs} imgsz={args.imgsz} runs={args.runs} warmup={args.warmup} dtype={args.dtype}")
     print("-" * 90)
     print(f"{'config':<30}{'params(M)':>11}{'median':>9}{'mean':>9}{'min':>9}{'p95':>9}{'fps':>8}")

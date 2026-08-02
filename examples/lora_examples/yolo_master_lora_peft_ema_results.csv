@@ -1,0 +1,7 @@
+protocol_id,dataset,rank,alpha,max_epochs,completed_epochs,fraction,amp,batch,imgsz,effective_backend,alpha_warmup,best_epoch,precision,recall,mAP50,mAP50_95,trainable_params,adapter_params,train_time_min,peak_gpu_memory_gb,status
+peft_ema_sync_rtx4060_v1,brain_tumor,4,8,40,17,1.0,False,8,640,peft,3,2,0.43386,0.57434,0.40754,0.26097,409174,64000,10.38,3.79,completed_early_stop
+peft_ema_sync_rtx4060_v1,brain_tumor,8,16,40,40,1.0,False,8,640,peft,3,33,0.45512,0.77818,0.47810,0.34647,473174,128000,25.38,3.83,completed
+peft_ema_sync_rtx4060_v1,brain_tumor,16,32,40,17,1.0,False,8,640,peft,3,2,0.43767,0.75353,0.47357,0.31845,601174,256000,10.62,3.84,completed_early_stop
+peft_ema_sync_rtx4060_v1,visdrone,4,8,30,30,0.2,False,2,640,peft,5,20,0.27431,0.14468,0.09152,0.04601,410734,64000,73.14,8.68,completed
+peft_ema_sync_rtx4060_v1,visdrone,8,16,30,30,0.2,False,2,640,peft,5,20,0.24676,0.14905,0.09799,0.04926,474734,128000,69.06,8.69,completed
+peft_ema_sync_rtx4060_v1,visdrone,16,32,30,30,0.2,False,2,640,peft,5,28,0.30409,0.15179,0.11454,0.05797,602734,256000,76.62,8.72,completed

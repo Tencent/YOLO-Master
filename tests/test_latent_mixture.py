@@ -66,6 +66,25 @@ def test_latent_mixture_preserves_first_input_when_residual_zero():
     assert torch.allclose(y, xs[0])
 
 
+def test_latent_mixture_optional_sparse_inference_dispatches_top_k(monkeypatch):
+    module = LatentMixture([8, 8], 8, num_experts=4, inference_top_k=2, residual_init=0.1).eval()
+    calls = [0] * module.num_experts
+    for index, expert in enumerate(module.experts):
+        original = expert.forward
+
+        def wrapped(value, *, _index=index, _original=original):
+            calls[_index] += 1
+            return _original(value)
+
+        monkeypatch.setattr(expert, "forward", wrapped)
+
+    with torch.no_grad():
+        module([torch.randn(2, 8, 4, 4), torch.randn(2, 8, 4, 4)])
+
+    assert sum(call > 0 for call in calls) <= 2
+    assert module.export_capabilities()["eager_sparse_dispatch"] is True
+
+
 def test_latent_mixture_publishes_single_train_aux_and_snapshot():
     module = LatentMixture([16, 8], 16, residual_init=0.01, balance_loss_coeff=0.01, router_z_loss_coeff=0.001)
     module.train()
@@ -82,6 +101,13 @@ def test_latent_mixture_publishes_single_train_aux_and_snapshot():
     assert records[0][0] is module
     snapshot = module.routing_snapshot()
     assert snapshot["family"] == "latent"
+    assert snapshot["top_k"] == snapshot["training_top_k"] == 4
+    assert snapshot["inference_top_k"] == 4
+    assert snapshot["executed_experts"] == 4
+    assert snapshot["configured_top_k"] == 4
+    assert snapshot["active_experts_per_sample"].tolist() == [4, 4]
+    assert snapshot["batch_expert_union"] == 4
+    assert snapshot["kernel_calls"] == 4
     assert snapshot["noise_std"] == 0.0
     assert snapshot["router_init_std"] == 0.0
     assert snapshot["identity_cold_start"] is False
@@ -219,3 +245,55 @@ def test_latent_temperature_anneal_updates_latent_modules():
 
     assert updated == 1
     assert float(module.temperature) == pytest.approx(0.475)
+
+
+def test_latent_value_fusion_has_explicit_causal_semantics():
+    torch.manual_seed(7)
+    first = torch.randn(2, 8, 4, 4)
+    auxiliary = torch.randn(2, 8, 4, 4)
+    changed = auxiliary.flip(0)
+
+    legacy = LatentMixture([8, 8], 8, residual_init=0.0).eval()
+    fused = LatentMixture(
+        [8, 8], 8, residual_init=0.0, value_fusion_mode="weighted_sum", value_fusion_weights=[1.0, 1.0]
+    ).eval()
+    fused.load_state_dict(legacy.state_dict(), strict=False)
+
+    with patch.object(legacy.router, "forward", return_value=(torch.zeros(2, 4), torch.full((2, 4), 0.25))):
+        legacy_a = legacy([first, auxiliary])
+        legacy_b = legacy([first, changed])
+    with patch.object(fused.router, "forward", return_value=(torch.zeros(2, 4), torch.full((2, 4), 0.25))):
+        fused_a = fused([first, auxiliary])
+        fused_b = fused([first, changed])
+
+    assert torch.allclose(legacy_a, legacy_b)
+    assert not torch.allclose(fused_a, fused_b)
+    assert fused.routing_snapshot()["value_fusion_mode"] == "weighted_sum"
+
+
+def test_latent_value_fusion_ablations_are_reproducible():
+    torch.manual_seed(8)
+    xs = [torch.randn(2, 8, 4, 4), torch.randn(2, 8, 4, 4)]
+    shuffled = [xs[0], xs[1].flip(0)]
+    first_only = LatentMixture(
+        [8, 8], 8, residual_init=0.0, value_fusion_mode="weighted_sum", value_fusion_weights=[1.0, 0.0]
+    ).eval()
+    equal = LatentMixture(
+        [8, 8], 8, residual_init=0.0, value_fusion_mode="weighted_sum", value_fusion_weights=[1.0, 1.0]
+    ).eval()
+    equal.load_state_dict(first_only.state_dict(), strict=False)
+
+    assert torch.allclose(first_only(xs), first_only(shuffled))
+    assert not torch.allclose(equal(xs), equal(shuffled))
+    assert torch.allclose(first_only.value_fusion_weights, torch.tensor([1.0, 0.0]))
+
+
+def test_latent_value_fusion_is_opt_in_and_checkpoint_compatible():
+    default = LatentMixture([8, 8], 8)
+    restored = LatentMixture([8, 8], 8)
+    restored.load_state_dict(default.state_dict(), strict=True)
+
+    assert default.value_fusion_mode == "router_only"
+    assert "value_fusion_weights" not in default.state_dict()
+    with pytest.raises(ValueError, match="value_fusion_mode"):
+        LatentMixture([8, 8], 8, value_fusion_mode="unknown")

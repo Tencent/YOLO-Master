@@ -9,23 +9,7 @@ from typing import Iterable
 
 import torch
 
-
-def usage_gini(usage: Iterable[float] | torch.Tensor) -> float:
-    """Return the Gini coefficient for a non-negative expert-usage vector."""
-    if isinstance(usage, torch.Tensor):
-        values = usage.detach().float().reshape(-1).cpu()
-    else:
-        values = torch.tensor([float(v) for v in usage], dtype=torch.float32)
-
-    if values.numel() == 0:
-        return 0.0
-    values = values.clamp_min(0)
-    total = float(values.sum())
-    if total <= 0:
-        return 0.0
-
-    diff_sum = torch.abs(values[:, None] - values[None, :]).sum()
-    return float(diff_sum / (2 * values.numel() * total))
+from .protocol import usage_gini
 
 
 def mean_usage_gini_from_model(model: torch.nn.Module) -> float:
@@ -73,4 +57,3 @@ def apply_balance_loss_coeff(model: torch.nn.Module, coeff: float) -> int:
         if moe_loss_fn is not None and hasattr(moe_loss_fn, "balance_loss_coeff"):
             moe_loss_fn.balance_loss_coeff = float(coeff)
     return updated
-

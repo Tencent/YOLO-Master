@@ -106,6 +106,7 @@ class ConfigDriftDetector:
     TASKS = Path("ultralytics/nn/tasks.py")
     MIXTURE_REGISTRY = Path("ultralytics/nn/mixture_registry.py")
     MASTER_MODELS = Path("ultralytics/cfg/models/master")
+    YOLO26_MASTER_MODELS = Path("ultralytics/cfg/models/26")
     TYPE_REGISTRIES = ("CFG_FLOAT_KEYS", "CFG_FRACTION_KEYS", "CFG_INT_KEYS", "CFG_BOOL_KEYS")
     TORCH_MODULE_SIGNATURES = {"nn.Upsample": _Signature(0, 5)}
 
@@ -115,7 +116,8 @@ class ConfigDriftDetector:
     def check_all(self) -> list[DriftIssue]:
         """Run every drift check and return sorted diagnostics."""
         master_paths = sorted((self.root / self.MASTER_MODELS).rglob("*.yaml"))
-        yaml_paths = [self.root / self.DEFAULT_CFG, *master_paths]
+        yolo26_master_paths = sorted((self.root / self.YOLO26_MASTER_MODELS).glob("yolo26-master-*.yaml"))
+        yaml_paths = [self.root / self.DEFAULT_CFG, *master_paths, *yolo26_master_paths]
         issues = []
         issues.extend(self.check_yaml_duplicates(yaml_paths))
         issues.extend(self.check_config_mappings())
@@ -761,6 +763,7 @@ def main(argv: list[str] | None = None) -> int:
             print(issue.format(detector.root))
     else:
         count = len(list((detector.root / detector.MASTER_MODELS).rglob("*.yaml")))
+        count += len(list((detector.root / detector.YOLO26_MASTER_MODELS).glob("yolo26-master-*.yaml")))
         print(f"Configuration drift check: PASS ({count} Master model configs)")
     return 1 if issues else 0
 

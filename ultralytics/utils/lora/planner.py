@@ -38,6 +38,7 @@ class RefusalError(PEFTRefusalError):
     the exception hierarchy. Existing code catching RefusalError continues
     to work; new code can catch PEFTRefusalError for the same effect.
     """
+
     pass
 
 
@@ -70,6 +71,7 @@ class ArchitectureFingerprint:
         phi_residual: Residual connection density (modules with add_hook / total).
         phi_norm: LayerNorm ratio among all norm layers (LN / (BN+LN+GN)).
     """
+
     phi_attn: float = 0.0
     phi_text: float = 0.0
     phi_dw: float = 0.0
@@ -188,17 +190,14 @@ class ArchitectureFingerprint:
             # than text/clip names in their paths (e.g. WorldModel,
             # MaxSigmoidAttnBlock, ContrastiveHead). Inspect both class and
             # path so real checkpoints are not misclassified as plain CNNs.
-            if (
-                cls_name in {
-                    "WorldModel",
-                    "WorldDetect",
-                    "MaxSigmoidAttnBlock",
-                    "ImagePoolingAttn",
-                    "ContrastiveHead",
-                    "BNContrastiveHead",
-                }
-                or any(k in lname for k in ("text_encoder", "clip", "text_fusion", "world_embed", "text_proj"))
-            ):
+            if cls_name in {
+                "WorldModel",
+                "WorldDetect",
+                "MaxSigmoidAttnBlock",
+                "ImagePoolingAttn",
+                "ContrastiveHead",
+                "BNContrastiveHead",
+            } or any(k in lname for k in ("text_encoder", "clip", "text_fusion", "world_embed", "text_proj")):
                 has_text_fusion = True
 
             # MoE signature
@@ -230,10 +229,10 @@ class ArchitectureFingerprint:
           - YOLO-Master-MoE:                φ_attn = 0,  φ_text = 0
         """
         profiles = {
-            "yolo_cnn":       cls(phi_attn=0.0,  phi_text=0.0, phi_moe=0.0),
-            "yolo12":         cls(phi_attn=0.45, phi_text=0.0, phi_moe=0.0),
-            "yolo_world":     cls(phi_attn=0.45, phi_text=0.5, phi_moe=0.0),
-            "rtdetr":         cls(phi_attn=0.85, phi_text=0.0, phi_moe=0.0),
+            "yolo_cnn": cls(phi_attn=0.0, phi_text=0.0, phi_moe=0.0),
+            "yolo12": cls(phi_attn=0.45, phi_text=0.0, phi_moe=0.0),
+            "yolo_world": cls(phi_attn=0.45, phi_text=0.5, phi_moe=0.0),
+            "rtdetr": cls(phi_attn=0.85, phi_text=0.0, phi_moe=0.0),
             "yolo_master_moe": cls(phi_attn=0.0, phi_text=0.0, phi_moe=0.25),
         }
         return profiles.get(family, cls())
@@ -300,18 +299,43 @@ class ArchitectureFingerprint:
         total_modules_all = 0  # all nn.Module descendants
 
         # Detect head-related module class names
-        _HEAD_CLASS_NAMES = frozenset({
-            "Detect", "RTDETRDecoder", "Segment", "Segment26", "Pose", "Pose26", "OBB", "OBB26",
-            "SemanticSegment", "WorldDetect", "YOLOEDetect", "YOLOESegment", "YOLOESegment26", "v10Detect",
-        })
+        _HEAD_CLASS_NAMES = frozenset(
+            {
+                "Detect",
+                "RTDETRDecoder",
+                "Segment",
+                "Segment26",
+                "Pose",
+                "Pose26",
+                "OBB",
+                "OBB26",
+                "SemanticSegment",
+                "WorldDetect",
+                "YOLOEDetect",
+                "YOLOESegment",
+                "YOLOESegment26",
+                "v10Detect",
+            }
+        )
 
         # Residual detection: modules that have forward with add/residual
         # Heuristic: count modules whose class name contains common residual patterns
-        _RESIDUAL_KEYWORDS = frozenset({
-            "C2f", "C3k2", "C3", "C2PSA", "A2C2f", "Bottleneck",
-            "ResidualBlock", "SPPF", "SPP", "C2fCIB",
-            "RepC3", "C3k",
-        })
+        _RESIDUAL_KEYWORDS = frozenset(
+            {
+                "C2f",
+                "C3k2",
+                "C3",
+                "C2PSA",
+                "A2C2f",
+                "Bottleneck",
+                "ResidualBlock",
+                "SPPF",
+                "SPP",
+                "C2fCIB",
+                "RepC3",
+                "C3k",
+            }
+        )
 
         for name, module in model.named_modules():
             total_modules_all += 1
@@ -320,10 +344,7 @@ class ArchitectureFingerprint:
             if isinstance(module, nn.Conv2d):
                 total_conv += 1
                 conv_channel_sums.append(module.in_channels + module.out_channels)
-                if (
-                    module.in_channels == module.out_channels
-                    == module.groups
-                ):
+                if module.in_channels == module.out_channels == module.groups:
                     dw_count += 1
                 elif module.groups > 1:
                     group_count += 1
@@ -335,9 +356,14 @@ class ArchitectureFingerprint:
             # Covers both YOLO12 (AAttn) and RT-DETR (MultiheadAttention,
             # MSDeformAttn, AIFI, RTDETRDecoder, DeformableTransformerDecoderLayer).
             is_attention_module = cls_name in (
-                "AAttn", "MultiheadAttention", "MSDEFORMAttention",
-                "MSDeformAttn", "RTDETRDecoder", "DeformableAttention",
-                "AIFI", "DeformableTransformerDecoderLayer",
+                "AAttn",
+                "MultiheadAttention",
+                "MSDEFORMAttention",
+                "MSDeformAttn",
+                "RTDETRDecoder",
+                "DeformableAttention",
+                "AIFI",
+                "DeformableTransformerDecoderLayer",
             )
             if is_attention_module:
                 attn_count += 1
@@ -346,9 +372,16 @@ class ArchitectureFingerprint:
             # no "text" in their path, so include their distinctive classes.
             lname = name.lower()
             is_text_module = cls_name in (
-                "TextFusion", "WorldEmbed", "TextProj", "TextEncoder",
-                "WorldModel", "WorldDetect", "MaxSigmoidAttnBlock",
-                "ImagePoolingAttn", "ContrastiveHead", "BNContrastiveHead",
+                "TextFusion",
+                "WorldEmbed",
+                "TextProj",
+                "TextEncoder",
+                "WorldModel",
+                "WorldDetect",
+                "MaxSigmoidAttnBlock",
+                "ImagePoolingAttn",
+                "ContrastiveHead",
+                "BNContrastiveHead",
             )
             if is_text_module:
                 text_count += 1
@@ -361,14 +394,15 @@ class ArchitectureFingerprint:
             # MoE role detection is intentionally class/path based because
             # routers and experts are often custom modules without Conv/Linear
             # leaves of their own.
-            is_moe_module = (
-                any(k in lname for k in ("moe_router", "moe_expert", "moe_gate", "router", "expert"))
-                or any(k in cls_name.lower() for k in ("moe", "router", "expert"))
-            )
+            is_moe_module = any(
+                k in lname for k in ("moe_router", "moe_expert", "moe_gate", "router", "expert")
+            ) or any(k in cls_name.lower() for k in ("moe", "router", "expert"))
             if is_moe_module:
                 moe_count += 1
 
-            is_role_module = isinstance(module, (nn.Conv2d, nn.Linear)) or is_attention_module or is_text_module or is_moe_module
+            is_role_module = (
+                isinstance(module, (nn.Conv2d, nn.Linear)) or is_attention_module or is_text_module or is_moe_module
+            )
             if is_role_module:
                 role_count += 1
                 if isinstance(module, nn.Conv2d):
@@ -393,10 +427,7 @@ class ArchitectureFingerprint:
         total_params = sum(p.numel() for p in model.parameters())
         total_modules = total_conv + total_linear
         if total_modules == 0:
-            LOGGER.warning(
-                "[Planner] Model has no Conv2d or Linear modules. "
-                "Returning zero fingerprint."
-            )
+            LOGGER.warning("[Planner] Model has no Conv2d or Linear modules. Returning zero fingerprint.")
             return cls()
         if total_conv == 0:
             total_conv = 1
@@ -462,6 +493,7 @@ class PEFTVariantProfile:
         supports_attention: Whether this variant supports attention layers.
         supports_text_fusion: Whether this variant supports text-fusion layers.
     """
+
     xi: float = 0.0
     supports_conv: bool = True
     supports_linear: bool = True
@@ -574,6 +606,7 @@ class PlacementDecision:
         refusal_reason: Human-readable refusal reason if REFUSE.
         safety_overrides: Dict of config overrides to apply if ADAPT.
     """
+
     status: str = "ACCEPT"
     recommended_variant: Optional[str] = None
     recommended_rank: Optional[int] = None
@@ -632,6 +665,7 @@ class DecisionAudit:
     Persisted to disk as JSON for post-hoc analysis, paper reproduction,
     and debugging.  One audit file per ``plan()`` call.
     """
+
     timestamp: str
     model_name: str
     fingerprint: Dict[str, float]
@@ -708,9 +742,7 @@ class DecisionAudit:
                         old_file.unlink()
                     except OSError:
                         pass
-                LOGGER.debug(
-                    "[Planner] Audit rotation: removed %d old file(s)", excess
-                )
+                LOGGER.debug("[Planner] Audit rotation: removed %d old file(s)", excess)
         except OSError:
             pass  # Non-fatal: rotation failure should not crash planning
 
@@ -835,9 +867,7 @@ class LOVODataCollector:
         """
         if isinstance(point, tuple):
             fp, variant, delta_mAP = point
-            point = LOVODataPoint(
-                fingerprint=fp, variant=variant, delta_mAP=delta_mAP, **metadata
-            )
+            point = LOVODataPoint(fingerprint=fp, variant=variant, delta_mAP=delta_mAP, **metadata)
         self.data_points.append(point)
 
     def extend(self, points: List[Union[LOVODataPoint, Tuple]]) -> None:
@@ -862,9 +892,7 @@ class LOVODataCollector:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
-            json.dump(
-                [p.to_dict() for p in self.data_points], f, indent=2, ensure_ascii=False
-            )
+            json.dump([p.to_dict() for p in self.data_points], f, indent=2, ensure_ascii=False)
         LOGGER.info("[LOVO] Saved %d data points to %s", len(self.data_points), path)
 
     @classmethod
@@ -893,14 +921,10 @@ class LOVODataCollector:
         }
 
     def filter_by_variant(self, variant: str) -> "LOVODataCollector":
-        return LOVODataCollector(
-            [p for p in self.data_points if p.variant.lower() == variant.lower()]
-        )
+        return LOVODataCollector([p for p in self.data_points if p.variant.lower() == variant.lower()])
 
     def filter_by_model(self, model_name: str) -> "LOVODataCollector":
-        return LOVODataCollector(
-            [p for p in self.data_points if p.model_name == model_name]
-        )
+        return LOVODataCollector([p for p in self.data_points if p.model_name == model_name])
 
     def __len__(self) -> int:
         return len(self.data_points)
@@ -937,7 +961,7 @@ class LOVOValidationResult:
 
     @property
     def lovo_rmse(self) -> float:
-        return self.lovo_mse ** 0.5
+        return self.lovo_mse**0.5
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -985,9 +1009,7 @@ class LOVOValidator:
             ValueError: If fewer than 5 unique data points.
         """
         if len(data_points) < 5:
-            raise ValueError(
-                f"LOVO requires at least 5 data points, got {len(data_points)}"
-            )
+            raise ValueError(f"LOVO requires at least 5 data points, got {len(data_points)}")
 
         # Deduplicate by (fingerprint, variant, delta_mAP) key.
         # Including delta_mAP is essential: the same (architecture, variant) can
@@ -1019,18 +1041,26 @@ class LOVOValidator:
                 unique_points.append(p)
 
         if len(unique_points) < 5:
-            raise ValueError(
-                f"LOVO requires at least 5 unique data points, got {len(unique_points)}"
-            )
+            raise ValueError(f"LOVO requires at least 5 unique data points, got {len(unique_points)}")
 
         predictions: List[Tuple[float, float, str]] = []
+        # Fit once on the complete data set to seed adjacent leave-one-out
+        # folds. The final result is fitted again below so the returned
+        # coefficients always correspond exactly to all observations.
+        full_history = [p.to_tuple() for p in unique_points]
+        full_ranks = [max(int(p.rank), 1) for p in unique_points]
+        warm_planner = PEFTPlanner()
+        warm_planner.fit(full_history, ranks=full_ranks)
+        warm_start_coeffs = warm_planner._coeffs.copy()
         for left_out in unique_points:
             train_data = [p for p in unique_points if p is not left_out]
             train_history = [p.to_tuple() for p in train_data]
             train_ranks = [max(int(p.rank), 1) for p in train_data]
 
             planner = PEFTPlanner()
+            planner._warm_start_coeffs = warm_start_coeffs
             planner.fit(train_history, ranks=train_ranks)
+            warm_start_coeffs = planner._coeffs.copy()
             predicted = planner.predict(left_out.fingerprint, left_out.variant, max(int(left_out.rank), 1))
             predictions.append((left_out.delta_mAP, predicted, left_out.variant))
 
@@ -1059,10 +1089,8 @@ class LOVOValidator:
         ss_tot = float(np.sum((actual_arr - np.mean(actual_arr)) ** 2))
         r2 = 1.0 - ss_res / ss_tot if ss_tot > 1e-12 else 0.0
 
-        # Final fit on all unique points
         full_planner = PEFTPlanner()
-        full_history = [p.to_tuple() for p in unique_points]
-        full_planner.fit(full_history, ranks=[max(int(p.rank), 1) for p in unique_points])
+        full_planner.fit(full_history, ranks=full_ranks)
 
         return LOVOValidationResult(
             lovo_predictions=predictions,
@@ -1079,9 +1107,7 @@ class LOVOValidator:
         """Convenience wrapper that validates a collector."""
         return self.cross_validate(collector.data_points)
 
-    def cross_validate_paper(
-        self, data_points: List[LOVODataPoint]
-    ) -> Dict[str, Any]:
+    def cross_validate_paper(self, data_points: List[LOVODataPoint]) -> Dict[str, Any]:
         """Run LOVO using the strict five-feature paper regression.
 
         This is intentionally separate from :meth:`cross_validate`, which
@@ -1091,20 +1117,21 @@ class LOVOValidator:
             raise ValueError(f"Paper LOVO requires at least 5 data points, got {len(data_points)}")
         predictions = []
         for index, left_out in enumerate(data_points):
-            train = data_points[:index] + data_points[index + 1:]
+            train = data_points[:index] + data_points[index + 1 :]
             planner = PEFTPlanner()
             planner.fit([point.to_tuple() for point in train])
             predicted = planner.predict_paper(left_out.fingerprint, left_out.variant)
             predictions.append((left_out.delta_mAP, predicted, left_out.variant))
         try:
             import numpy as np
+
             actual = np.asarray([item[0] for item in predictions], dtype=np.float64)
             predicted = np.asarray([item[1] for item in predictions], dtype=np.float64)
             residual = actual - predicted
-            mse = float(np.mean(residual ** 2))
+            mse = float(np.mean(residual**2))
             mae = float(np.mean(np.abs(residual)))
             total = float(np.sum((actual - np.mean(actual)) ** 2))
-            r2 = 1.0 - float(np.sum(residual ** 2)) / total if total > 1e-12 else 0.0
+            r2 = 1.0 - float(np.sum(residual**2)) / total if total > 1e-12 else 0.0
         except ImportError:
             mse = mae = r2 = 0.0
         final_planner = PEFTPlanner()
@@ -1112,7 +1139,7 @@ class LOVOValidator:
         return {
             "predictions": predictions,
             "mse": mse,
-            "rmse": mse ** 0.5,
+            "rmse": mse**0.5,
             "mae": mae,
             "r2": r2,
             "coefficients": list(final_planner._paper_coeffs),
@@ -1141,9 +1168,7 @@ class LOVOValidator:
             held_out_ids = {id(point) for point in held_out}
             train = [point for point in data_points if id(point) not in held_out_ids]
             if len(train) < 5:
-                raise ValueError(
-                    f"Grouped LOVO fold {group_name!r} has only {len(train)} training points"
-                )
+                raise ValueError(f"Grouped LOVO fold {group_name!r} has only {len(train)} training points")
             planner = PEFTPlanner()
             planner.fit(
                 [point.to_tuple() for point in train],
@@ -1182,25 +1207,23 @@ class LOVOValidator:
             actual = np.asarray([item["actual"] for item in flat], dtype=np.float64)
             predicted = np.asarray([item["predicted"] for item in flat], dtype=np.float64)
             residual = actual - predicted
-            mse = float(np.mean(residual ** 2)) if len(flat) else 0.0
+            mse = float(np.mean(residual**2)) if len(flat) else 0.0
             total = float(np.sum((actual - np.mean(actual)) ** 2)) if len(flat) else 0.0
-            r2 = 1.0 - float(np.sum(residual ** 2)) / total if total > 1e-12 else 0.0
+            r2 = 1.0 - float(np.sum(residual**2)) / total if total > 1e-12 else 0.0
         except ImportError:
             mse = r2 = 0.0
         return {
             "folds": folds,
             "predictions": flat,
             "mse": mse,
-            "rmse": mse ** 0.5,
+            "rmse": mse**0.5,
             "r2": r2,
             "n_samples": len(flat),
             "n_groups": len(groups),
             "paper_regression": paper,
         }
 
-    def cross_validate_variant(
-        self, data_points: List[LOVODataPoint], *, paper: bool = True
-    ) -> Dict[str, Any]:
+    def cross_validate_variant(self, data_points: List[LOVODataPoint], *, paper: bool = True) -> Dict[str, Any]:
         """Run genuine leave-one-variant-out validation.
 
         Each fold excludes every observation of one variant before fitting;
@@ -1240,9 +1263,7 @@ class LOVOValidator:
         )
         return result
 
-    def evaluate_catastrophe_detection(
-        self, collector: LOVODataCollector
-    ) -> Dict[str, Any]:
+    def evaluate_catastrophe_detection(self, collector: LOVODataCollector) -> Dict[str, Any]:
         """Evaluate catastrophe detection metrics.
 
         Uses the LOVO-predicted values and the threshold to compute
@@ -1265,11 +1286,7 @@ class LOVOValidator:
 
         precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
         recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-        f1 = (
-            2 * precision * recall / (precision + recall)
-            if (precision + recall) > 0
-            else 0.0
-        )
+        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
         accuracy = (tp + tn) / (tp + fp + tn + fn) if (tp + fp + tn + fn) > 0 else 0.0
 
         return {
@@ -1284,9 +1301,7 @@ class LOVOValidator:
             "accuracy": accuracy,
         }
 
-    def evaluate_decision_boundary(
-        self, collector: LOVODataCollector
-    ) -> Dict[str, Any]:
+    def evaluate_decision_boundary(self, collector: LOVODataCollector) -> Dict[str, Any]:
         """Evaluate ACCEPT/REFUSE decision boundary accuracy."""
         result = self.cross_validate(collector.data_points)
 
@@ -1366,18 +1381,18 @@ class PEFTPlanner:
     # New extended dims default to 0.0 coefficient (no impact until LOVO-fitted with
     # multi-scale data), preserving backward compatibility with the original model.
     DEFAULT_COEFFS: Tuple[float, ...] = (
-        0.0656,   # beta0  – intercept
-        0.0026,   # beta1  – phi_attn
-        0.0,      # beta2  – phi_text
-        0.0054,   # beta3  – phi_dw
-        1.0,      # beta4  – xi (variant)
-        0.0,      # beta5  – phi_depth (activated by LOVO fit)
-        0.0,      # beta6  – phi_width
-        0.0,      # beta7  – phi_head
-        0.0,      # beta8  – phi_residual
-        0.0,      # beta9  – phi_norm
-        0.0,      # beta10 – log(r) rank effect
-        0.0,      # beta11 – phi_attn² (non-linear catastrophe term)
+        0.0656,  # beta0  – intercept
+        0.0026,  # beta1  – phi_attn
+        0.0,  # beta2  – phi_text
+        0.0054,  # beta3  – phi_dw
+        1.0,  # beta4  – xi (variant)
+        0.0,  # beta5  – phi_depth (activated by LOVO fit)
+        0.0,  # beta6  – phi_width
+        0.0,  # beta7  – phi_head
+        0.0,  # beta8  – phi_residual
+        0.0,  # beta9  – phi_norm
+        0.0,  # beta10 – log(r) rank effect
+        0.0,  # beta11 – phi_attn² (non-linear catastrophe term)
     )
     # Strict Eq. 6 contract. The extended model remains available through
     # ``predict`` for engineering calibration, while paper claims use this.
@@ -1424,9 +1439,7 @@ class PEFTPlanner:
         self.lovo_persist_path = lovo_persist_path
         self._coeffs = list(self.DEFAULT_COEFFS)
         self._paper_coeffs = list(self.PAPER_COEFFS)
-        self._history: List[
-            Tuple[ArchitectureFingerprint, str, float]
-        ] = []
+        self._history: List[Tuple[ArchitectureFingerprint, str, float]] = []
         self._lovo_result: Optional[LOVOValidationResult] = None
         self._fit_n_samples = 0
         self._fit_effective_rank = 0
@@ -1439,6 +1452,10 @@ class PEFTPlanner:
         self._fit_feature_scale = None
         self._fit_posterior_covariance = None
         self._fit_ranks: List[int] = []
+        # Optional coefficient prior supplied by LOVO warm-starting.  This is
+        # deliberately private so existing planner callers retain the exact
+        # default fitting behaviour.
+        self._warm_start_coeffs: Optional[List[float]] = None
         self._needs_refit = False  # Flag: re-fit on next plan() after new data
 
     def _maybe_fit_from_lovo(self) -> None:
@@ -1495,21 +1512,25 @@ class PEFTPlanner:
             self.lovo_collector = LOVODataCollector()
         inner_model = getattr(model, "model", model)
         fingerprint = ArchitectureFingerprint.compute(inner_model)
-        self.lovo_collector.add(LOVODataPoint(
-            fingerprint=fingerprint,
-            variant=variant,
-            delta_mAP=delta_mAP,
-            model_name=model_name,
-            dataset=dataset,
-            epochs=epochs,
-            rank=max(int(rank), 1),
-            notes=notes or f"rank={rank}",
-        ))
+        self.lovo_collector.add(
+            LOVODataPoint(
+                fingerprint=fingerprint,
+                variant=variant,
+                delta_mAP=delta_mAP,
+                model_name=model_name,
+                dataset=dataset,
+                epochs=epochs,
+                rank=max(int(rank), 1),
+                notes=notes or f"rank={rank}",
+            )
+        )
         self._needs_refit = True
         LOGGER.info(
-            "[Planner] Recorded training result: variant=%s, rank=%d, "
-            "ΔmAP=%.4f (collector now has %d points)",
-            variant, rank, delta_mAP, len(self.lovo_collector),
+            "[Planner] Recorded training result: variant=%s, rank=%d, ΔmAP=%.4f (collector now has %d points)",
+            variant,
+            rank,
+            delta_mAP,
+            len(self.lovo_collector),
         )
         if self.lovo_persist_path is not None:
             try:
@@ -1564,12 +1585,13 @@ class PEFTPlanner:
         self._fit_feature_mean = None
         self._fit_feature_scale = None
         self._fit_posterior_covariance = None
-        self._fit_ranks = [max(int(ranks[i]), 1) if ranks is not None and i < len(ranks) else 8 for i in range(len(history))]
+        self._fit_ranks = [
+            max(int(ranks[i]), 1) if ranks is not None and i < len(ranks) else 8 for i in range(len(history))
+        ]
         if len(history) < 5:
             self._coeffs = list(self.DEFAULT_COEFFS)
             LOGGER.warning(
-                "[Planner] Insufficient calibration data (%d samples). "
-                "Using default coefficients.",
+                "[Planner] Insufficient calibration data (%d samples). Using default coefficients.",
                 len(history),
             )
             return
@@ -1577,9 +1599,7 @@ class PEFTPlanner:
         try:
             import numpy as np
         except ImportError:
-            LOGGER.warning(
-                "[Planner] NumPy not available. Using default coefficients."
-            )
+            LOGGER.warning("[Planner] NumPy not available. Using default coefficients.")
             return
 
         X = []
@@ -1598,7 +1618,11 @@ class PEFTPlanner:
         Z = np.ones_like(X_arr)
         Z[:, 1:] = (X_arr[:, 1:] - feature_mean) / feature_scale
 
-        prior_beta = np.asarray(self.DEFAULT_COEFFS, dtype=np.float64)
+        warm_start = getattr(self, "_warm_start_coeffs", None)
+        if warm_start is not None and len(warm_start) >= n_features:
+            prior_beta = np.asarray(warm_start[:n_features], dtype=np.float64)
+        else:
+            prior_beta = np.asarray(self.DEFAULT_COEFFS, dtype=np.float64)
         if prior_beta.size < n_features:
             prior_beta = np.pad(prior_beta, (0, n_features - prior_beta.size))
         prior_beta = prior_beta[:n_features]
@@ -1623,7 +1647,13 @@ class PEFTPlanner:
         XtX = Z.T @ Z
         spectral_scale = max(float(np.trace(XtX) / max(int(mat_rank), 1)), 1.0)
         rank_deficit = max(n_features - int(mat_rank), 0) / max(n_features, 1)
-        candidates = spectral_scale * np.logspace(-6, 2, 25)
+        if warm_start is not None:
+            # Adjacent LOVO folds have nearly identical posteriors.  A short
+            # regularization sweep is sufficient when a prior fit is present,
+            # while standalone ``fit`` calls keep the original 25-point grid.
+            candidates = spectral_scale * np.logspace(-4, 1, 10)
+        else:
+            candidates = spectral_scale * np.logspace(-6, 2, 25)
         candidates = np.unique(np.concatenate((candidates, [spectral_scale * max(rank_deficit, 1e-6) * 1e-3])))
 
         best = None
@@ -1664,22 +1694,26 @@ class PEFTPlanner:
         self._fit_posterior_covariance = noise_variance * precision_inv
         LOGGER.info(
             "[Planner] Fitted prior-centered Bayesian ridge coefficients (12-dim, λ=%.6g): %s",
-            ridge_lambda, self._coeffs,
+            ridge_lambda,
+            self._coeffs,
         )
         LOGGER.info(
             "[Planner] Fit rank=%d/%d, effective_dof=%.2f, condition=%.3g, samples=%d.",
-            mat_rank, n_features, effective_dof, condition_number, len(history),
+            mat_rank,
+            n_features,
+            effective_dof,
+            condition_number,
+            len(history),
         )
 
-    def _fit_paper_coeffs(
-        self, history: List[Tuple[ArchitectureFingerprint, str, float]]
-    ) -> None:
+    def _fit_paper_coeffs(self, history: List[Tuple[ArchitectureFingerprint, str, float]]) -> None:
         """Fit the strict five-feature Eq. 6 model with a stable least square."""
         if len(history) < 5:
             self._paper_coeffs = list(self.PAPER_COEFFS)
             return
         try:
             import numpy as np
+
             X = np.asarray(
                 [self._paper_feature_vector(fp, variant) for fp, variant, _ in history],
                 dtype=np.float64,
@@ -1687,13 +1721,12 @@ class PEFTPlanner:
             y = np.asarray([delta for _, _, delta in history], dtype=np.float64)
             prior = np.asarray(self.PAPER_COEFFS, dtype=np.float64)
             ridge = 1e-4
-            self._paper_coeffs = np.linalg.solve(
-                X.T @ X + ridge * np.eye(X.shape[1]), X.T @ y + ridge * prior
-            ).tolist()
+            self._paper_coeffs = np.linalg.solve(X.T @ X + ridge * np.eye(X.shape[1]), X.T @ y + ridge * prior).tolist()
         except ImportError:
             self._paper_coeffs = list(self.PAPER_COEFFS)
         except np.linalg.LinAlgError:
             self._paper_coeffs = list(self.PAPER_COEFFS)
+
     @staticmethod
     def _feature_vector(
         fingerprint: ArchitectureFingerprint,
@@ -1721,9 +1754,7 @@ class PEFTPlanner:
         ]
 
     @staticmethod
-    def _paper_feature_vector(
-        fingerprint: ArchitectureFingerprint, variant: str
-    ) -> List[float]:
+    def _paper_feature_vector(fingerprint: ArchitectureFingerprint, variant: str) -> List[float]:
         """Return the paper Eq. 6 feature vector ``[1, attn, text, dw, xi]``."""
         return [
             1.0,
@@ -1733,9 +1764,7 @@ class PEFTPlanner:
             PEFTVariantProfile.from_variant(variant).xi,
         ]
 
-    def predict_paper(
-        self, fingerprint: ArchitectureFingerprint, variant: str
-    ) -> float:
+    def predict_paper(self, fingerprint: ArchitectureFingerprint, variant: str) -> float:
         """Predict with the strict five-feature paper regression contract."""
         coeffs = list(self._paper_coeffs)
         features = self._paper_feature_vector(fingerprint, variant)
@@ -1874,14 +1903,21 @@ class PEFTPlanner:
             "evidence_confidence_reasons": confidence_reasons,
             "uses_learned_evidence": fitted,
             "low_confidence": confidence == "low",
-            "paper_regression_features": [
-                "intercept", "phi_attn", "phi_text", "phi_dw", "variant_xi"
-            ],
+            "paper_regression_features": ["intercept", "phi_attn", "phi_text", "phi_dw", "variant_xi"],
             "paper_coefficients": list(self._paper_coeffs),
             "implementation_regression_features": [
-                "intercept", "phi_attn", "phi_text", "phi_dw", "variant_xi",
-                "phi_depth", "phi_width", "phi_head", "phi_residual", "phi_norm",
-                "log2_rank", "phi_attn_squared",
+                "intercept",
+                "phi_attn",
+                "phi_text",
+                "phi_dw",
+                "variant_xi",
+                "phi_depth",
+                "phi_width",
+                "phi_head",
+                "phi_residual",
+                "phi_norm",
+                "log2_rank",
+                "phi_attn_squared",
             ],
         }
 
@@ -1968,9 +2004,7 @@ class PEFTPlanner:
         from .api import _effective_peft_variant
 
         if not isinstance(config, LoRAConfig):
-            LOGGER.warning(
-                "[Planner] Config is not LoRAConfig, skipping planner."
-            )
+            LOGGER.warning("[Planner] Config is not LoRAConfig, skipping planner.")
             decision = PlacementDecision(
                 status="ACCEPT",
                 target_modules_hint=[],
@@ -1985,12 +2019,17 @@ class PEFTPlanner:
             return decision
 
         inner_model = getattr(model, "model", model)
+        # Build the structural graph once for this planning pass. Target
+        # detection and the optional budget solver reuse the same graph.
+        from ultralytics.vpeft.graph import ComputationGraphBuilder
+
+        graph = ComputationGraphBuilder().build(inner_model)
         fingerprint = ArchitectureFingerprint.compute(inner_model)
         variant = _effective_peft_variant(config)
         rank = getattr(config, "r", 0)
         paper_delta = self.predict_paper(fingerprint, variant)
         # Compute architecture-conditioned targets once for all decision paths.
-        targets_hint = self.detect_targets(model, config)
+        targets_hint = self.detect_targets(model, config, graph=graph)
 
         LOGGER.info(
             "[Planner] Architecture fingerprint: φ_attn=%.3f, "
@@ -2016,9 +2055,7 @@ class PEFTPlanner:
         calibration_metadata["paper_predicted_delta"] = paper_delta
 
         # === Phase 1: Regression-dominant evaluation of ALL variants ===
-        ALL_VARIANTS = [
-            "lora", "dora", "loha", "lokr", "ia3", "hra", "adalora", "oft", "boft"
-        ]
+        ALL_VARIANTS = ["lora", "dora", "loha", "lokr", "ia3", "hra", "adalora", "oft", "boft"]
         variant_scores: Dict[str, float] = {}
         for v in ALL_VARIANTS:
             profile = PEFTVariantProfile.from_variant(v)
@@ -2053,9 +2090,8 @@ class PEFTPlanner:
         best_delta = variant_scores[best_variant]
 
         requested_profile = PEFTVariantProfile.from_variant(variant)
-        requested_compatible = (
-            (fingerprint.phi_attn <= 0.05 or requested_profile.supports_attention)
-            and (fingerprint.phi_text <= 0.05 or requested_profile.supports_text_fusion)
+        requested_compatible = (fingerprint.phi_attn <= 0.05 or requested_profile.supports_attention) and (
+            fingerprint.phi_text <= 0.05 or requested_profile.supports_text_fusion
         )
         if variant in variant_scores:
             requested_delta = variant_scores[variant]
@@ -2067,13 +2103,19 @@ class PEFTPlanner:
             LOGGER.info(
                 "[Planner] Requested variant '%s' is incompatible with this "
                 "architecture (φ_attn=%.3f, φ_text=%.3f); will ADAPT to %s.",
-                variant, fingerprint.phi_attn, fingerprint.phi_text, best_variant,
+                variant,
+                fingerprint.phi_attn,
+                fingerprint.phi_text,
+                best_variant,
             )
             requested_delta = best_delta
 
         LOGGER.info(
             "[Planner] Regression: requested %s Δ=%.4f, best %s Δ=%.4f",
-            variant, requested_delta, best_variant, best_delta,
+            variant,
+            requested_delta,
+            best_variant,
+            best_delta,
         )
 
         safety_overrides: Dict[str, Any] = {}
@@ -2087,7 +2129,7 @@ class PEFTPlanner:
         # configuration (RT-DETR + LoRA-family has 7/7 catastrophe rate
         # per paper Fig. 4). The regression may not have seen enough
         # catastrophic data to generalise this pattern.
-        using_defaults = (self._coeffs == list(self.DEFAULT_COEFFS))
+        using_defaults = self._coeffs == list(self.DEFAULT_COEFFS)
 
         # Guardrail A: DoRA on attention-rich architectures → downgrade to LoRA.
         # Paper Fig. 4: YOLO12n DoRA has 6/7 catastrophe rate. When LOVO-fitted,
@@ -2097,8 +2139,8 @@ class PEFTPlanner:
             safety_overrides["use_dora"] = False
             safety_overrides["variant_adapted"] = True
             LOGGER.info(
-                "[Planner] Safety guardrail: DoRA on attention-rich (φ_attn=%.3f) "
-                "→ downgrade to LoRA", fingerprint.phi_attn
+                "[Planner] Safety guardrail: DoRA on attention-rich (φ_attn=%.3f) → downgrade to LoRA",
+                fingerprint.phi_attn,
             )
 
         # Guardrail B: RT-DETR-like architecture + LoRA-family.
@@ -2112,16 +2154,17 @@ class PEFTPlanner:
         # RT-DETR-l is ~0.10 (backbone has many conv layers that dilute the ratio),
         # while the paper-calibrated profile assumes phi_attn≈0.85.
         arch_family = ArchitectureFingerprint._detect_architecture_family(inner_model)
-        is_rtdetr_like = (
-            fingerprint.phi_attn > 0.7
-            or arch_family == "rtdetr"
-        )
+        is_rtdetr_like = fingerprint.phi_attn > 0.7 or arch_family == "rtdetr"
         if is_rtdetr_like and variant.lower() in ("lora", "dora", "loha", "lokr"):
             LOGGER.warning(
                 "[Planner] Guardrail B (unconditional): RT-DETR-like "
                 "architecture (φ_attn=%.2f, family=%s) + %s → REFUSE "
                 "(using_defaults=%s, regression Δ=%.4f ignored)",
-                fingerprint.phi_attn, arch_family, variant, using_defaults, requested_delta,
+                fingerprint.phi_attn,
+                arch_family,
+                variant,
+                using_defaults,
+                requested_delta,
             )
             decision = PlacementDecision(
                 status="REFUSE",
@@ -2148,8 +2191,7 @@ class PEFTPlanner:
         # early-return so incompatible requests cannot bypass budget checks.
         budget = getattr(config, "adapter_budget", None)
         budget_defaulted = budget is None and bool(
-            getattr(config, "planner_enabled", False)
-            or getattr(config, "lora_planner_enabled", False)
+            getattr(config, "planner_enabled", False) or getattr(config, "lora_planner_enabled", False)
         )
         if budget_defaulted:
             budget = self.DEFAULT_ADAPTER_BUDGET
@@ -2163,15 +2205,13 @@ class PEFTPlanner:
                 rank=solver_rank,
                 budget=int(budget),
                 solver_name=str(getattr(config, "planner_solver", "ao")),
+                graph=graph,
             )
             calibration_metadata.update(budget_result[1])
             if budget_result[0] is None:
                 decision = PlacementDecision(
                     status="REFUSE",
-                    refusal_reason=(
-                        f"No feasible placement under adapter budget {int(budget)} "
-                        f"for {solver_variant}."
-                    ),
+                    refusal_reason=(f"No feasible placement under adapter budget {int(budget)} for {solver_variant}."),
                     predicted_delta=requested_delta,
                     target_modules_hint=[],
                     safety_overrides={"planner_refused": True, "budget_infeasible": True},
@@ -2308,14 +2348,10 @@ class PEFTPlanner:
             if rank > 0 and rank > 8:
                 recommended_rank = 8
                 safety_overrides["r"] = 8
-                LOGGER.info(
-                    "[Planner] Capping rank to 8 for attention-rich architecture"
-                )
+                LOGGER.info("[Planner] Capping rank to 8 for attention-rich architecture")
             if not getattr(config, "include_attention", False):
                 safety_overrides["include_attention"] = True
-                LOGGER.info(
-                    "[Planner] Enabling safe attention for attention-rich architecture"
-                )
+                LOGGER.info("[Planner] Enabling safe attention for attention-rich architecture")
 
         # CNN architecture rank cap: protect against memory blowup on large models.
         # For attention-poor architectures (φ_attn < 0.05), apply a parameter-count-
@@ -2341,7 +2377,9 @@ class PEFTPlanner:
                 LOGGER.info(
                     "[Planner] CNN rank cap: model has %.1fM params → "
                     "capping rank from %d to %d to prevent memory blowup",
-                    model_params / 1e6, rank, _cnn_rank_cap,
+                    model_params / 1e6,
+                    rank,
+                    _cnn_rank_cap,
                 )
 
             # Grouped convolution rank alignment: when the model contains grouped
@@ -2355,9 +2393,10 @@ class PEFTPlanner:
                 aligned_rank = (recommended_rank // _gcd) * _gcd
                 if aligned_rank > 0:
                     LOGGER.info(
-                        "[Planner] Grouped conv rank alignment: "
-                        "rank %d → %d (gcd=%d)",
-                        recommended_rank, aligned_rank, _gcd,
+                        "[Planner] Grouped conv rank alignment: rank %d → %d (gcd=%d)",
+                        recommended_rank,
+                        aligned_rank,
+                        _gcd,
                     )
                     recommended_rank = aligned_rank
                     safety_overrides["r"] = aligned_rank
@@ -2367,14 +2406,12 @@ class PEFTPlanner:
             if getattr(config, "include_attention", False):
                 safety_overrides["include_attention"] = False
                 LOGGER.info(
-                    "[Planner] No attention detected (φ_attn=%.3f), "
-                    "disabling attention targets",
+                    "[Planner] No attention detected (φ_attn=%.3f), disabling attention targets",
                     fingerprint.phi_attn,
                 )
             else:
                 LOGGER.info(
-                    "[Planner] No attention detected (φ_attn=%.3f), "
-                    "attention already disabled",
+                    "[Planner] No attention detected (φ_attn=%.3f), attention already disabled",
                     fingerprint.phi_attn,
                 )
 
@@ -2426,6 +2463,7 @@ class PEFTPlanner:
         rank: int,
         budget: int,
         solver_name: str = "ao",
+        graph: Optional[Any] = None,
     ) -> Tuple[Optional[List[str]], Dict[str, Any]]:
         """Solve the paper placement/rank problem for planner candidates."""
         from ultralytics.vpeft.constraints import ConstraintRegistry
@@ -2436,7 +2474,8 @@ class PEFTPlanner:
             MIPRelaxationSolver,
         )
 
-        graph = ComputationGraphBuilder().build(model)
+        if graph is None:
+            graph = ComputationGraphBuilder().build(model)
         candidates = set(target_modules)
         if not candidates:
             return None, {"budget_solver": solver_name, "budget": int(budget)}
@@ -2586,6 +2625,7 @@ class PEFTPlanner:
         self,
         model: nn.Module,
         config: Optional[Any] = None,
+        graph: Optional[Any] = None,
     ) -> List[str]:
         """Architecture-conditioned target module detection.
 
@@ -2612,22 +2652,21 @@ class PEFTPlanner:
         Returns:
             List[str]: Sorted list of target module names.
         """
-        inner_model = ArchitectureFingerprint._unwrap_model(
-            getattr(model, "model", model)
-        )
+        inner_model = ArchitectureFingerprint._unwrap_model(getattr(model, "model", model))
         fingerprint = ArchitectureFingerprint.compute(inner_model)
         # Detect architecture family for family-level guardrail logic.
         # This is necessary because RT-DETR-l's actual phi_attn is ~0.10
         # (many conv layers dilute the ratio), while the paper-calibrated
         # profile assumes phi_attn≈0.85.
         arch_family = ArchitectureFingerprint._detect_architecture_family(inner_model)
-        is_rtdetr = (fingerprint.phi_attn >= 0.7 or arch_family == "rtdetr")
+        is_rtdetr = fingerprint.phi_attn >= 0.7 or arch_family == "rtdetr"
         targets: List[str] = []
         include_text = fingerprint.phi_text > 0.05
 
-        from ultralytics.vpeft.graph import ComputationGraphBuilder
+        if graph is None:
+            from ultralytics.vpeft.graph import ComputationGraphBuilder
 
-        graph = ComputationGraphBuilder().build(inner_model)
+            graph = ComputationGraphBuilder().build(inner_model)
         annotations = {node.name: node.annotations or {} for node in graph.nodes}
         for name, module in inner_model.named_modules():
             if not name:
@@ -2652,13 +2691,20 @@ class PEFTPlanner:
             # Text-fusion detection: use precise patterns (v2 improvement).
             # Bare "fusion" keyword removed to avoid false positives on
             # modules like feature_fusion or fusion_layer.
-            is_text_fusion = bool(structural.get("text_fusion")) or any(
-                k in lname for k in (
-                    "text_fusion", "text_proj", "clip", "lang", "world_embed",
+            is_text_fusion = (
+                bool(structural.get("text_fusion"))
+                or any(
+                    k in lname
+                    for k in (
+                        "text_fusion",
+                        "text_proj",
+                        "clip",
+                        "lang",
+                        "world_embed",
+                    )
                 )
-            ) or module.__class__.__name__ in {
-                "ContrastiveHead", "BNContrastiveHead", "TextProj", "WorldEmbed"
-            }
+                or module.__class__.__name__ in {"ContrastiveHead", "BNContrastiveHead", "TextProj", "WorldEmbed"}
+            )
 
             # Semantic text-fusion candidates remain eligible even when they
             # live below a WorldDetect head; the paper explicitly protects the
@@ -2680,20 +2726,13 @@ class PEFTPlanner:
             # YOLO12s-like (moderate attention): conv + safe attention.
             if 0.05 <= fingerprint.phi_attn < 0.7 and not is_rtdetr:
                 # Exclude area-attention risky conv layers (qkv, proj, pe).
-                if is_conv and any(
-                    p in lname for p in (".attn.qkv", ".attn.proj", ".attn.pe")
-                ):
+                if is_conv and any(p in lname for p in (".attn.qkv", ".attn.proj", ".attn.pe")):
                     continue
                 # Exclude ABlock-internal MLP convs on the residual stream.
-                if is_conv and ".mlp." in lname and any(
-                    b in lname for b in ("ablock", "a2c2f", "aattn")
-                ):
+                if is_conv and ".mlp." in lname and any(b in lname for b in ("ablock", "a2c2f", "aattn")):
                     continue
                 # Exclude MSDeformAttn geometry-sensitive linear layers.
-                if is_linear and any(
-                    p in lname
-                    for p in ("sampling_offsets", "attention_weights")
-                ):
+                if is_linear and any(p in lname for p in ("sampling_offsets", "attention_weights")):
                     continue
                 targets.append(name)
                 continue
@@ -2712,20 +2751,23 @@ class PEFTPlanner:
             for name in targets:
                 lname = name.lower()
                 structural = annotations.get(name, {})
-                if only_backbone and (structural.get("in_head") or any(
-                    p in lname
-                    for p in (
-                        "head",
-                        "detect",
-                        "box",
-                        "cls",
-                        "pred",
-                        "fpn",
-                        "pan",
-                        "seg",
-                        "pose",
+                if only_backbone and (
+                    structural.get("in_head")
+                    or any(
+                        p in lname
+                        for p in (
+                            "head",
+                            "detect",
+                            "box",
+                            "cls",
+                            "pred",
+                            "fpn",
+                            "pan",
+                            "seg",
+                            "pose",
+                        )
                     )
-                )):
+                ):
                     continue
                 if not include_head and (
                     (structural.get("in_head") and not structural.get("text_fusion"))
@@ -2754,6 +2796,7 @@ class PEFTPlanner:
             grouped convolutions are found.
         """
         import math as _math
+
         result = 0
         for module in model.modules():
             if isinstance(module, nn.Conv2d) and module.groups > 1:
@@ -2770,10 +2813,7 @@ def is_planner_enabled(config: Any) -> bool:
     Returns:
         bool: True if the planner is enabled, False otherwise.
     """
-    return bool(
-        getattr(config, "lora_planner_enabled", False)
-        or getattr(config, "planner_enabled", False)
-    )
+    return bool(getattr(config, "lora_planner_enabled", False) or getattr(config, "planner_enabled", False))
 
 
 __all__ = [

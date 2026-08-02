@@ -74,13 +74,16 @@ class _LocalConvTransformerExpert(nn.Module):
     """
 
     def __init__(self, dim: int, num_heads: int, mlp_ratio: float = 2.0,
-                 dropout: float = 0.0):
+                 dropout: float = 0.0, local_window_size: int = 0):
         super().__init__()
         if num_heads <= 0 or dim % num_heads != 0:
             raise ValueError(f"dim ({dim}) must be divisible by positive num_heads ({num_heads})")
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
         self.scale = self.head_dim ** -0.5
+        if int(local_window_size) < 0:
+            raise ValueError("local_window_size must be non-negative (0 disables window attention)")
+        self.local_window_size = int(local_window_size)
 
         # DW-3×3 pre-mixing before QKV projection
         self.dw_mix = nn.Conv2d(dim, dim, 3, padding=1, groups=dim, bias=False)
@@ -128,8 +131,31 @@ class _LocalConvTransformerExpert(nn.Module):
         v_2d = v_2d + self.pe(v_2d)
         v = v_2d.flatten(2)
 
-        out = _sdpa(to_heads(q), to_heads(k), to_heads(v), self.scale)
-        out = out.transpose(2, 3).reshape(B, C, H, W)
+        if self.local_window_size > 0 and N > self.local_window_size ** 2:
+            # Keep the convolutional QKV path, but bound attention to local
+            # windows. Padding is removed before the residual is formed, so
+            # non-divisible feature maps retain their original shape.
+            win = self.local_window_size
+            q_nhwc = q.reshape(B, C, H, W).permute(0, 2, 3, 1)
+            k_nhwc = k.reshape(B, C, H, W).permute(0, 2, 3, 1)
+            v_nhwc = v.reshape(B, C, H, W).permute(0, 2, 3, 1)
+            q_nhwc, _, _ = _WindowTransformerExpert._pad_to_window(q_nhwc, win)
+            k_nhwc, _, _ = _WindowTransformerExpert._pad_to_window(k_nhwc, win)
+            v_nhwc, _, _ = _WindowTransformerExpert._pad_to_window(v_nhwc, win)
+            Hp, Wp = q_nhwc.shape[1:3]
+            q_win = _WindowTransformerExpert._window_partition(q_nhwc, win)
+            k_win = _WindowTransformerExpert._window_partition(k_nhwc, win)
+            v_win = _WindowTransformerExpert._window_partition(v_nhwc, win)
+            q_win = q_win.reshape(-1, win * win, nh, hd).permute(0, 2, 1, 3)
+            k_win = k_win.reshape(-1, win * win, nh, hd).permute(0, 2, 1, 3)
+            v_win = v_win.reshape(-1, win * win, nh, hd).permute(0, 2, 1, 3)
+            out_win = _sdpa(q_win, k_win, v_win, self.scale)
+            out_win = out_win.transpose(1, 2).reshape(-1, win * win, C)
+            out = _WindowTransformerExpert._window_reverse(out_win, win, Hp, Wp)
+            out = out[:, :H, :W, :].permute(0, 3, 1, 2).contiguous()
+        else:
+            out = _sdpa(to_heads(q), to_heads(k), to_heads(v), self.scale)
+            out = out.transpose(2, 3).reshape(B, C, H, W)
         x = x + self.ls1 * self.drop(self.proj(out))
 
         # ── Gated FFN ─────────────────────────────────────────────────────
@@ -296,6 +322,9 @@ class _DeformableTransformerExpert(nn.Module):
         self.head_dim = dim // num_heads
         self.n_points = n_points
         self.align_corners = align_corners
+        # Reference coordinates depend only on the spatial shape and device;
+        # cache them to avoid rebuilding an N-element grid on every forward.
+        self._reference_grid_cache: dict[tuple, torch.Tensor] = {}
 
         # Query projection
         self.q_proj = nn.Linear(dim, dim, bias=False)
@@ -366,13 +395,20 @@ class _DeformableTransformerExpert(nn.Module):
         attn_w = self.attn_proj(q).reshape(B, N, nh, np_)     # [B, N, nh, np]
         attn_w = F.softmax(attn_w, dim=-1)                    # normalize over points
 
-        # Build reference grid: each token's own position (normalised to [-1,1])
-        # Token index → (row, col) → (x_norm, y_norm)
-        idx = torch.arange(N, device=q.device)
-        row = (idx // W).float() / max(H - 1, 1) * 2 - 1    # y in [-1,1]
-        col = (idx %  W).float() / max(W - 1, 1) * 2 - 1    # x in [-1,1]
-        ref = torch.stack([col, row], dim=-1)                 # [N, 2]
-        ref = ref[None, :, None, None, :].expand(B, -1, nh, np_, -1)  # [B,N,nh,np,2]
+        # Build/reference cache: each token's own position (normalised to
+        # [-1,1]).  The singleton dimensions are expanded without copying.
+        cache_key = (N, H, W, q.device.type, q.device.index)
+        ref = self._reference_grid_cache.get(cache_key)
+        if ref is None:
+            idx = torch.arange(N, device=q.device)
+            row = (idx // W).float() / max(H - 1, 1) * 2 - 1
+            col = (idx % W).float() / max(W - 1, 1) * 2 - 1
+            ref = torch.stack([col, row], dim=-1)[None, :, None, None, :]
+            # Keep the cache bounded for workloads that sweep many resolutions.
+            if len(self._reference_grid_cache) >= 8:
+                self._reference_grid_cache.pop(next(iter(self._reference_grid_cache)))
+            self._reference_grid_cache[cache_key] = ref
+        ref = ref.expand(B, -1, nh, np_, -1)
 
         # Sampling locations = reference + learned offsets (scaled, clamped to valid range)
         sample_locs = (ref + offsets * 0.25).clamp(-1.0, 1.0)   # [B, N, nh, np, 2]

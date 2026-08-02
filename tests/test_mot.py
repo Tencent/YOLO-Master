@@ -93,6 +93,32 @@ def test_mot_temperature_anneal():
     assert after == [max(t * 0.5, 0.3) for t in before]
 
 
+def test_localconv_window_attention_is_opt_in_and_shape_preserving():
+    """LocalConv keeps global attention by default and supports padded windows."""
+    from ultralytics.nn.modules.mot.experts import _LocalConvTransformerExpert
+
+    torch.manual_seed(0)
+    x = torch.randn(1, 24, 7, 9)
+    global_expert = _LocalConvTransformerExpert(24, 3).eval()
+    window_expert = _LocalConvTransformerExpert(24, 3, local_window_size=4).eval()
+    assert global_expert.local_window_size == 0
+    assert window_expert.local_window_size == 4
+    with torch.no_grad():
+        out = window_expert(x)
+    assert out.shape == x.shape
+
+
+def test_mot_local_window_config_applies_to_nested_expert():
+    model = C2fMoT(64, 64, n=1, num_heads=4)
+    resolved = __import__("ultralytics.nn.modules.moe.config", fromlist=["resolve_mixture_config"]).resolve_mixture_config(
+        SimpleNamespace(mot_local_attn_window=4), model
+    )
+    from ultralytics.nn.modules.moe.config import apply_mixture_config
+
+    apply_mixture_config(model, resolved)
+    assert model.m[0].experts[0].local_window_size == 4
+
+
 def test_trainer_detects_and_anneals_moa_mot_temperatures():
     trainer = object.__new__(BaseTrainer)
     trainer.args = SimpleNamespace(moa_mot_temperature_factor=0.5, moa_mot_min_temperature=0.3)
@@ -365,3 +391,124 @@ def test_c2fmot_aux_loss_aggregation():
                  if isinstance(getattr(m, 'last_aux_loss', None), torch.Tensor)]
     assert len(block_aux) == 3
     assert torch.allclose(module.last_aux_loss, sum(block_aux))
+
+
+# ── Issue #54: training-mode boundary regression ──────────────────────────
+# The eval-mode boundary tests above verify shape preservation and finiteness.
+# The tests below additionally verify backward-pass correctness when the
+# feature map is smaller than the window, or when shifted windows operate
+# on odd-sized inputs — ensuring gradients flow through the padding/crop
+# and shift/unshift codepaths correctly.
+
+
+def test_mot_window_expert_handles_window_larger_than_feature_map_train():
+    """Window expert must backpropagate through padding when win > H/W in training."""
+    from ultralytics.nn.modules.mot.mot import _WindowTransformerExpert
+
+    torch.manual_seed(0)
+    expert = _WindowTransformerExpert(16, num_heads=4, window_size=8).train()
+    x = torch.randn(1, 16, 3, 5)
+    out = expert(x)
+    assert out.shape == x.shape
+    assert torch.isfinite(out).all()
+
+    # Backward through padding → window_partition → attention → crop chain
+    out.sum().backward()
+    for p in expert.parameters():
+        assert p.grad is not None, f"Parameter {p.shape} received no gradient"
+        assert torch.isfinite(p.grad).all()
+
+
+def test_mot_block_handles_window_larger_than_feature_map_train():
+    """MoTBlock with win > H/W must train: gradients reach all experts and router."""
+    torch.manual_seed(0)
+    block = MoTBlock(32, num_heads=4, top_k=2, window_size=16, n_points=2,
+                     balance_loss_coeff=0.01).train()
+    x = torch.randn(1, 32, 5, 7)
+    out, aux = block(x)
+    assert out.shape == x.shape
+    assert torch.isfinite(out).all()
+    assert torch.isfinite(aux)
+
+    (out.sum() + aux).backward()
+    # Non-selected experts still get gradient through exploration_eps blending
+    assert _has_grad(block.router)
+    for expert in block.experts:
+        assert _has_grad(expert), f"Expert {type(expert).__name__} has no gradient"
+
+
+def test_mot_window_expert_shift_odd_spatial_train():
+    """Shift on odd-sized input must backprop through pad→shift→window→unshift→crop."""
+    from ultralytics.nn.modules.mot.mot import _WindowTransformerExpert
+
+    torch.manual_seed(0)
+    expert = _WindowTransformerExpert(24, num_heads=3, window_size=5, shift_size=2).train()
+    x = torch.randn(1, 24, 7, 9)
+    out = expert(x)
+    assert out.shape == x.shape
+    assert torch.isfinite(out).all()
+
+    out.sum().backward()
+    for p in expert.parameters():
+        assert p.grad is not None, f"Parameter {p.shape} received no gradient"
+        assert torch.isfinite(p.grad).all()
+
+
+def test_mot_block_shift_odd_spatial_train():
+    """MoTBlock with shift=True on odd H/W: full block must train with gradients."""
+    torch.manual_seed(0)
+    block = MoTBlock(32, num_heads=4, top_k=2, window_size=5, n_points=2,
+                     window_shift=True, balance_loss_coeff=0.01).train()
+    x = torch.randn(2, 32, 9, 11)
+    out, aux = block(x)
+    assert out.shape == x.shape
+    assert torch.isfinite(out).all()
+
+    (out.sum() + aux).backward()
+    assert _has_grad(block.router)
+    for expert in block.experts:
+        assert _has_grad(expert)
+
+
+def test_mot_exploration_eps_active_in_train_disabled_in_eval():
+    """exploration_eps must densify routing in train mode, stay inactive in eval."""
+    torch.manual_seed(0)
+    block = MoTBlock(24, num_heads=3, top_k=1, window_size=4, n_points=2,
+                     exploration_eps=0.2)
+
+    # ── Eval: strictly sparse (only top_k=1 expert non-zero) ───────────────
+    block.eval()
+    with torch.no_grad():
+        w_eval, _idx_eval = block.router(torch.randn(2, 24, 5, 5))
+    nonzero_eval = (w_eval > 0).sum(dim=1)
+    assert torch.equal(nonzero_eval, torch.ones_like(nonzero_eval)), (
+        "eval mode must route each token to exactly 1 expert"
+    )
+    assert torch.allclose(w_eval.sum(dim=1), torch.ones_like(w_eval[:, 0])), (
+        "eval weights must sum to 1"
+    )
+
+    # ── Train: dense from exploration_eps blending ─────────────────────────
+    block.train()
+    w_train, _idx_train = block.router(torch.randn(2, 24, 5, 5))
+    nonzero_train = (w_train > 0).sum(dim=1)
+    # With exploration_eps=0.2, the ε-blending adds non-zero weight to
+    # non-selected experts → every token should have num_experts > top_k
+    # non-zero entries.
+    assert (nonzero_train > 1).all(), (
+        f"training mode should have dense routing from exploration_eps={block.router.exploration_eps}"
+    )
+    assert torch.allclose(w_train.sum(dim=1), torch.ones_like(w_train[:, 0])), (
+        "train weights must still sum to 1"
+    )
+
+
+def test_mot_exploration_eps_strict_zero_in_eval():
+    """Even with exploration_eps=0, eval mode must stay sparse (no densification)."""
+    torch.manual_seed(0)
+    block = MoTBlock(24, num_heads=3, top_k=1, window_size=4, n_points=2,
+                     exploration_eps=0.0).eval()
+    with torch.no_grad():
+        w, _idx = block.router(torch.randn(2, 24, 5, 5))
+    nonzero = (w > 0).sum(dim=1)
+    assert torch.equal(nonzero, torch.ones_like(nonzero))

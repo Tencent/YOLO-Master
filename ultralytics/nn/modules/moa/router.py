@@ -75,10 +75,11 @@ def _moa_router_aux_loss(
     if reduce_ddp:
         global_sum = _all_reduce_mean(local_sum.detach().clone())
         global_count = _all_reduce_mean(local_count.detach().clone())
-        # DDP averages parameter gradients by world size. Scale the local Jacobian
-        # by R/N while exposing the exact detached global value S/N.
+        # ``_all_reduce_mean`` makes ``global_count`` equal N/R. DDP later averages
+        # parameter gradients by R, so 1/global_count already gives the required
+        # local Jacobian R/N; multiplying by world size again would over-scale it.
         importance = global_sum / global_count.clamp_min(1.0)
-        local_grad = (local_sum - local_sum.detach()) * (dist.get_world_size() / global_count.clamp_min(1.0))
+        local_grad = (local_sum - local_sum.detach()) / global_count.clamp_min(1.0)
         importance = importance + local_grad
     else:
         importance = local_sum / local_count.clamp_min(1.0)

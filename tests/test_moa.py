@@ -16,6 +16,7 @@ from ultralytics.nn.modules.moa.moa import (
     _moa_router_aux_loss,
     _window_flash_attn,
 )
+from ultralytics.nn.modules.moa.heads import _window_partition_2d, _window_unpartition_2d
 from ultralytics.nn.modules._numeric import fp_clamp_floor as _fp_min
 from ultralytics.nn.tasks import DetectionModel
 from ultralytics.utils.loss import _collect_moa_aux_loss
@@ -412,26 +413,58 @@ def test_regional_attn_head_non_divisible_dim_and_heads():
 
 
 def test_regional_attn_head_small_spatial_dims():
-    """_RegionalAttnHead gracefully handles H=1 or W=1 feature maps."""
+    """_RegionalAttnHead keeps canonical memory format and gradients for singleton axes."""
     torch.manual_seed(0)
-    cases = [
-        (_RegionalAttnHead(32, num_heads=4), torch.randn(1, 32, 1, 16)),
-        (_RegionalAttnHead(32, num_heads=4), torch.randn(1, 32, 16, 1)),
-        (_RegionalAttnHead(32, num_heads=4), torch.randn(1, 32, 1, 1)),
-    ]
-    for module, x in cases:
-        module.train()
+    for height, width in ((1, 16), (16, 1), (1, 1)):
+        module = _RegionalAttnHead(32, num_heads=4).train()
+        x = torch.randn(2, 32, height, width, requires_grad=True)
         out = module(x)
         assert out.shape == x.shape
+        assert out.is_contiguous()
         assert torch.isfinite(out).all()
-        out.mean().backward()
+        out.square().mean().backward()
+        assert x.grad is not None and torch.isfinite(x.grad).all()
         assert _has_grad(module)
+
+
+def test_window_partition_unpartition_round_trip():
+    """Window helpers preserve row-major [H,W] layout, including multiple heads."""
+    spatial = torch.arange(2 * 3 * 4 * 6 * 5).reshape(2, 3, 4, 6, 5)
+    windows = _window_partition_2d(spatial, 2)
+    restored = _window_unpartition_2d(windows, 2, 2, 3, 4, 6)
+    assert torch.equal(restored, spatial)
+
+
+def test_window_flash_attn_matches_spatial_reference():
+    """Window attention matches an explicit per-window numerical reference."""
+    torch.manual_seed(7)
+    B, nh, H, W, hd, win = 2, 2, 4, 6, 3, 2
+    q, k, v = (torch.randn(B, nh, H * W, hd) for _ in range(3))
+    scale = hd ** -0.5
+
+    actual = _window_flash_attn(q, k, v, scale, win, H, W)
+    expected = torch.empty_like(actual.reshape(B, nh, H, W, hd))
+    for row in range(0, H, win):
+        for col in range(0, W, win):
+            indices = [(r * W + c) for r in range(row, row + win) for c in range(col, col + win)]
+            reference = _flash_attn(q[:, :, indices], k[:, :, indices], v[:, :, indices], scale)
+            expected[:, :, row : row + win, col : col + win] = reference.reshape(B, nh, win, win, hd)
+
+    assert torch.allclose(actual, expected.reshape(B, nh, H * W, hd), atol=1e-6, rtol=1e-5)
 
 
 def test_regional_attn_head_invalid_pool_stride():
     """_RegionalAttnHead raises ValueError for pool_stride < 1."""
     with pytest.raises(ValueError, match="pool_stride"):
         _RegionalAttnHead(32, num_heads=4, pool_stride=0)
+
+
+def test_regional_attn_head_default_and_unlimited_kv_budgets():
+    """The compatibility default is bounded while None preserves unlimited KV pooling."""
+    bounded = _RegionalAttnHead(32, num_heads=4)
+    unlimited = _RegionalAttnHead(32, num_heads=4, max_kv_tokens=None)
+    assert bounded.max_kv_tokens == 4096
+    assert unlimited.max_kv_tokens is None
 
 
 def test_local_attn_head_window_size_clamping():

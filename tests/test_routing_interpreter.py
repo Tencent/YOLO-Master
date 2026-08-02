@@ -259,6 +259,27 @@ def test_causal_analysis_forces_expert_and_restores_router():
     assert torch.allclose(natural, restored)
 
 
+def test_dataset_collapse_usage_is_weighted_by_samples_not_batches():
+    batches = [torch.ones(2, 1, 3, 4), -torch.ones(1, 1, 3, 4)]
+
+    _, _, collapse = RoutingInterpreter(ToyModel()).run_dataset_analysis(batches)
+
+    positive = torch.softmax(torch.tensor([1.0, -1.0]), dim=0)
+    negative = positive.flip(0)
+    expected = (2 * positive + negative) / 3
+    assert collapse["routed"].expert_usage == pytest.approx(expected.tolist())
+
+
+def test_single_sample_dataset_metrics_have_finite_zero_spread():
+    _, differentiation, _ = RoutingInterpreter(ToyModel()).run_dataset_analysis(
+        [torch.ones(1, 1, 3, 4)]
+    )
+
+    metrics = differentiation["routed"]
+    assert metrics.std_kl_divergence == pytest.approx(0.0)
+    assert metrics.std_weight_spread == pytest.approx(0.0)
+
+
 @pytest.mark.parametrize(
     ("module", "batch", "expected_shape"),
     [

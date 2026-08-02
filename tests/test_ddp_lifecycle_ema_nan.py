@@ -440,6 +440,26 @@ def test_checkpoint_restore_tolerates_missing_lazy_ema_buffer():
     )
 
 
+def test_checkpoint_restore_migrates_legacy_three_slot_ema_state():
+    t = object.__new__(BaseTrainer)
+    t.model = nn.Linear(1, 1)
+    t.model.register_buffer("_mixture_loss_ema_buf", torch.tensor([1.0, 0.1, 0.1, 0.1]))
+    t.ema = ModelEMA(t.model)
+    t.optimizer = torch.optim.SGD(t.model.parameters(), lr=0.01)
+    t.scaler = torch.amp.GradScaler("cuda", enabled=False)
+    old_ema = nn.Linear(1, 1)
+    old_ema.register_buffer("_mixture_loss_ema_buf", torch.tensor([2.0, 0.2, 0.3]))
+
+    t._load_checkpoint_state(
+        {"ema": old_ema, "optimizer": None, "scaler": None, "best_fitness": 0.0, "updates": 7}
+    )
+
+    expected = torch.tensor([2.0, 0.2, 0.3, 0.1])
+    assert torch.equal(t.model._mixture_loss_ema_buf, expected)
+    assert torch.equal(t.ema.ema._mixture_loss_ema_buf, expected)
+    assert t.ema.updates == 7
+
+
 def test_healthy_checkpoint_rejects_nonfinite_state_and_preserves_prior(tmp_path):
     t = object.__new__(BaseTrainer)
     t.healthy = tmp_path / "last_healthy.pt"

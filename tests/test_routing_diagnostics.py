@@ -25,6 +25,36 @@ def test_nonfinite_moa_aux_preserves_finite_graph_and_reports_boundary():
     assert torch.isfinite(weights.grad).all()
 
 
+def test_moa_aux_ddp_local_jacobian_is_world_size_invariant(monkeypatch):
+    """Averaged mock-DDP gradients must match the single-process global objective."""
+    rank_inputs = [torch.tensor([0.2, -0.1]), torch.tensor([0.5, 0.3])]
+    world_size = len(rank_inputs)
+    global_weights = torch.cat([torch.softmax(values, dim=0).view(1, 2, 1, 1) for values in rank_inputs], dim=0)
+    global_logits = torch.zeros_like(global_weights)
+    reference_values = torch.cat(rank_inputs).requires_grad_()
+    reference_weights = torch.stack(
+        [torch.softmax(reference_values[i : i + 2], dim=0) for i in range(0, reference_values.numel(), 2)]
+    ).view(world_size, 2, 1, 1)
+    reference = _moa_router_aux_loss(reference_weights, global_logits, 1.0)
+    reference.backward()
+    expected = sum(reference_values.grad.view(world_size, 2), start=torch.zeros(2))
+
+    global_sum_mean = global_weights.sum(dim=(0, 2, 3)) / world_size
+    global_count_mean = torch.tensor(1.0)
+    rank_gradients = []
+    for values in rank_inputs:
+        local_values = values.clone().requires_grad_()
+        local_weights = torch.softmax(local_values, dim=0).view(1, 2, 1, 1)
+        reductions = iter((global_sum_mean, global_count_mean))
+        monkeypatch.setattr("ultralytics.nn.modules.moa.router._all_reduce_mean", lambda _: next(reductions).clone())
+        local_loss = _moa_router_aux_loss(local_weights, torch.zeros_like(local_weights), 1.0, reduce_ddp=True)
+        local_loss.backward()
+        rank_gradients.append(local_values.grad)
+
+    ddp_averaged = torch.stack(rank_gradients).mean(dim=0)
+    assert torch.allclose(ddp_averaged, expected, atol=1e-6, rtol=1e-6)
+
+
 def test_moa_block_snapshot_keeps_pre_fallback_nonfinite_diagnostics(monkeypatch):
     block = MoABlock(24, num_heads=3).train()
 
@@ -68,6 +98,30 @@ def test_routed_modules_declare_sparse_export_boundary():
         assert capabilities["torchscript_trace_sparse_dispatch"] is False
         assert capabilities["exact_sparse_export"] is False
         assert "dense" in capabilities["sparse_export_limitation"].lower()
+
+
+def test_moa_sparse_inference_keeps_one_group_and_renormalizes(monkeypatch):
+    block = MoABlock(24, num_heads=3, inference_sparse_threshold=0.4).eval()
+    weights = torch.tensor([0.8, 0.1, 0.1]).view(1, 3, 1, 1).expand(2, 3, 4, 4)
+    monkeypatch.setattr(block.router, "forward", lambda x, return_logits=False: (weights, weights.log()))
+    calls = [0, 0, 0]
+    for idx, name in enumerate(("local_head", "region_head", "global_head")):
+        head = getattr(block, name)
+        original = head.forward
+
+        def counted(x, *, _idx=idx, _original=original):
+            calls[_idx] += 1
+            return _original(x)
+
+        monkeypatch.setattr(head, "forward", counted)
+
+    output = block(torch.randn(2, 24, 4, 4))
+    snapshot = block.routing_snapshot()
+
+    assert output.shape == (2, 24, 4, 4)
+    assert calls == [1, 0, 0]
+    assert snapshot["executed_groups"] == 1
+    assert snapshot["approximation_error"] > 0
 
 
 def test_c2f_moa_propagates_sequential_head_configuration():

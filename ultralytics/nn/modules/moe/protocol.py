@@ -1,132 +1,89 @@
-# 🐧Please note that this file has been modified by Tencent on 2026/02/13. All Tencent Modifications are Copyright (C) 2026 Tencent.
-"""Unified protocol for all routed (mixture) modules: MoE, MoA, MoT, MoLoRA.
+"""Minimal adapters for MoE routing snapshots and derived metrics."""
 
-Defines a common interface so that downstream code (trainers, loss collectors,
-exporters, diagnostic tools) can treat all mixture modules uniformly without
-``hasattr`` probes or module-specific branching.
-
-## RoutedModule Protocol
-
-Any nn.Module that routes input across multiple experts/heads SHOULD satisfy
-this protocol.  Existing MoE classes already comply; MoA, MoT, and MoLoRA
-are patched to comply via ``@property`` shims in their respective files.
-
-Required attributes/properties:
-  - ``num_experts`` (int): Total number of expert branches.
-  - ``top_k`` (int): Number of active experts per forward (``== num_experts`` if dense).
-  - ``aux_loss`` (Tensor): Scalar auxiliary loss (balance + z-loss); zero if eval.
-  - ``last_routing_snapshot`` (dict): Detached routing diagnostics from last forward.
-
-Optional (recommended) methods:
-  - ``get_gflops(input_shape) -> dict``: Per-component FLOPs estimate.
-  - ``__deepcopy__(memo)``: Safe deepcopy that strips non-leaf tensors.
-  - ``set_top_k(k)``: Dynamically adjust Top-K (MoE only; MoA/MoT use temperature).
-"""
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Protocol, runtime_checkable, Tuple
+from dataclasses import asdict, dataclass
+from typing import Any, Iterable, Mapping
 
 import torch
-import torch.nn as nn
-
-from ..routing_protocol import RoutingAuxPublisher
 
 
-@runtime_checkable
-class RoutedModule(Protocol):
-    """Protocol that all mixture-routing modules (MoE/MoA/MoT/MoLoRA) implement.
+@dataclass(frozen=True)
+class RoutingMetrics:
+    """JSON-safe metrics derived from one normalized routing snapshot."""
 
-    Use ``isinstance(module, RoutedModule)`` for duck-typing checks, or simply
-    access the attributes directly — the protocol is non-binding; each module
-    type already provides all required attributes.
-    """
-
-    # ── Required attributes ──────────────────────────────────────────
+    expert_usage: list[float]
+    topk_counts: list[float]
     num_experts: int
     top_k: int
+    aux_loss: float
+    gini: float
+    dominant_expert: int
+    dominant_share: float
 
-    @property
-    def aux_loss(self) -> torch.Tensor:
-        """Scalar auxiliary loss (balance + z-loss). Zero outside training."""
-        ...
-
-    @property
-    def last_routing_snapshot(self) -> Dict[str, Any]:
-        """Detached routing diagnostics from the most recent forward pass.
-
-        Keys (all optional, at least one present):
-          - ``expert_usage`` (Tensor [E]): Normalized per-expert usage share.
-          - ``mean_router_probs`` (Tensor [E]): Mean router probabilities.
-          - ``aux_loss`` (float): Detached scalar aux loss value.
-          - ``num_experts`` (int), ``top_k`` (int).
-        """
-        ...
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
-# ── Mixin for modules that want a zero-cost default implementation ──────
-
-class RoutedModuleMixin:
-    """Mixin providing default RoutedModule protocol shims.
-
-    Subclasses should override ``aux_loss`` and populate
-    ``last_routing_snapshot`` during forward.  This mixin ensures that
-    ``get_gflops`` and ``__deepcopy__`` are always available, even on modules
-    that don't define their own.
-    """
-
-    def get_gflops(self, input_shape: Tuple[int, int, int, int]) -> Dict[str, float]:
-        """Default GFLOPs estimate: sum over all Conv2d/Linear submodules."""
-        B, C, H, W = input_shape
-        total_macs = 0.0
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                macs = B * m.in_channels * m.out_channels * (H // m.stride[0]) * (W // m.stride[1])
-                macs *= (m.kernel_size[0] * m.kernel_size[1]) / max(m.groups, 1)
-                total_macs += macs
-            elif isinstance(m, nn.Linear):
-                total_macs += B * m.in_features * m.out_features
-        gf = total_macs / 1e9
-        return {"total_gflops": gf, "conv_linear_gflops": gf}
-
-    def __deepcopy__(self, memo):
-        """Default safe deepcopy — delegates to ``_robust_deepcopy``."""
-        from ._helpers import _robust_deepcopy
-        return _robust_deepcopy(self, memo)
+def _float_list(value: Any) -> list[float]:
+    if isinstance(value, torch.Tensor):
+        value = value.detach().float().reshape(-1).cpu().tolist()
+    if value is None:
+        return []
+    return [float(item) for item in value]
 
 
-def is_routed_module(module: nn.Module) -> bool:
-    """Check whether a module satisfies the RoutedModule protocol.
+def normalize_routing_snapshot(
+    snapshot: Mapping[str, Any] | None, *, num_experts: int = 0, top_k: int = 0
+) -> dict[str, Any]:
+    """Normalize legacy/current snapshot keys without mutating the producer payload."""
+    source = snapshot or {}
+    usage = _float_list(source.get("expert_usage", source.get("usage")))
+    counts = _float_list(source.get("topk_counts", source.get("counts")))
+    size = int(source.get("num_experts", num_experts or len(usage)))
+    if size > 0:
+        usage = (usage + [0.0] * size)[:size]
+        counts = (counts + [0.0] * size)[:size]
+    return {
+        **source,
+        "expert_usage": usage,
+        "topk_counts": counts,
+        "num_experts": size,
+        "top_k": int(source.get("top_k", top_k)),
+        "aux_loss": float(source.get("aux_loss", 0.0)),
+    }
 
-    This is a structural check: the module must have ``num_experts``,
-    ``top_k``, ``aux_loss``, and ``last_routing_snapshot``.
-    """
-    return (
-        hasattr(module, "num_experts")
-        and hasattr(module, "top_k")
-        and hasattr(module, "aux_loss")
-        and hasattr(module, "last_routing_snapshot")
+
+def usage_gini(usage: Iterable[float] | torch.Tensor) -> float:
+    """Return one canonical bounded Gini coefficient for expert usage."""
+    values = torch.as_tensor(_float_list(usage), dtype=torch.float32).clamp_min(0.0)
+    if values.numel() == 0:
+        return 0.0
+    total = values.sum()
+    # Sorted cumulative form is O(n log n) instead of the pairwise O(n^2).
+    sorted_values = torch.sort(values).values
+    index = torch.arange(1, sorted_values.numel() + 1, dtype=sorted_values.dtype)
+    gini = (2 * torch.sum(index * sorted_values) / (sorted_values.numel() * total.clamp_min(1e-12))) - (
+        (sorted_values.numel() + 1) / sorted_values.numel()
     )
+    gini = torch.where(total > 0, gini, torch.zeros_like(gini))
+    value = float(gini.clamp(0.0, 1.0).item())
+    return 0.0 if value != value else value
 
 
-def collect_routed_children(module: nn.Module) -> list:
-    """Return all immediate+nested RoutedModule children of ``module``.
-
-    Useful for trainers and loss collectors that need to iterate over
-    all mixture modules in a model.
-    """
-    results = []
-    for child in module.modules():
-        if child is module:
-            continue
-        if is_routed_module(child):
-            results.append(child)
-    return results
-
-
-__all__ = [
-    "RoutingAuxPublisher",
-    "RoutedModule",
-    "RoutedModuleMixin",
-    "is_routed_module",
-    "collect_routed_children",
-]
+def routing_metrics(snapshot: Mapping[str, Any] | None, *, num_experts: int = 0, top_k: int = 0) -> RoutingMetrics:
+    """Adapt a routing snapshot to the shared scheduler/diagnostic metric vocabulary."""
+    normalized = normalize_routing_snapshot(snapshot, num_experts=num_experts, top_k=top_k)
+    usage = normalized["expert_usage"]
+    dominant = max(range(len(usage)), key=usage.__getitem__) if usage else -1
+    share = usage[dominant] if dominant >= 0 else 0.0
+    return RoutingMetrics(
+        expert_usage=usage,
+        topk_counts=normalized["topk_counts"],
+        num_experts=normalized["num_experts"],
+        top_k=normalized["top_k"],
+        aux_loss=normalized["aux_loss"],
+        gini=usage_gini(usage),
+        dominant_expert=dominant,
+        dominant_share=share,
+    )

@@ -162,10 +162,11 @@ lora_planner_enabled: False # (bool) Enable architecture-conditioned PEFT Planne
 lora_adapter_budget: # (int, optional) Maximum adapter parameters for planner placement
 lora_planner_solver: "ao" # (str) Planner budget solver: ao, dco, mip
 lora_planner_backend: "legacy" # (str) Planner backend: legacy or vpeft (opt-in)
+lora_vpeft_strict: False # (bool) Raise unexpected internal V-PEFT errors instead of compatibility fallback
 lora_include_head: False # (bool) Include YOLO detection head layers in LoRA targeting
 lora_freeze_bn: False # (bool) Freeze BatchNorm layers during LoRA training
 lora_target_modules: # (list[str], optional) LoRA target modules
-lora_rank_pattern: # (dict[str, int], optional) Per-target LoRA rank overrides
+lora_rank_pattern: # (dict[str, int], optional) Per-target LoRA ranks produced by placement planning
 lora_save_adapters: True # (bool) Save LoRA adapters
 lora_adapter_dir: "lora_adapter" # (str) Directory name for adapters
 lora_auto_r_ratio: 0.0 # (float) Auto calculate LoRA rank based on params ratio
@@ -266,17 +267,20 @@ mot_scene_aware_router: False # (bool) Enable the experimental scene-aware resid
 mot_scene_hidden_dim: # (int, optional) Hidden size of the MoT scene-statistics projector (null=3)
 mot_scene_consistency: 0.0 # (float) Scene/expert consistency auxiliary-loss coefficient (0 disables)
 mot_scene_inference_mode: dynamic # (str) Scene-aware eval policy: dynamic or bypass
+mot_local_attn_window: 0 # (int) Optional LocalConv expert attention window; 0 keeps global attention
 moa_temperature: 1.0 # (float) Initial MoA router temperature
 moa_aux_loss_coeff: 0.01 # (float) MoA router auxiliary-loss coefficient
 moa_local_window_size: 7 # (int) Window size for MoA local attention head
-moa_sparse_inference: False # (bool) Skip globally low-weight MoA head groups during eager evaluation
-moa_sparse_inference_threshold: 0.02 # (float) Maximum batch-wide MoA head weight eligible for sparse skipping
+moa_regional_max_kv_tokens: 4096 # (int, 0=unlimited) Maximum Regional Head KV tokens
+moa_sparse_inference: False # (bool) Skip low-weight MoA head groups during eval inference
+moa_sparse_inference_threshold: 0.02 # (float) MoA sparse inference skip threshold in [0, 1)
 moa_mot_temperature_factor: 0.97 # (float) Per-epoch router temperature multiplier for MoA/MoT
 moa_mot_min_temperature: 0.3 # (float) Minimum router temperature after annealing
 moe_aux_gain: 1.0 # (float) Gain for MoE balance/z-loss auxiliary loss
 mot_aux_gain: 1.0 # (float) Gain for MoT router auxiliary loss
 moa_aux_gain: 1.0 # (float) Gain for MoA router auxiliary loss
 latent_aux_gain: 0.1 # (float) Gain for Latent Mixture auxiliary loss (conservative default)
+latent_inference_top_k: # (int, optional) Number of latent experts used during eager inference (null=dense)
 mixture_aux_budget: 3.0 # (float) Global normalized budget shared by routed auxiliary losses
 molora_num_experts: 0 # (int) Number of experts in MoLoRA layers (0 to disable)
 molora_top_k: 2 # (int) Number of experts to activate per forward

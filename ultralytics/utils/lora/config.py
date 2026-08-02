@@ -138,6 +138,7 @@ class LoRAConfig:
     adapter_budget: Optional[int] = None
     planner_solver: str = "ao"  # ao, dco, mip; AO is deterministic/default
     planner_backend: str = "legacy"  # legacy or vpeft; V-PEFT remains opt-in
+    vpeft_strict: bool = False  # Re-raise unexpected internal V-PEFT failures
     sensitivity_select: bool = False
     sensitivity_num_batches: int = 4
     sensitivity_top_ratio: float = 0.5
@@ -304,6 +305,7 @@ class LoRAConfig:
             "adapter_budget": "lora_adapter_budget",
             "planner_solver": "lora_planner_solver",
             "planner_backend": "lora_planner_backend",
+            "vpeft_strict": "lora_vpeft_strict",
             "sensitivity_select": "lora_sensitivity_select",
             "sensitivity_num_batches": "lora_sensitivity_num_batches",
             "sensitivity_top_ratio": "lora_sensitivity_top_ratio",

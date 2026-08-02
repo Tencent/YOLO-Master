@@ -5,9 +5,11 @@ from unittest.mock import patch
 import pytest
 import torch
 
+from ultralytics.nn.modules import LatentRouter
 from ultralytics.nn.modules._numeric import (
     all_reduce_mean,
     clamp_min_for_dtype,
+    disabled_autocast,
     fp_clamp_floor,
     stable_normalize,
 )
@@ -51,6 +53,27 @@ def test_all_mixture_namespaces_share_canonical_all_reduce_mean():
     assert moa_all_reduce_mean is all_reduce_mean
     assert moe_all_reduce_mean is all_reduce_mean
     assert mot_all_reduce_mean is all_reduce_mean
+
+
+def test_disabled_autocast_falls_back_when_device_is_unsupported():
+    with patch("torch.amp.autocast_mode.is_autocast_available", return_value=False), patch(
+        "torch.autocast", side_effect=AssertionError("unsupported autocast must not be constructed")
+    ):
+        with disabled_autocast("mps"):
+            result = torch.ones(1) + 1
+
+    assert result.item() == 2
+
+
+def test_disabled_autocast_uses_supported_cpu_context():
+    with patch("torch.amp.autocast_mode.is_autocast_available", return_value=True), patch(
+        "torch.autocast", wraps=torch.autocast
+    ) as autocast:
+        with disabled_autocast("cpu"):
+            result = torch.ones(1) + 1
+
+    autocast.assert_called_once_with(device_type="cpu", enabled=False)
+    assert result.item() == 2
 
 
 def test_all_reduce_mean_keeps_global_value_and_local_gradient():
@@ -100,6 +123,19 @@ def test_mot_router_keeps_fp32_logits_and_activation_dtype_weights():
     assert indices.dtype == torch.long
     assert torch.isfinite(weights).all()
     assert torch.allclose(weights.float().sum(dim=1), torch.ones_like(weights[:, 0].float()), atol=2e-3)
+
+
+def test_latent_router_keeps_fp32_routing_contract_after_dtype_conversion():
+    router = LatentRouter(8, num_experts=3).eval().half()
+    tokens = torch.randn(2, 8, dtype=torch.bfloat16)
+
+    logits, probs = router(tokens)
+
+    assert logits.dtype == torch.float32
+    assert probs.dtype == torch.float32
+    assert {parameter.dtype for parameter in router.parameters()} == {torch.float32}
+    assert torch.isfinite(probs).all()
+    assert torch.allclose(probs.sum(dim=-1), torch.ones_like(probs[:, 0]), atol=1e-6)
 
 
 @pytest.mark.parametrize("router_cls", [DualStreamGateRouter, ZeroCostRouter])

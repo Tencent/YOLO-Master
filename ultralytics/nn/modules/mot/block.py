@@ -40,6 +40,7 @@ class MoTBlock(nn.Module):
         dropout (float): Dropout for attention/FFN.
         exploration_eps (float): Training-only dense routing floor that keeps all experts trainable.
         sparse_train_warmup_steps (int): Dense training forwards before enabled sparse dispatch begins.
+        local_attn_window (int): LocalConv attention window; 0 keeps global attention.
 
     Shape:
         Input:  [B, dim, H, W]
@@ -70,6 +71,7 @@ class MoTBlock(nn.Module):
         scene_consistency_coeff: float = 0.0,
         sparse_train_warmup_steps: int = 0,
         scene_inference_mode: str = "dynamic",
+        local_attn_window: int = 0,
     ):
         super().__init__()
         if not 1 <= top_k <= self.NUM_EXPERTS:
@@ -83,6 +85,7 @@ class MoTBlock(nn.Module):
         self.register_buffer("_sparse_train_step", torch.tensor(0, dtype=torch.long), persistent=True)
         self._ddp_find_unused_parameters: Optional[bool] = None
         self._ddp_contract_source = "unconfigured"
+        self._ddp_sparse_state_cache: Optional[Tuple[tuple, Tuple[bool, bool, Optional[str]]]] = None
         self.scene_consistency_coeff = max(float(scene_consistency_coeff), 0.0)
         # Legacy YAML/checkpoints used balance_loss_coeff for z-loss only; when
         # router_z_loss_coeff is omitted, keep that behaviour for the z term.
@@ -102,7 +105,9 @@ class MoTBlock(nn.Module):
 
         # Three Transformer experts
         self.experts = nn.ModuleList([
-            _LocalConvTransformerExpert(dim, expert_heads, mlp_ratio, dropout),
+            _LocalConvTransformerExpert(
+                dim, expert_heads, mlp_ratio, dropout, local_window_size=local_attn_window
+            ),
             _WindowTransformerExpert(dim, expert_heads, window_size, mlp_ratio, dropout,
                                      shift_size=window_size // 2 if window_shift else 0),
             _DeformableTransformerExpert(
@@ -234,25 +239,31 @@ class MoTBlock(nn.Module):
         """Record the DDP unused-parameter contract required by sparse expert dispatch."""
         self._ddp_find_unused_parameters = bool(find_unused_parameters)
         self._ddp_contract_source = str(source)
+        self._ddp_sparse_state_cache = None
 
     def _ddp_sparse_training_state(self) -> Tuple[bool, bool, Optional[str]]:
         """Return whether active DDP can safely tolerate locally unused experts."""
-        ddp_active = bool(
-            self.training
-            and torch.distributed.is_available()
-            and torch.distributed.is_initialized()
-            and torch.distributed.get_world_size() > 1
-        )
+        dist_available = torch.distributed.is_available()
+        dist_initialized = dist_available and torch.distributed.is_initialized()
+        world_size = torch.distributed.get_world_size() if dist_initialized else 1
+        cache_key = (self.training, dist_available, dist_initialized, world_size, self._ddp_find_unused_parameters)
+        if self._ddp_sparse_state_cache is not None and self._ddp_sparse_state_cache[0] == cache_key:
+            return self._ddp_sparse_state_cache[1]
+
+        ddp_active = bool(self.training and dist_initialized and world_size > 1)
         if not ddp_active:
-            return False, True, None
-        if self._ddp_find_unused_parameters is True:
-            return True, True, None
-        reason = (
-            "find_unused_parameters_disabled"
-            if self._ddp_find_unused_parameters is False
-            else "find_unused_parameters_not_confirmed"
-        )
-        return True, False, reason
+            state = (False, True, None)
+        elif self._ddp_find_unused_parameters is True:
+            state = (True, True, None)
+        else:
+            reason = (
+                "find_unused_parameters_disabled"
+                if self._ddp_find_unused_parameters is False
+                else "find_unused_parameters_not_confirmed"
+            )
+            state = (True, False, reason)
+        self._ddp_sparse_state_cache = (cache_key, state)
+        return state
 
     def _training_dispatch_policy(
         self,
@@ -305,6 +316,18 @@ class MoTBlock(nn.Module):
         use_sparse = (not self.training or (sparse_train_ready and ddp_sparse_safe)) and not exporting
         warmup_step = 0 if exporting else int(self._sparse_train_step.item())
         B = x.shape[0]
+        route_ids = indices if indices is not None else weights.argmax(dim=1, keepdim=True)
+        route_mask = torch.zeros_like(weights, dtype=torch.bool)
+        route_mask.scatter_(1, route_ids, True)
+        token_mask_sparsity = 1.0 - float(route_mask.float().mean())
+        experts_per_sample = route_mask.reshape(B, self.NUM_EXPERTS, -1).any(dim=2).sum(dim=1)
+        batch_expert_union = int(route_mask.any(dim=(0, 2, 3)).sum())
+        routing_metrics = {
+            "token_mask_sparsity": token_mask_sparsity,
+            "experts_per_sample": experts_per_sample.detach().cpu(),
+            "mean_experts_per_sample": float(experts_per_sample.float().mean()),
+            "batch_expert_union": batch_expert_union,
+        }
         if use_sparse:
             expert_calls = 0
             for e_idx, expert in enumerate(self.experts):
@@ -332,6 +355,8 @@ class MoTBlock(nn.Module):
             self._last_dispatch_stats = {
                 "mode": "sample_sparse",
                 "expert_calls": expert_calls,
+                "actual_expert_calls": expert_calls,
+                **routing_metrics,
                 "selected_samples": B,
                 "selected_experts": selected_experts,
                 "sparsity_ratio": 1.0 - expert_calls / max(len(self.experts), 1),
@@ -362,6 +387,8 @@ class MoTBlock(nn.Module):
             self._last_dispatch_stats = {
                 "mode": "dense",
                 "expert_calls": len(self.experts),
+                "actual_expert_calls": len(self.experts),
+                **routing_metrics,
                 "selected_samples": B,
                 "selected_experts": len(self.experts),
                 "sparsity_ratio": 0.0,

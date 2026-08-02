@@ -69,13 +69,14 @@ def _estimate_adapter_params(
     if variant == "ia3":
         return c_in
     if variant in ("loha", "lokr"):
-        return (rank ** 2) * min(c_in, c_out)
+        return (rank**2) * min(c_in, c_out)
     return rank * (c_in + c_out)
 
 
 # ---------------------------------------------------------------------------
 # Public dataclasses
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class NodeAttributes:
@@ -91,6 +92,7 @@ class NodeAttributes:
         rho_i: Residual-connection flag (0 or 1).
         sigma_i: Semantic-role index (see _SEMANTIC_ROLE_VOCAB).
     """
+
     tau_i: int
     c_in: int
     c_out: int
@@ -104,6 +106,7 @@ class NodeAttributes:
 @dataclass
 class GraphNode:
     """A node in the computation graph."""
+
     name: str
     module: Any  # nn.Module in new path, ModuleNode/dummy in legacy path
     attributes: NodeAttributes
@@ -141,6 +144,7 @@ class GraphNode:
 @dataclass
 class GraphEdge:
     """A typed edge in the computation graph."""
+
     src: int
     dst: int
     edge_type: Literal["sequential", "residual", "attention"]
@@ -173,10 +177,7 @@ class ModuleNode:
         self.groups = groups
 
     def __repr__(self) -> str:
-        return (
-            f"ModuleNode({self.name}, {self.op_type}, "
-            f"in={self.in_channels}, out={self.out_channels})"
-        )
+        return f"ModuleNode({self.name}, {self.op_type}, in={self.in_channels}, out={self.out_channels})"
 
     @property
     def semantic_role(self) -> str:
@@ -226,6 +227,7 @@ class ComputationGraph:
         self.edges: List[GraphEdge] = edges if edges is not None else []
         self._legacy_modules: Optional[List[ModuleNode]] = modules
         self._node_features: Optional[torch.Tensor] = node_features
+        self._edge_index_cache: Dict[torch.device, Dict[str, Tuple[torch.Tensor, torch.Tensor]]] = {}
 
         # If legacy modules are provided but nodes are not, synthesise GraphNodes
         if not self.nodes and modules is not None:
@@ -315,6 +317,7 @@ class ComputationGraph:
 # Graph builder
 # ---------------------------------------------------------------------------
 
+
 class ComputationGraphBuilder:
     """Build a typed heterogeneous computation graph from a PyTorch model.
 
@@ -366,9 +369,20 @@ class ComputationGraphBuilder:
     def _has_residual_pattern(name: str) -> bool:
         """Heuristic residual-block detection from module/path names."""
         keywords = {
-            "c2f", "c3k2", "c3", "c2psa", "a2c2f", "bottleneck",
-            "residual", "sppf", "spp", "c2fcib", "repc3", "c3k",
-            "shortcut", "add",
+            "c2f",
+            "c3k2",
+            "c3",
+            "c2psa",
+            "a2c2f",
+            "bottleneck",
+            "residual",
+            "sppf",
+            "spp",
+            "c2fcib",
+            "repc3",
+            "c3k",
+            "shortcut",
+            "add",
         }
         return any(kw in name.lower() for kw in keywords)
 
@@ -428,9 +442,16 @@ class ComputationGraphBuilder:
         current = cls._get_submodule(root, name) if name else root
         current_name = current.__class__.__name__
         text_classes = {
-            "WorldModel", "WorldDetect", "MaxSigmoidAttnBlock", "ImagePoolingAttn",
-            "ContrastiveHead", "BNContrastiveHead", "TextFusion", "WorldEmbed",
-            "TextProj", "TextEncoder",
+            "WorldModel",
+            "WorldDetect",
+            "MaxSigmoidAttnBlock",
+            "ImagePoolingAttn",
+            "ContrastiveHead",
+            "BNContrastiveHead",
+            "TextFusion",
+            "WorldEmbed",
+            "TextProj",
+            "TextEncoder",
         }
         head_classes = {
             "Detect",
@@ -482,7 +503,7 @@ class ComputationGraphBuilder:
             if int(getattr(ancestor, "num_experts", 0) or 0) <= 0:
                 continue
             prefix = ".".join(name.split(".")[: depth + 1])
-            relative = name[len(prefix):].lstrip(".").lower()
+            relative = name[len(prefix) :].lstrip(".").lower()
             if relative.startswith("experts.") or ".experts." in relative or "expert" in relative:
                 moe_group = prefix
                 break
@@ -566,7 +587,9 @@ class ComputationGraphBuilder:
                             for p in parent_parts:
                                 parent = getattr(parent, p)
                         cls_name = parent.__class__.__name__.lower()
-                        if any(kw in cls_name for kw in {"residual", "bottleneck", "c2f", "c3", "c2psa", "a2c2f", "c3k2"}):
+                        if any(
+                            kw in cls_name for kw in {"residual", "bottleneck", "c2f", "c3", "c2psa", "a2c2f", "c3k2"}
+                        ):
                             rho_i = 1
                             break
                 except Exception:
@@ -670,7 +693,9 @@ class ComputationGraphBuilder:
             if len(convs) >= 2:
                 _add(convs[0], convs[-1], "residual")
 
-            shortcut_nodes = [j for j in indices if any(k in nodes[j].name.lower() for k in ("shortcut", "add", "skip"))]
+            shortcut_nodes = [
+                j for j in indices if any(k in nodes[j].name.lower() for k in ("shortcut", "add", "skip"))
+            ]
             for j in shortcut_nodes:
                 for k in indices:
                     if k != j:
@@ -718,6 +743,7 @@ class ComputationGraphBuilder:
 # ---------------------------------------------------------------------------
 # Internal node-feature encoder
 # ---------------------------------------------------------------------------
+
 
 class _NodeAttributeEncoder(nn.Module):
     """Learnable encoder that maps raw node attributes to initial feature vectors.
@@ -806,6 +832,7 @@ class _NodeAttributeEncoder(nn.Module):
 # ---------------------------------------------------------------------------
 # GATv2 encoder
 # ---------------------------------------------------------------------------
+
 
 class _GATv2Layer(nn.Module):
     """Single GATv2 message-passing layer with edge-type-specific weights."""
@@ -913,7 +940,9 @@ class _GATv2Layer(nn.Module):
         out = out.reshape(num_nodes, -1)  # [N, hidden_dim]
         return out
 
-    def forward(self, h: torch.Tensor, edge_index_dict: Dict[str, Tuple[torch.Tensor, torch.Tensor]], num_nodes: int) -> torch.Tensor:
+    def forward(
+        self, h: torch.Tensor, edge_index_dict: Dict[str, Tuple[torch.Tensor, torch.Tensor]], num_nodes: int
+    ) -> torch.Tensor:
         """Forward one GATv2 layer.
 
         Args:
@@ -973,7 +1002,9 @@ class GATv2ArchitectureEncoder(nn.Module):
         nn.init.normal_(self.w_g, std=0.01)
 
     @staticmethod
-    def _build_edge_index_dict(edges: List[GraphEdge], num_nodes: int, device: torch.device) -> Dict[str, Tuple[torch.Tensor, torch.Tensor]]:
+    def _build_edge_index_dict(
+        edges: List[GraphEdge], num_nodes: int, device: torch.device
+    ) -> Dict[str, Tuple[torch.Tensor, torch.Tensor]]:
         """Convert Python edge list to per-type (src, dst) index tensors."""
         buckets: Dict[str, List[Tuple[int, int]]] = defaultdict(list)
         for e in edges:
@@ -1012,7 +1043,16 @@ class GATv2ArchitectureEncoder(nn.Module):
 
         x = self.node_encoder(graph.nodes)  # [N, hidden_dim]
         device = x.device
-        edge_index_dict = self._build_edge_index_dict(graph.edges, num_nodes, device)
+        # Cache the immutable Python edge list conversion across repeated
+        # encoder forwards; tensors are kept separately per target device.
+        cache = getattr(graph, "_edge_index_cache", None)
+        if cache is None:
+            graph._edge_index_cache = {}
+            cache = graph._edge_index_cache
+        edge_index_dict = cache.get(device)
+        if edge_index_dict is None:
+            edge_index_dict = self._build_edge_index_dict(graph.edges, num_nodes, device)
+            cache[device] = edge_index_dict
 
         h = x
         for layer in self.gnn_layers:

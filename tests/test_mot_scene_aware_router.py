@@ -157,6 +157,19 @@ def test_scene_consistency_component_reaches_scene_projector():
     assert any(parameter.grad is not None for parameter in block.router.scene_projector.parameters())
 
 
+def test_mot_snapshot_reports_exact_runtime_sparse_metrics():
+    block = MoTBlock(24, num_heads=3, top_k=1).eval()
+    with torch.no_grad():
+        block.router.router[-1].bias.copy_(torch.tensor([3.0, 0.0, -3.0]))
+        block(torch.randn(2, 24, 4, 4))
+    dispatch = block.routing_snapshot()["dispatch"]
+
+    assert dispatch["token_mask_sparsity"] == pytest.approx(2.0 / 3.0)
+    assert dispatch["experts_per_sample"].tolist() == [1, 1]
+    assert dispatch["batch_expert_union"] == 1
+    assert dispatch["actual_expert_calls"] == 1
+
+
 def test_scene_aware_master_config_parses_and_runs():
     config = ROOT / "ultralytics/cfg/models/master/v0_10/det/yolo-master-mot-scene-n.yaml"
     model = DetectionModel(str(config), ch=3, nc=80, verbose=False).eval()
@@ -178,3 +191,15 @@ def test_scene_aware_yaml_survives_runtime_default_resolution():
     audit = [item for item in resolved.audit if item["kind"] == "mot"]
     assert audit and all(item["sources"]["scene_aware_router"] == "yaml" for item in audit)
     assert all(block.router.scene_aware for block in model.modules() if isinstance(block, MoTBlock))
+
+
+def test_scene_aware_enable_after_router_move_preserves_device_and_fp32_contract():
+    router = _MoTRouter(8, scene_aware=False).to(dtype=torch.float64)
+
+    router.enable_scene_aware()
+
+    reference = next(router.router.parameters())
+    assert {parameter.device for parameter in router.scene_projector.parameters()} == {reference.device}
+    assert {parameter.dtype for parameter in router.scene_projector.parameters()} == {torch.float32}
+    weights, _ = router(torch.randn(1, 8, 4, 4, dtype=torch.float64))
+    assert torch.isfinite(weights).all()

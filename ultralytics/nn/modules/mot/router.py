@@ -153,11 +153,12 @@ class _MoTRouter(FP32RouterMixin, nn.Module):
             hidden = int(hidden_dim or self.scene_hidden_dim or 3)
             if hidden <= 0:
                 raise ValueError("scene_hidden_dim must be positive")
+            reference = next(self.router.parameters())
             self.scene_projector = nn.Sequential(
                 nn.Linear(3, hidden),
                 nn.SiLU(inplace=False),
                 nn.Linear(hidden, self.num_experts),
-            )
+            ).to(device=reference.device, dtype=torch.float32)
             nn.init.zeros_(self.scene_projector[-1].weight)
             nn.init.zeros_(self.scene_projector[-1].bias)
             self.scene_hidden_dim = hidden
@@ -168,7 +169,8 @@ class _MoTRouter(FP32RouterMixin, nn.Module):
         """Compute differentiable high-frequency, heterogeneity, and scale statistics."""
         feature = x.float()
         eps = torch.finfo(feature.dtype).eps
-        rms = feature.square().mean(dim=(1, 2, 3)).sqrt().clamp_min(eps)
+        squared = feature.square()
+        rms = squared.mean(dim=(1, 2, 3)).sqrt().clamp_min(eps)
 
         dx = (feature[..., 1:] - feature[..., :-1]).abs().mean(dim=(1, 2, 3)) if feature.shape[-1] > 1 else rms * 0
         dy = (
@@ -176,7 +178,7 @@ class _MoTRouter(FP32RouterMixin, nn.Module):
         )
         high_frequency = 0.5 * (dx + dy) / rms
 
-        spatial_energy = feature.square().mean(dim=1)
+        spatial_energy = squared.mean(dim=1)
         heterogeneity = spatial_energy.flatten(1).std(dim=1, unbiased=False) / spatial_energy.flatten(1).mean(
             dim=1
         ).clamp_min(eps)

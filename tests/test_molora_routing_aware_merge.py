@@ -1,5 +1,7 @@
 """Routing-aware MoLoRA merge tests."""
 
+from typing import List
+
 import pytest
 import torch
 import torch.nn as nn
@@ -8,7 +10,7 @@ from ultralytics.nn.peft.molora import MoLoRAConfig, MoLoRALayer, MoLoRAModel
 from ultralytics.utils.lora import adapter_metadata, merge_adapters
 
 
-def _set_router_bias(layer: MoLoRALayer, bias: list[float]) -> None:
+def _set_router_bias(layer: MoLoRALayer, bias: List[float]) -> None:
     with torch.no_grad():
         layer.router.fc[-1].weight.zero_()
         layer.router.fc[-1].bias.copy_(torch.tensor(bias))

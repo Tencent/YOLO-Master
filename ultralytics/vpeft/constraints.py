@@ -891,10 +891,18 @@ class ConstraintRegistry:
         placement: torch.Tensor,
         ranks: torch.Tensor,
         variant: Union[str, Sequence[str]],
+        differentiable: bool | None = None,
     ) -> Dict[str, Union[float, torch.Tensor]]:
         """Evaluate soft constraints and return a dict of violation scalars.
         Positive values indicate violation; zero means satisfied.
         """
+        if differentiable is None:
+            differentiable = bool(
+                isinstance(placement, torch.Tensor)
+                and placement.requires_grad
+                or isinstance(ranks, torch.Tensor)
+                and ranks.requires_grad
+            )
         variants = variant if isinstance(variant, (list, tuple)) else [variant] * graph.n_nodes
         if len(variants) != graph.n_nodes:
             raise ValueError("per-node variant list must match graph.n_nodes")

@@ -1,4 +1,5 @@
 """Regression: LoRA must not target MoE control paths that break DDP."""
+
 import torch
 import torch.nn as nn
 from types import SimpleNamespace
@@ -65,6 +66,27 @@ def test_adalora_schedule_advances_after_optimizer_step():
     controller.after_optimizer_step()
 
     assert trainer.model.steps == [1, 2]
+
+
+def test_adalora_schedule_updates_all_modules_after_optimizer_step():
+    class AdapterModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.a = nn.Linear(1, 1)
+            self.b = nn.Linear(1, 1)
+            self.lora_enabled = True
+            self.steps = []
+
+        def update_and_allocate(self, step):
+            self.steps.append(step)
+
+    model = AdapterModel()
+    model.a.update_and_allocate = lambda step: model.steps.append(("a", step))
+    model.b.update_and_allocate = lambda step: model.steps.append(("b", step))
+    controller = AdapterRuntimeController(SimpleNamespace(model=model))
+    controller.after_optimizer_step()
+
+    assert ("a", 1) in model.steps and ("b", 1) in model.steps
 
 
 def test_adapter_controller_active_recognizes_molora():

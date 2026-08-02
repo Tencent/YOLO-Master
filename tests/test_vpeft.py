@@ -250,6 +250,19 @@ def test_vpeft_differentiable_solver_survives_large_budget_violation():
     )
 
 
+def test_vpeft_differentiable_solver_records_diagnostics():
+    from ultralytics.vpeft import ComputationGraph, ConstraintRegistry, DifferentiableOptimizationSolver, ModuleNode
+
+    graph = ComputationGraph(modules=[ModuleNode("backbone.fc", "Linear", 8, 8)])
+    decision = DifferentiableOptimizationSolver(max_iter=1, optimize_variant=True).solve(
+        graph, budget=10_000, variant="lora", constraints=ConstraintRegistry.default()
+    )
+    assert decision.metadata["n_nodes"] == 1
+    assert decision.metadata["n_variant_candidates"] == 8
+    assert decision.metadata["elapsed_seconds"] >= 0
+    assert decision.metadata["final_utility"] == decision.utility
+
+
 @pytest.mark.parametrize(
     ("model_class", "config", "expected_head"),
     [

@@ -54,6 +54,11 @@ def test_moa_sequential_heads_matches_default():
     )
 
 
+def test_moa_defaults_to_sequential_heads():
+    assert MoABlock(48, num_heads=6).sequential_heads is True
+    assert C2fMoA(48, 48, n=1, num_heads=6).m[0].sequential_heads is True
+
+
 # ── MoA __all__ ───────────────────────────────────────────────────────────
 
 def test_moa_all_exports_only_public_symbols():

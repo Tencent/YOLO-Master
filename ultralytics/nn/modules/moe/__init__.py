@@ -75,6 +75,7 @@ from .utils import (
 from .analysis import ExpertUsageTracker, diagnose_model, RoutingCollapseDetector
 from .diagnostics import MoELayerDiagnostic, collect_moe_diagnostics, diagnostics_to_dict, format_moe_diagnostics
 from .history import MoEDiagnosticsRecorder, export_moe_history_plots
+from .protocol import RoutingMetrics, normalize_routing_snapshot, routing_metrics, usage_gini
 from .pruning import prune_moe_model, prune_moe_module
 from .scheduler import (
     MoEDynamicScheduler,
@@ -107,6 +108,7 @@ from .hooks import (
 
 
 # ── API Stability Tiers ──────────────────────────────────────────────
+# `__all__` remains compatibility-complete; use these tier manifests for discovery.
 # STABLE: production-ready, well-tested, backward-compatible API.
 STABLE_MOE_CLASSES = frozenset(
     {
@@ -290,4 +292,8 @@ __all__ = [
     "is_experimental_moe",
     "is_deprecated_moe",
     "is_legacy_moe",
+    "RoutingMetrics",
+    "normalize_routing_snapshot",
+    "routing_metrics",
+    "usage_gini",
 ]

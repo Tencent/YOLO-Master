@@ -7,6 +7,8 @@ from typing import Any
 
 import torch
 
+from .protocol import routing_metrics, usage_gini
+
 
 @dataclass
 class MoELayerDiagnostic:
@@ -42,18 +44,19 @@ def collect_moe_diagnostics(model: torch.nn.Module, collapse_threshold: float = 
         if not snapshot or num_experts <= 0:
             continue
 
-        usage = _tensor_to_list(snapshot.get("expert_usage")) or [0.0] * num_experts
-        counts = _tensor_to_list(snapshot.get("topk_counts")) or [0.0] * num_experts
-        dominant_share = max(usage) if usage else 0.0
-        dominant_expert = int(max(range(len(usage)), key=usage.__getitem__)) if usage else -1
+        metrics = routing_metrics(snapshot, num_experts=num_experts, top_k=int(getattr(module, "top_k", 0)))
+        usage = metrics.expert_usage
+        counts = metrics.topk_counts
+        dominant_share = metrics.dominant_share
+        dominant_expert = metrics.dominant_expert
 
         diagnostics.append(
             MoELayerDiagnostic(
                 name=name,
                 module_type=type(module).__name__,
                 num_experts=num_experts,
-                top_k=int(snapshot.get("top_k", getattr(module, "top_k", 0))),
-                aux_loss=float(snapshot.get("aux_loss", 0.0)),
+                top_k=metrics.top_k,
+                aux_loss=metrics.aux_loss,
                 usage=usage,
                 counts=counts,
                 dominant_expert=dominant_expert,
@@ -70,18 +73,6 @@ def collect_moe_diagnostics(model: torch.nn.Module, collapse_threshold: float = 
 def diagnostics_to_dict(diagnostics: list[MoELayerDiagnostic]) -> list[dict[str, Any]]:
     """Convert diagnostics to JSON-serializable dictionaries."""
     return [diag.__dict__.copy() for diag in diagnostics]
-
-
-def _gini(values: list[float]) -> float:
-    """Compute a bounded Gini coefficient from a non-negative usage vector."""
-    if not values:
-        return 0.0
-    usage = torch.tensor(values, dtype=torch.float32).clamp_min(0)
-    total = float(usage.sum())
-    if total <= 0:
-        return 0.0
-    diff = torch.abs(usage[:, None] - usage[None, :]).sum()
-    return float((diff / (2 * usage.numel() * total)).item())
 
 
 def routing_runtime_metrics(model: torch.nn.Module, collapse_threshold: float = 0.8) -> dict[str, Any]:
@@ -111,7 +102,7 @@ def routing_runtime_metrics(model: torch.nn.Module, collapse_threshold: float = 
             "num_experts": int(snapshot.get("num_experts", len(usage))),
             "top_k": int(snapshot.get("top_k", getattr(module, "top_k", 0))),
             "expert_usage": usage,
-            "gini": _gini(usage),
+            "gini": usage_gini(usage),
             "entropy": float((-usage_tensor * torch.log(usage_tensor)).sum()),
             "dominant_share": max(usage),
             "collapse_flag": max(usage) >= float(collapse_threshold),

@@ -77,6 +77,7 @@ examples/YOLO-Master-Edge-Deployment/build-ort/yolo_master_edge_benchmark \
   --images /path/to/VisDrone/images/val \
   --profile visdrone \
   --imgsz 960 \
+  --threads 4 \
   --limit 500 \
   --output benchmark_onnx.csv
 ```
@@ -107,6 +108,7 @@ examples/YOLO-Master-Edge-Deployment/build-ncnn/yolo_master_edge_benchmark \
   --images /path/to/VisDrone/images/val \
   --profile visdrone \
   --imgsz 960 \
+  --threads 4 \
   --limit 500 \
   --output benchmark_ncnn.csv
 ```
@@ -137,11 +139,17 @@ examples/YOLO-Master-Edge-Deployment/build-mnn/yolo_master_edge_benchmark \
   --images /path/to/VisDrone/images/val \
   --profile visdrone \
   --imgsz 960 \
+  --threads 4 \
   --limit 500 \
   --output benchmark_mnn.csv
 ```
 
 `--images` accepts either a directory of images or a text file with one image path per line.
+`--threads` configures the CPU worker count for ONNX Runtime, NCNN, and MNN. Keep it identical across backends for a
+fair CPU comparison. Thread configuration is applied before each runtime loads its model.
+
+For MNN, the input session is resized only when the input tensor shape changes. Fixed-shape benchmark loops therefore
+exclude repeated session-resize overhead.
 
 ## Benchmark CSV Output
 

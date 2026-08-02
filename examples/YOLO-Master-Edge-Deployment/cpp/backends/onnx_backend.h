@@ -10,12 +10,14 @@
 class OnnxBackend final : public Backend {
 public:
     OnnxBackend();
+    void set_num_threads(int threads) override;
     void load(const std::string& model_path) override;
     Tensor infer(const Tensor& input) override;
     std::string name() const override;
 
 private:
     std::string model_path_;
+    int num_threads_ = 4;
 #ifdef WITH_ONNXRUNTIME
     Ort::Env env_;
     Ort::SessionOptions session_options_;

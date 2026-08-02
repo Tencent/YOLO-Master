@@ -153,11 +153,8 @@ def _mixture_aux_isolation_enabled(model: nn.Module | None) -> bool:
 
 def _mixture_aux_isolation_flags(losses: tuple[torch.Tensor, ...]) -> list[bool]:
     """Synchronize finite flags so every DDP rank makes the identical isolation choice."""
-    flags = torch.tensor(
-        [int(not bool(torch.isfinite(loss).all().item())) for loss in losses],
-        dtype=torch.int32,
-        device=losses[0].device,
-    )
+    finite = torch.stack([torch.isfinite(loss).all() for loss in losses])
+    flags = (~finite).to(dtype=torch.int32)
     if dist.is_available() and dist.is_initialized():
         try:
             dist.all_reduce(flags, op=dist.ReduceOp.MAX)
@@ -167,7 +164,9 @@ def _mixture_aux_isolation_flags(losses: tuple[torch.Tensor, ...]) -> list[bool]
             # local flags.  This prevents a 600-second NCCL timeout; training
             # will likely fail soon anyway, but we get a cleaner traceback.
             pass
-    return [bool(flag) for flag in flags.cpu().tolist()]
+    # One host transfer for all routed loss flags instead of one ``.item()``
+    # synchronization per component.
+    return [bool(flag) for flag in flags.detach().cpu().tolist()]
 
 
 def _update_mixture_loss_ema(model: nn.Module | None, key: str, loss_t: torch.Tensor) -> None:
@@ -189,6 +188,34 @@ def _update_mixture_loss_ema(model: nn.Module | None, key: str, loss_t: torch.Te
         val = max(_MIXTURE_LOSS_EMA_FLOOR, min(val, _MIXTURE_LOSS_MAX_ENTRY))
         if val > _MIXTURE_LOSS_EMA_FLOOR:
             buf[idx] = _MIXTURE_LOSS_EMA_DECAY * float(buf[idx]) + (1.0 - _MIXTURE_LOSS_EMA_DECAY) * val
+
+
+def _update_mixture_loss_ema_batch(model: nn.Module | None, losses: tuple[torch.Tensor, ...]) -> tuple[float, ...]:
+    """Update all mixture-loss EMA entries with one device-to-host read.
+
+    The old per-kind helper converted each scalar independently, which caused
+    four CUDA synchronizations before every loss composition.  Keep the EMA
+    buffer on-device and only materialize the four values together for the
+    Python-side normalization factors.
+    """
+    if model is None or not getattr(model, "training", False):
+        return tuple()
+    buf = getattr(model, "_mixture_loss_ema_buf", None)
+    if buf is None:
+        _get_mixture_loss_ema(model)
+        buf = model._mixture_loss_ema_buf
+    values = torch.stack(
+        [
+            loss.detach().abs().reshape(()) if isinstance(loss, torch.Tensor) and loss.numel() else buf.new_zeros(())
+            for loss in losses
+        ]
+    ).to(device=buf.device, dtype=buf.dtype)
+    defaults = buf.new_tensor([_MIXTURE_LOSS_EMA_DEFAULTS[key] for key in _MIXTURE_LOSS_EMA_KEYS])
+    with torch.no_grad():
+        safe_buf = torch.where(torch.isfinite(buf), buf, defaults)
+        values = values.clamp(_MIXTURE_LOSS_EMA_FLOOR, _MIXTURE_LOSS_MAX_ENTRY)
+        buf.copy_(safe_buf.mul(_MIXTURE_LOSS_EMA_DECAY).add(values * (1.0 - _MIXTURE_LOSS_EMA_DECAY)))
+    return tuple(float(value) for value in buf.detach().tolist())
 
 
 def _collect_mixture_aux_loss(
@@ -218,23 +245,36 @@ def _collect_mixture_aux_loss(
         return torch.tensor(0.0, device=device)
     from ultralytics.nn.modules.routing_protocol import collect_aux_loss
 
-    # Keep a structured per-kind view for logging/debugging.
+    # Collect every routed family in one model traversal.  The canonical
+    # collector also applies wrapper/child de-duplication via covered_modules.
+    grouped: dict[str, list[torch.Tensor]] = {}
+    diagnostics: dict[str, Any] = {}
     if model is not None:
-        _, model._mixture_aux_diagnostics = collect_aux_loss(
+        _, diagnostics = collect_aux_loss(
             model,
             device=device,
             return_diagnostics=True,
+            return_tensor_values=True,
+            return_value_scalars=False,
             include_kinds=("moe", "moa", "mot", "molora", "latent"),
         )
-    moe_l = _collect_moe_aux_loss(model, device)
-    mot_l = _collect_mot_aux_loss(model, device)
-    moa_l = _collect_moa_aux_loss(model, device)
-    latent_l = torch.tensor(0.0, device=device)
+        grouped = diagnostics.pop("_tensor_values_by_kind", {})
+
+    def _sum_kind(*kinds: str) -> torch.Tensor:
+        values = [value.to(device=device) for kind in kinds for value in grouped.get(kind, ())]
+        if not values:
+            return torch.zeros((), device=device)
+        total = values[0]
+        for value in values[1:]:
+            total = total + value.to(dtype=total.dtype)
+        return total
+
+    moe_l = _sum_kind("moe", "molora")
+    mot_l = _sum_kind("mot")
+    moa_l = _sum_kind("moa")
+    latent_l = _sum_kind("latent")
     if model is not None:
-        latent_l = collect_aux_loss(model, device=device, include_kinds=("latent",))
-        if not torch.isfinite(latent_l):
-            LOGGER.warning(f"[NaN guard] Latent aux_loss is non-finite ({latent_l}), skipping")
-            latent_l = latent_l.new_zeros(())
+        model._mixture_aux_diagnostics = diagnostics
     aux_losses = (moe_l, mot_l, moa_l, latent_l)
     nonfinite = _mixture_aux_isolation_flags(aux_losses)
     aux_names = ("moe", "mot", "moa", "latent")
@@ -242,6 +282,9 @@ def _collect_mixture_aux_loss(
         model._mixture_aux_nonfinite = {name: bad for name, bad in zip(aux_names, nonfinite)}
         model._mixture_aux_isolated = False
     if any(nonfinite):
+        for name, bad in zip(aux_names, nonfinite):
+            if bad:
+                LOGGER.warning("[NaN guard] %s aux_loss is non-finite, skipping", name)
         # Always isolate non-finite aux components — never let raw NaN/Inf
         # propagate to the main loss.  This replaces the old `mixture_aux_isolate_nonfinite`
         # flag which was never enabled in any config (it is now always on).
@@ -249,32 +292,19 @@ def _collect_mixture_aux_loss(
         aux_losses = tuple(loss.new_zeros(()) if bad else loss for loss, bad in zip(aux_losses, nonfinite))
         moe_l, mot_l, moa_l, latent_l = aux_losses
 
-    _update_mixture_loss_ema(model, "moe", moe_l)
-    _update_mixture_loss_ema(model, "mot", mot_l)
-    _update_mixture_loss_ema(model, "moa", moa_l)
-    _update_mixture_loss_ema(model, "latent", latent_l)
-
-    ema = _get_mixture_loss_ema(model)
-    if ema is not None:
-        moe_scale_val = max(ema["moe"], _MIXTURE_LOSS_EMA_FLOOR)
-        mot_scale_val = max(ema["mot"], _MIXTURE_LOSS_EMA_FLOOR)
-        moa_scale_val = max(ema["moa"], _MIXTURE_LOSS_EMA_FLOOR)
-        latent_scale_val = max(ema["latent"], _MIXTURE_LOSS_EMA_FLOOR)
+    ema_values = _update_mixture_loss_ema_batch(model, (moe_l, mot_l, moa_l, latent_l))
+    if ema_values:
+        moe_scale_val, mot_scale_val, moa_scale_val, latent_scale_val = ema_values
     else:
-        moe_scale_val = float(moe_l.detach().clamp(min=_MIXTURE_LOSS_EMA_FLOOR).item())
-        mot_scale_val = float(mot_l.detach().clamp(min=_MIXTURE_LOSS_EMA_FLOOR).item())
-        moa_scale_val = float(moa_l.detach().clamp(min=_MIXTURE_LOSS_EMA_FLOOR).item())
-        latent_scale_val = float(latent_l.detach().clamp(min=_MIXTURE_LOSS_EMA_FLOOR).item())
+        moe_scale_val = mot_scale_val = moa_scale_val = latent_scale_val = _MIXTURE_LOSS_EMA_FLOOR
 
     # Guard: clamp scales to finite range before division — prevents NaN from
     # corrupted EMA buffers propagating through the normalisation step.
     SAFE_SCALE_RANGE = (1e-6, 1e6)
-    moe_scale_val = float(torch.tensor(moe_scale_val).clamp(min=SAFE_SCALE_RANGE[0], max=SAFE_SCALE_RANGE[1]).item())
-    mot_scale_val = float(torch.tensor(mot_scale_val).clamp(min=SAFE_SCALE_RANGE[0], max=SAFE_SCALE_RANGE[1]).item())
-    moa_scale_val = float(torch.tensor(moa_scale_val).clamp(min=SAFE_SCALE_RANGE[0], max=SAFE_SCALE_RANGE[1]).item())
-    latent_scale_val = float(
-        torch.tensor(latent_scale_val).clamp(min=SAFE_SCALE_RANGE[0], max=SAFE_SCALE_RANGE[1]).item()
-    )
+    moe_scale_val = min(max(float(moe_scale_val), SAFE_SCALE_RANGE[0]), SAFE_SCALE_RANGE[1])
+    mot_scale_val = min(max(float(mot_scale_val), SAFE_SCALE_RANGE[0]), SAFE_SCALE_RANGE[1])
+    moa_scale_val = min(max(float(moa_scale_val), SAFE_SCALE_RANGE[0]), SAFE_SCALE_RANGE[1])
+    latent_scale_val = min(max(float(latent_scale_val), SAFE_SCALE_RANGE[0]), SAFE_SCALE_RANGE[1])
 
     terms = (
         moe_l / moe_scale_val * float(moe_gain),

@@ -56,6 +56,7 @@ class C2fMoT(nn.Module):
         scene_consistency_coeff: float = 0.0,
         sparse_train_warmup_steps: int = 0,
         scene_inference_mode: str = "dynamic",
+        local_attn_window: int = 0,
     ):
         super().__init__()
         self.c = int(c2 * e)
@@ -95,6 +96,7 @@ class C2fMoT(nn.Module):
                 scene_consistency_coeff=scene_consistency_coeff,
                 sparse_train_warmup_steps=sparse_train_warmup_steps,
                 scene_inference_mode=scene_inference_mode,
+                local_attn_window=local_attn_window,
             )
             for i in range(n)
         )

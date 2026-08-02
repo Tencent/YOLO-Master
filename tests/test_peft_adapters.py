@@ -689,6 +689,36 @@ class TestPeftModelDeviceAndDtype:
         for p in model.parameters():
             assert p.device.type == "cpu"
 
+    def test_molora_injection_inherits_preplaced_base_device(self, tiny_cnn):
+        """Experts/router should inherit device when injection follows model placement."""
+        model = tiny_cnn.to("cpu")
+        cfg = MoLoRAConfig(
+            r=4, alpha=8, num_experts=4, top_k=2,
+            target_modules=["conv1"]
+        )
+        model = get_peft_molora_model(model, cfg)
+        layer = model.conv1
+        assert layer.base_layer.weight.device.type == "cpu"
+        assert all(p.device.type == "cpu" for p in layer.experts.parameters())
+        assert all(p.device.type == "cpu" for p in layer.router.parameters())
+        assert all(p.dtype == layer.base_layer.weight.dtype for p in layer.experts.parameters())
+        assert all(p.dtype == torch.float32 for p in layer.router.parameters())
+        assert model(torch.randn(2, 3, 8, 8)).device.type == "cpu"
+
+    @pytest.mark.skipif(not torch.backends.mps.is_available(), reason="MPS not available")
+    def test_molora_injection_after_mps_placement_smoke(self, tiny_cnn):
+        """Injecting after MPS placement should not leave new adapter state on CPU."""
+        model = tiny_cnn.to("mps")
+        cfg = MoLoRAConfig(
+            r=4, alpha=8, num_experts=4, top_k=2,
+            target_modules=["conv1"]
+        )
+        model = get_peft_molora_model(model, cfg)
+        layer = model.conv1
+        assert all(p.device.type == "mps" for p in layer.experts.parameters())
+        assert all(p.device.type == "mps" for p in layer.router.parameters())
+        assert model(torch.randn(2, 3, 8, 8, device="mps")).device.type == "mps"
+
     def test_molora_model_dtype(self, tiny_cnn):
         """MoLoRA model should support float16."""
         cfg = MoLoRAConfig(

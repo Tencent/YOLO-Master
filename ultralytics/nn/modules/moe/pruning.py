@@ -412,16 +412,75 @@ class MoEPruner:
         LOGGER.info("\n✅ Surgery completed")
         return new_model
     
+    def _sync_yaml_num_experts(self, pruned_model: nn.Module) -> None:
+        """Encode each ES_MOE's post-prune expert count into ``model.yaml``.
+
+        Without this, ``YOLO(pruned.pt).train()`` (the prune -> LoRA/full fine-tune
+        recovery workflow) rebuilds the model from ``model.yaml`` using ES_MOE's default
+        expert count, and ``intersect_dicts`` silently drops the reduced expert/router
+        weights on shape mismatch, re-inflating the model with randomly initialized
+        experts. Writing ``[out_channels, num_experts]`` into each pruned ES_MOE's YAML
+        args lets the pruned architecture survive the rebuild (ES_MOE clamps
+        ``top_k = min(top_k, num_experts)`` automatically).
+        """
+        from ultralytics.nn.modules.moe.modules import ES_MOE
+
+        y = getattr(pruned_model, "yaml", None)
+        if not isinstance(y, dict) or "backbone" not in y:
+            return
+        backbone, head = y["backbone"], y.get("head", [])
+        nb = len(backbone)
+        for name, mod in pruned_model.named_modules():
+            if not isinstance(mod, ES_MOE):
+                continue
+            parts = name.split(".")
+            if len(parts) < 2 or not parts[1].isdigit():
+                continue
+            idx = int(parts[1])
+            seq, j = (backbone, idx) if idx < nb else (head, idx - nb)
+            if not 0 <= j < len(seq) or len(seq[j]) < 4:
+                continue
+            args = list(seq[j][3]) if isinstance(seq[j][3], list) else [seq[j][3]]
+            out_ch = args[0] if args else getattr(mod, "out_channels", None)
+            # Recover the kept experts' actual depthwise kernel sizes; pruning keeps
+            # experts with heterogeneous kernels whose order/values are not the
+            # default [3, 5, 7...] a bare rebuild would assign. Writing the full
+            # positional arg list (incl. expert_kernel_sizes) lets YOLO(pruned.pt)
+            # .train() rebuild the exact experts so their weights survive
+            # intersect_dicts instead of being dropped on a kernel-shape mismatch.
+            kernels = []
+            for expert in mod.experts:
+                conv = getattr(expert, "conv", None)
+                depthwise = getattr(conv, "depthwise", None) if conv is not None else None
+                ks = getattr(depthwise, "kernel_size", None)
+                kernels.append(int(ks[0]) if isinstance(ks, (tuple, list)) else int(ks) if ks else 3)
+            top_k = int(mod.top_k) if getattr(mod, "use_top_k", True) else None
+            seq[j][3] = [
+                out_ch,
+                int(mod.num_experts),
+                int(getattr(mod, "reduction", 8)),
+                top_k,
+                bool(getattr(mod, "use_sparse_inference", True)),
+                float(getattr(mod, "dynamic_threshold", 0.4)),
+                int(getattr(mod, "max_kernel_size", 15)),
+                kernels,
+            ]
+        LOGGER.info("   Synced post-prune expert counts + kernel sizes into model.yaml")
+
     def _save_model(self, pruned_model: nn.Module, output_path: str) -> None:
         """
         Save pruned model to file
-        
+
         Args:
             pruned_model: Pruned model
             output_path: Output file path
         """
         LOGGER.info("\n[Phase 4] Saving Pruned Model...")
-        
+
+        # Keep model.yaml consistent with the pruned architecture so retraining
+        # (LoRA / full fine-tune recovery) does not silently re-inflate experts.
+        self._sync_yaml_num_experts(pruned_model)
+
         # Update YOLO wrapper
         self.model.model = pruned_model
         

@@ -143,4 +143,111 @@ class PlacementPlan:
         return plan
 
 
-__all__ = ["PlacementPlan", "PlacementTarget"]
+@dataclass(frozen=True)
+class PlannerResult:
+    """Stable external contract shared by legacy and V-PEFT planners.
+
+    ``PlacementDecision`` and ``PlacementPlan`` remain internal/backward-
+    compatible types. API and checkpoint consumers should prefer this type.
+    """
+
+    status: str
+    backend: str
+    reason: dict[str, Any] | None = None
+    targets: tuple[str, ...] = ()
+    rank_pattern: dict[str, int] = field(default_factory=dict)
+    budget: dict[str, int] = field(default_factory=dict)
+    fallback: bool = False
+    strict: bool = False
+    metadata: dict[str, Any] = field(default_factory=dict)
+    schema_version: int = 1
+
+    def __post_init__(self) -> None:
+        status = str(self.status).upper()
+        if status not in {"ACCEPT", "ADAPT", "REFUSE", "FALLBACK"}:
+            raise ValueError(f"invalid PlannerResult status={self.status!r}")
+        object.__setattr__(self, "status", status)
+        if self.fallback != (status == "FALLBACK"):
+            raise ValueError("fallback must be true exactly when status is FALLBACK")
+        if self.reason is not None and not self.reason.get("message"):
+            raise ValueError("PlannerResult reason requires a non-empty message")
+        if any(int(rank) <= 0 for rank in self.rank_pattern.values()):
+            raise ValueError("PlannerResult ranks must be positive")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "status": self.status,
+            "backend": self.backend,
+            "reason": dict(self.reason) if self.reason else None,
+            "targets": list(self.targets),
+            "rank_pattern": {name: int(rank) for name, rank in self.rank_pattern.items()},
+            "budget": {key: int(value) for key, value in self.budget.items()},
+            "fallback": self.fallback,
+            "strict": self.strict,
+            "metadata": dict(self.metadata),
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "PlannerResult":
+        return cls(
+            schema_version=int(payload.get("schema_version", 1)),
+            status=str(payload.get("status", "FALLBACK")),
+            backend=str(payload.get("backend", "legacy")),
+            reason=dict(payload["reason"]) if payload.get("reason") else None,
+            targets=tuple(str(name) for name in payload.get("targets", ())),
+            rank_pattern={str(name): int(rank) for name, rank in dict(payload.get("rank_pattern", {})).items()},
+            budget={str(key): int(value) for key, value in dict(payload.get("budget", {})).items()},
+            fallback=bool(payload.get("fallback", str(payload.get("status", "")).upper() == "FALLBACK")),
+            strict=bool(payload.get("strict", False)),
+            metadata=dict(payload.get("metadata", {})),
+        )
+
+    @classmethod
+    def from_legacy_decision(cls, decision: Any, *, strict: bool = False) -> "PlannerResult":
+        status = str(getattr(decision, "status", "ACCEPT")).upper()
+        message = getattr(decision, "refusal_reason", None)
+        targets = tuple(getattr(decision, "target_modules_hint", None) or ())
+        rank = getattr(decision, "recommended_rank", None)
+        return cls(
+            status=status,
+            backend="legacy",
+            reason={"category": "planner_refusal", "message": str(message)} if message else None,
+            targets=targets,
+            rank_pattern={name: int(rank) for name in targets} if rank else {},
+            fallback=False,
+            strict=strict,
+            metadata={
+                "recommended_variant": getattr(decision, "recommended_variant", None),
+                "predicted_delta": getattr(decision, "predicted_delta", None),
+                "safety_overrides": dict(getattr(decision, "safety_overrides", {}) or {}),
+                **dict(getattr(decision, "metadata", {}) or {}),
+            },
+        )
+
+    @classmethod
+    def from_placement_plan(
+        cls,
+        plan: PlacementPlan,
+        *,
+        strict: bool = False,
+        fallback_reason: Mapping[str, Any] | None = None,
+    ) -> "PlannerResult":
+        status = "FALLBACK" if fallback_reason else plan.status
+        reason = dict(fallback_reason) if fallback_reason else None
+        if reason is None and plan.refusal_reason:
+            reason = {"category": "infeasible", "message": str(plan.refusal_reason)}
+        return cls(
+            status=status,
+            backend=plan.planner_backend,
+            reason=reason,
+            targets=tuple(target.name for target in plan.targets),
+            rank_pattern={target.name: int(target.rank) for target in plan.targets},
+            budget=dict(plan.budget),
+            fallback=status == "FALLBACK",
+            strict=strict,
+            metadata={"solver": plan.solver, "plan_fingerprint": plan.fingerprint, **dict(plan.metadata)},
+        )
+
+
+__all__ = ["PlacementPlan", "PlacementTarget", "PlannerResult"]

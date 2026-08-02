@@ -43,6 +43,33 @@ def _flash_attn(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
     attn = attn.softmax(dim=-1)
     return attn @ v
 
+def _window_partition_2d(t: torch.Tensor, window_size: int) -> torch.Tensor:
+    """Partition ``[B, nh, H, W, hd]`` into ``[B*nh*nW, win², hd]`` windows."""
+    B, nh, height, width, hd = t.shape
+    win = int(window_size)
+    if win < 1 or height % win or width % win:
+        raise ValueError(f"window_size={win} must evenly divide spatial shape {(height, width)}")
+    t = t.reshape(B, nh, height // win, win, width // win, win, hd)
+    return t.permute(0, 1, 2, 4, 3, 5, 6).reshape(-1, win * win, hd)
+
+
+def _window_unpartition_2d(
+    windows: torch.Tensor,
+    window_size: int,
+    batch_size: int,
+    num_heads: int,
+    height: int,
+    width: int,
+) -> torch.Tensor:
+    """Reverse :func:`_window_partition_2d` to ``[B, nh, H, W, hd]``."""
+    win = int(window_size)
+    if win < 1 or height % win or width % win:
+        raise ValueError(f"window_size={win} must evenly divide spatial shape {(height, width)}")
+    hd = windows.shape[-1]
+    t = windows.reshape(batch_size, num_heads, height // win, width // win, win, win, hd)
+    return t.permute(0, 1, 2, 4, 3, 5, 6).reshape(batch_size, num_heads, height, width, hd)
+
+
 def _window_flash_attn(
     q: torch.Tensor,
     k: torch.Tensor,
@@ -60,10 +87,11 @@ def _window_flash_attn(
         )
     win = max(1, min(int(window_size), height, width))
 
-    def to_spatial(t: torch.Tensor) -> torch.Tensor:
-        return t.transpose(2, 3).reshape(B, nh, height, width, hd)
-
-    qs, ks, vs = to_spatial(q), to_spatial(k), to_spatial(v)
+    # N is already the flattened row-major spatial axis. Transposing N and hd
+    # before reshape silently mixes feature and spatial coordinates.
+    qs = q.reshape(B, nh, height, width, hd)
+    ks = k.reshape(B, nh, height, width, hd)
+    vs = v.reshape(B, nh, height, width, hd)
     pad_h = (win - height % win) % win
     pad_w = (win - width % win) % win
     if pad_h or pad_w:
@@ -71,18 +99,14 @@ def _window_flash_attn(
         qs, ks, vs = F.pad(qs, pad), F.pad(ks, pad), F.pad(vs, pad)
     hp, wp = qs.shape[2], qs.shape[3]
 
-    def partition(t: torch.Tensor) -> torch.Tensor:
-        t = t.view(B, nh, hp // win, win, wp // win, win, hd)
-        return t.permute(0, 1, 2, 4, 3, 5, 6).reshape(-1, win * win, hd)
-
-    def reverse(windows: torch.Tensor) -> torch.Tensor:
-        n_h, n_w = hp // win, wp // win
-        t = windows.view(B, nh, n_h, n_w, win, win, hd)
-        t = t.permute(0, 1, 2, 4, 3, 5, 6).reshape(B, nh, hp, wp, hd)
-        return t[:, :, :height, :width, :].reshape(B, nh, height * width, hd)
-
-    out_w = _flash_attn(partition(qs), partition(ks), partition(vs), scale)
-    return reverse(out_w)
+    out_w = _flash_attn(
+        _window_partition_2d(qs, win),
+        _window_partition_2d(ks, win),
+        _window_partition_2d(vs, win),
+        scale,
+    )
+    out = _window_unpartition_2d(out_w, win, B, nh, hp, wp)
+    return out[:, :, :height, :width, :].reshape(B, nh, height * width, hd)
 
 class _LocalAttnHead(nn.Module):
     """Local attention head: DW-biased QKV + window-partitioned self-attention.
@@ -145,7 +169,7 @@ class _RegionalAttnHead(nn.Module):
     """
 
     def __init__(self, dim: int, num_heads: int, head_dim: Optional[int] = None,
-                 pool_stride: int = 2):
+                 pool_stride: int = 2, max_kv_tokens: Optional[int] = 4096):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = head_dim or max(dim // num_heads, 16)
@@ -154,7 +178,10 @@ class _RegionalAttnHead(nn.Module):
         # P0-3 fix: validate pool_stride at construction time.
         if pool_stride < 1:
             raise ValueError(f"pool_stride must be ≥ 1, got {pool_stride}")
+        if max_kv_tokens is not None and max_kv_tokens < 1:
+            raise ValueError(f"max_kv_tokens must be positive or None, got {max_kv_tokens}")
         self.pool_stride = pool_stride
+        self.max_kv_tokens = None if max_kv_tokens is None else int(max_kv_tokens)
 
         self.q_proj = nn.Conv2d(dim, inner, 1, bias=False)
         # P2-6 fix: use adaptive_avg_pool2d instead of AvgPool2d so that when
@@ -176,8 +203,14 @@ class _RegionalAttnHead(nn.Module):
         if min(H, W) <= 1:
             kv = self.kv_proj(x)                    # conv-only, skip pool
         else:
-            target_h = max(1, H // self.pool_stride)
-            target_w = max(1, W // self.pool_stride)
+            stride = self.pool_stride
+            if self.max_kv_tokens is not None:
+                # Increase pooling only when the configured stride would leave
+                # too many KV tokens for a quadratic attention kernel.
+                while (max(1, H // stride) * max(1, W // stride)) > self.max_kv_tokens:
+                    stride *= 2
+            target_h = max(1, H // stride)
+            target_w = max(1, W // stride)
             pooled = F.adaptive_avg_pool2d(x, (target_h, target_w))
             kv = self.kv_proj(pooled)               # [B, 2*inner, H', W']
         H2, W2 = kv.shape[2], kv.shape[3]
@@ -185,17 +218,20 @@ class _RegionalAttnHead(nn.Module):
         # Guard: if pooling collapsed the spatial dim to zero (extreme edge case),
         # fall back to identity KV.
         if H2 * W2 == 0:
-            k = self.q_proj(x).reshape(B, nh, hd, -1).transpose(2, 3)
+            k = self.q_proj(x).reshape(B, nh, hd, -1).transpose(2, 3).contiguous()
             v = k.clone()
         else:
             k, v = kv.split(inner, dim=1)
-            k = k.flatten(2).view(B, nh, hd, H2 * W2).transpose(2, 3)
-            v = v.flatten(2).view(B, nh, hd, H2 * W2).transpose(2, 3)
+            k = k.flatten(2).view(B, nh, hd, H2 * W2).transpose(2, 3).contiguous()
+            v = v.flatten(2).view(B, nh, hd, H2 * W2).transpose(2, 3).contiguous()
 
-        q = self.q_proj(x).flatten(2).view(B, nh, hd, H * W).transpose(2, 3)
+        # Materialize canonical [B, nh, N, hd] strides. Singleton spatial axes
+        # otherwise retain ambiguous channels-first strides that can make SDPA's
+        # backward select an incompatible memory-format path.
+        q = self.q_proj(x).flatten(2).view(B, nh, hd, H * W).transpose(2, 3).contiguous()
 
         out = _flash_attn(q, k, v, self.scale)               # [B, nh, N, hd]
-        out = out.transpose(2, 3).reshape(B, inner, H, W)
+        out = out.transpose(2, 3).contiguous().reshape(B, inner, H, W)
         return self.norm(self.proj(out))
 
 class _GlobalAttnHead(nn.Module):
@@ -287,10 +323,6 @@ class _GlobalAttnHead(nn.Module):
 
         # kv = k^T @ v → [B*nh, eff_nb, hd]
         kv = k_flat.transpose(1, 2) @ v_flat
-        # L2-normalize kv accumulator to keep matmul chain stable in float16
-        # fp16-safe floor: 1e-6 underflows in half precision
-        kv_norm = kv.norm(dim=-1, keepdim=True).clamp(min=_fp_min(1e-6, kv.dtype))
-        kv = kv / kv_norm
         # normalizer: sum of k features over N → [B*nh, eff_nb]
         # fp16-safe: accumulate in float32 (P0-2 fix) — at N=25600 (1280×1280 P3),
         # raw k_sum can reach ~2.5e8 which overflows to inf in float16.

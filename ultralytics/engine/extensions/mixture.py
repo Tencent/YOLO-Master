@@ -148,12 +148,25 @@ class MixtureRuntimeController:
             return 0
         from ultralytics.nn.modules.moe.schedule import apply_balance_loss_coeff, usage_gini
 
-        layer_gini = {}
-        for name, usage in self._gini_usage_totals.items():
-            reduced = usage.clone()
-            if torch.distributed.is_available() and torch.distributed.is_initialized():
-                torch.distributed.all_reduce(reduced, op=torch.distributed.ReduceOp.SUM)
-            layer_gini[name] = usage_gini(reduced)
+        names = list(self._gini_usage_totals)
+        max_experts = max(self._gini_usage_totals[name].numel() for name in names)
+        stacked = torch.stack(
+            [
+                torch.nn.functional.pad(
+                    self._gini_usage_totals[name],
+                    (0, max_experts - self._gini_usage_totals[name].numel()),
+                )
+                for name in names
+            ]
+        )
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            # One collective for all layers avoids an NCCL synchronization per
+            # MoE block at the end of every epoch.
+            torch.distributed.all_reduce(stacked, op=torch.distributed.ReduceOp.SUM)
+        layer_gini = {
+            name: usage_gini(stacked[index, : self._gini_usage_totals[name].numel()])
+            for index, name in enumerate(names)
+        }
         mean_gini = float(sum(layer_gini.values()) / len(layer_gini))
         coeff = self._gini_scheduler.update(mean_gini)
         updated = apply_balance_loss_coeff(self.model, coeff)

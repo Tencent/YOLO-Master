@@ -1332,7 +1332,12 @@ class BaseTrainer:
 
             online_target = unwrap_model(self.model)
             online_mixture_ema = initialize_mixture_loss_ema_buffer(online_target)
-            ema_state = ckpt["ema"].float().state_dict()
+            checkpoint_ema = ckpt["ema"].float()
+            # Apply the same lazy initializer/migration used by live models before
+            # extracting state, so legacy three-slot checkpoints load into the
+            # current four-slot online and EMA buffers without a size mismatch.
+            initialize_mixture_loss_ema_buffer(checkpoint_ema)
+            ema_state = checkpoint_ema.state_dict()
             checkpoint_mixture_ema = ema_state.get("_mixture_loss_ema_buf")
             if checkpoint_mixture_ema is not None:
                 online_mixture_ema.copy_(

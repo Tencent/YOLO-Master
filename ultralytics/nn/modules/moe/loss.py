@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributed as dist
-from typing import Optional, Dict, Union
+from typing import Optional, Dict, Tuple, Union
 from ultralytics.nn.modules._numeric import all_reduce_mean, clamp_min_for_dtype, should_reduce_ddp
 from .scheduler import MoEDynamicScheduler, MoEDynamicSchedulerConfig
 
@@ -199,6 +199,63 @@ class MoELoss(nn.Module):
         global_mean = local_sum / local_count.clamp(min=1.0)
         return (local_mean + (global_mean - local_mean.detach())).to(orig_dtype)
 
+    def _get_global_statistics(
+        self, router_probs: torch.Tensor, expert_indices: Optional[torch.Tensor]
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Reduce router importance and hard usage in one packed collective.
+
+        The legacy helpers reduce the same MoE layer statistics in four
+        separate calls (importance sum/count and expert counts/total). Packing
+        them keeps the global values and local autograd path unchanged while
+        reducing launch/synchronization overhead in DDP.
+        """
+        if expert_indices is not None:
+            flat_indices = expert_indices.reshape(-1).to(torch.long)
+            local_counts = F.one_hot(flat_indices, num_classes=self.num_experts).float().sum(dim=0)
+            local_selected = local_counts.new_tensor(float(flat_indices.numel()))
+        else:
+            flat_indices = None
+            local_counts = None
+            local_selected = None
+
+        if not should_reduce_ddp(self):
+            importance = router_probs.mean(dim=0)
+            usage = (
+                local_counts / local_selected.clamp_min(1.0)
+                if local_counts is not None
+                else importance.detach()
+            )
+            return importance, usage.detach()
+
+        original_dtype = router_probs.dtype
+        local_probs = router_probs.float()
+        local_mean = local_probs.mean(dim=0)
+        local_sum = local_probs.sum(dim=0).detach()
+        local_count = local_sum.new_tensor(float(router_probs.shape[0]))
+        parts = [local_sum, local_count.reshape(1)]
+        if local_counts is not None:
+            parts.extend((local_counts.detach(), local_selected.reshape(1)))
+        packed = torch.cat(parts)
+
+        # NCCL only accepts CUDA tensors; normal DDP CUDA paths already arrive
+        # here on CUDA, while the explicit branch keeps the helper safe for
+        # callers that construct CPU statistics under a NCCL process group.
+        if packed.device.type == "cpu" and dist.get_backend() == "nccl":
+            packed = packed.cuda()
+        dist.all_reduce(packed, op=dist.ReduceOp.SUM)
+
+        offset = self.num_experts
+        global_mean = packed[:offset] / packed[offset].clamp_min(1.0)
+        importance = (local_mean + (global_mean.to(local_mean.device) - local_mean.detach())).to(original_dtype)
+        if local_counts is None:
+            return importance, importance.detach()
+
+        counts_start = offset + 1
+        global_counts = packed[counts_start : counts_start + self.num_experts]
+        global_selected = packed[counts_start + self.num_experts].clamp_min(1.0)
+        usage = (global_counts / global_selected).to(local_counts.device).detach()
+        return importance, usage
+
     def forward(
         self,
         router_probs: torch.Tensor,
@@ -221,23 +278,9 @@ class MoELoss(nn.Module):
             expert_indices = self._flatten_expert_indices(expert_indices)
 
         # 1. Load Balancing Loss
-        importance = self._get_global_mean(router_probs)
-
-        if self.use_soft_balancing:
-            # === Soft Balancing (Differentiable, GShard / Switch style) ===
-            # Prefer discrete Top-K counts when available; this matches the
-            # Switch/GShard signal used by hard balancing while keeping gradient
-            # flow through `importance`. If a legacy caller has no indices, fall
-            # back to detached importance rather than failing the training step.
-            usage = self._usage_from_expert_indices(expert_indices) if expert_indices is not None else importance.detach()
-        else:
-            # === Hard Balancing (GShard / Switch Style) ===
-            # Usage is defined by the discrete selection count.
-            # Requires expert_indices.
-            if expert_indices is None:
-                raise ValueError("expert_indices is required for hard load balancing.")
-
-            usage = self._usage_from_expert_indices(expert_indices)
+        if not self.use_soft_balancing and expert_indices is None:
+            raise ValueError("expert_indices is required for hard load balancing.")
+        importance, usage = self._get_global_statistics(router_probs, expert_indices)
 
         # Balance Loss: N * sum(importance * usage)
         balance_loss = self.num_experts * torch.sum(importance * usage)

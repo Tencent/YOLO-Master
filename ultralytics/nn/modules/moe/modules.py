@@ -404,7 +404,7 @@ class ES_MOE(nn.Module):
 
     def __init__(self, in_channels, out_channels=None, num_experts=4, reduction=8,
                  top_k=2, use_sparse_inference=True, dynamic_threshold=0.4,
-                 max_kernel_size=15):
+                 max_kernel_size=15, expert_kernel_sizes=None):
         """
         Args:
             in_channels: Input channels
@@ -415,6 +415,10 @@ class ES_MOE(nn.Module):
             use_sparse_inference: Enable sparse Top-K expert computation during inference
             dynamic_threshold: Optional threshold for pruning low-confidence experts during inference
             max_kernel_size: Largest odd depthwise kernel assigned to an expert
+            expert_kernel_sizes: Optional explicit per-expert depthwise kernel sizes
+                (length must equal ``num_experts``). When ``None`` the kernels are
+                derived from defaults; pruned checkpoints set this so retraining
+                rebuilds the exact kept-expert kernels and reloads their weights.
         """
         super(ES_MOE, self).__init__()
 
@@ -440,6 +444,7 @@ class ES_MOE(nn.Module):
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.num_experts = num_experts
+        self.reduction = reduction
         self.top_k = min(top_k, num_experts) if top_k is not None else num_experts
         self.use_top_k = (top_k is not None)
         self.use_sparse_inference = use_sparse_inference
@@ -449,12 +454,27 @@ class ES_MOE(nn.Module):
         # Dynamic routing (Top-K supported)
         self.routing = DynamicRoutingLayer(in_channels, num_experts, reduction, top_k)
 
-        # Expert group (original design)
-        default_kernel_sizes = [3, 5, 7]
-        if num_experts <= len(default_kernel_sizes):
-            ks = [min(k, max_kernel_size) for k in default_kernel_sizes[:num_experts]]
+        # Expert group (original design). ``expert_kernel_sizes`` lets a pruned
+        # checkpoint reconstruct its kept experts' heterogeneous kernels so that
+        # ``YOLO(pruned.pt).train()`` reloads expert weights instead of dropping
+        # them on a kernel-shape mismatch (prune -> LoRA/full fine-tune recovery).
+        if expert_kernel_sizes is not None:
+            if len(expert_kernel_sizes) != num_experts:
+                raise ValueError(
+                    f"expert_kernel_sizes must have {num_experts} entries, got {len(expert_kernel_sizes)}"
+                )
+            ks = []
+            for k in expert_kernel_sizes:
+                k = int(k)
+                if k % 2 == 0:
+                    k -= 1
+                ks.append(min(k, max_kernel_size))
         else:
-            ks = [min(3 + 2 * i, max_kernel_size) for i in range(num_experts)]
+            default_kernel_sizes = [3, 5, 7]
+            if num_experts <= len(default_kernel_sizes):
+                ks = [min(k, max_kernel_size) for k in default_kernel_sizes[:num_experts]]
+            else:
+                ks = [min(3 + 2 * i, max_kernel_size) for i in range(num_experts)]
         self.experts = nn.ModuleList(
             [EfficientExpertGroup(in_channels, out_channels, kernel_size=k) for k in ks]
         )

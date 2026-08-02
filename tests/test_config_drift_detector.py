@@ -170,6 +170,27 @@ def test_incompatible_model_argument_counts_are_reported(tmp_path):
     assert any(issue.code == "MODEL_ARGS_INCOMPATIBLE" and "Known" in issue.message for issue in issues)
 
 
+def test_check_all_includes_yolo26_master_configs(tmp_path):
+    detector = ConfigDriftDetector(tmp_path)
+    _write(tmp_path / detector.DEFAULT_CFG, "alpha: 1\n")
+    _write(tmp_path / detector.YOLO26_MASTER_MODELS / "yolo26-master-test.yaml", "alpha: 1\nalpha: 2\n")
+
+    issues = detector.check_all()
+
+    assert any(
+        issue.code == "YAML_DUPLICATE_KEY" and issue.path.name == "yolo26-master-test.yaml" for issue in issues
+    )
+
+
+def test_lora_rank_pattern_cli_mapping_round_trip():
+    from ultralytics.utils.lora.config import LoRAConfig
+
+    rank_pattern = {"model.0.conv": 4, "model.1.conv": 8}
+    config = LoRAConfig.from_args(lora_rank_pattern=rank_pattern)
+
+    assert config.rank_pattern == rank_pattern
+
+
 def test_repository_has_no_configuration_drift():
     issues = ConfigDriftDetector(ROOT).check_all()
 

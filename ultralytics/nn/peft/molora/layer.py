@@ -238,6 +238,13 @@ class MoLoRALayer(nn.Module):
             reduce_ddp=True,
         )
 
+        # New adapter state must follow an already-placed base layer. Experts use
+        # the base dtype, while router parameters start in FP32 for stable routing.
+        # A later explicit layer/model .half() still converts the router normally.
+        base_weight = base_layer.weight
+        self.to(device=base_weight.device, dtype=base_weight.dtype)
+        self.router.to(device=base_weight.device, dtype=torch.float32)
+
         # Routing stats for diagnostics (not persistent)
         self._last_routing_stats: Optional[Dict[str, Any]] = None
         self.last_routing_snapshot: dict = {}
@@ -518,8 +525,10 @@ class MoLoRALayer(nn.Module):
         if self.training:
             self._step_count.add_(1)
 
-        # Router
-        router_logits = self.router(x)  # [B, E]
+        # Keep router execution in its parameter dtype. Injection initializes it
+        # in FP32, but explicit module conversions such as .half() remain honored.
+        router_parameter = next(self.router.parameters())
+        router_logits = self.router(x.to(router_parameter.dtype))  # [B, E]
         calibration_applied = self.router_calibration is not None
         if calibration_applied:
             router_logits = self.router_calibration(x, router_logits)
@@ -619,6 +628,25 @@ class MoLoRALayer(nn.Module):
         B = x.shape[0]
         K = top_k_indices.shape[1]
         expert_out = torch.zeros_like(out_template)
+        # When every expert participates, a single batched low-rank matmul is
+        # cheaper than launching one Linear pair per expert.  Keep sparse
+        # routing and export semantics on the existing path; this optimization
+        # is limited to the shape/backend combination with exact semantics.
+        if (
+            K == self.num_experts
+            and x.ndim == 2
+            and not torch.jit.is_tracing()
+            and not torch.onnx.is_in_onnx_export()
+            and self._can_batch_linear_experts()
+        ):
+            expert_out = self._compute_sparse_experts_batched(x, top_k_weights, top_k_indices)
+            self._last_dispatch_stats = {
+                "mode": "batched_dense_linear",
+                "expert_calls": self.num_experts,
+                "selected_samples": B,
+                "top_k": K,
+            }
+            return expert_out
         if torch.jit.is_tracing() or torch.onnx.is_in_onnx_export():
             assignments = F.one_hot(top_k_indices, num_classes=self.num_experts).to(top_k_weights.dtype)
             dense_weights = (assignments * top_k_weights.unsqueeze(-1)).sum(dim=1)
@@ -627,8 +655,12 @@ class MoLoRALayer(nn.Module):
                 shape = (-1,) + (1,) * (out_e.dim() - 1)
                 expert_out = expert_out + out_e * dense_weights[:, expert_idx].view(shape)
             return expert_out
-        grouped = B >= 4
+        if B < 4 and isinstance(self.base_layer, nn.Linear) and self._can_vectorize_linear_experts():
+            return self._compute_vectorized_linear_experts(x, top_k_weights, top_k_indices, out_template)
+
         calls = 0
+        dispatch_rows = 0
+        grouped = B >= 4
         for e in range(self.num_experts):
             mask = top_k_indices == e
             selected = mask.any(dim=1)
@@ -636,6 +668,7 @@ class MoLoRALayer(nn.Module):
             if batch_idx.numel() == 0:
                 continue
             calls += 1
+            dispatch_rows += batch_idx.numel()
             x_e = x[batch_idx]
             out_e = self.experts[e](x_e)
             weights = (top_k_weights[batch_idx] * mask[batch_idx].to(top_k_weights.dtype)).sum(dim=1)
@@ -646,8 +679,91 @@ class MoLoRALayer(nn.Module):
             "expert_calls": calls,
             "selected_samples": B,
             "top_k": K,
+            "dispatch_shape": (dispatch_rows, K),
         }
         return expert_out
+
+    def _can_batch_linear_experts(self) -> bool:
+        """Return whether the dense Linear expert batch path is semantics-safe."""
+        if not self.experts or self.experts[0].is_conv:
+            return False
+        ranks = {expert.r for expert in self.experts}
+        if len(ranks) != 1:
+            return False
+        # Independent dropout masks would not be preserved by stacked matmul.
+        return all(isinstance(expert.dropout, nn.Identity) for expert in self.experts)
+
+    def _compute_sparse_experts_batched(
+        self,
+        x: torch.Tensor,
+        top_k_weights: torch.Tensor,
+        top_k_indices: torch.Tensor,
+    ) -> torch.Tensor:
+        """Compute all same-rank Linear experts with batched low-rank matmuls."""
+        parameter_dtype = self.experts[0].lora_A.weight.dtype
+        x_param = x.to(parameter_dtype)
+        a = torch.stack([expert.lora_A.weight for expert in self.experts])
+        b = torch.stack([expert.lora_B.weight for expert in self.experts])
+        hidden = torch.einsum("eri,bi->ebr", a, x_param)
+        outputs = torch.einsum("eor,ebr->ebo", b, hidden)
+        scales = torch.as_tensor(
+            [expert.scaling for expert in self.experts], dtype=outputs.dtype, device=outputs.device
+        ).view(-1, 1, 1)
+        outputs = outputs * scales
+        # Gather the Top-K order because torch.topk returns expert indices
+        # sorted by router probability rather than expert id.
+        batch_outputs = outputs.permute(1, 0, 2)
+        gather_index = top_k_indices.unsqueeze(-1).expand(-1, -1, outputs.shape[-1])
+        selected = batch_outputs.gather(1, gather_index)
+        return (selected * top_k_weights.to(selected.dtype).unsqueeze(-1)).sum(dim=1).to(x.dtype)
+
+    def _can_vectorize_linear_experts(self) -> bool:
+        """Return whether experts share the Linear topology required by the dense kernel."""
+        if not self.experts:
+            return False
+        rank = self.experts[0].r
+        return all(
+            not expert.is_conv
+            and expert.r == rank
+            and isinstance(expert.lora_A, nn.Linear)
+            and isinstance(expert.lora_B, nn.Linear)
+            for expert in self.experts
+        )
+
+    def _compute_vectorized_linear_experts(
+        self,
+        x: torch.Tensor,
+        top_k_weights: torch.Tensor,
+        top_k_indices: torch.Tensor,
+        out_template: torch.Tensor,
+    ) -> torch.Tensor:
+        """Run all same-rank Linear experts in two batched einsum kernels."""
+        parameter_dtype = self.experts[0].lora_A.weight.dtype
+        x_stacked = x.to(parameter_dtype).unsqueeze(-2).expand(*x.shape[:-1], self.num_experts, x.shape[-1])
+        dropout_p = self.experts[0].dropout.p if isinstance(self.experts[0].dropout, nn.Dropout) else 0.0
+        x_stacked = F.dropout(x_stacked, p=dropout_p, training=self.training)
+        a_weight = torch.stack([expert.lora_A.weight for expert in self.experts])
+        b_weight = torch.stack([expert.lora_B.weight for expert in self.experts])
+        scales = x_stacked.new_tensor([expert.scaling for expert in self.experts])
+        low_rank = torch.einsum("...ei,eri->...er", x_stacked, a_weight)
+        all_outputs = torch.einsum("...er,eor->...eo", low_rank, b_weight)
+        scale_shape = (1,) * (all_outputs.dim() - 2) + (self.num_experts, 1)
+        all_outputs = all_outputs * scales.view(scale_shape)
+
+        assignments = F.one_hot(top_k_indices, num_classes=self.num_experts).to(top_k_weights.dtype)
+        dense_weights = (assignments * top_k_weights.unsqueeze(-1)).sum(dim=1)
+        weight_shape = (x.shape[0],) + (1,) * (all_outputs.dim() - 3) + (self.num_experts, 1)
+        adapted = (all_outputs * dense_weights.to(parameter_dtype).view(weight_shape)).sum(dim=-2)
+        if adapted.dtype != out_template.dtype:
+            adapted = adapted.to(out_template.dtype)
+        self._last_dispatch_stats = {
+            "mode": "vectorized_dense_linear",
+            "expert_calls": self.num_experts,
+            "selected_samples": x.shape[0],
+            "top_k": top_k_indices.shape[1],
+            "dispatch_shape": (x.shape[0], self.num_experts),
+        }
+        return adapted
 
     def _expert_usage(self, expert_indices: torch.Tensor) -> torch.Tensor:
         """Normalized expert usage histogram."""

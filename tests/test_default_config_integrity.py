@@ -39,6 +39,7 @@ def test_mixture_defaults_parse_with_expected_types():
     assert cfg.mot_scene_inference_mode == "dynamic"
     assert cfg.moa_sparse_inference is False
     assert cfg.moa_sparse_inference_threshold == 0.02
+    assert cfg.moa_regional_max_kv_tokens == 4096
 
 
 def test_new_mixture_float_key_is_type_checked():

@@ -11,6 +11,13 @@ OnnxBackend::OnnxBackend()
 {
 }
 
+void OnnxBackend::set_num_threads(int threads) {
+    if (threads <= 0) {
+        throw std::invalid_argument("ONNX Runtime thread count must be positive");
+    }
+    num_threads_ = threads;
+}
+
 void OnnxBackend::load(const std::string& model_path) {
     if (model_path.empty()) {
         throw std::invalid_argument("ONNX model path is empty");
@@ -18,7 +25,9 @@ void OnnxBackend::load(const std::string& model_path) {
     model_path_ = model_path;
 
 #ifdef WITH_ONNXRUNTIME
-    session_options_.SetIntraOpNumThreads(1);
+    session_options_.SetIntraOpNumThreads(num_threads_);
+    session_options_.SetInterOpNumThreads(1);
+    session_options_.SetExecutionMode(ExecutionMode::ORT_SEQUENTIAL);
     session_options_.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
     session_.reset(new Ort::Session(env_, model_path.c_str(), session_options_));
 

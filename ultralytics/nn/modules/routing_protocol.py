@@ -52,6 +52,12 @@ def current_aux_step() -> int:
     return int(_CURRENT_STEP.get())
 
 
+def is_export_or_tracing() -> bool:
+    """Return whether the current forward is being captured for export/tracing."""
+
+    return bool(torch.jit.is_tracing() or torch.onnx.is_in_onnx_export())
+
+
 def begin_aux_step(step: int | None = None) -> int:
     """Set and return the canonical step for the current forward context."""
 
@@ -272,7 +278,7 @@ def routing_finite_diagnostics(
 ) -> dict[str, Any]:
     """Summarize the first non-finite routing boundary without retaining graphs."""
 
-    if torch.jit.is_tracing() or torch.onnx.is_in_onnx_export():
+    if is_export_or_tracing():
         return {
             "first_nonfinite_boundary": None,
             "logits_finite": None,
@@ -323,6 +329,8 @@ def collect_aux_loss(
     require_training: bool = True,
     ddp_sync: bool = False,
     return_diagnostics: bool = False,
+    return_tensor_values: bool = False,
+    return_value_scalars: bool = True,
     modules: Iterable[nn.Module] | None = None,
 ):
     """Collect canonical losses once, rejecting stale and eval publications."""
@@ -362,7 +370,10 @@ def collect_aux_loss(
         covered.add(id(module))
         covered.update(record.covered_modules)
         diagnostics["counts_by_kind"][record.kind] = diagnostics["counts_by_kind"].get(record.kind, 0) + 1
-        diagnostics["values_by_kind"].setdefault(record.kind, []).append(float(record.value.detach()))
+        if return_value_scalars:
+            diagnostics["values_by_kind"].setdefault(record.kind, []).append(float(record.value.detach()))
+        if return_tensor_values:
+            diagnostics.setdefault("_tensor_values_by_kind", {}).setdefault(record.kind, []).append(record.value)
         diagnostics["modules"].append(module.__class__.__name__)
 
     if selected:
