@@ -55,9 +55,15 @@ class MoABlock(nn.Module):
         block_index: int = 0,
         local_window_size: int = 7,
         sequential_heads: bool = False,
+        sparse_inference: bool = False,
+        sparse_inference_threshold: float = 0.02,
     ):
         super().__init__()
         self.sequential_heads = sequential_heads
+        self.sparse_inference = bool(sparse_inference)
+        self.sparse_inference_threshold = float(sparse_inference_threshold)
+        if not 0.0 <= self.sparse_inference_threshold < 1.0:
+            raise ValueError("sparse_inference_threshold must be in [0, 1)")
         if num_heads <= 0 or num_heads % self.NUM_GROUPS != 0:
             raise ValueError(
                 f"num_heads ({num_heads}) must be positive and divisible by NUM_GROUPS ({self.NUM_GROUPS})"
@@ -127,12 +133,18 @@ class MoABlock(nn.Module):
 
     def export_capabilities(self) -> dict:
         capabilities = _export_routing_capabilities(self)
+        eager_sparse = bool(self.sparse_inference)
         capabilities.update(
             routing_kind="moa",
-            sparse_dispatch=False,
-            eager_sparse_dispatch=False,
+            sparse_dispatch=eager_sparse,
+            eager_sparse_dispatch=eager_sparse,
             training_sparse_dispatch=False,
-            sparse_export_limitation="MoA uses dense soft routing in eager and exported graphs.",
+            sparse_export_limitation=(
+                "MoA optional eager inference skips low-weight head groups; ONNX and TorchScript tracing use "
+                "the dense fallback."
+                if eager_sparse
+                else "MoA uses dense soft routing in eager and exported graphs."
+            ),
         )
         return capabilities
 
@@ -176,7 +188,23 @@ class MoABlock(nn.Module):
         w_g = weights[:, 2:3]
 
         # ── Attention head outputs ────────────────────────────────────────
-        if self.sequential_heads:
+        exporting = torch.jit.is_tracing() or torch.onnx.is_in_onnx_export()
+        sparse_eval = not self.training and self.sparse_inference and not exporting
+        active = None
+        if sparse_eval:
+            active = weights.detach().amax(dim=(0, 2, 3)) > self.sparse_inference_threshold
+            if bool(active.all()):
+                active = None
+
+        if active is not None:
+            mixed = x.new_zeros(x.shape)
+            if bool(active[0]):
+                mixed = mixed + w_l * self.local_head(x)
+            if bool(active[1]):
+                mixed = mixed + w_r * self.region_head(x)
+            if bool(active[2]):
+                mixed = mixed + w_g * self.global_head(x)
+        elif self.sequential_heads:
             # Sequential path: compute and accumulate one head at a time.
             # Mathematically identical to the default path; useful for
             # memory-constrained environments and ONNX export validation.

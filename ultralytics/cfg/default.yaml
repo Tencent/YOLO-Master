@@ -269,6 +269,8 @@ mot_scene_inference_mode: dynamic # (str) Scene-aware eval policy: dynamic or by
 moa_temperature: 1.0 # (float) Initial MoA router temperature
 moa_aux_loss_coeff: 0.01 # (float) MoA router auxiliary-loss coefficient
 moa_local_window_size: 7 # (int) Window size for MoA local attention head
+moa_sparse_inference: False # (bool) Skip globally low-weight MoA head groups during eager evaluation
+moa_sparse_inference_threshold: 0.02 # (float) Maximum batch-wide MoA head weight eligible for sparse skipping
 moa_mot_temperature_factor: 0.97 # (float) Per-epoch router temperature multiplier for MoA/MoT
 moa_mot_min_temperature: 0.3 # (float) Minimum router temperature after annealing
 moe_aux_gain: 1.0 # (float) Gain for MoE balance/z-loss auxiliary loss

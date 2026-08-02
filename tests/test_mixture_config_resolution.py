@@ -22,6 +22,8 @@ def _args(**overrides):
         moe_weight_threshold=0.03,
         moa_local_window_size=9,
         moa_aux_loss_coeff=0.2,
+        moa_sparse_inference=True,
+        moa_sparse_inference_threshold=0.15,
         mot_balance_loss=0.4,
         mot_router_z_loss=0.5,
         mot_sparse_train=True,
@@ -51,6 +53,10 @@ def test_yaml_explicit_values_override_cli_and_are_inherited_by_children():
     apply_mixture_config(model, resolved)
     assert model.m[0].router.temperature == 1.0
     assert model.m[0].local_head.window_size == 11
+    assert model.sparse_inference is True
+    assert model.sparse_inference_threshold == 0.15
+    assert model.m[0].sparse_inference is True
+    assert model.m[0].sparse_inference_threshold == 0.15
 
 
 def test_mot_cli_values_apply_to_wrapper_and_nested_blocks():
@@ -104,6 +110,8 @@ def test_resolver_has_safe_defaults_without_args_or_model():
     assert resolved.values["moe"]["temperature"] == 1.0
     assert resolved.values["moe"]["router_z_loss_coeff"] == 0.1
     assert resolved.values["moa"]["local_window_size"] == 7
+    assert resolved.values["moa"]["sparse_inference"] is False
+    assert resolved.values["moa"]["sparse_inference_threshold"] == 0.02
     assert resolved.values["mot"]["sparse_train"] is False
     assert resolved.values["mot"]["sparse_train_warmup_steps"] == 0
     assert resolved.values["mot"]["scene_aware_router"] is False

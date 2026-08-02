@@ -29,6 +29,8 @@ MIXTURE_DEFAULTS: dict[str, dict[str, Any]] = {
         "aux_loss_coeff": 0.01,
         "aux_gain": 1.0,
         "aux_budget": 3.0,
+        "sparse_inference": False,
+        "sparse_inference_threshold": 0.02,
     },
     "mot": {
         "balance_loss_coeff": 0.01,
@@ -75,6 +77,8 @@ CLI_FIELDS: dict[str, dict[str, str]] = {
         "aux_loss_coeff": "moa_aux_loss_coeff",
         "aux_gain": "moa_aux_gain",
         "aux_budget": "mixture_aux_budget",
+        "sparse_inference": "moa_sparse_inference",
+        "sparse_inference_threshold": "moa_sparse_inference_threshold",
     },
     "mot": {
         "balance_loss_coeff": "mot_balance_loss",
@@ -131,7 +135,13 @@ def annotate_mixture_yaml_config(module: nn.Module, module_name: str, yaml_args:
     kind = None
     if name == "C2fMoA":
         kind = "moa"
-        for index, key in ((3, "temperature"), (6, "aux_loss_coeff"), (7, "local_window_size")):
+        for index, key in (
+            (3, "temperature"),
+            (6, "aux_loss_coeff"),
+            (7, "local_window_size"),
+            (9, "sparse_inference"),
+            (10, "sparse_inference_threshold"),
+        ):
             if len(yaml_args) > index:
                 explicit[key] = yaml_args[index]
     elif name == "C2fMoT":
@@ -150,7 +160,13 @@ def annotate_mixture_yaml_config(module: nn.Module, module_name: str, yaml_args:
                 explicit[key] = yaml_args[index]
     elif name == "MoABlock":
         kind = "moa"
-        for index, key in ((3, "temperature"), (6, "aux_loss_coeff"), (8, "local_window_size")):
+        for index, key in (
+            (3, "temperature"),
+            (6, "aux_loss_coeff"),
+            (8, "local_window_size"),
+            (10, "sparse_inference"),
+            (11, "sparse_inference_threshold"),
+        ):
             if len(yaml_args) > index:
                 explicit[key] = yaml_args[index]
     elif name == "MoTBlock":
@@ -313,6 +329,19 @@ def apply_mixture_config(model: nn.Module, resolved: ResolvedMixtureConfig) -> i
                 local_head.window_size = max(1, int(config["local_window_size"]))
             if hasattr(module, "aux_loss_coeff") and "aux_loss_coeff" not in inherited_explicit:
                 module.aux_loss_coeff = config["aux_loss_coeff"]
+            if hasattr(module, "sparse_inference") and "sparse_inference" not in inherited_explicit:
+                module.sparse_inference = bool(config["sparse_inference"])
+                for child in module.modules():
+                    if child is not module and hasattr(child, "sparse_inference"):
+                        child.sparse_inference = module.sparse_inference
+            if hasattr(module, "sparse_inference_threshold") and "sparse_inference_threshold" not in inherited_explicit:
+                threshold = float(config["sparse_inference_threshold"])
+                if not 0.0 <= threshold < 1.0:
+                    raise ValueError("moa_sparse_inference_threshold must be in [0, 1)")
+                module.sparse_inference_threshold = threshold
+                for child in module.modules():
+                    if child is not module and hasattr(child, "sparse_inference_threshold"):
+                        child.sparse_inference_threshold = threshold
         elif kind == "mot":
             if hasattr(module, "balance_loss_coeff") and "balance_loss_coeff" not in inherited_explicit:
                 module.balance_loss_coeff = config["balance_loss_coeff"]

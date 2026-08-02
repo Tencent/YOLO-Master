@@ -68,8 +68,14 @@ class C2fMoA(nn.Module):
         aux_loss_coeff: float = 0.01,
         local_window_size: int = 7,
         sequential_heads: bool = False,
+        sparse_inference: bool = False,
+        sparse_inference_threshold: float = 0.02,
     ):
         super().__init__()
+        self.sparse_inference = bool(sparse_inference)
+        self.sparse_inference_threshold = float(sparse_inference_threshold)
+        if not 0.0 <= self.sparse_inference_threshold < 1.0:
+            raise ValueError("sparse_inference_threshold must be in [0, 1)")
         self.c = int(c2 * e)
         self.cv1 = Conv(c1, 2 * self.c, 1)
         self.cv2 = Conv((2 + n) * self.c, c2, 1)
@@ -109,7 +115,9 @@ class C2fMoA(nn.Module):
                      aux_loss_coeff=aux_loss_coeff,
                      block_index=i,
                      local_window_size=local_window_size,
-                     sequential_heads=sequential_heads)
+                     sequential_heads=sequential_heads,
+                     sparse_inference=sparse_inference,
+                     sparse_inference_threshold=sparse_inference_threshold)
             for i in range(n)
         )
         self.last_aux_loss: torch.Tensor = torch.zeros((), requires_grad=False)
@@ -168,12 +176,18 @@ class C2fMoA(nn.Module):
 
     def export_capabilities(self) -> dict:
         capabilities = _export_routing_capabilities(self)
+        eager_sparse = bool(self.sparse_inference)
         capabilities.update(
             routing_kind="moa",
-            sparse_dispatch=False,
-            eager_sparse_dispatch=False,
+            sparse_dispatch=eager_sparse,
+            eager_sparse_dispatch=eager_sparse,
             training_sparse_dispatch=False,
-            sparse_export_limitation="C2fMoA uses dense soft routing in eager and exported graphs.",
+            sparse_export_limitation=(
+                "C2fMoA optional eager inference skips low-weight head groups; ONNX and TorchScript tracing use "
+                "the dense fallback."
+                if eager_sparse
+                else "C2fMoA uses dense soft routing in eager and exported graphs."
+            ),
         )
         return capabilities
 

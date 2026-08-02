@@ -535,6 +535,44 @@ def test_moa_block_sequential_heads():
         assert _has_grad(module), f"No grad with shortcut={shortcut}"
 
 
+def test_moa_sparse_inference_skips_only_globally_low_weight_heads(monkeypatch):
+    class CountingHead(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.calls = 0
+
+        def forward(self, x):
+            self.calls += 1
+            return x
+
+    block = MoABlock(
+        dim=48,
+        num_heads=3,
+        sparse_inference=True,
+        sparse_inference_threshold=0.2,
+    ).eval()
+    weights = torch.tensor([0.90, 0.09, 0.01]).view(1, 3, 1, 1).expand(1, 3, 4, 4)
+    logits = weights.log()
+    monkeypatch.setattr(block.router, "forward", lambda _x, return_logits=False: (weights, logits))
+    block.local_head = CountingHead()
+    block.region_head = CountingHead()
+    block.global_head = CountingHead()
+
+    with torch.no_grad():
+        output = block(torch.randn(1, 48, 4, 4))
+
+    assert output.shape == (1, 48, 4, 4)
+    assert [block.local_head.calls, block.region_head.calls, block.global_head.calls] == [1, 0, 0]
+
+
+def test_moa_sparse_inference_defaults_to_dense_and_validates_threshold():
+    block = MoABlock(dim=48, num_heads=3)
+    assert block.sparse_inference is False
+    assert block.sparse_inference_threshold == 0.02
+    with pytest.raises(ValueError, match="sparse_inference_threshold"):
+        MoABlock(dim=48, num_heads=3, sparse_inference_threshold=1.0)
+
+
 def test_moa_block_sequential_vs_parallel_equivalence():
     """Sequential and parallel head evaluation produce identical outputs."""
     torch.manual_seed(0)
