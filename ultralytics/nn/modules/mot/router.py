@@ -266,9 +266,7 @@ class _MoTRouter(FP32RouterMixin, nn.Module):
             # renormalize selected weights
             topk_weights = stable_normalize(topk_vals, dim=1)
             # scatter back to [B, E, H, W] sparse
-            sparse_w = torch.zeros_like(weights)
-            sparse_w.scatter_(1, topk_idx, topk_weights)
-            weights = sparse_w
+            weights = torch.zeros_like(weights).scatter(1, topk_idx, topk_weights)
             if self.training and self.exploration_eps > 0:
                 eps = self.exploration_eps
                 weights = weights * (1.0 - eps) + dense_weights * eps

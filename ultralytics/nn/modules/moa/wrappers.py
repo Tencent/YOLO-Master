@@ -18,7 +18,7 @@ from ultralytics.nn.modules.routing_protocol import (
     routing_finite_diagnostics,
     routing_snapshot as _routing_snapshot,
 )
-from .block import MoABlock
+from .block import MoABlock, _resolve_sparse_inference_threshold
 from .heads import _LocalAttnHead, _flash_attn, _init_conv_weights
 from .router import _MoARouter, _moa_router_aux_loss
 
@@ -75,11 +75,15 @@ class C2fMoA(nn.Module):
         sequential_heads: bool = True,
         regional_max_kv_tokens: int | None = 4096,
         sparse_inference: bool = False,
-        sparse_inference_threshold: float = 0.02,
+        sparse_inference_threshold: float | None = None,
+        *,
+        inference_sparse_threshold: float | None = None,
     ):
         super().__init__()
-        self.sparse_inference = bool(sparse_inference)
-        self.sparse_inference_threshold = float(sparse_inference_threshold)
+        self.sparse_inference = bool(sparse_inference or inference_sparse_threshold is not None)
+        self.sparse_inference_threshold = _resolve_sparse_inference_threshold(
+            sparse_inference_threshold, inference_sparse_threshold
+        )
         if not 0.0 <= self.sparse_inference_threshold < 1.0:
             raise ValueError("sparse_inference_threshold must be in [0, 1)")
         self.c = int(c2 * e)
@@ -125,8 +129,8 @@ class C2fMoA(nn.Module):
                 local_window_size=local_window_size,
                 sequential_heads=sequential_heads,
                 regional_max_kv_tokens=regional_max_kv_tokens,
-                sparse_inference=sparse_inference,
-                sparse_inference_threshold=sparse_inference_threshold,
+                sparse_inference=self.sparse_inference,
+                sparse_inference_threshold=self.sparse_inference_threshold,
             )
             for i in range(n)
         )

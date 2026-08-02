@@ -10,7 +10,9 @@ import torch.nn as nn
 
 
 def _autocast_is_available(device_type: str) -> bool:
-    """Return whether this PyTorch build exposes autocast for ``device_type``."""
+    """Return whether this PyTorch build exposes unified autocast for ``device_type``."""
+    if not callable(getattr(torch, "autocast", None)):
+        return False
     checker = getattr(getattr(torch, "amp", None), "autocast_mode", None)
     checker = getattr(checker, "is_autocast_available", None)
     if checker is not None:
@@ -27,6 +29,10 @@ def disabled_autocast(device_type: str):
     """Disable autocast when supported, otherwise return a no-op context."""
     if _autocast_is_available(device_type):
         return torch.autocast(device_type=device_type, enabled=False)
+    if device_type == "cuda":
+        legacy_autocast = getattr(getattr(getattr(torch, "cuda", None), "amp", None), "autocast", None)
+        if callable(legacy_autocast):
+            return legacy_autocast(enabled=False)
     return nullcontext()
 
 

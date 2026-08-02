@@ -1,11 +1,71 @@
-"""Minimal adapters for MoE routing snapshots and derived metrics."""
+"""Unified routed-module protocol, snapshot adapters, and derived metrics."""
 
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, Protocol, runtime_checkable
 
 import torch
+import torch.nn as nn
+
+from ..routing_protocol import RoutingAuxPublisher
+
+
+@runtime_checkable
+class RoutedModule(Protocol):
+    """Structural protocol shared by MoE, MoA, MoT, and MoLoRA modules."""
+
+    num_experts: int
+    top_k: int
+
+    @property
+    def aux_loss(self) -> torch.Tensor:
+        """Return the scalar routing auxiliary loss."""
+        ...
+
+    @property
+    def last_routing_snapshot(self) -> dict[str, Any]:
+        """Return detached routing diagnostics from the latest forward."""
+        ...
+
+
+class RoutedModuleMixin:
+    """Compatibility mixin providing generic FLOPs and deepcopy helpers."""
+
+    def get_gflops(self, input_shape: tuple[int, int, int, int]) -> dict[str, float]:
+        """Estimate Conv2d/Linear work for a routed module."""
+        batch, _, height, width = input_shape
+        total_macs = 0.0
+        for module in self.modules():
+            if isinstance(module, nn.Conv2d):
+                macs = (
+                    batch
+                    * module.in_channels
+                    * module.out_channels
+                    * (height // module.stride[0])
+                    * (width // module.stride[1])
+                )
+                total_macs += macs * (module.kernel_size[0] * module.kernel_size[1]) / max(module.groups, 1)
+            elif isinstance(module, nn.Linear):
+                total_macs += batch * module.in_features * module.out_features
+        gflops = total_macs / 1e9
+        return {"total_gflops": gflops, "conv_linear_gflops": gflops}
+
+    def __deepcopy__(self, memo):
+        """Delegate to the canonical routed-module deepcopy helper."""
+        from ._helpers import _robust_deepcopy
+
+        return _robust_deepcopy(self, memo)
+
+
+def is_routed_module(module: nn.Module) -> bool:
+    """Return whether ``module`` satisfies the legacy routed-module contract."""
+    return all(hasattr(module, name) for name in ("num_experts", "top_k", "aux_loss", "last_routing_snapshot"))
+
+
+def collect_routed_children(module: nn.Module) -> list[nn.Module]:
+    """Return routed descendants in module traversal order."""
+    return [child for child in module.modules() if child is not module and is_routed_module(child)]
 
 
 @dataclass(frozen=True)
@@ -87,3 +147,16 @@ def routing_metrics(snapshot: Mapping[str, Any] | None, *, num_experts: int = 0,
         dominant_expert=dominant,
         dominant_share=share,
     )
+
+
+__all__ = [
+    "RoutedModule",
+    "RoutedModuleMixin",
+    "RoutingAuxPublisher",
+    "RoutingMetrics",
+    "collect_routed_children",
+    "is_routed_module",
+    "normalize_routing_snapshot",
+    "routing_metrics",
+    "usage_gini",
+]

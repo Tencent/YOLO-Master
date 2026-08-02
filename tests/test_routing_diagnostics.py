@@ -124,6 +124,22 @@ def test_moa_sparse_inference_keeps_one_group_and_renormalizes(monkeypatch):
     assert snapshot["approximation_error"] > 0
 
 
+def test_moa_sparse_threshold_alias_rejects_conflicts_and_propagates_to_children():
+    with pytest.raises(ValueError, match="must match"):
+        MoABlock(
+            24,
+            num_heads=3,
+            sparse_inference_threshold=0.2,
+            inference_sparse_threshold=0.4,
+        )
+
+    module = C2fMoA(48, 48, n=2, num_heads=3, inference_sparse_threshold=0.3)
+    assert module.sparse_inference is True
+    assert module.sparse_inference_threshold == pytest.approx(0.3)
+    assert all(child.sparse_inference is True for child in module.m)
+    assert all(child.sparse_inference_threshold == pytest.approx(0.3) for child in module.m)
+
+
 def test_c2f_moa_propagates_sequential_head_configuration():
     module = C2fMoA(48, 48, n=3, num_heads=3, sequential_heads=True)
 

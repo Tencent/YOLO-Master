@@ -1,4 +1,5 @@
 """Core Mixture-of-Transformer block."""
+
 from __future__ import annotations
 import torch
 import torch.nn as nn
@@ -15,6 +16,7 @@ from ultralytics.nn.modules.routing_protocol import (
 from .experts import _DeformableTransformerExpert, _LocalConvTransformerExpert, _WindowTransformerExpert
 from .router import _MoTRouter, _mot_router_aux_loss
 from ultralytics.utils import LOGGER
+
 
 class MoTBlock(nn.Module):
     """Mixture-of-Transformers Block.
@@ -104,21 +106,33 @@ class MoTBlock(nn.Module):
             )
 
         # Three Transformer experts
-        self.experts = nn.ModuleList([
-            _LocalConvTransformerExpert(
-                dim, expert_heads, mlp_ratio, dropout, local_window_size=local_attn_window
-            ),
-            _WindowTransformerExpert(dim, expert_heads, window_size, mlp_ratio, dropout,
-                                     shift_size=window_size // 2 if window_shift else 0),
-            _DeformableTransformerExpert(
-                dim, expert_heads, n_points, mlp_ratio, dropout,
-                align_corners=grid_align_corners,
-            ),
-        ])
+        self.experts = nn.ModuleList(
+            [
+                _LocalConvTransformerExpert(dim, expert_heads, mlp_ratio, dropout, local_window_size=local_attn_window),
+                _WindowTransformerExpert(
+                    dim,
+                    expert_heads,
+                    window_size,
+                    mlp_ratio,
+                    dropout,
+                    shift_size=window_size // 2 if window_shift else 0,
+                ),
+                _DeformableTransformerExpert(
+                    dim,
+                    expert_heads,
+                    n_points,
+                    mlp_ratio,
+                    dropout,
+                    align_corners=grid_align_corners,
+                ),
+            ]
+        )
 
         # Router
         self.router = _MoTRouter(
-            dim, self.NUM_EXPERTS, top_k,
+            dim,
+            self.NUM_EXPERTS,
+            top_k,
             use_spatial=use_spatial_router,
             temperature=temperature,
             exploration_eps=exploration_eps,
@@ -231,9 +245,7 @@ class MoTBlock(nn.Module):
 
     def _sparse_training_ready(self) -> bool:
         """Return whether training has completed the configured dense warmup."""
-        return bool(
-            self.sparse_train and int(self._sparse_train_step.item()) >= self.sparse_train_warmup_steps
-        )
+        return bool(self.sparse_train and int(self._sparse_train_step.item()) >= self.sparse_train_warmup_steps)
 
     def configure_ddp_sparse_training(self, *, find_unused_parameters: bool, source: str = "external") -> None:
         """Record the DDP unused-parameter contract required by sparse expert dispatch."""
@@ -317,8 +329,9 @@ class MoTBlock(nn.Module):
         warmup_step = 0 if exporting else int(self._sparse_train_step.item())
         B = x.shape[0]
         route_ids = indices if indices is not None else weights.argmax(dim=1, keepdim=True)
-        route_mask = torch.zeros_like(weights, dtype=torch.bool)
-        route_mask.scatter_(1, route_ids, True)
+        route_mask = (
+            torch.zeros_like(weights).scatter(1, route_ids, torch.ones_like(route_ids, dtype=weights.dtype)).bool()
+        )
         token_mask_sparsity = 1.0 - float(route_mask.float().mean())
         experts_per_sample = route_mask.reshape(B, self.NUM_EXPERTS, -1).any(dim=2).sum(dim=1)
         batch_expert_union = int(route_mask.any(dim=(0, 2, 3)).sum())
@@ -339,7 +352,7 @@ class MoTBlock(nn.Module):
                 if batch_idx.numel() == 0:
                     continue
                 expert_calls += 1
-                w = weights[batch_idx, e_idx:e_idx + 1]
+                w = weights[batch_idx, e_idx : e_idx + 1]
                 expert_out = expert(x[batch_idx])
                 if expert_out.shape != x[batch_idx].shape:
                     raise RuntimeError(
@@ -372,7 +385,7 @@ class MoTBlock(nn.Module):
             }
         else:
             for e_idx, expert in enumerate(self.experts):
-                w = weights[:, e_idx:e_idx + 1]
+                w = weights[:, e_idx : e_idx + 1]
                 expert_out = expert(x)
                 if expert_out.shape != x.shape:
                     raise RuntimeError(
@@ -413,7 +426,7 @@ class MoTBlock(nn.Module):
             aux_loss      : scalar (GShard balance + router z-loss, 0 if both coeffs==0)
         """
         # ── Routing weights ──────────────────────────────────────────────
-        weights, indices, router_logits = self.router(x, return_logits=True)   # [B, E, H, W]
+        weights, indices, router_logits = self.router(x, return_logits=True)  # [B, E, H, W]
 
         # ── Expert computation ───────────────────────────────────────────
         out = self._blend_experts(x, weights, indices)
@@ -445,9 +458,7 @@ class MoTBlock(nn.Module):
         else:
             aux = x.new_zeros(())
             scene_consistency = x.new_zeros(())
-            finite_diagnostics = routing_finite_diagnostics(
-                logits=router_logits, probabilities=weights, aux_loss=aux
-            )
+            finite_diagnostics = routing_finite_diagnostics(logits=router_logits, probabilities=weights, aux_loss=aux)
 
         exporting = torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()
         if self.training and not exporting and not torch.isfinite(aux):
@@ -477,5 +488,6 @@ class MoTBlock(nn.Module):
             }
 
         return out, aux
+
 
 __all__ = ("MoTBlock",)
