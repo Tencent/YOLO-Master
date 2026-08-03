@@ -1,0 +1,39 @@
+{
+  "artifact_type": "formal_cross_seed_routing_summary",
+  "dataset": "VisDrone2019-DET",
+  "dataset_version": "2019-DET",
+  "derivation": "lossless scalar and identity summary extracted from the verified formal analyzer output",
+  "determinism_rows_passed": 960,
+  "determinism_rows_total": 960,
+  "expert_count": 3,
+  "expert_utilization_by_seed_count": 90,
+  "formal_root": "/root/autodl-tmp/MoT/results/phase3_formal_20260731T214515Z",
+  "image_count": 32,
+  "layer_count": 6,
+  "mean_dominant_expert_agreement": 0.5260416666666666,
+  "mean_token_top1_agreement": 0.435361328125,
+  "model": "v10_mot",
+  "pairwise_row_count": 1920,
+  "protocol": {
+    "batch": 8,
+    "epochs": 30,
+    "imgsz": 640,
+    "precision": "fp32"
+  },
+  "publication_status": "raw_source_omitted_from_git",
+  "raw_source_location": "private formal archive; not distributed in Git",
+  "schema_version": 1,
+  "seed_count": 5,
+  "seed_pair_count": 10,
+  "seeds": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "source_file": "phase3_cross_seed_routing.json",
+  "source_sha256": "b7049cdbac25c346ac8deb37b505d92bd37406f197458a8f045677c1eba9f7f2",
+  "source_size_bytes": 3112098,
+  "split": "val-fixed32"
+}
