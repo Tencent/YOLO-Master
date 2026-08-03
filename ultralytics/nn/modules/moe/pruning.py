@@ -442,8 +442,30 @@ class MoEPruner:
                 continue
             args = list(seq[j][3]) if isinstance(seq[j][3], list) else [seq[j][3]]
             out_ch = args[0] if args else getattr(mod, "out_channels", None)
-            seq[j][3] = [out_ch, int(mod.num_experts)]
-        LOGGER.info("   Synced post-prune expert counts into model.yaml")
+            # Recover the kept experts' actual depthwise kernel sizes; pruning keeps
+            # experts with heterogeneous kernels whose order/values are not the
+            # default [3, 5, 7...] a bare rebuild would assign. Writing the full
+            # positional arg list (incl. expert_kernel_sizes) lets YOLO(pruned.pt)
+            # .train() rebuild the exact experts so their weights survive
+            # intersect_dicts instead of being dropped on a kernel-shape mismatch.
+            kernels = []
+            for expert in mod.experts:
+                conv = getattr(expert, "conv", None)
+                depthwise = getattr(conv, "depthwise", None) if conv is not None else None
+                ks = getattr(depthwise, "kernel_size", None)
+                kernels.append(int(ks[0]) if isinstance(ks, (tuple, list)) else int(ks) if ks else 3)
+            top_k = int(mod.top_k) if getattr(mod, "use_top_k", True) else None
+            seq[j][3] = [
+                out_ch,
+                int(mod.num_experts),
+                int(getattr(mod, "reduction", 8)),
+                top_k,
+                bool(getattr(mod, "use_sparse_inference", True)),
+                float(getattr(mod, "dynamic_threshold", 0.4)),
+                int(getattr(mod, "max_kernel_size", 15)),
+                kernels,
+            ]
+        LOGGER.info("   Synced post-prune expert counts + kernel sizes into model.yaml")
 
     def _save_model(self, pruned_model: nn.Module, output_path: str) -> None:
         """

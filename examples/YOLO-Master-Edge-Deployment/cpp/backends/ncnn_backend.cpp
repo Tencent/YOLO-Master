@@ -163,6 +163,13 @@ NcnnBackend::NcnnBackend() = default;
 
 NcnnBackend::~NcnnBackend() = default;
 
+void NcnnBackend::set_num_threads(int threads) {
+    if (threads <= 0) {
+        throw std::invalid_argument("NCNN thread count must be positive");
+    }
+    num_threads_ = threads;
+}
+
 void NcnnBackend::load(const std::string& model_path) {
     if (model_path.empty()) {
         throw std::invalid_argument("NCNN model path is empty");
@@ -176,7 +183,7 @@ void NcnnBackend::load(const std::string& model_path) {
 
     net_.reset(new ncnn::Net());
     net_->opt.use_vulkan_compute = false;
-    net_->opt.num_threads = 1;
+    net_->opt.num_threads = num_threads_;
 
     if (net_->load_param(param_path_.c_str()) != 0) {
         throw std::runtime_error("failed to load NCNN param file: " + param_path_);

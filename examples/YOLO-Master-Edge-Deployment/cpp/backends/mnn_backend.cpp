@@ -37,6 +37,13 @@ void validate_input(const Tensor& input) {
 
 MnnBackend::MnnBackend() = default;
 
+void MnnBackend::set_num_threads(int threads) {
+    if (threads <= 0) {
+        throw std::invalid_argument("MNN thread count must be positive");
+    }
+    num_threads_ = threads;
+}
+
 MnnBackend::~MnnBackend() {
 #ifdef WITH_MNN
     if (interpreter_) {
@@ -60,7 +67,7 @@ void MnnBackend::load(const std::string& model_path) {
 
     MNN::ScheduleConfig config;
     config.type = MNN_FORWARD_CPU;
-    config.numThread = 1;
+    config.numThread = num_threads_;
     session_ = interpreter_->createSession(config);
     if (!session_) {
         throw std::runtime_error("failed to create MNN session: " + model_path_);
@@ -87,8 +94,11 @@ Tensor MnnBackend::infer(const Tensor& input) {
     }
 
     std::vector<int> dims(input.shape.begin(), input.shape.end());
-    interpreter_->resizeTensor(input_tensor_, dims);
-    interpreter_->resizeSession(session_);
+    if (input_shape_ != input.shape) {
+        interpreter_->resizeTensor(input_tensor_, dims);
+        interpreter_->resizeSession(session_);
+        input_shape_ = input.shape;
+    }
 
     auto* tmp_input = MNN::Tensor::create(
         dims,

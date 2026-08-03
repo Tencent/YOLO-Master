@@ -28,6 +28,7 @@ struct Args {
     int warmup = 5;
     int runs = 1;
     int limit = 0;
+    int threads = 4;
 };
 
 struct TimingRow {
@@ -52,6 +53,7 @@ static void print_usage(const char* program) {
         << "[--warmup 5] "
         << "[--runs 1] "
         << "[--limit 500] "
+        << "[--threads 4] "
         << "[--output benchmark.csv]\n";
 }
 
@@ -100,6 +102,8 @@ static Args parse_args(int argc, char** argv) {
             args.runs = std::stoi(value);
         } else if (key == "--limit") {
             args.limit = std::stoi(value);
+        } else if (key == "--threads") {
+            args.threads = std::stoi(value);
         } else {
             std::cerr << "Unknown argument: " << key << "\n";
             print_usage(argv[0]);
@@ -120,7 +124,8 @@ static Args parse_args(int argc, char** argv) {
         std::cerr << "Invalid --profile: " << args.profile << "\n";
         std::exit(2);
     }
-    if (args.imgsz <= 0 || args.warmup < 0 || args.runs <= 0 || args.limit < 0) {
+    if (args.imgsz <= 0 || args.warmup < 0 || args.runs <= 0 || args.limit < 0 ||
+        args.threads <= 0) {
         std::cerr << "Invalid numeric argument\n";
         std::exit(2);
     }
@@ -251,6 +256,7 @@ int main(int argc, char** argv) {
         const Args args = parse_args(argc, argv);
         const auto images = collect_images(args.images, args.limit);
         auto backend = create_backend(args.backend);
+        backend->set_num_threads(args.threads);
         backend->load(args.model);
 
         const Tensor warmup_input = preprocess_image(images.front(), args.imgsz, args.imgsz).input;
@@ -295,6 +301,7 @@ int main(int argc, char** argv) {
                   << " model=" << args.model
                   << " profile=" << args.profile
                   << " imgsz=" << args.imgsz
+                  << " threads=" << args.threads
                   << " conf=" << args.conf
                   << " iou=" << args.iou
                   << " output=" << args.output << "\n";

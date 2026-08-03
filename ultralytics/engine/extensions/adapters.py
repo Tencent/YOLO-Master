@@ -224,18 +224,22 @@ class AdapterRuntimeController:
         self.trainer.lora_ortho_batch_counter = 0
 
     def sync_ema_treatment(self) -> int:
-        """Copy scheduled fallback scaling from online wrappers to matching EMA wrappers."""
+        """Copy scheduled LoRA scaling from online adapters to matching EMA adapters."""
         metadata = getattr(self.model, "lora_runtime_metadata", {}) or {}
         effective_backend = metadata.get("effective_backend", getattr(self.model, "lora_backend", None))
-        if effective_backend != "fallback":
+        if effective_backend not in {"fallback", "peft"}:
             return 0
         ema = getattr(getattr(self.trainer, "ema", None), "ema", None)
         if ema is None:
             return 0
-        from ultralytics.utils.lora.fallback import FewShotLoRAConv, ManualLoRAConv
 
         online_modules = dict(self.model.named_modules())
         ema_modules = dict(unwrap_model(ema).named_modules())
+        if effective_backend == "peft":
+            return self._sync_peft_ema_scaling(online_modules, ema_modules)
+
+        from ultralytics.utils.lora.fallback import FewShotLoRAConv, ManualLoRAConv
+
         synced = 0
         for name, online in online_modules.items():
             if not isinstance(online, (ManualLoRAConv, FewShotLoRAConv)):
@@ -248,6 +252,26 @@ class AdapterRuntimeController:
             if ema_identity != online_identity:
                 raise ValueError(f"EMA fallback adapter identity differs at '{name}'.")
             averaged.scaling = online.scaling
+            synced += 1
+        return synced
+
+    @staticmethod
+    def _sync_peft_ema_scaling(online_modules: dict, ema_modules: dict) -> int:
+        """Copy PEFT scaling dictionaries, which are intentionally absent from state_dict."""
+        synced = 0
+        for name, online in online_modules.items():
+            if getattr(online, "lora_A", None) is None:
+                continue
+            averaged = ema_modules.get(name)
+            if averaged is None or getattr(averaged, "lora_A", None) is None:
+                raise ValueError(f"EMA PEFT adapter layout differs at '{name}'.")
+            online_scaling = getattr(online, "scaling", None)
+            ema_scaling = getattr(averaged, "scaling", None)
+            if not isinstance(online_scaling, dict):
+                continue
+            if not isinstance(ema_scaling, dict) or set(ema_scaling) != set(online_scaling):
+                raise ValueError(f"EMA PEFT scaling layout differs at '{name}'.")
+            ema_scaling.update(online_scaling)
             synced += 1
         return synced
 

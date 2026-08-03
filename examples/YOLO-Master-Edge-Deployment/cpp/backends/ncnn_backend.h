@@ -11,12 +11,14 @@ class NcnnBackend final : public Backend {
 public:
     NcnnBackend();
     ~NcnnBackend() override;
+    void set_num_threads(int threads) override;
     void load(const std::string& model_path) override;
     Tensor infer(const Tensor& input) override;
     std::string name() const override;
 
 private:
     std::string model_path_;
+    int num_threads_ = 4;
 #ifdef WITH_NCNN
     std::string param_path_;
     std::string bin_path_;

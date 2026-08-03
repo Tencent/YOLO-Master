@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -11,6 +12,7 @@ struct Tensor {
 class Backend {
 public:
     virtual ~Backend() = default;
+    virtual void set_num_threads(int threads) = 0;
     virtual void load(const std::string& model_path) = 0;
     virtual Tensor infer(const Tensor& input) = 0;
     virtual std::string name() const = 0;
