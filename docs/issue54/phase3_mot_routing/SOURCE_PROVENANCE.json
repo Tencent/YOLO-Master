@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "purpose": "Tencent/YOLO-Master PR #216 visual-source provenance recovery",
+  "created_utc": "2026-08-02T23:58:19Z",
+  "source_repository": "/root/autodl-tmp/MoT/YOLO-Master",
+  "source_git_commit": "02f01545f3fa63fd030f0508c91a172f13428891",
+  "formal_root_record_file": "/root/autodl-tmp/MoT/results/PHASE3_FORMAL_ROOT.txt",
+  "formal_root": "/root/autodl-tmp/MoT/results/phase3_formal_20260731T214515Z",
+  "copy_mode": "read-only source copy; no training, inference, or routing export",
+  "source_files": [
+    {
+      "relative_path": "phase3_cross_seed_routing.json",
+      "source_absolute_path": "/root/autodl-tmp/MoT/results/phase3_formal_20260731T214515Z/phase3_cross_seed_routing.json",
+      "size_bytes": 3112098,
+      "sha256": "b7049cdbac25c346ac8deb37b505d92bd37406f197458a8f045677c1eba9f7f2"
+    },
+    {
+      "relative_path": "phase3_formal_registry.json",
+      "source_absolute_path": "/root/autodl-tmp/MoT/results/phase3_formal_20260731T214515Z/phase3_formal_registry.json",
+      "size_bytes": 6319,
+      "sha256": "3b3f22cd0339dfab372a0b8c27c55dfea4a0b22b57e13a3d92ed8675b7d28540"
+    },
+    {
+      "relative_path": "reports/PHASE3_MOT_CROSS_SEED_REPORT.md",
+      "source_absolute_path": "/root/autodl-tmp/MoT/results/phase3_formal_20260731T214515Z/reports/PHASE3_MOT_CROSS_SEED_REPORT.md",
+      "size_bytes": 1684,
+      "sha256": "ab8de7198be28aea55bf2116b50a1c685d4d108e01c03f5e30949bfd2464991c"
+    },
+    {
+      "relative_path": "reports/phase3_mot_seed_metrics.csv",
+      "source_absolute_path": "/root/autodl-tmp/MoT/results/phase3_formal_20260731T214515Z/reports/phase3_mot_seed_metrics.csv",
+      "size_bytes": 459,
+      "sha256": "8a6080b4fe0ffc57aa68c455fc315d62f3c33b51e77793e07cadda8ac7745024"
+    },
+    {
+      "relative_path": "reports/phase3_mot_layer_stability.csv",
+      "source_absolute_path": "/root/autodl-tmp/MoT/results/phase3_formal_20260731T214515Z/reports/phase3_mot_layer_stability.csv",
+      "size_bytes": 757,
+      "sha256": "ae455515b35ea33d46766bce8a73bd783588d2664542a7dbcf3bafcbc010a87e"
+    },
+    {
+      "relative_path": "reports/phase3_mot_pairwise_agreement.csv",
+      "source_absolute_path": "/root/autodl-tmp/MoT/results/phase3_formal_20260731T214515Z/reports/phase3_mot_pairwise_agreement.csv",
+      "size_bytes": 242985,
+      "sha256": "0a181bc7d05f67a3098761c90a6825c27bfa51a37659ecf41345b50dd0c97618"
+    },
+    {
+      "relative_path": "reports/phase3_mot_expert_utilization.csv",
+      "source_absolute_path": "/root/autodl-tmp/MoT/results/phase3_formal_20260731T214515Z/reports/phase3_mot_expert_utilization.csv",
+      "size_bytes": 10882,
+      "sha256": "74dd65253338883015c484cc4c148b43a0923524b473008df75b927e003994f4"
+    },
+    {
+      "relative_path": "reports/phase3_mot_report_manifest.json",
+      "source_absolute_path": "/root/autodl-tmp/MoT/results/phase3_formal_20260731T214515Z/reports/phase3_mot_report_manifest.json",
+      "size_bytes": 2327,
+      "sha256": "4933d684160d349ccc04a1ec2124548cce7a0a3ecfe1d6a853e741b633c9fa5d"
+    }
+  ]
+}
