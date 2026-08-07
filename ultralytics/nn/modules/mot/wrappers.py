@@ -57,6 +57,7 @@ class C2fMoT(nn.Module):
         sparse_train_warmup_steps: int = 0,
         scene_inference_mode: str = "dynamic",
         local_attn_window: int = 0,
+        window_shift: bool | str = "alternate",
     ):
         super().__init__()
         self.c = int(c2 * e)
@@ -76,9 +77,19 @@ class C2fMoT(nn.Module):
                 f"(must divide channels and yield head_dim ≥ 8)"
             )
 
-        # Alternate window shift by block index (Swin-style): even blocks use
-        # regular windows, odd blocks use shifted windows. Fixed at build time
-        # → deterministic inference and trace-stable export.
+        # Window shift policy, fixed at build time → deterministic inference and
+        # trace-stable export.  "alternate" is the Swin-style default: even blocks
+        # use regular windows, odd blocks shifted.  A plain bool forces one policy
+        # on every block, which is what a shift-strategy ablation needs; before
+        # this was exposed the alternating rule was unreachable from YAML.
+        if isinstance(window_shift, str):
+            if window_shift != "alternate":
+                raise ValueError(f"window_shift must be 'alternate' or a bool, got {window_shift!r}")
+            shift_flags = [bool(i % 2) for i in range(n)]
+        else:
+            shift_flags = [bool(window_shift)] * n
+        self.window_shift = window_shift
+
         self.m = nn.ModuleList(
             MoTBlock(
                 dim=dim,
@@ -89,7 +100,7 @@ class C2fMoT(nn.Module):
                 mlp_ratio=mlp_ratio,
                 temperature=temperature,
                 balance_loss_coeff=balance_loss_coeff,
-                window_shift=bool(i % 2),
+                window_shift=shift_flags[i],
                 sparse_train=sparse_train,
                 scene_aware_router=scene_aware_router,
                 scene_hidden_dim=scene_hidden_dim,
