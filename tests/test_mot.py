@@ -8,7 +8,7 @@ from ultralytics.engine.trainer import BaseTrainer
 from ultralytics.nn.modules.moa import C2fMoA, MoABlock
 from ultralytics.nn.modules.mot import C2fMoT, MoTBlock, anneal_mot_temperature, collect_mot_aux_loss
 from ultralytics.nn.tasks import DetectionModel
-from ultralytics.nn.mixture_loss import _collect_mot_aux_loss
+from ultralytics.utils.loss import _collect_mot_aux_loss
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -42,7 +42,7 @@ def test_mot_block_forward_backward_all_experts_trainable():
     # Squared-sum produces O(1) per-element gradient (vs O(1/N) for mean),
     # ensuring non-selected experts' ~0.02-weighted contribution stays above
     # the float32 underflow threshold.
-    ((out**2).sum() + aux).backward()
+    ((out ** 2).sum() + aux).backward()
     assert _has_grad(block.router)
     for expert in block.experts:
         assert _has_grad(expert)
@@ -93,32 +93,6 @@ def test_mot_temperature_anneal():
     assert after == [max(t * 0.5, 0.3) for t in before]
 
 
-def test_localconv_window_attention_is_opt_in_and_shape_preserving():
-    """LocalConv keeps global attention by default and supports padded windows."""
-    from ultralytics.nn.modules.mot.experts import _LocalConvTransformerExpert
-
-    torch.manual_seed(0)
-    x = torch.randn(1, 24, 7, 9)
-    global_expert = _LocalConvTransformerExpert(24, 3).eval()
-    window_expert = _LocalConvTransformerExpert(24, 3, local_window_size=4).eval()
-    assert global_expert.local_window_size == 0
-    assert window_expert.local_window_size == 4
-    with torch.no_grad():
-        out = window_expert(x)
-    assert out.shape == x.shape
-
-
-def test_mot_local_window_config_applies_to_nested_expert():
-    model = C2fMoT(64, 64, n=1, num_heads=4)
-    resolved = __import__(
-        "ultralytics.nn.modules.moe.config", fromlist=["resolve_mixture_config"]
-    ).resolve_mixture_config(SimpleNamespace(mot_local_attn_window=4), model)
-    from ultralytics.nn.modules.moe.config import apply_mixture_config
-
-    apply_mixture_config(model, resolved)
-    assert model.m[0].experts[0].local_window_size == 4
-
-
 def test_trainer_detects_and_anneals_moa_mot_temperatures():
     trainer = object.__new__(BaseTrainer)
     trainer.args = SimpleNamespace(moa_mot_temperature_factor=0.5, moa_mot_min_temperature=0.3)
@@ -154,6 +128,7 @@ def test_mot_model_configs_parse():
 def test_mot_deformable_align_corners_option():
     block = MoTBlock(32, num_heads=4, top_k=2, window_size=4, n_points=2, grid_align_corners=False)
     assert block.experts[2].align_corners is False
+
 
 
 def test_mot_window_size_larger_than_feature_map():
@@ -245,20 +220,6 @@ def test_mot_deformable_attention_falls_back_for_non_grid_tokens():
     assert torch.isfinite(output).all()
 
 
-@pytest.mark.skipif(not torch.backends.mps.is_available(), reason="requires Apple MPS")
-def test_mot_deformable_reference_grid_cache_clears_on_module_apply():
-    """Cached grids must not survive checkpoint device or dtype migration."""
-    from ultralytics.nn.modules.mot.mot import _DeformableTransformerExpert
-
-    expert = _DeformableTransformerExpert(16, num_heads=4, n_points=2).eval()
-    with torch.no_grad():
-        expert(torch.randn(1, 16, 2, 2))
-
-    assert expert._reference_grid_cache
-    expert.to("mps")
-    assert not expert._reference_grid_cache
-
-
 def test_mot_inference_sparsity_skips_inactive_experts():
     """At eval with top_k<E, a per-sample inactive expert must not be invoked."""
     torch.manual_seed(0)
@@ -273,7 +234,6 @@ def test_mot_inference_sparsity_skips_inactive_experts():
 
 
 # ── Boundary regression tests (issue #54) ──────────────────────────────────
-
 
 def test_mot_block_handles_1x1_feature_map():
     """MoTBlock must not crash on the smallest possible spatial input (1×1)."""
@@ -291,7 +251,8 @@ def test_mot_block_handles_all_zero_input():
     """All-zero input must not produce NaN or Inf in output or aux loss."""
     torch.manual_seed(0)
     # Use balance_loss_coeff > 0 so aux loss is computed even on zero input
-    block = MoTBlock(32, num_heads=4, top_k=2, window_size=4, n_points=2, balance_loss_coeff=0.01).train()
+    block = MoTBlock(32, num_heads=4, top_k=2, window_size=4, n_points=2,
+                     balance_loss_coeff=0.01).train()
     x = torch.zeros(2, 32, 8, 8)
     out, aux = block(x)
     assert out.shape == x.shape
@@ -351,7 +312,8 @@ def test_c2fmot_handles_minimal_channels():
 
 def test_mot_router_z_loss_handles_extreme_logits():
     """Router z-loss must guard against overflow on extreme logit values."""
-    block = MoTBlock(32, num_heads=4, top_k=2, window_size=4, n_points=2, balance_loss_coeff=0.01).eval()
+    block = MoTBlock(32, num_heads=4, top_k=2, window_size=4, n_points=2,
+                     balance_loss_coeff=0.01).eval()
     # Simulate extreme router output
     extreme_logits = torch.full((1, 3, 4, 4), 100.0)
     z = block.router.z_loss_from_logits(extreme_logits)
@@ -365,7 +327,8 @@ def test_mot_router_z_loss_handles_extreme_logits():
 def test_mot_sparse_train_mode():
     """sparse_train=True must only dispatch to selected experts."""
     torch.manual_seed(0)
-    block = MoTBlock(24, num_heads=3, top_k=1, window_size=4, n_points=2, sparse_train=True).train()
+    block = MoTBlock(24, num_heads=3, top_k=1, window_size=4, n_points=2,
+                     sparse_train=True).train()
     x = torch.randn(1, 24, 6, 6)
     out, aux = block(x)
     assert out.shape == x.shape
@@ -398,15 +361,345 @@ def test_c2fmot_aux_loss_aggregation():
     module = C2fMoT(32, 32, n=3, num_heads=4, top_k=2, balance_loss_coeff=0.01).train()
     module(torch.randn(2, 32, 8, 8))
     # Each block contributes to total
-    block_aux = [m.last_aux_loss for m in module.m if isinstance(getattr(m, "last_aux_loss", None), torch.Tensor)]
+    block_aux = [m.last_aux_loss for m in module.m
+                 if isinstance(getattr(m, 'last_aux_loss', None), torch.Tensor)]
     assert len(block_aux) == 3
     assert torch.allclose(module.last_aux_loss, sum(block_aux))
-# Additional boundary & stability tests for MoT (犀牛鸟 #54)
-# Append to tests/test_mot.py
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Boundary regression tests: degenerate geometry, shifted-window correctness,
+# and eval-mode routing.  Each test below pins a defect found by probing the
+# boundary surface of MoTBlock / _WindowTransformerExpert / the router.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _amplified_window_expert(window_size, shift_size, dim=8, num_heads=2):
+    """Window expert whose attention path dominates, for influence probing.
+
+    Default ``ls1=0.1`` plus ``std=0.02`` weights attenuate the attention
+    contribution so far that cross-token influence is unmeasurable.  Amplifying
+    qkv/proj, setting ``ls1=1`` and zeroing ``ls2`` isolates attention as the
+    only route by which one token can affect another.
+    """
+    from ultralytics.nn.modules.mot.mot import _WindowTransformerExpert
+
+    torch.manual_seed(0)
+    expert = _WindowTransformerExpert(dim, num_heads=num_heads, window_size=window_size, shift_size=shift_size).eval()
+    with torch.no_grad():
+        torch.nn.init.trunc_normal_(expert.qkv.weight, std=0.5)
+        torch.nn.init.trunc_normal_(expert.proj.weight, std=0.5)
+        expert.ls1.fill_(1.0)
+        expert.ls2.zero_()
+    return expert
+
+
+def _influence_map(expert, src, size=(8, 8), dim=8):
+    """Per-pixel absolute output change from perturbing a single input token.
+
+    The perturbation must vary across channels: LayerNorm cancels a
+    channel-uniform offset, which would make the probe blind.
+    """
+    H, W = size
+    x = torch.zeros(1, dim, H, W)
+    delta = torch.tensor([5.0, -5.0] * (dim // 2))
+    with torch.no_grad():
+        base = expert(x)
+        perturbed = x.clone()
+        perturbed[0, :, src[0], src[1]] += delta
+        return (expert(perturbed) - base).abs().sum(dim=1)[0]
+
+
+@pytest.mark.parametrize("window_size", [0, -1, -4])
+def test_mot_window_expert_rejects_non_positive_window_size(window_size):
+    """window_size <= 0 must raise, not ZeroDivisionError inside _pad_to_window."""
+    from ultralytics.nn.modules.mot.mot import _WindowTransformerExpert
+
+    with pytest.raises(ValueError, match="window_size must be >= 1"):
+        _WindowTransformerExpert(16, num_heads=4, window_size=window_size)
+
+
+@pytest.mark.parametrize("window_size", [0, -3])
+def test_mot_block_rejects_non_positive_window_size(window_size):
+    """MoTBlock validates window_size up front so bad YAML fails clearly."""
+    with pytest.raises(ValueError, match="window_size must be >= 1"):
+        MoTBlock(32, num_heads=4, top_k=2, window_size=window_size, n_points=2)
+
+
+@pytest.mark.parametrize("n_points", [0, -2])
+def test_mot_deformable_expert_rejects_non_positive_n_points(n_points):
+    """n_points=0 silently zeroed the whole attention branch — must raise."""
+    from ultralytics.nn.modules.mot.mot import _DeformableTransformerExpert
+
+    with pytest.raises(ValueError, match="n_points must be >= 1"):
+        _DeformableTransformerExpert(16, num_heads=4, n_points=n_points)
+
+
+@pytest.mark.parametrize("n_points", [0, -2])
+def test_mot_block_rejects_non_positive_n_points(n_points):
+    with pytest.raises(ValueError, match="n_points must be >= 1"):
+        MoTBlock(32, num_heads=4, top_k=2, window_size=4, n_points=n_points)
+
+
+def test_mot_window_expert_honours_explicit_shift_size():
+    """shift_size is a value, not a flag.
+
+    It used to be coerced via ``(window_size // 2) if shift_size else 0``, so
+    every truthy value collapsed to win//2 — silently ignoring the caller.
+    """
+    from ultralytics.nn.modules.mot.mot import _WindowTransformerExpert
+
+    for requested in (0, 1, 2, 3):
+        expert = _WindowTransformerExpert(16, num_heads=4, window_size=5, shift_size=requested)
+        assert expert.shift_size == requested
+    # bool keeps the Swin default meaning; out-of-range wraps into [0, win)
+    assert _WindowTransformerExpert(16, num_heads=4, window_size=5, shift_size=True).shift_size == 2
+    assert _WindowTransformerExpert(16, num_heads=4, window_size=5, shift_size=False).shift_size == 0
+    assert _WindowTransformerExpert(16, num_heads=4, window_size=5, shift_size=7).shift_size == 2
+
+
+def test_mot_window_expert_shift_does_not_leak_across_image_edges():
+    """Shifted windows must be masked, as in canonical Swin.
+
+    The cyclic roll wraps opposite edges into one window; without an attention
+    mask a top-left token influences the bottom-right corner.  The unshifted
+    expert is the control: influence outside the window is exactly zero.
+    """
+    control = _influence_map(_amplified_window_expert(4, 0), src=(0, 0))
+    shifted = _influence_map(_amplified_window_expert(4, 2), src=(0, 0))
+
+    # Control: strictly window-local.
+    assert control[4:, :].sum() == 0
+    assert control[:, 4:].sum() == 0
+    # Shifted: the wrapped edge rows/cols must not be reachable either.
+    assert shifted[6:, :].sum() == 0, "shifted window leaks into wrapped bottom rows"
+    assert shifted[:, 6:].sum() == 0, "shifted window leaks into wrapped right cols"
+    assert shifted[7, 7] == 0, "opposite corners attend each other under shift"
+    # Sanity: the probe is actually measuring something.
+    assert shifted[:4, :4].sum() > 0
+
+
+def test_mot_window_expert_shift_still_connects_across_windows():
+    """The mask must block only wrapped pairs, not shift's whole purpose.
+
+    A token at the unshifted window boundary (3, 3) must reach tokens beyond
+    it (rows/cols 4-5) once shifted — that cross-window connectivity is why
+    Swin alternates shifted blocks at all.
+    """
+    control = _influence_map(_amplified_window_expert(4, 0), src=(3, 3))
+    shifted = _influence_map(_amplified_window_expert(4, 2), src=(3, 3))
+
+    assert control[4:, :].sum() == 0  # unshifted: cannot cross the boundary
+    assert shifted[4:6, 2:6].sum() > 0  # shifted: reaches the next window
+    # Interior window is fully unmasked, so influence spans exactly rows/cols 2-5.
+    rows = (shifted > 1e-4).any(dim=1).nonzero().flatten().tolist()
+    cols = (shifted > 1e-4).any(dim=0).nonzero().flatten().tolist()
+    assert rows == [2, 3, 4, 5]
+    assert cols == [2, 3, 4, 5]
+
+
+def test_mot_shift_attn_mask_leaves_interior_window_unmasked():
+    """Mask shape/content contract: interior window fully attends, edges restricted."""
+    expert = _amplified_window_expert(4, 2)
+    mask = expert._shift_attn_mask(8, 8, torch.device("cpu"))
+    assert mask.shape == (4, 1, 16, 16)  # [nW, 1(head-broadcast), win², win²]
+    assert mask.dtype == torch.bool
+    allowed = [float(w.float().mean()) for w in mask[:, 0]]
+    assert allowed[0] == 1.0, "interior window must be fully unmasked"
+    assert all(0 < a < 1.0 for a in allowed[1:]), "edge windows must be partially masked"
+    # Every query keeps at least itself, so no row can be all-False (→ NaN softmax).
+    assert mask.any(dim=-1).all()
+
+
+@pytest.mark.parametrize("shift_size", [0, 2])
+@pytest.mark.parametrize("spatial", [(1, 1), (1, 5), (2, 3), (3, 3), (5, 7), (7, 9), (9, 11), (4, 128)])
+def test_mot_window_expert_shape_and_finiteness_across_geometries(shift_size, spatial):
+    """Odd sizes, degenerate 1×1, and extreme aspect ratios must round-trip cleanly."""
+    from ultralytics.nn.modules.mot.mot import _WindowTransformerExpert
+
+    torch.manual_seed(0)
+    expert = _WindowTransformerExpert(16, num_heads=4, window_size=4, shift_size=shift_size).eval()
+    x = torch.randn(1, 16, *spatial)
+    with torch.no_grad():
+        out = expert(x)
+    assert out.shape == x.shape
+    assert torch.isfinite(out).all()
+
+
+@pytest.mark.parametrize("window_shift", [False, True])
+@pytest.mark.parametrize("window_size", [1, 2, 16])
+def test_mot_block_degrades_when_window_exceeds_feature_map(window_shift, window_size):
+    """window_size >= H/W (incl. win=1 and shift enabled) must pad, crop, stay finite."""
+    torch.manual_seed(0)
+    block = MoTBlock(32, num_heads=4, top_k=2, window_size=window_size, n_points=2, window_shift=window_shift).eval()
+    x = torch.randn(2, 32, 3, 5)
+    with torch.no_grad():
+        out, aux = block(x)
+    assert out.shape == x.shape
+    assert torch.isfinite(out).all()
+    assert aux.item() == 0  # eval mode contributes no aux loss
+
+
+def test_mot_window_expert_shift_is_trace_stable():
+    """The mask must not break ONNX/TorchScript tracing (roll uses a cat fallback)."""
+    import warnings
+
+    expert = _amplified_window_expert(4, 2, dim=16, num_heads=4)
+    x = torch.randn(1, 16, 8, 8)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        traced = torch.jit.trace(expert, x)
+        out = traced(torch.randn(1, 16, 8, 8))
+    assert out.shape == (1, 16, 8, 8)
+    assert torch.isfinite(out).all()
+
+
+def test_mot_exploration_eps_disabled_in_eval_end_to_end():
+    """eval must not re-densify routing — checked at router *and* dispatch level.
+
+    The router-level test above only inspects weights; this pins the observable
+    consequence: eval dispatches to exactly top_k experts, training does not.
+    """
+    torch.manual_seed(0)
+    block = MoTBlock(24, num_heads=3, top_k=1, window_size=4, n_points=2, exploration_eps=0.2)
+    x = torch.randn(2, 24, 6, 6)
+
+    block.train()
+    block(x)
+    train_calls = block._last_dispatch_stats["expert_calls"]
+
+    block.eval()
+    with torch.no_grad():
+        weights, _ = block.router(x)
+        out, aux = block(x)
+    eval_calls = block._last_dispatch_stats["expert_calls"]
+
+    assert train_calls == block.NUM_EXPERTS, "training keeps every expert trainable"
+    assert eval_calls == block.top_k, "eval must dispatch to top_k experts only"
+    # Eval weights: exactly one nonzero per token, and it is a full 1.0.
+    assert torch.equal((weights > 0).sum(dim=1), torch.ones(2, 6, 6, dtype=torch.long))
+    assert torch.allclose(weights.sum(dim=1), torch.ones(2, 6, 6))
+    assert torch.allclose(weights.max(dim=1).values, torch.ones(2, 6, 6))
+    assert aux.item() == 0
+    assert torch.isfinite(out).all()
+
+
+def test_mot_exploration_eps_boundary_values():
+    """eps is clamped into [0, 0.2]; the endpoint itself is accepted silently."""
+    import warnings
+
+    assert MoTBlock(24, num_heads=3, exploration_eps=0.2).router.exploration_eps == 0.2
+    with pytest.warns(UserWarning, match="clamped"):
+        assert MoTBlock(24, num_heads=3, exploration_eps=-0.5).router.exploration_eps == 0.0
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # 0.0 and 0.2 must not warn
+        MoTBlock(24, num_heads=3, exploration_eps=0.0)
+
+
+def test_c2fmot_window_shift_policy_is_configurable():
+    """window_shift must be reachable from YAML, not hardcoded per block index.
+
+    The alternating rule was previously baked into ``wrappers.py`` as
+    ``bool(i % 2)`` with no constructor argument, so a shift-strategy ablation
+    was impossible to express in a model YAML.  "alternate" keeps the Swin
+    default; a plain bool forces one policy onto every block.
+    """
+
+    def shifts(**kwargs):
+        module = C2fMoT(32, 32, n=4, num_heads=4, top_k=2, window_size=4, n_points=2, **kwargs)
+        return [blk.experts[1].shift_size for blk in module.m]
+
+    assert shifts() == [0, 2, 0, 2]  # default is unchanged
+    assert shifts(window_shift="alternate") == [0, 2, 0, 2]
+    assert shifts(window_shift=True) == [2, 2, 2, 2]
+    assert shifts(window_shift=False) == [0, 0, 0, 0]
+
+    with pytest.raises(ValueError, match="window_shift must be 'alternate' or a bool"):
+        C2fMoT(32, 32, n=2, num_heads=4, window_size=4, n_points=2, window_shift="every-other")
+
+
+def test_c2fmot_window_shift_reaches_model_from_yaml():
+    """A YAML arg list must actually drive the shift policy end to end."""
+    cfg = {
+        "nc": 8,
+        "backbone": [[-1, 1, "Conv", [16, 3, 2]]],
+        "head": [
+            # ``n`` comes from the repeat column, not the arg list; ``c1`` is
+            # inserted from the input channels.  Args are therefore
+            # [c2, num_heads, top_k, window_size, n_points, mlp_ratio, temperature,
+            #  balance_loss_coeff, e, sparse_train, scene_aware_router,
+            #  scene_hidden_dim, scene_consistency_coeff, sparse_train_warmup_steps,
+            #  scene_inference_mode, window_shift]
+            [-1, 2, "C2fMoT", [32, 4, 2, 4, 2, 2.0, 1.0, 0.01, 0.5, False, False, None, 0.0, 0, "dynamic", True]],
+            [[-1], 1, "Detect", [8]],
+        ],
+    }
+    model = DetectionModel(cfg, ch=3, nc=8, verbose=False)
+    blocks = [m for m in model.modules() if isinstance(m, C2fMoT)]
+    assert len(blocks) == 1
+    assert [blk.experts[1].shift_size for blk in blocks[0].m] == [2, 2], "YAML window_shift ignored"
+
+
+def test_c2fmot_shifted_blocks_are_edge_safe():
+    """C2fMoT alternates window_shift by block index — cover the wired-up path.
+
+    Under the default "alternate" policy every odd block runs the shifted
+    expert.  This is how the mask fix reaches trained models.
+    """
+    torch.manual_seed(0)
+    module = C2fMoT(32, 32, n=4, num_heads=4, top_k=2, window_size=4, n_points=2).eval()
+    shifts = [blk.experts[1].shift_size for blk in module.m]
+    assert shifts == [0, 2, 0, 2]
+    x = torch.randn(1, 32, 7, 9)
+    with torch.no_grad():
+        out = module(x)
+    assert out.shape == (1, 32, 7, 9)
+    assert torch.isfinite(out).all()
+
+
+# Main-branch coverage retained while replaying the issue #54 boundary suite.
+
+
+def test_localconv_window_attention_is_opt_in_and_shape_preserving():
+    """LocalConv keeps global attention by default and supports padded windows."""
+    from ultralytics.nn.modules.mot.experts import _LocalConvTransformerExpert
+
+    torch.manual_seed(0)
+    x = torch.randn(1, 24, 7, 9)
+    global_expert = _LocalConvTransformerExpert(24, 3).eval()
+    window_expert = _LocalConvTransformerExpert(24, 3, local_window_size=4).eval()
+    assert global_expert.local_window_size == 0
+    assert window_expert.local_window_size == 4
+    with torch.no_grad():
+        out = window_expert(x)
+    assert out.shape == x.shape
+
+
+def test_mot_local_window_config_applies_to_nested_expert():
+    model = C2fMoT(64, 64, n=1, num_heads=4)
+    resolved = __import__(
+        "ultralytics.nn.modules.moe.config", fromlist=["resolve_mixture_config"]
+    ).resolve_mixture_config(SimpleNamespace(mot_local_attn_window=4), model)
+    from ultralytics.nn.modules.moe.config import apply_mixture_config
+
+    apply_mixture_config(model, resolved)
+    assert model.m[0].experts[0].local_window_size == 4
+
+
+@pytest.mark.skipif(not torch.backends.mps.is_available(), reason="requires Apple MPS")
+def test_mot_deformable_reference_grid_cache_clears_on_module_apply():
+    """Cached grids must not survive checkpoint device or dtype migration."""
+    from ultralytics.nn.modules.mot.mot import _DeformableTransformerExpert
+
+    expert = _DeformableTransformerExpert(16, num_heads=4, n_points=2).eval()
+    with torch.no_grad():
+        expert(torch.randn(1, 16, 2, 2))
+    assert expert._reference_grid_cache
+    expert.to("mps")
+    assert not expert._reference_grid_cache
 
 
 def test_mot_fp16_forward_stability():
-    """MoTBlock forward pass must not produce NaN/Inf in fp16."""
     torch.manual_seed(0)
     block = MoTBlock(32, num_heads=4, top_k=2, window_size=4, n_points=2).eval().half()
     x = torch.randn(2, 32, 8, 8, dtype=torch.float16)
@@ -419,84 +712,61 @@ def test_mot_fp16_forward_stability():
 
 
 def test_mot_gradient_flow_with_zero_exploration_eps():
-    """Even with exploration_eps=0, active expert must receive gradient."""
     torch.manual_seed(0)
-    block = MoTBlock(32, num_heads=4, top_k=1, window_size=4, n_points=2,
-                     exploration_eps=0.0, sparse_train=True).train()
-    x = torch.randn(2, 32, 8, 8)
-    out, aux = block(x)
-    (out ** 2).sum().backward()
+    block = MoTBlock(
+        32, num_heads=4, top_k=1, window_size=4, n_points=2, exploration_eps=0.0, sparse_train=True
+    ).train()
+    out, _ = block(torch.randn(2, 32, 8, 8))
+    (out**2).sum().backward()
     assert _has_grad(block.router)
-    experts_with_grad = sum(_has_grad(e) for e in block.experts)
-    assert experts_with_grad >= 1
+    assert sum(_has_grad(expert) for expert in block.experts) >= 1
 
 
 def test_mot_top_k_equals_num_experts():
-    """top_k == NUM_EXPERTS should be equivalent to dense routing."""
-    torch.manual_seed(0)
-    block = MoTBlock(32, num_heads=4, top_k=3, window_size=4, n_points=2,
-                     exploration_eps=0.0).eval()
+    block = MoTBlock(32, num_heads=4, top_k=3, window_size=4, n_points=2, exploration_eps=0.0).eval()
     x = torch.randn(2, 32, 8, 8)
     with torch.no_grad():
-        out, aux = block(x)
+        out, _ = block(x)
     assert out.shape == x.shape
     assert torch.isfinite(out).all()
 
 
 def test_mot_routing_determinism():
-    """Same input twice must produce identical expert weights at eval."""
     torch.manual_seed(0)
-    block = MoTBlock(32, num_heads=4, top_k=2, window_size=4, n_points=2,
-                     exploration_eps=0.0).eval()
+    block = MoTBlock(32, num_heads=4, top_k=2, window_size=4, n_points=2, exploration_eps=0.0).eval()
     x = torch.randn(2, 32, 8, 8)
     with torch.no_grad():
-        w1, i1 = block.router(x)
-        w2, i2 = block.router(x)
-    assert torch.allclose(w1, w2)
-    assert torch.equal(i1, i2)
+        weights_a, indices_a = block.router(x)
+        weights_b, indices_b = block.router(x)
+    assert torch.allclose(weights_a, weights_b)
+    assert torch.equal(indices_a, indices_b)
 
 
 def test_mot_block_forward_train_and_eval_consistency():
-    """Training forward should produce same-shaped output as eval forward."""
     torch.manual_seed(0)
     block = MoTBlock(32, num_heads=4, top_k=2, window_size=4, n_points=2)
     x = torch.randn(2, 32, 8, 8)
-    block.train()
-    out_train, aux_train = block(x)
-    block.eval()
+    train_out, _ = block.train()(x)
     with torch.no_grad():
-        out_eval, aux_eval = block(x)
-    assert out_train.shape == out_eval.shape == x.shape
-    assert torch.isfinite(out_train).all()
-    assert torch.isfinite(out_eval).all()
-
-
-def test_mot_window_expert_shift_size_zero():
-    """shift_size=0 must produce valid output (no shift mode)."""
-    from ultralytics.nn.modules.mot.mot import _WindowTransformerExpert
-    torch.manual_seed(0)
-    expert = _WindowTransformerExpert(16, num_heads=4, window_size=4, shift_size=0).eval()
-    x = torch.randn(1, 16, 8, 8)
-    with torch.no_grad():
-        out = expert(x)
-    assert out.shape == x.shape
-    assert torch.isfinite(out).all()
+        eval_out, _ = block.eval()(x)
+    assert train_out.shape == eval_out.shape == x.shape
+    assert torch.isfinite(train_out).all()
+    assert torch.isfinite(eval_out).all()
 
 
 def test_mot_localconv_expert_with_various_input_sizes():
-    """LocalConv expert must handle diverse spatial dimensions."""
     from ultralytics.nn.modules.mot.mot import _LocalConvTransformerExpert
+
     expert = _LocalConvTransformerExpert(16, num_heads=4).eval()
-    for h, w in [(4, 4), (8, 16), (16, 8), (7, 13)]:
-        x = torch.randn(1, 16, h, w)
+    for height, width in ((4, 4), (8, 16), (16, 8), (7, 13)):
+        x = torch.randn(1, 16, height, width)
         with torch.no_grad():
             out = expert(x)
-        assert out.shape == x.shape, f'Failed at {h}x{w}'
-        assert torch.isfinite(out).all(), f'NaN at {h}x{w}'
+        assert out.shape == x.shape
+        assert torch.isfinite(out).all()
 
 
 def test_mot_block_invalid_top_k_raises():
-    """top_k outside [1, NUM_EXPERTS] must raise ValueError."""
     with pytest.raises(ValueError, match="top_k"):
         MoTBlock(32, top_k=0)
     with pytest.raises(ValueError, match="top_k"):
@@ -504,13 +774,18 @@ def test_mot_block_invalid_top_k_raises():
 
 
 def test_mot_block_with_scene_aware_router():
-    """MoTBlock with scene_aware=True must produce finite output."""
     torch.manual_seed(0)
-    block = MoTBlock(32, num_heads=4, top_k=2, window_size=4, n_points=2,
-                     scene_aware_router=True, scene_hidden_dim=16,
-                     scene_consistency_coeff=0.01).train()
-    x = torch.randn(2, 32, 8, 8)
-    out, aux = block(x)
-    assert out.shape == x.shape
+    block = MoTBlock(
+        32,
+        num_heads=4,
+        top_k=2,
+        window_size=4,
+        n_points=2,
+        scene_aware_router=True,
+        scene_hidden_dim=16,
+        scene_consistency_coeff=0.01,
+    ).train()
+    out, aux = block(torch.randn(2, 32, 8, 8))
+    assert out.shape == (2, 32, 8, 8)
     assert torch.isfinite(out).all()
     assert torch.isfinite(aux)
