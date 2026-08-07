@@ -5,7 +5,7 @@ import torch
 from torch import nn
 
 from ultralytics.engine.trainer import BaseTrainer
-from ultralytics.optim.muon import MuSGD
+from ultralytics.optim.muon import MuSGD, muon_update
 
 
 class _AdapterFixture(nn.Module):
@@ -168,3 +168,32 @@ def test_resume_rejects_incompatible_full_sft_optimizer_state():
 
     with pytest.raises(ValueError, match="incompatible full-SFT"):
         trainer._load_checkpoint_state({"optimizer": source.state_dict(), "scaler": None, "ema": None})
+
+
+def test_muon_update_handles_3d_expert_weights():
+    """MoT/MoA experts carry 3-D weights; zeropower_via_newtonschulz5 asserts 2-D."""
+    grad = torch.randn(4, 8, 8)
+    momentum = torch.zeros_like(grad)
+    update = muon_update(grad, momentum)
+    assert update.shape == (4, 64), "3-D grads must be flattened to 2-D, not rejected"
+    assert torch.isfinite(update).all()
+
+
+def test_muon_update_passes_through_sub_2d_params():
+    """1-D/0-D params have no subspace to orthogonalize, so they must pass through."""
+    for shape in [(16,), ()]:
+        grad = torch.randn(shape)
+        momentum = torch.zeros_like(grad)
+        update = muon_update(grad, momentum)
+        assert update.shape == grad.shape
+        assert torch.isfinite(update).all()
+
+
+def test_muon_update_leaves_2d_and_4d_paths_untouched():
+    """The 3-D/1-D guards must not change the shapes Muon already handled."""
+    for shape in [(128, 64), (1, 32), (32, 1), (16, 8, 3, 3)]:
+        grad = torch.randn(*shape)
+        update = muon_update(grad, torch.zeros_like(grad))
+        assert torch.isfinite(update).all()
+        # Reshaped back by the caller, so only the element count must survive.
+        assert update.numel() == grad.numel()

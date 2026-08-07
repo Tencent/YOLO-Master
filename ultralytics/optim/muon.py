@@ -91,6 +91,16 @@ def muon_update(grad: torch.Tensor, momentum: torch.Tensor, beta: float = 0.95, 
     update = grad.lerp(momentum, beta) if nesterov else momentum
     if update.ndim == 4:  # for the case of conv filters
         update = update.view(len(update), -1)
+    elif update.ndim == 3:
+        # MoT/MoA experts introduce 3-D weights (e.g. per-expert [E, out, in]).
+        # zeropower_via_newtonschulz5 asserts a 2-D input, so without this the
+        # optimizer dies on any model containing them.
+        update = update.reshape(update.size(0), -1)
+    elif update.ndim < 2:
+        # 1-D (biases, norms) and 0-D params have no subspace to orthogonalize.
+        # trainer.py only routes ndim >= 2 params into the Muon group, so this
+        # is a guard for hand-built param groups rather than a live path.
+        return update
     update = zeropower_via_newtonschulz5(update)
     update *= max(1, grad.size(-2) / grad.size(-1)) ** 0.5
     return update
