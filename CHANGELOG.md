@@ -32,7 +32,7 @@ All notable changes to YOLO-Master are documented in this file.
 ## 🌟 Overview
 
 > [!IMPORTANT]
-> v26.08 is a cumulative release from `YOLO-Master-v26.02`. It upgrades the upstream Ultralytics baseline from `8.3.240` to `8.4.101` while preserving YOLO-Master's mixture and PEFT extensions. The Git tag `v26.08` identifies the exact release commit. Published metrics below are limited to results stored in the repository's model catalog or deployment reports.
+> v26.08 is the cumulative source release after `YOLO-Master-v26.02`. It upgrades the Ultralytics baseline from `8.3.240` to `8.4.101`, keeps mixture and PEFT work additive to native YOLO26 behavior, and turns several formerly independent research paths into governed, testable execution surfaces. The annotated Git tag `v26.08` identifies the exact release commit. Published metrics below are limited to artifacts stored in the repository's model catalog or deployment reports.
 
 <p align="center">
   <img width="100%" alt="YOLO-Master v2026.08 release overview: MultiTask, Shared Expert MoE, MoA and MoT, PEFT Planner, MoLoRA, Latent Mixture, and edge deployment" src="https://github.com/user-attachments/assets/0d3b951b-bc83-4a81-9865-9fb40370a912" /><br>
@@ -44,12 +44,25 @@ All notable changes to YOLO-Master are documented in this file.
 | | |
 |---|---|
 | **Release range** | `YOLO-Master-v26.02...v26.08` |
-| **Audited history** | 622 commits · 96 merged PRs · 38 author identities, including bots and aliases |
+| **Audited history** | 634 commits total: 514 non-merge commits and 120 merge commits |
+| **Change surface** | 3,353 files changed: 981,877 additions and 23,747 deletions |
 | **Upstream upgrade** | Ultralytics `8.3.240` → `8.4.101` |
 | **Native model family** | YOLO26 detect · segment · semantic · pose · OBB · classify · YOLOE |
 | **Release freeze gate** | 201 passed · 1 xfailed (documented mixture/P0-P2 command) |
 | **Model catalog** | 7 evaluated checkpoints · 3 pending/evaluating variants |
 | **License** | AGPL-3.0 |
+
+### Release provenance
+
+| Artifact | Canonical value |
+|---|---|
+| **YOLO-Master source tag** | `v26.08` |
+| **Tag target commit** | `1dc71f1da20424a10ebe186e16a7296528756643` |
+| **Underlying Python package** | `ultralytics==8.4.101` |
+| **Published assets** | `ultralytics-8.4.101-py3-none-any.whl` · `ultralytics-8.4.101.tar.gz` |
+| **Historical comparison tag** | `YOLO-Master-v26.02` (`6bed010e3b0f67efbb735470b8c6e3cca65e4e33`) |
+
+The source tag names the YOLO-Master release; it is not a second Python package version. Consumers should resolve the package version from `ultralytics.__version__`, while release provenance and source diffs should resolve through the Git tag and target commit above.
 
 ### Why upgrade
 
@@ -58,9 +71,40 @@ All notable changes to YOLO-Master are documented in this file.
 - **More adaptation paths:** choose fixed-rank LoRA, the architecture-conditioned PEFT Planner, FewShot-LoRA, or routed MoLoRA adapters.
 - **Deployment beyond Python:** package models for Windows, Linux, Jetson, and macOS through ONNX Runtime, NCNN, MNN, TensorRT, and Core ML workflows.
 
-[Highlights](#key-highlights) · [Quick Start](#quick-start) · [Architecture](#architecture-at-a-glance) · [New Features](#new-features) · [Usage Examples](#usage-examples) · [Model Zoo](#model-zoo-benchmarks) · [Validation](#validation) · [Migration](#migration-guide) · [Development diff](https://github.com/Tencent/YOLO-Master/compare/YOLO-Master-v26.02...v26.08)
+[Evolution](#version-evolution) · [Highlights](#key-highlights) · [Quick Start](#quick-start) · [Architecture](#architecture-at-a-glance) · [New Features](#new-features) · [Usage Examples](#usage-examples) · [Model Zoo](#model-zoo-benchmarks) · [Validation](#validation) · [Migration](#migration-guide) · [Development diff](https://github.com/Tencent/YOLO-Master/compare/YOLO-Master-v26.02...v26.08)
 
 > **Canonical release notes:** [`docs/release-notes/v26.08.md`](https://github.com/Tencent/YOLO-Master/blob/v26.08/docs/release-notes/v26.08.md) contains the current P0-P2 hardening summary, validation evidence, migration steps, and known limitations. The Python package identity remains `ultralytics==8.4.101`; `v26.08` is the YOLO-Master source release tag.
+
+---
+
+<a id="version-evolution"></a>
+
+### From v26.02 to v26.08: a framework transition
+
+v26.02 established the original YOLO-Master proposition: ES-MoE conditional computation, standard LoRA fine-tuning, Sparse SAHI, Cluster-Weighted NMS (CW-NMS), and basic MoE loss/pruning tools on the `8.3.240` Ultralytics generation. v26.08 is not a simple accumulation of model blocks. It moves the project from a feature-oriented extension into a routed vision framework with explicit parser, loss, checkpoint, data, export, and validation contracts.
+
+| Concern | v26.02 baseline | v26.08 release position |
+|---|---|---|
+| **Upstream foundation** | Ultralytics `8.3.240`; early YOLO-Master model variants | Ultralytics `8.4.101` and native YOLO26 task flows; mixture profiles are registered additively and integrity-checked against the upstream baseline |
+| **Conditional computation** | ES-MoE, routing choices, balancing loss, and pruning | A shared routing protocol across MoE, MoA, MoT, Latent Mixture, and MoLoRA; dynamic scheduling, diagnostics, shared-expert reuse, sparse/eager boundaries, and loss budgeting |
+| **Adaptation** | Fixed-rank configuration-driven LoRA | Standard LoRA remains, with FewShot-LoRA, architecture-conditioned Planner/V-PEFT placement, LOVO validation, and routed MoLoRA adapters with save/load and merge contracts |
+| **Task coverage** | Detection-centered model and inference extensions | Native YOLO26 task family remains intact; a preview MultiTask train/validation path adds a release profile for detect, instance segment, and human pose with partial-label protection |
+| **Deployment** | Sparse tiled inference and post-processing extensions | Export preflight and a routed backend-capability matrix; documented ONNX Runtime, NCNN, MNN, TensorRT, Core ML, Windows, Linux, Jetson, and macOS integration paths |
+| **Operational readiness** | Per-feature tests and scripts | P0-P2 lifecycle hardening for AMP, MPS, DDP, EMA, checkpoints, non-finite recovery, model catalogs, release audits, and Agent contracts |
+
+This distinction matters for adopters: YAML owns architecture choice and expert topology; the PEFT control plane owns adapter placement; the trainer owns routed auxiliary-loss composition and recovery; and export either records a supported routing strategy or selects a declared dense fallback. A module being constructible is therefore no longer treated as evidence of end-to-end accuracy, convergence, or hardware latency.
+
+### Release evolution
+
+| Period | Main evolution | Result carried into v26.08 |
+|---|---|---|
+| **February 2026** | v26.02 established ES-MoE, standard LoRA, Sparse SAHI, CW-NMS, MoE loss, and pruning as the public baseline. | The original detection, sparse-inference, and fixed-rank-adaptation capabilities remain available. |
+| **May to June** | LoRA gained FewShot controls; MoE routing/loss semantics were corrected; MoA and MoT blocks, configurations, tests, and ablation tooling entered the repository. | Conditional computation expanded beyond convolutional experts to routed attention and transformer paths. |
+| **Early July** | MoLoRA, LOVO validation, scaling-law tooling, V-PEFT/Planner work, model-profile expansion, and C++ edge examples were added. | PEFT became a separate, architecture-aware planning and adapter-runtime surface rather than only a rank setting. |
+| **Mid to late July** | AMP-safe sparse dispatch, DDP/EMA/checkpoint lifecycle fixes, non-finite recovery, export preflight, capability reporting, governance checks, and the `8.4.101` rebase were completed. | Routed features carry explicit numerical, distributed, checkpoint, and export boundaries instead of relying on implicit eager behavior. |
+| **Early August** | Shared Expert MoE, Latent Mixture contracts, MultiTask model/trainer/loss/data integration, and portable COCO-aligned smoke profiles were completed. | The release provides model-scoped expert reuse and a scoped detect/segment/pose MultiTask training and validation profile. |
+
+The timeline is drawn from the release range, including the upstream modernization commit (`47a503e`), MoLoRA introduction (`752900f`), MoA/MoT integration (`18527df`), LOVO and V-PEFT work (`917fddc`, `fe3c087`), export governance (`aed6505`, `0d32bd1`), Shared Expert MoE (`82b6ad5`), and MultiTask integration (`31f48ea`, `a7684bd`, `aa5b891`, `a91ec77`). It deliberately summarizes shipped implementation and test scope rather than restating older performance claims as new v26.08 measurements.
 
 ---
 
@@ -759,6 +803,19 @@ The release-freeze result was generated from the command printed above on the ta
 
 > [!IMPORTANT]
 > **Breaking changes:** none are formally declared for v26.08. Existing fixed-rank LoRA calls and the documented `sparse_sahi`, `lora_auto_r_ratio`, and `moe_balance_loss` settings remain registered. Custom code that imports Ultralytics internals should still be retested against the new `8.4.101` baseline.
+
+#### Upgrade impact by workflow
+
+| Existing v26.02 workflow | v26.08 behavior | Required upgrade action |
+|---|---|---|
+| Native detection or an existing official YOLO integration | The parser, trainer, task heads, checkpoints, and export flow now follow the `8.4.101` baseline. | Retest code that imports Ultralytics internals; keep native YOLO26 YAML files unchanged for the upstream baseline. |
+| ES-MoE model YAML | Expert topology and routing are YAML-owned; routed auxiliary losses pass through the shared loss protocol. | Keep the YAML with its checkpoint, and validate custom expert or router modules with the routing-boundary tests before reuse. |
+| Fixed-rank LoRA | Standard `lora_r` and `lora_alpha` training remains supported. | Keep the existing call; opt into Planner/V-PEFT only when a placement policy is wanted. |
+| LoRA plus a new routed adapter experiment | MoLoRA is a separate adapter-expert runtime with dedicated save/load and merge semantics. | Select either standard LoRA or MoLoRA. A positive `lora_r` and `molora_num_experts > 0` are intentionally rejected together. |
+| Sparse SAHI or CW-NMS inference | The original registered settings remain available; they are not silently converted into routed-model deployment guarantees. | Preserve the existing inference configuration and benchmark the full model/backend combination in the target environment. |
+| Exporting a mixture profile | Eager sparse execution and exported behavior can differ by backend. | Run export preflight and consult the capability matrix; accept the documented dense fallback or an explicit refusal rather than assuming sparse routing is preserved. |
+| MultiTask experimentation | The release profile supports detect, instance segment, and human pose training/validation with partial-label masks. | Use `task="multitask"` and the supplied COCO-unified contract; provide data, criterion, and validation support before enabling other branches. MultiTask OBB training is rejected. |
+| Resume/checkpoint integration | Native checkpoint fields are retained and mixture/PEFT state is carried as additive metadata. | Retest resume and EMA behavior with the target configuration; do not replace native checkpoint fields with custom routing metadata. |
 
 #### Upstream baseline: `8.3.240` → `8.4.101`
 
