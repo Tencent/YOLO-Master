@@ -8,9 +8,7 @@ from ultralytics.nn.autobackend import AutoBackend
 # ==================== 🐵 猴子补丁：修复框架热身 Bug ====================
 # 替换掉原版容易产生 NaN 的 torch.empty，确保 EsMoE 路由安全通过 final_eval
 def safe_warmup(self, imgsz=(1, 3, 640, 640)):
-    im = torch.zeros(
-        *imgsz, dtype=torch.half if self.fp16 else torch.float, device=self.device
-    )
+    im = torch.zeros(*imgsz, dtype=torch.half if self.fp16 else torch.float, device=self.device)
     self.forward(im)
 
 
@@ -37,9 +35,8 @@ def main():
         warmup_epochs=5,
         project="YOLO-Master-Issue49",
         name="BCCD-EsMoE-N-Result",
-        # ==================== 🧠 激活 EsMoE 核心参数 ====================
-        moe_num_experts=8,
-        moe_top_k=2,
+        # ==================== 🧠 EsMoE 运行时参数 ====================
+        # Expert counts and Top-K are defined by the selected model YAML.
         moe_balance_loss=0.01,
         moe_router_z_loss=0.001,
     )

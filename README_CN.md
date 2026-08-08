@@ -5,7 +5,7 @@
   <a href="https://colab.research.google.com/drive/1gTKkCsE4sXIOWpu1cdNBjdFHEahBoZD0?usp=sharing"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a>
   <a href="https://arxiv.org/abs/2512.23273"><img src="https://img.shields.io/badge/arXiv-2512.23273-b31b1b.svg" alt="arXiv"></a>
   <a href="#-引用"><img src="https://img.shields.io/badge/CVPR-2026-6420AA.svg" alt="CVPR 2026"></a>
-  <a href="https://github.com/Tencent/YOLO-Master/releases/tag/YOLO-Master-v26.02"><img src="https://img.shields.io/badge/%F0%9F%93%A6-Model%20Zoo-orange" alt="Model Zoo"></a>
+  <a href="https://github.com/Tencent/YOLO-Master/releases/tag/v26.08"><img src="https://img.shields.io/badge/%F0%9F%93%A6-v26.08%20Release-orange" alt="YOLO-Master v26.08 release"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-AGPL%203.0-blue.svg" alt="AGPL 3.0"></a>
   <a href="https://github.com/ultralytics/ultralytics"><img src="https://img.shields.io/badge/Ultralytics-YOLO-blue" alt="Ultralytics"></a>
 </p>
@@ -176,14 +176,15 @@ results = model.train(
     epochs=100,
     imgsz=640,
     batch=16,
-    moe_num_experts=8,      # 专家数量
-    moe_top_k=2,            # 每个 token 激活的专家数
     moe_balance_loss=0.01,  # 负载均衡损失权重
 )
 
 # 专家利用率分析与剪枝
 model.prune_experts(threshold=0.15)
 ```
+
+MoE 的专家数量和 Top-K 属于模型拓扑，应在所选模型 YAML 中配置；模型构建后无法安全修改其层形状。
+保留 `moe_num_experts` 与 `moe_top_k` 仅为配置和 checkpoint 兼容，它们不会覆盖 YAML 拓扑。
 
 ---
 

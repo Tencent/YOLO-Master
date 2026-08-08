@@ -21,6 +21,7 @@ kpt_shape: [17, 3]                              # COCO keypoints
 nm: 32                                          # mask coefficients
 npr: 256                                         # mask prototypes
 tasks: ['detect', 'segment', 'pose']             # active supervised tasks
+task_weights: {detect: 1.0, segment: 0.5, pose: 1.0} # stable loss-weight baseline; runtime overrides use multitask_task_weights
 
 scales:
   # [depth, width, max_channels]

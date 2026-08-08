@@ -38,6 +38,7 @@ def test_mixture_defaults_parse_with_expected_types():
     assert cfg.mot_scene_hidden_dim is None
     assert cfg.mot_scene_inference_mode == "dynamic"
     assert cfg.moa_regional_max_kv_tokens == 4096
+    assert cfg.multitask_task_weights is None
 
 
 def test_new_mixture_float_key_is_type_checked():
@@ -58,6 +59,16 @@ def test_scene_inference_mode_is_type_checked():
         assert "mot_scene_inference_mode" in str(exc)
     else:
         raise AssertionError("mot_scene_inference_mode must reject non-string values")
+
+
+def test_multitask_task_weights_must_be_a_dict():
+    check_cfg({"multitask_task_weights": {"segment": 0.75}})
+    try:
+        check_cfg({"multitask_task_weights": ["segment", 0.75]})
+    except TypeError as exc:
+        assert "multitask_task_weights" in str(exc)
+    else:
+        raise AssertionError("multitask_task_weights must reject non-dict values")
 
 
 def test_molora_none_and_empty_optional_values_have_stable_semantics():

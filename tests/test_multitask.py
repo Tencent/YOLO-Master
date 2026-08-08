@@ -7,8 +7,10 @@ import numpy as np
 import pytest
 import torch
 import torch.nn as nn
+import yaml
 
 from ultralytics.nn.modules.multitask.head import MultiTaskHead
+from ultralytics.nn.tasks import MultiTaskModel, resolve_multitask_task_weights
 from ultralytics.utils.loss import MultiTaskLoss
 from ultralytics.models.yolo.multitask.train import (
     MultiTaskTrainer,
@@ -84,6 +86,44 @@ def test_multitask_loss_respects_task_source_for_auxiliary_criteria(monkeypatch)
     assert total.item() == pytest.approx(1.0)
     assert items.shape == (9,)
     assert called == {"segment": 0, "pose": 0}
+
+
+def test_multitask_task_weights_support_yaml_baselines_and_runtime_overrides():
+    """A runtime override changes only named weights and preserves YAML defaults."""
+    yaml_weights = resolve_multitask_task_weights({"segment": 0.75, "depth": 0.2}, source="model YAML task_weights")
+    resolved = resolve_multitask_task_weights({"segment": 0.25}, base=yaml_weights, source="multitask_task_weights")
+
+    assert resolved["detect"] == 1.0
+    assert resolved["segment"] == 0.25
+    assert resolved["depth"] == 0.2
+
+
+@pytest.mark.parametrize(
+    ("weights", "error"),
+    [
+        ({"caption": 1.0}, "unsupported task names"),
+        ({"segment": -0.1}, "finite and >= 0"),
+        ({"segment": float("inf")}, "finite and >= 0"),
+        ({"segment": True}, "numeric weight"),
+    ],
+)
+def test_multitask_task_weights_reject_invalid_values(weights, error):
+    """Typos and invalid values must fail before they silently affect optimization."""
+    with pytest.raises((TypeError, ValueError), match=error):
+        resolve_multitask_task_weights(weights)
+
+
+def test_multitask_model_reads_task_weights_from_model_yaml():
+    """Model-YAML task weights establish the loss baseline before training starts."""
+    config_path = ROOT / "ultralytics/cfg/models/26/yolo26-master-mt-n.yaml"
+    config = yaml.safe_load(config_path.read_text())
+    config["task_weights"] = {"segment": 0.75, "pose": 0.4}
+
+    model = MultiTaskModel(config, nc=8, ch=3, verbose=False)
+
+    assert model.task_weights["detect"] == 1.0
+    assert model.task_weights["segment"] == 0.75
+    assert model.task_weights["pose"] == 0.4
 
 
 def test_coco_multitask_dataset_emits_aligned_targets(tmp_path):
@@ -1140,6 +1180,16 @@ class TestMultiTaskTrainer:
         assert len(t.loss_names) == 9
         assert t.loss_names[-3:] == ("depth_loss", "normal_loss", "semantic_loss")
 
+    def test_runtime_task_weights_preserve_model_yaml_weights(self):
+        trainer = self._new_trainer()
+        trainer.args = SimpleNamespace(multitask_task_weights={"pose": 0.4})
+        model = SimpleNamespace(task_weights={"detect": 1.0, "segment": 0.75, "pose": 1.0})
+
+        weights = trainer._apply_task_weight_overrides(model)
+
+        assert weights["segment"] == 0.75
+        assert weights["pose"] == 0.4
+
 
 def test_multitask_validator_keeps_coco_loader_task(monkeypatch):
     """Direct multitask validation must not fall back to the ordinary YOLO-label dataset."""
@@ -1332,6 +1382,7 @@ class TestMultiTaskModelIntegration:
         model = MultiTaskModel(str(cfg_path), nc=8, ch=3, verbose=False)
         head = model.model[-1]
         assert isinstance(head, MultiTaskHead) and len(head.active_tasks) >= 1
+        assert model.task_weights["segment"] == 0.5
 
     @pytest.mark.slow
     def test_model_forward_no_crash(self):

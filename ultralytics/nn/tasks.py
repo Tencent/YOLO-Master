@@ -4,7 +4,9 @@ import contextlib
 import pickle
 import re
 import threading
+from collections.abc import Mapping
 from copy import deepcopy
+from math import isfinite
 from pathlib import Path
 
 import torch
@@ -841,6 +843,51 @@ class PoseModel(DetectionModel):
         return build_composite_criterion(self, native)
 
 
+MULTITASK_TASK_WEIGHT_DEFAULTS = {
+    "detect": 1.0,
+    "segment": 0.5,
+    "pose": 1.0,
+    "classify": 0.3,
+    "depth": 0.3,
+    "normal": 0.3,
+    "semantic": 0.5,
+    "obb": 0.5,
+}
+
+
+def resolve_multitask_task_weights(overrides=None, *, base=None, source="task_weights"):
+    """Return supported multi-task loss weights with validated selective overrides."""
+
+    resolved = dict(MULTITASK_TASK_WEIGHT_DEFAULTS)
+
+    def apply(values, values_source):
+        if values is None:
+            return
+        if not isinstance(values, Mapping):
+            raise TypeError(
+                f"{values_source} must be a mapping of task names to numeric weights, got {type(values).__name__}."
+            )
+        if not all(isinstance(task, str) for task in values):
+            raise TypeError(f"{values_source} task names must be strings, got {list(values)!r}.")
+        unknown = sorted(set(values).difference(MULTITASK_TASK_WEIGHT_DEFAULTS))
+        if unknown:
+            raise ValueError(
+                f"{values_source} contains unsupported task names {unknown}; "
+                f"supported tasks are {sorted(MULTITASK_TASK_WEIGHT_DEFAULTS)}."
+            )
+        for task, value in values.items():
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise TypeError(f"{values_source}.{task} must be a numeric weight, got {value!r}.")
+            value = float(value)
+            if not isfinite(value) or value < 0.0:
+                raise ValueError(f"{values_source}.{task} must be finite and >= 0, got {value!r}.")
+            resolved[task] = value
+
+    apply(base, "existing task_weights")
+    apply(overrides, source)
+    return resolved
+
+
 class MultiTaskModel(DetectionModel):
     """YOLO Multi-Task Vision Model.
 
@@ -885,17 +932,9 @@ class MultiTaskModel(DetectionModel):
             from ultralytics.utils import IterableSimpleNamespace
 
             self.args = IterableSimpleNamespace(**DEFAULT_CFG_DICT)
-        # Default task weights (can be overridden)
-        self.task_weights = {
-            "detect": 1.0,
-            "segment": 0.5,
-            "pose": 1.0,
-            "classify": 0.3,
-            "depth": 0.3,
-            "normal": 0.3,
-            "semantic": 0.5,
-            "obb": 0.5,
-        }
+        self.task_weights = resolve_multitask_task_weights(
+            cfg_dict.get("task_weights"), source="model YAML task_weights"
+        )
 
     def has_task(self, task: str) -> bool:
         """Check if a task is active in this model."""

@@ -30,6 +30,23 @@ installed, it also enables the 133-class semantic branch.
 The generator records task availability for every image. This is important because keypoints are present only for
 person instances and missing supervision must not be converted into negative targets.
 
+## Task-loss weighting
+
+Each multi-task model starts with the balanced defaults `detect=1.0`, `segment=0.5`, `pose=1.0`, `classify=0.3`,
+`depth=0.3`, `normal=0.3`, and `semantic=0.5`. Put stable experiment baselines in the model YAML with
+`task_weights`, then use `multitask_task_weights` to override only the weights needed for one training run. Values
+must be finite and non-negative; a zero is valid for an explicit ablation. Unknown task names fail before training.
+
+```python
+model.train(
+    data="scripts/coco2017_multitask_panoptic.yaml",
+    multitask_task_weights={"segment": 0.75, "semantic": 0.25},
+)
+```
+
+The resolved weights are attached to the model before EMA and checkpoint creation, so resumed runs retain the active
+configuration in their saved training arguments and model metadata.
+
 Install official semantic annotations before Panoptic training:
 
 ```bash

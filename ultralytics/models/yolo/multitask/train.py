@@ -15,7 +15,7 @@ import torch
 from ultralytics.data import TaskRoutedDataset, build_dataloader, build_yolo_dataset
 from ultralytics.data.multitask_sampler import MultiTaskBatchSampler
 from ultralytics.models.yolo.detect import DetectionTrainer
-from ultralytics.nn.tasks import MultiTaskModel
+from ultralytics.nn.tasks import MultiTaskModel, resolve_multitask_task_weights
 from ultralytics.utils import DEFAULT_CFG, LOGGER, RANK, colorstr
 from ultralytics.utils.torch_utils import torch_distributed_zero_first
 
@@ -259,9 +259,22 @@ class MultiTaskTrainer(DetectionTrainer):
         model = unwrap_model(self.model)
         if not hasattr(model, "active_tasks"):
             raise TypeError("MultiTaskTrainer requires a model with an active_tasks contract.")
+        self._apply_task_weight_overrides(model)
         active_tasks = validate_multitask_contract(self.data, model.model[-1])
         model.active_tasks = set(active_tasks)
         LOGGER.info(f"{colorstr('multitask:')} active_tasks={model.active_tasks}")
+
+    def _apply_task_weight_overrides(self, model):
+        """Apply runtime task-loss weights without discarding model-YAML values."""
+        overrides = getattr(self.args, "multitask_task_weights", None)
+        model.task_weights = resolve_multitask_task_weights(
+            overrides,
+            base=getattr(model, "task_weights", None),
+            source="multitask_task_weights",
+        )
+        if overrides is not None:
+            LOGGER.info(f"{colorstr('multitask:')} task_weights={model.task_weights}")
+        return model.task_weights
 
     def build_dataset(self, img_path, mode="train", batch=None):
         """Build YOLO Dataset for training or validation (fallback: detection)."""

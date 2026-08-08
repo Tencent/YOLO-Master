@@ -248,7 +248,7 @@ for name, m in wrapper.model.named_modules():
 ```yaml
 # 同时使用 MoE 和 MoLoRA
 moe: true
-moe_num_experts: 4
+# MoE 模块的专家数量在模型 YAML 中定义，不能通过训练参数重塑。
 molora_num_experts: 4
 ```
 

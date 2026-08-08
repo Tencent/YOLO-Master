@@ -5,7 +5,7 @@
   <a href="https://colab.research.google.com/drive/1gTKkCsE4sXIOWpu1cdNBjdFHEahBoZD0?usp=sharing"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a>
   <a href="https://arxiv.org/abs/2512.23273"><img src="https://img.shields.io/badge/arXiv-2512.23273-b31b1b.svg" alt="arXiv"></a>
   <a href="#-citation"><img src="https://img.shields.io/badge/CVPR-2026-6420AA.svg" alt="CVPR 2026"></a>
-  <a href="https://github.com/Tencent/YOLO-Master/releases/tag/YOLO-Master-v26.02"><img src="https://img.shields.io/badge/%F0%9F%93%A6-Model%20Zoo-orange" alt="Model Zoo"></a>
+  <a href="https://github.com/Tencent/YOLO-Master/releases/tag/v26.08"><img src="https://img.shields.io/badge/%F0%9F%93%A6-v26.08%20Release-orange" alt="YOLO-Master v26.08 release"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-AGPL%203.0-blue.svg" alt="AGPL 3.0"></a>
   <a href="https://github.com/ultralytics/ultralytics"><img src="https://img.shields.io/badge/Ultralytics-YOLO-blue" alt="Ultralytics"></a>
 </p>
@@ -182,14 +182,16 @@ results = model.train(
     epochs=100,
     imgsz=640,
     batch=16,
-    moe_num_experts=8,      # Number of experts
-    moe_top_k=2,            # Experts activated per token
     moe_balance_loss=0.01,  # Load balancing loss weight
 )
 
 # Expert utilization analysis & pruning
 model.prune_experts(threshold=0.15)
 ```
+
+Set MoE expert counts and Top-K in the selected model YAML: they define layer shapes and cannot be safely changed
+after model construction. The legacy `moe_num_experts` and `moe_top_k` runtime options remain only for configuration
+and checkpoint compatibility; they do not override YAML topology.
 
 ---
 

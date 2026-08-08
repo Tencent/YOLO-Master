@@ -4,38 +4,50 @@ All notable changes to YOLO-Master are documented in this file.
 
 ---
 
-## [YOLO-Master-v26.08] — 2026-08-07
+## [v26.08] — 2026-08-08
 
 <div align="center">
-  <img width="260" height="260" alt="YOLO-Master Logo" src="https://github.com/user-attachments/assets/847ce41b-7282-4e98-b8be-240a572dd87a" />
-
-  <h1>YOLO-Master v2026.08</h1>
+  <a id="top"></a>
+  <img width="180" height="180" alt="YOLO-Master logo" src="https://github.com/user-attachments/assets/847ce41b-7282-4e98-b8be-240a572dd87a" />
+  <h1>🎯 YOLO-Master v26.08 Release Notes</h1>
   <p><strong>Ultralytics 8.4.101 · YOLO26 · Mixture Architectures · PEFT · MultiTask · Edge Runtime</strong></p>
-
-  [![Release](https://img.shields.io/badge/release-v26.08-7c3aed.svg)](https://github.com/Tencent/YOLO-Master/releases)
-  [![Validation](https://img.shields.io/badge/focused_gate-377%20passed%2C%201%20xfailed-16a34a.svg)](#-validation)
-  [![Ultralytics](https://img.shields.io/badge/Ultralytics-8.4.101-111827.svg)](#-upstream-modernization)
-  [![Python](https://img.shields.io/badge/Python-3.8+-2563eb.svg)](https://www.python.org/)
-  [![PyTorch](https://img.shields.io/badge/PyTorch-1.8+-ee4c2c.svg)](https://pytorch.org/)
-  [![License](https://img.shields.io/badge/License-AGPL--3.0-0f766e.svg)](https://github.com/Tencent/YOLO-Master/blob/main/LICENSE)
+  <p>
+    <a href="https://github.com/Tencent/YOLO-Master/releases"><img alt="Release v26.08" src="https://img.shields.io/badge/release-v26.08-7c3aed.svg" /></a>
+    <a href="#validation"><img alt="Release freeze gate: 201 passed, 1 xfailed" src="https://img.shields.io/badge/release_freeze-201%20passed%2C%201%20xfailed-16a34a.svg" /></a>
+    <a href="#upstream-modernization"><img alt="Ultralytics 8.4.101" src="https://img.shields.io/badge/Ultralytics-8.4.101-111827.svg" /></a>
+    <a href="https://www.python.org/"><img alt="Python 3.8 or newer" src="https://img.shields.io/badge/Python-3.8+-2563eb.svg" /></a>
+    <a href="https://pytorch.org/"><img alt="PyTorch 1.8 or newer" src="https://img.shields.io/badge/PyTorch-1.8+-ee4c2c.svg" /></a>
+    <a href="https://github.com/Tencent/YOLO-Master/blob/main/LICENSE"><img alt="AGPL-3.0 license" src="https://img.shields.io/badge/License-AGPL--3.0-0f766e.svg" /></a>
+  </p>
+  <p>
+    <a href="https://huggingface.co/spaces/gatilin/YOLO-Master-WebUI-Demo"><strong>Live Demo</strong></a> ·
+    <a href="https://tencent.github.io/YOLO-Master/"><strong>Documentation</strong></a> ·
+    <a href="https://github.com/Tencent/YOLO-Master/tree/main/model-zoo"><strong>Model Zoo</strong></a> ·
+    <a href="https://github.com/Tencent/YOLO-Master/discussions"><strong>Discussions</strong></a>
+  </p>
 </div>
 
+---
+
+## 🌟 Overview
+
 > [!IMPORTANT]
-> v26.08 is a cumulative release from `YOLO-Master-v26.02`. It upgrades the upstream Ultralytics baseline from `8.3.240` to `8.4.101` while preserving YOLO-Master's mixture and PEFT extensions. Published metrics below are limited to results stored in the repository's model catalog or deployment reports.
+> v26.08 is a cumulative release from `YOLO-Master-v26.02`. It upgrades the upstream Ultralytics baseline from `8.3.240` to `8.4.101` while preserving YOLO-Master's mixture and PEFT extensions. The Git tag `v26.08` identifies the exact release commit. Published metrics below are limited to results stored in the repository's model catalog or deployment reports.
 
 <p align="center">
-  <img width="100%" alt="YOLO-Master v2026.08 release overview: MultiTask, Shared Expert MoE, MoA and MoT, PEFT Planner, MoLoRA, Latent Mixture, and edge deployment" src="https://github.com/user-attachments/assets/0d3b951b-bc83-4a81-9865-9fb40370a912" />
+  <img width="100%" alt="YOLO-Master v2026.08 release overview: MultiTask, Shared Expert MoE, MoA and MoT, PEFT Planner, MoLoRA, Latent Mixture, and edge deployment" src="https://github.com/user-attachments/assets/0d3b951b-bc83-4a81-9865-9fb40370a912" /><br>
+  <sub><strong>Figure 1.</strong> Conceptual v26.08 overview: unified tasks, routed architectures, parameter-efficient adaptation, and cross-platform deployment.</sub>
 </p>
 
 ### Release at a glance
 
 | | |
 |---|---|
-| **Release range** | `YOLO-Master-v26.02...YOLO-Master-v26.08` |
+| **Release range** | `YOLO-Master-v26.02...v26.08` |
 | **Audited history** | 622 commits · 96 merged PRs · 38 author identities, including bots and aliases |
 | **Upstream upgrade** | Ultralytics `8.3.240` → `8.4.101` |
 | **Native model family** | YOLO26 detect · segment · semantic · pose · OBB · classify · YOLOE |
-| **Focused release gate** | 377 passed · 1 xfailed (mixture/P0-P2 scope) |
+| **Release freeze gate** | 201 passed · 1 xfailed (documented mixture/P0-P2 command) |
 | **Model catalog** | 7 evaluated checkpoints · 3 pending/evaluating variants |
 | **License** | AGPL-3.0 |
 
@@ -46,24 +58,26 @@ All notable changes to YOLO-Master are documented in this file.
 - **More adaptation paths:** choose fixed-rank LoRA, the architecture-conditioned PEFT Planner, FewShot-LoRA, or routed MoLoRA adapters.
 - **Deployment beyond Python:** package models for Windows, Linux, Jetson, and macOS through ONNX Runtime, NCNN, MNN, TensorRT, and Core ML workflows.
 
-[What's new](#-whats-new) · [Choose a model](#choose-a-v2608-architecture) · [Upstream upgrade](#-upstream-modernization) · [Model Zoo](#-model-zoo) · [Validation](#-validation) · [Migration](#-migration-guide) · [Development diff](https://github.com/Tencent/YOLO-Master/compare/YOLO-Master-v26.02...main)
+[Highlights](#key-highlights) · [Quick Start](#quick-start) · [Architecture](#architecture-at-a-glance) · [New Features](#new-features) · [Usage Examples](#usage-examples) · [Model Zoo](#model-zoo-benchmarks) · [Validation](#validation) · [Migration](#migration-guide) · [Development diff](https://github.com/Tencent/YOLO-Master/compare/YOLO-Master-v26.02...v26.08)
 
-> **Canonical release notes:** [docs/release-notes/v26.08.md](docs/release-notes/v26.08.md) contains the current P0-P2 hardening summary, validation evidence, migration steps, and known limitations.
+> **Canonical release notes:** [`docs/release-notes/v26.08.md`](https://github.com/Tencent/YOLO-Master/blob/v26.08/docs/release-notes/v26.08.md) contains the current P0-P2 hardening summary, validation evidence, migration steps, and known limitations. The Python package identity remains `ultralytics==8.4.101`; `v26.08` is the YOLO-Master source release tag.
 
 ---
 
-## ✨ What's new
+<a id="key-highlights"></a>
+
+### 🎯 Key Highlights
 
 | Area | Release status | What v26.08 adds |
 |---|---|---|
 | **Ultralytics 8.4.101 / YOLO26** | **Stable upstream base** | Native task flows, checkpoint compatibility, export integrity, and additive mixture registration |
-| **MultiTask** | **Preview** | Unified detection, segmentation, pose, classification, depth, and OBB branches with optional task routing |
+| **MultiTask** | **Preview** | A YAML-declared detect/segment/pose release profile with optional task-feature routing; additional head branches require matching supervision and validation evidence |
 | **Shared Expert MoE** | **Validated component** | Model-scoped expert-pool reuse with cross-model isolation |
 | **MoA / MoT** | **Experimental profiles** | Routed attention and transformer blocks, sparse paths, scene-aware routing, and shared temperature scheduling |
 | **PEFT Planner / LOVO** | **Opt-in** | Architecture-conditioned placement, V-PEFT solvers, validation, and FewShot-LoRA controls |
 | **MoLoRA** | **Opt-in** | Sparse routing over low-rank adapter experts with routing-aware merge contracts |
 | **Latent Mixture** | **Experimental profiles** | Dense latent routing, configurable initialization/noise, auxiliary losses, and inference top-k |
-| **Edge Runtime** | **Platform-validated** | Windows GUI, ONNX Runtime, NCNN, MNN, Jetson TensorRT, and macOS Core ML workflows |
+| **Edge Runtime** | **Documented integrations** | Windows GUI, ONNX Runtime, NCNN, MNN, Jetson TensorRT, and macOS Core ML workflows; hardware evidence is scoped below |
 | **Reliability** | **Release gate** | NaN recovery, DDP checkpoint hardening, EMA synchronization, AMP-safe sparse dispatch, and release audits |
 
 > [!TIP]
@@ -71,7 +85,9 @@ All notable changes to YOLO-Master are documented in this file.
 
 ---
 
-## 🚀 Quick start
+<a id="quick-start"></a>
+
+## ⚡ Quick Start
 
 ### Install from source
 
@@ -132,7 +148,12 @@ latent = YOLO(
 The repository-level WebUI provides task selection, image/batch/video/webcam inputs, inference controls, result tables, and Agent-oriented workflows in one interface.
 
 <p align="center">
-  <img width="100%" alt="YOLO-Master WebUI showing single-image object detection, confidence controls, detections, and inference results" src="https://github.com/user-attachments/assets/282bcece-8d88-4157-b3f5-390cc25aa24b" />
+  <a href="https://huggingface.co/spaces/gatilin/YOLO-Master-WebUI-Demo"><img width="100%" alt="YOLO-Master WebUI showing single-image object detection, confidence controls, detections, and inference results" src="https://github.com/user-attachments/assets/282bcece-8d88-4157-b3f5-390cc25aa24b" /></a><br>
+  <sub><strong>Figure 2.</strong> YOLO-Master WebUI: task selection, interactive inference controls, visual output, and structured detection results. Click the image to open the live demo.</sub>
+</p>
+
+<p align="center">
+  <a href="https://huggingface.co/spaces/gatilin/YOLO-Master-WebUI-Demo"><strong>Open the live WebUI demo</strong></a> · <code>python app.py</code> for local launch
 </p>
 
 > [!NOTE]
@@ -140,7 +161,12 @@ The repository-level WebUI provides task selection, image/batch/video/webcam inp
 
 ---
 
-## 🔄 Upstream modernization
+<a id="new-features"></a>
+<a id="upstream-modernization"></a>
+
+## 🚀 New Features
+
+### 1️⃣ Ultralytics 8.4.101 and YOLO26 Modernization
 
 v26.02 reported Ultralytics `8.3.240`. v26.08 rebases YOLO-Master on **Ultralytics `8.4.101`** and ports the existing MoE, MoA, MoT, MoLoRA, V-PEFT, and Agent integrations as additive extensions rather than replacing upstream task implementations.
 
@@ -177,10 +203,71 @@ yolo mixtures kind=latent format=json
 
 ---
 
-## 🧩 Architecture highlights
+<a id="architecture-at-a-glance"></a>
+
+### 🧭 Architecture at a Glance
+
+The architecture analysis in this release is organized around four complementary mixture surfaces. A profile may use one surface or compose several through YAML; the table describes the routing contract, not a promise that every profile enables every surface.
+
+| Layer | Component family | Routing object | Typical placement | Current execution boundary |
+|---|---|---|---|---|
+| Backbone | ES-MoE, gated MoE, Shared Expert MoE | Conv/FFN expert weights, usually Top-K or gated | Backbone feature stages | Eager profiles may dispatch sparsely; expert sharing is model-scoped and isolated across model builds. |
+| Neck | MoA | Local, regional, and global attention paths | Neck/FPN attention blocks | Soft mixture keeps all heads available; optional batch-level sparse skipping is opt-in. |
+| Neck | MoT | Transformer expert weights over spatial tokens | Neck transformer blocks | Training can retain dense exploration; eager evaluation can use Top-K dispatch. `TaskRouter` is a separate task-affinity router. |
+| Head fusion | Latent Mixture | Image-level latent expert probabilities | Multi-scale feature fusion before the task head | Training is dense by design; sparse eager inference is optional and becomes calibration-gated only with `require_inference_calibration=True`; export uses the declared dense fallback. |
+| PEFT | MoLoRA | Adapter-expert Top-K weights | Runtime injection around selected `Linear`/`Conv2d` layers | Base weights remain available; save/load and merge semantics are explicit and standard LoRA is mutually exclusive with enabled MoLoRA. |
+
+```mermaid
+flowchart LR
+    Y[Model YAML] --> P[parse_model + mixture registry]
+    P --> B[Backbone: MoE profiles]
+    B --> N[Neck: MoA / MoT profiles]
+    N --> L[Head fusion: Latent Mixture]
+    L --> H[Native or MultiTask heads]
+    C[PEFT config] --> A[Planner / V-PEFT]
+    A --> M[MoLoRA runtime injection]
+    M --> H
+    H --> R[Native criterion]
+    B --> X[Shared routing protocol]
+    N --> X
+    L --> X
+    M --> X
+    X --> Q[CompositeCriterion: EMA + budget + NaN isolation]
+    R --> Q
+    Q --> T[Trainer: AMP / DDP / EMA / checkpoint]
+    B --> E[Export preflight]
+    N --> E
+    L --> E
+    M --> E
+    E --> D[Dense fallback or explicit refusal]
+```
+
+#### Build and control plane
+
+- `ultralytics/nn/tasks.py` keeps the upstream parser as the model-construction entry point. `mixture_registry.py` resolves additive YAML names, adapts channels/repeats, and records YAML provenance; official YOLO26 YAML files are not overwritten.
+- The forward path publishes routed auxiliary losses through `ultralytics/nn/modules/routing_protocol.py`. `CompositeCriterion` collects each routed family once, applies per-family EMA normalization and gains, enforces the global auxiliary budget, and isolates non-finite families before adding them to native task loss.
+- MultiTask uses `MultiTaskHead` plus `TaskRouter` for task/shared feature gating. `MultiTaskBatchSampler` controls source proportions and persists its state for deterministic resume; it does not turn missing labels into negative targets.
+- PEFT is a separate control plane: the Planner/V-PEFT produces placement decisions, then MoLoRA injects adapter experts without changing the YAML topology. This is distinct from per-sample forward routing.
+
+#### Architecture boundaries to keep explicit
+
+> [!IMPORTANT]
+> **Routing is not task selection.** MoT provides shared visual representation. `TaskRouter` computes per-token affinity and applies task/shared feature gates to every YAML-enabled branch; YAML plus the dataset contract decide which branches are built and supervised. Neither router chooses one final task output at inference time.
+
+- Latent Mixture defaults to `value_fusion_mode="router_only"`: auxiliary inputs affect routing probabilities but are not automatically fused as expert values. Use `weighted_sum` explicitly when value fusion is intended.
+- Routed export is not equivalent to eager sparse execution. The capability matrix and preflight choose a declared dense fallback for tracing/ONNX-style backends unless a backend explicitly advertises preserved routing.
+- The architecture analysis covers implementation structure and focused contracts. It does not establish end-to-end accuracy gains, multi-epoch convergence, NCCL stability, or universal hardware latency.
+
+**Implementation map:** `ultralytics/nn/tasks.py` · `ultralytics/nn/mixture_registry.py` · `ultralytics/nn/modules/routing_protocol.py` · `ultralytics/nn/mixture_loss.py` · `ultralytics/data/multitask_sampler.py` · `ultralytics/nn/peft/molora/` · `ultralytics/utils/export_preflight.py`
+
+**Full report:** [YOLO-Master Deep Architecture Analysis](YOLO-Master-Deep-Analysis.md) — source-level module walkthrough, routing semantics, YAML integration, and implementation index.
+
+---
+
+### 2️⃣ MultiTask and Routed Architecture Highlights
 
 <details open>
-<summary><strong>1. MultiTask Learning — one feature hierarchy, configurable task branches</strong></summary>
+<summary><strong>MultiTask Learning — one feature hierarchy, configurable task branches</strong></summary>
 
 `MultiTaskHead` combines a shared backbone and neck with task-specific branches. `TaskRouter` is optional and performs content-based spatial-token routing between task-specific and shared features.
 
@@ -204,20 +291,20 @@ yolo mixtures kind=latent format=json
 ```bash
 yolo multitask train \
   model=ultralytics/cfg/models/26/yolo26-master-mt-n.yaml \
-  data=ultralytics/cfg/datasets/coco8-multitask.yaml \
+  data=ultralytics/cfg/datasets/coco-multitask-unified.yaml \
   epochs=100 \
   imgsz=640
 ```
 
 > [!NOTE]
-> The current unified COCO pipeline has aligned trainable labels for detection, instance segmentation, and human pose. Classification, depth, and OBB require suitable task labels before they contribute a training loss. The current `multitask` prediction map uses `DetectionPredictor`; a public `tasks=[...]` multi-output inference API is not documented in this release.
+> The shipped MultiTask YAML and COCO-unified dataset declare **detection, instance segmentation, and human pose**. The `MultiTaskHead` can construct other branch types, but the trainer rejects a selected branch unless its dataset, criterion, and validation contract are present; MultiTask OBB remains non-trainable. The current `multitask` prediction map uses `DetectionPredictor`; a public `tasks=[...]` multi-output inference API is not documented in this release.
 
 **Implementation:** `ultralytics/nn/modules/multitask/` · `ultralytics/models/yolo/multitask/` · `ultralytics/nn/tasks.py`
 
 </details>
 
 <details open>
-<summary><strong>2. Shared Expert MoE — model-scoped parameter reuse</strong></summary>
+<summary><strong>Shared Expert MoE — model-scoped parameter reuse</strong></summary>
 
 `SharedExpertMoE` uses `pool_id` to share one `fused_experts` module across compatible blocks built as part of the same model. Model parsing clears the temporary registry at model boundaries, so separately constructed models do not share parameters or devices.
 
@@ -239,9 +326,7 @@ The v0.8 shared model now uses the current `C2fMoT` argument order (`num_heads=8
 <details>
 <summary><strong>3. MoA and MoT — routed attention and transformer experts</strong></summary>
 
-### Mixture of Attention
-
-MoA combines local, regional, and global attention paths behind a router.
+**Mixture of Attention (MoA).** MoA combines local, regional, and global attention paths behind a router.
 
 | Setting | Purpose |
 |---|---|
@@ -250,9 +335,7 @@ MoA combines local, regional, and global attention paths behind a router.
 | `moa_sparse_inference` | Skip low-weight head groups during evaluation |
 | `moa_sparse_inference_threshold` | Sparse-evaluation threshold |
 
-### Mixture of Transformers
-
-MoT routes spatial tokens through transformer-style experts.
+**Mixture of Transformers (MoT).** MoT routes spatial tokens through transformer-style experts.
 
 | Setting | Purpose |
 |---|---|
@@ -386,9 +469,12 @@ The selected YAML uses `router_init_std=0.02` and `temperature=0.5`. The shared 
 
 ---
 
-## 🖥️ Edge deployment
+### 3️⃣ Cross-Platform Edge Deployment
 
 The cross-platform example combines a shared C++ runtime with platform-specific applications and packaging workflows.
+
+> [!IMPORTANT]
+> The table below describes repository integrations and target platforms, not a blanket backend-certification claim. The Jetson result is the only hardware benchmark published here; routed-profile TensorRT and the current Core ML environment remain outside the validated release surface.
 
 | Backend | Repository integration | Primary targets |
 |---|---|---|
@@ -398,12 +484,13 @@ The cross-platform example combines a shared C++ runtime with platform-specific 
 | **TensorRT** | Native C++ backend + Jetson scripts | NVIDIA GPU and Jetson Orin |
 | **Core ML** | Export scripts + Swift application | macOS on Apple Silicon and Intel |
 
-### Windows GUI
+#### 🖥️ Windows GUI
 
 The Windows 10/11 application uses Dear ImGui and Direct3D 11. It supports image, folder, video, and webcam input; segmentation overlays; backend switching; and live confidence/IoU controls.
 
 <p align="center">
-  <img width="100%" alt="YOLO-Master Windows Runner using the ONNX Runtime CUDA backend for dense aerial vehicle detection" src="https://github.com/user-attachments/assets/187e04da-9abd-4d83-aab7-f5c48a89fd8c" />
+  <img width="100%" alt="YOLO-Master Windows Runner using the ONNX Runtime CUDA backend for dense aerial vehicle detection" src="https://github.com/user-attachments/assets/187e04da-9abd-4d83-aab7-f5c48a89fd8c" /><br>
+  <sub><strong>Figure 3.</strong> Native Windows Runner processing a dense aerial scene with the ONNX Runtime CUDA backend.</sub>
 </p>
 
 The cross-platform edge and reproduction work includes merged contributions for the C++ ONNX/NCNN/MNN runtime ([#97](https://github.com/Tencent/YOLO-Master/pull/97)), Jetson TensorRT deployment ([#105](https://github.com/Tencent/YOLO-Master/pull/105)), the macOS Core ML runner ([#134](https://github.com/Tencent/YOLO-Master/pull/134)), and the Windows GUI ([#176](https://github.com/Tencent/YOLO-Master/pull/176)). [View all PRs by `skywalker-lt`](https://github.com/Tencent/YOLO-Master/pulls?q=is%3Apr+author%3Askywalker-lt+).
@@ -416,7 +503,7 @@ cd examples/YOLO-Master-Cross-Platform-Edge-Deployment/gui
 
 The build requires Visual Studio 2022, CMake 3.16 or newer, and at least one configured inference backend. Packaging copies required runtime DLLs beside `yolomaster_gui.exe`.
 
-### Verified Jetson result
+#### 📊 Verified Jetson Result
 
 | Device | Backend | Precision | Dataset/model scope | Latency | FPS | mAP50-95 |
 |---|---|---:|---|---:|---:|---:|
@@ -429,7 +516,9 @@ The corresponding PyTorch FP32 baseline is `0.2036` mAP50-95. These values apply
 
 ---
 
-## 🛡️ Reliability and recovery
+## 🛠 Improvements & Fixes
+
+### 🛡️ Reliability and Recovery
 
 | Area | v26.08 change | Verification scope |
 |---|---|---|
@@ -460,7 +549,82 @@ The corresponding PyTorch FP32 baseline is `0.2036` mAP50-95. These values apply
 
 ---
 
-## 📦 Model Zoo
+### P0-P2 hardening delivered in this release
+
+The following corrections are verified by focused build, forward, serialization, or contract tests. They describe implementation readiness, not full-dataset convergence, production throughput, or multi-node behavior.
+
+| Priority | Area | Correction |
+|---|---|---|
+| P0 | Routing and auxiliary loss | A single routing facade collects auxiliary loss once, preserves detached diagnostics, and isolates non-finite routed-loss families. |
+| P0 | Checkpoint, EMA, and DDP lifecycle | Bootstrap/pre-epoch checkpoint coordination and PEFT/EMA scaling synchronization are covered by lifecycle regressions. |
+| P0 | Export contracts | Export preflight checks module/backend declarations and records sparse versus dense strategy, fallback, and performance caveats. |
+| P1 | MultiTask data path | `MultiTaskBatchSampler` supports deterministic weighted or round-robin sampling, DDP rank interleaving, and resumable state; partial labels are loss-masked. |
+| P1 | AMP, MPS, and sparse dispatch | Sparse accumulation aligns dtypes, MPS uses the native-safe bilinear sampling path, and NaN recovery is synchronized across ranks. |
+| P1 | Latent Mixture | Named YAML configuration, checkpoint provenance, value-fusion selection, and an optional calibration gate for sparse eager inference prevent parser/config drift. |
+| P2 | PEFT and observability | MoLoRA fallback adapters round-trip through save/load and routing snapshots expose stable diagnostics for integration work. |
+
+For the implementation-to-evidence mapping and remaining audit items, see [`docs/release-notes/v26.08.md`](https://github.com/Tencent/YOLO-Master/blob/v26.08/docs/release-notes/v26.08.md).
+
+---
+
+<a id="usage-examples"></a>
+
+## 💡 Usage Examples
+
+<details open>
+<summary><strong>🧩 Example 1: MultiTask training</strong></summary>
+
+```bash
+yolo multitask train \
+  model=ultralytics/cfg/models/26/yolo26-master-mt-n.yaml \
+  data=ultralytics/cfg/datasets/coco-multitask-unified.yaml \
+  epochs=100 \
+  imgsz=640
+```
+
+</details>
+
+<details>
+<summary><strong>🎯 Example 2: Architecture-conditioned PEFT</strong></summary>
+
+```python
+from ultralytics import YOLO
+
+model = YOLO("ultralytics/cfg/models/26/yolo26.yaml")
+model.train(
+    data="coco8.yaml",
+    epochs=100,
+    lora_r=16,
+    lora_planner_enabled=True,
+    lora_adapter_budget=500_000,
+    lora_planner_solver="ao",
+    lora_planner_backend="vpeft",
+)
+```
+
+</details>
+
+<details>
+<summary><strong>🖥️ Example 3: Interactive and native runners</strong></summary>
+
+```bash
+# Local Gradio WebUI
+python app.py
+```
+
+```powershell
+# Native Windows GUI
+cd examples/YOLO-Master-Cross-Platform-Edge-Deployment/gui
+./build.ps1 -Run
+```
+
+</details>
+
+---
+
+<a id="model-zoo-benchmarks"></a>
+
+## 📊 Model Zoo & Benchmarks
 
 ### YOLO-Master-EsMoE
 
@@ -499,7 +663,21 @@ The corresponding PyTorch FP32 baseline is `0.2036` mAP50-95. These values apply
 
 <sub>¹ FPS values are the RTX 4090 results recorded in `model-zoo/models.json` (updated 2026-07-22). Dataset and evaluation fields follow that catalog. L/X results and PEFT efficiency figures are not published because matching evaluated artifacts are not available.</sub>
 
+### 🤝 Community Model Contributions
+
+We welcome reproducible model submissions. A model PR should include:
+
+1. externally hosted weights;
+2. the exact training YAML and command;
+3. dataset and evaluation protocol;
+4. precision, recall, mAP, latency, and hardware details;
+5. logs or curves sufficient to reproduce the result.
+
+See [CONTRIBUTING.md](https://github.com/Tencent/YOLO-Master/blob/main/CONTRIBUTING.md) before opening a pull request.
+
 ---
+
+<a id="validation"></a>
 
 ## ✅ Validation
 
@@ -520,6 +698,21 @@ pytest \
   tests/test_mixture_model_registry.py -q
 ```
 
+Run the P0-P2 regression groups before publishing a build:
+
+```bash
+pytest -q \
+  tests/test_routed_module_protocol.py tests/test_routing_diagnostics.py \
+  tests/test_molora_merge_semantics.py tests/test_p2_fixes.py \
+  tests/test_latent_mixture.py tests/test_mixture_loss_composition.py \
+  tests/test_mixture_model_registry.py tests/test_export_capability_matrix.py \
+  tests/test_multitask.py tests/test_mot.py tests/test_mixture_export.py \
+  tests/test_routing_aux_contract.py tests/test_mixture_aux_loss.py \
+  tests/test_moe_router_boundaries.py tests/test_molora_vpeft_integration.py \
+  tests/test_vpeft.py
+python agent/scripts/validate_yolo_master_skill.py --suite quick --pretty --summary-only
+```
+
 | Gate | Result |
 |---|---:|
 | MoE, MoA, and MoT modules | Passed |
@@ -531,8 +724,8 @@ pytest \
 | Ultralytics `8.4.101` upstream integrity | Passed |
 | Checkpoint conversion and compatibility | Passed |
 | Additive mixture model registry | Passed |
-| **Mixture/P0-P2 focused gate** | **377 passed · 1 xfailed** |
-| **MultiTask + Latent + P0 system gates** | **107 passed · 1 xfailed** |
+| **Mixture/P0-P2 focused gate** | **201 passed · 1 xfailed** |
+| **MultiTask + Latent + P0 system gates** | Included in the focused gate above |
 | **Agent Skill quick suite** | **36/36 passed** |
 
 Static release-note checks also verify referenced repository paths, Python syntax, registered configuration keys, model catalog parity, and patch whitespace.
@@ -540,21 +733,29 @@ Static release-note checks also verify referenced repository paths, Python synta
 > [!NOTE]
 > This is a **targeted release gate**, not the repository's entire test suite. It covers the features and compatibility claims promoted in these notes.
 
-The current focused result supersedes the earlier 230-test draft count. The `xfailed` case is retained as an explicit expected failure; it is not counted as a pass.
+The release-freeze result was generated from the command printed above on the tagged release candidate. The `xfailed` case is retained as an explicit expected failure; it is not counted as a pass.
 
-### Release boundaries
+### Verification boundaries
 
 - Routed model profiles remain experimental unless the model registry marks them stable.
 - MultiTask training and validation are implemented; task-specific multi-output prediction beyond the detection predictor remains preview functionality.
 - MoA/MoT, Latent Mixture, MoLoRA, and FewShot-LoRA do not have release-level accuracy or latency tables because matching evaluated artifacts are not stored in the repository.
 - TensorRT export remains unverified for the routed profiles listed in `docs/governance/model-registry.yaml`; component-level ONNX round trips do not imply full-model TensorRT validation.
+- No CUDA/MPS AMP multi-epoch run or real NCCL two-GPU training result is recorded in this release audit; DDP evidence is lifecycle and contract focused.
+- Core ML validation is blocked in the current macOS environment by a `coremltools`/SciPy binary loading issue.
+- Repository-wide Ruff findings remain outside the touched release surface, principally in `agent/`, `scripts/`, and legacy helper modules.
 - EsMoE-L, EsMoE-X, and v0.1-X remain pending or under evaluation.
 
 ---
 
-## 🔄 Migration guide
+<a id="migration-guide"></a>
+
+## 🔄 Migration Guide
 
 ### From v26.02 to v26.08
+
+<details>
+<summary><strong>🔧 Click to view detailed migration steps</strong></summary>
 
 > [!IMPORTANT]
 > **Breaking changes:** none are formally declared for v26.08. Existing fixed-rank LoRA calls and the documented `sparse_sahi`, `lora_auto_r_ratio`, and `moe_balance_loss` settings remain registered. Custom code that imports Ultralytics internals should still be retested against the new `8.4.101` baseline.
@@ -628,39 +829,71 @@ model.train(
 - MoLoRA merge semantics have dedicated regression tests. There is no `molora_compat` argument.
 - On macOS, the Agent runtime prefers MPS when available and no device is specified. Set `runtime.device` or disable `runtime.prefer_mps` to force CPU execution.
 
+</details>
+
 ---
 
-## 👥 Contributors
+## 🤝 Community & Contributors
 
 Thanks to every contributor who shaped this release. Commit counts below follow the audited release range and retain Git author identities as recorded.
 
-| Contributor | Commits | Focus |
+| Contributor | Recorded contribution | Focus |
 |---|---:|---|
-| **isLinXu** | 364 | Project direction, MoE architecture, DDP hardening, release integration |
-| **Hertz** | 102 | MoA/MoT integration and mixture optimization |
-| **gatilin** | 24 | Agent system and release management |
-| **13ewat3r** | 15 | MoA tests and vertical validation |
-| **kimariyb** | 15 | MoT hybrid architecture and domain LoRA |
-| **Thomas** | 13 | Project contributions across the release range |
-| **SidKC** | 12 | LoRA/V-PEFT lifecycle and routing dataset fixes |
+| **isLinXu** | 364 commits | Project direction, MoE architecture, DDP hardening, release integration |
+| **Hertz** | 102 commits | MoA/MoT integration and mixture optimization |
+| **gatilin** | 24 commits | Agent system and release management |
+| **13ewat3r** | 15 commits | MoA tests and vertical validation |
+| **kimariyb** | 15 commits | MoT hybrid architecture and domain LoRA |
+| **Thomas** | 13 commits | Project contributions across the release range |
+| **SidKC** | 12 commits | LoRA/V-PEFT lifecycle and routing dataset fixes |
+| [**skywalker-lt**](https://github.com/Tencent/YOLO-Master/pulls?q=is%3Apr+author%3Askywalker-lt+) | 9 merged PRs | Cross-platform edge deployment and reproduction workflows |
 
-Additional contributions came from [**skywalker-lt**](https://github.com/Tencent/YOLO-Master/pulls?q=is%3Apr+author%3Askywalker-lt+) for edge deployment and reproduction workflows, plus **Lfan-ke**, **vankari**, **delei-kong**, **Cooryn**, **Ricky-7-Yan**, **Zviolin**, and the wider YOLO-Master community.
+Additional contributions came from **Lfan-ke**, **vankari**, **delei-kong**, **Cooryn**, **Ricky-7-Yan**, **Zviolin**, and the wider YOLO-Master community.
 
-Special thanks to the Ultralytics team for the `8.4.101` upstream release. YOLO-Master v26.08 carries its mixture, PEFT, multi-task, and Agent extensions forward from the older `8.3.240` baseline.
-
----
-
-## 🔗 Resources
+### Community Links
 
 - [Documentation site](https://tencent.github.io/YOLO-Master/)
 - [GitHub Wiki](https://github.com/Tencent/YOLO-Master/wiki)
 - [Model Zoo](https://github.com/Tencent/YOLO-Master/tree/main/model-zoo)
 - [Discussions](https://github.com/Tencent/YOLO-Master/discussions)
-- [Issues](https://github.com/Tencent/YOLO-Master/issues)
-- [Development diff from v26.02](https://github.com/Tencent/YOLO-Master/compare/YOLO-Master-v26.02...main)
+- [Issues and feature requests](https://github.com/Tencent/YOLO-Master/issues)
+- [Development diff from v26.02](https://github.com/Tencent/YOLO-Master/compare/YOLO-Master-v26.02...v26.08)
 
-**License:** [GNU AGPL-3.0](https://github.com/Tencent/YOLO-Master/blob/main/LICENSE)<br>
-**Contact:** [gatilin@tencent.com](mailto:gatilin@tencent.com) · [islinxu@163.com](mailto:islinxu@163.com)
+---
+
+## 🙏 Acknowledgments
+
+We thank the Ultralytics team for the `8.4.101` upstream release, the research community behind MoE, LoRA, SAHI, and GShard, and every contributor, tester, and user who helped harden this release. YOLO-Master v26.08 carries its mixture, PEFT, multi-task, Agent, and deployment extensions forward from the older `8.3.240` baseline.
+
+---
+
+## 📄 License
+
+YOLO-Master is released under the [GNU Affero General Public License v3.0](https://github.com/Tencent/YOLO-Master/blob/main/LICENSE). Commercial use may require a separate Ultralytics license.
+
+---
+
+## 📞 Contact & Support
+
+- **Issues:** [GitHub Issues](https://github.com/Tencent/YOLO-Master/issues)
+- **Discussions:** [GitHub Discussions](https://github.com/Tencent/YOLO-Master/discussions)
+- **Email:** [gatilin@tencent.com](mailto:gatilin@tencent.com) · [islinxu@163.com](mailto:islinxu@163.com)
+
+---
+
+<div align="center">
+
+### 🌟 Star History
+
+[![GitHub Stars](https://img.shields.io/github/stars/Tencent/YOLO-Master?style=for-the-badge&logo=github&label=YOLO-Master%20Stars)](https://star-history.com/#Tencent/YOLO-Master&Date)
+
+[View the complete star history](https://star-history.com/#Tencent/YOLO-Master&Date)
+
+**Made with ❤️ by the YOLO-Master Team**
+
+<p><a href="#top">Back to top ↑</a></p>
+
+</div>
 
 ---
 

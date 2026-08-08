@@ -262,20 +262,23 @@ MIXTURE_FLOAT_KEYS = frozenset(
         "sigma",
     }
 )
-CFG_FLOAT_KEYS = frozenset(
-    {  # integer or float arguments, i.e. x=2 and x=2.0
-        "warmup_epochs",
-        "box",
-        "cls",
-        "dfl",
-        "dis",
-        "degrees",
-        "shear",
-        "time",
-        "workspace",
-        "batch",
-    }
-) | MIXTURE_FLOAT_KEYS
+CFG_FLOAT_KEYS = (
+    frozenset(
+        {  # integer or float arguments, i.e. x=2 and x=2.0
+            "warmup_epochs",
+            "box",
+            "cls",
+            "dfl",
+            "dis",
+            "degrees",
+            "shear",
+            "time",
+            "workspace",
+            "batch",
+        }
+    )
+    | MIXTURE_FLOAT_KEYS
+)
 CFG_FRACTION_KEYS = frozenset(
     {  # fractional floats use [0.0, 1.0], except dataset fraction uses (0.0, 1.0]
         "dropout",
@@ -342,21 +345,24 @@ MIXTURE_INT_KEYS = frozenset(
         "slice_size",
     }
 )
-CFG_INT_KEYS = frozenset(
-    {  # integer-only arguments
-        "epochs",
-        "patience",
-        "workers",
-        "seed",
-        "close_mosaic",
-        "mask_ratio",
-        "max_det",
-        "vid_stride",
-        "line_width",
-        "nbs",
-        "save_period",
-    }
-) | MIXTURE_INT_KEYS
+CFG_INT_KEYS = (
+    frozenset(
+        {  # integer-only arguments
+            "epochs",
+            "patience",
+            "workers",
+            "seed",
+            "close_mosaic",
+            "mask_ratio",
+            "max_det",
+            "vid_stride",
+            "line_width",
+            "nbs",
+            "save_period",
+        }
+    )
+    | MIXTURE_INT_KEYS
+)
 CFG_INT_MIN = {  # minimum valid values for integer arguments used as divisors, sizes or seeds
     "nbs": 1,
     "max_det": 1,
@@ -411,43 +417,46 @@ MIXTURE_BOOL_KEYS = frozenset(
         "weighted",
     }
 )
-CFG_BOOL_KEYS = frozenset(
-    {  # boolean-only arguments
-        "save",
-        "exist_ok",
-        "verbose",
-        "deterministic",
-        "single_cls",
-        "rect",
-        "cos_lr",
-        "overlap_mask",
-        "val",
-        "save_json",
-        "dnn",
-        "plots",
-        "show",
-        "save_txt",
-        "save_conf",
-        "save_crop",
-        "save_frames",
-        "show_labels",
-        "show_conf",
-        "visualize",
-        "augment",
-        "agnostic_nms",
-        "retina_masks",
-        "show_boxes",
-        "keras",
-        "optimize",
-        "dynamic",
-        "simplify",
-        "nms",
-        "pre_export_prune",
-        "profile",
-        "end2end",
-        "cls_remap",
-    }
-) | MIXTURE_BOOL_KEYS
+CFG_BOOL_KEYS = (
+    frozenset(
+        {  # boolean-only arguments
+            "save",
+            "exist_ok",
+            "verbose",
+            "deterministic",
+            "single_cls",
+            "rect",
+            "cos_lr",
+            "overlap_mask",
+            "val",
+            "save_json",
+            "dnn",
+            "plots",
+            "show",
+            "save_txt",
+            "save_conf",
+            "save_crop",
+            "save_frames",
+            "show_labels",
+            "show_conf",
+            "visualize",
+            "augment",
+            "agnostic_nms",
+            "retina_masks",
+            "show_boxes",
+            "keras",
+            "optimize",
+            "dynamic",
+            "simplify",
+            "nms",
+            "pre_export_prune",
+            "profile",
+            "end2end",
+            "cls_remap",
+        }
+    )
+    | MIXTURE_BOOL_KEYS
+)
 MIXTURE_STR_KEYS = frozenset(
     {
         "iou_type",
@@ -468,6 +477,7 @@ MIXTURE_STR_KEYS = frozenset(
     }
 )
 CFG_STR_KEYS = frozenset({"optimizer", "split", "copy_paste_mode", "auto_augment"}) | MIXTURE_STR_KEYS
+CFG_DICT_KEYS = frozenset({"multitask_task_weights"})
 LORA_RUNTIME_METADATA_KEYS = frozenset(
     {
         "effective_lora_backend",
@@ -611,7 +621,15 @@ def check_cfg(cfg: dict, hard: bool = True) -> None:
         - None values are ignored as they may be from optional arguments.
         - Fraction keys use [0.0, 1.0], except dataset fraction, which uses (0.0, 1.0].
     """
-    typed_keys = CFG_FLOAT_KEYS | CFG_FRACTION_KEYS | CFG_INT_KEYS | CFG_BOOL_KEYS | CFG_STR_KEYS | {"scale", "compile"}
+    typed_keys = (
+        CFG_FLOAT_KEYS
+        | CFG_FRACTION_KEYS
+        | CFG_INT_KEYS
+        | CFG_BOOL_KEYS
+        | CFG_STR_KEYS
+        | CFG_DICT_KEYS
+        | {"scale", "compile"}
+    )
     for k, v in cfg.items():
         if v is None and DEFAULT_CFG_DICT.get(k) is not None and k in typed_keys and k != "auto_augment":
             raise TypeError(f"'{k}=None' is invalid. '{k}' must not be None.")
@@ -663,9 +681,7 @@ def check_cfg(cfg: dict, hard: bool = True) -> None:
                     raise ValueError(f"'{k}={v}' is an invalid value. '{k}' must be >= {CFG_INT_MIN[k]}.")
             elif k == "lora_init_lora_weights" and not isinstance(v, (bool, str)):
                 if hard:
-                    raise TypeError(
-                        f"'{k}={v}' is of invalid type {type(v).__name__}. '{k}' must be a bool or str."
-                    )
+                    raise TypeError(f"'{k}={v}' is of invalid type {type(v).__name__}. '{k}' must be a bool or str.")
                 cfg[k] = bool(v)
             elif k in CFG_BOOL_KEYS and not isinstance(v, bool):
                 if hard:
@@ -678,6 +694,10 @@ def check_cfg(cfg: dict, hard: bool = True) -> None:
                 if hard:
                     raise TypeError(f"'{k}={v}' is of invalid type {type(v).__name__}. '{k}' must be a str.")
                 cfg[k] = str(v)
+            elif k in CFG_DICT_KEYS and not isinstance(v, dict):
+                if hard:
+                    raise TypeError(f"'{k}={v}' is of invalid type {type(v).__name__}. '{k}' must be a dict.")
+                cfg[k] = dict(v)
             elif k == "compile" and not isinstance(v, (bool, str)):  # False=off, True="default", or a mode string
                 if hard:
                     raise TypeError(
