@@ -32,7 +32,7 @@ All notable changes to YOLO-Master are documented in this file.
 ## 🌟 Overview
 
 > [!IMPORTANT]
-> v26.08 is the cumulative source release after `YOLO-Master-v26.02`. It upgrades the Ultralytics baseline from `8.3.240` to `8.4.101`, keeps mixture and PEFT work additive to native YOLO26 behavior, and turns several formerly independent research paths into governed, testable execution surfaces. The annotated Git tag `v26.08` identifies the exact release commit. Published metrics below are limited to artifacts stored in the repository's model catalog or deployment reports.
+> v26.08 is the cumulative source release after `YOLO-Master-v26.02`. It upgrades the Ultralytics baseline from `8.3.240` to `8.4.101`, keeps mixture and PEFT work additive to native YOLO26 behavior, and turns several formerly independent research paths into governed, testable execution surfaces. The annotated Git tag `YOLO-Master-v26.08` identifies the exact release commit. Published metrics below are limited to artifacts stored in the repository's model catalog or deployment reports.
 
 <p align="center">
   <img width="100%" alt="YOLO-Master v2026.08 release overview: MultiTask, Shared Expert MoE, MoA and MoT, PEFT Planner, MoLoRA, Latent Mixture, and edge deployment" src="https://github.com/user-attachments/assets/0d3b951b-bc83-4a81-9865-9fb40370a912" /><br>
@@ -43,9 +43,9 @@ All notable changes to YOLO-Master are documented in this file.
 
 | | |
 |---|---|
-| **Release range** | `YOLO-Master-v26.02...v26.08` |
-| **Audited history** | 634 commits total: 514 non-merge commits and 120 merge commits |
-| **Change surface** | 3,353 files changed: 981,877 additions and 23,747 deletions |
+| **Release range** | `YOLO-Master-v26.02...YOLO-Master-v26.08` |
+| **Audited history** | 635 commits total: 515 non-merge commits and 120 merge commits |
+| **Change surface** | 3,353 files changed: 981,934 additions and 23,747 deletions |
 | **Upstream upgrade** | Ultralytics `8.3.240` → `8.4.101` |
 | **Native model family** | YOLO26 detect · segment · semantic · pose · OBB · classify · YOLOE |
 | **Release freeze gate** | 201 passed · 1 xfailed (documented mixture/P0-P2 command) |
@@ -56,13 +56,13 @@ All notable changes to YOLO-Master are documented in this file.
 
 | Artifact | Canonical value |
 |---|---|
-| **YOLO-Master source tag** | `v26.08` |
-| **Tag target commit** | `1dc71f1da20424a10ebe186e16a7296528756643` |
+| **YOLO-Master source tag** | `YOLO-Master-v26.08` |
+| **Tag target commit** | Resolve the annotated tag with `git rev-parse YOLO-Master-v26.08^{}` |
 | **Underlying Python package** | `ultralytics==8.4.101` |
 | **Published assets** | `ultralytics-8.4.101-py3-none-any.whl` · `ultralytics-8.4.101.tar.gz` |
 | **Historical comparison tag** | `YOLO-Master-v26.02` (`6bed010e3b0f67efbb735470b8c6e3cca65e4e33`) |
 
-The source tag names the YOLO-Master release; it is not a second Python package version. Consumers should resolve the package version from `ultralytics.__version__`, while release provenance and source diffs should resolve through the Git tag and target commit above.
+The source tag names the YOLO-Master release; it is not a second Python package version. Consumers should resolve the package version from `ultralytics.__version__`, while release provenance and source diffs should resolve through `YOLO-Master-v26.08` and its annotated target commit.
 
 ### Why upgrade
 
@@ -71,9 +71,9 @@ The source tag names the YOLO-Master release; it is not a second Python package 
 - **More adaptation paths:** choose fixed-rank LoRA, the architecture-conditioned PEFT Planner, FewShot-LoRA, or routed MoLoRA adapters.
 - **Deployment beyond Python:** package models for Windows, Linux, Jetson, and macOS through ONNX Runtime, NCNN, MNN, TensorRT, and Core ML workflows.
 
-[Evolution](#version-evolution) · [Highlights](#key-highlights) · [Quick Start](#quick-start) · [Architecture](#architecture-at-a-glance) · [New Features](#new-features) · [Usage Examples](#usage-examples) · [Model Zoo](#model-zoo-benchmarks) · [Validation](#validation) · [Migration](#migration-guide) · [Development diff](https://github.com/Tencent/YOLO-Master/compare/YOLO-Master-v26.02...v26.08)
+[Evolution](#version-evolution) · [Highlights](#key-highlights) · [Quick Start](#quick-start) · [Architecture](#architecture-at-a-glance) · [New Features](#new-features) · [Usage Examples](#usage-examples) · [Model Zoo](#model-zoo-benchmarks) · [Validation](#validation) · [Migration](#migration-guide) · [Development diff](https://github.com/Tencent/YOLO-Master/compare/YOLO-Master-v26.02...YOLO-Master-v26.08)
 
-> **Canonical release notes:** [`docs/release-notes/v26.08.md`](https://github.com/Tencent/YOLO-Master/blob/v26.08/docs/release-notes/v26.08.md) contains the current P0-P2 hardening summary, validation evidence, migration steps, and known limitations. The Python package identity remains `ultralytics==8.4.101`; `v26.08` is the YOLO-Master source release tag.
+> **Canonical release notes:** [`docs/release-notes/v26.08.md`](https://github.com/Tencent/YOLO-Master/blob/YOLO-Master-v26.08/docs/release-notes/v26.08.md) contains the current P0-P2 hardening summary, validation evidence, migration steps, and known limitations. The Python package identity remains `ultralytics==8.4.101`; `YOLO-Master-v26.08` is the YOLO-Master source release tag.
 
 ---
 
@@ -607,7 +607,7 @@ The following corrections are verified by focused build, forward, serialization,
 | P1 | Latent Mixture | Named YAML configuration, checkpoint provenance, value-fusion selection, and an optional calibration gate for sparse eager inference prevent parser/config drift. |
 | P2 | PEFT and observability | MoLoRA fallback adapters round-trip through save/load and routing snapshots expose stable diagnostics for integration work. |
 
-For the implementation-to-evidence mapping and remaining audit items, see [`docs/release-notes/v26.08.md`](https://github.com/Tencent/YOLO-Master/blob/v26.08/docs/release-notes/v26.08.md).
+For the implementation-to-evidence mapping and remaining audit items, see [`docs/release-notes/v26.08.md`](https://github.com/Tencent/YOLO-Master/blob/YOLO-Master-v26.08/docs/release-notes/v26.08.md).
 
 ---
 
@@ -914,7 +914,7 @@ Additional contributions came from **Lfan-ke**, **vankari**, **delei-kong**, **C
 - [Model Zoo](https://github.com/Tencent/YOLO-Master/tree/main/model-zoo)
 - [Discussions](https://github.com/Tencent/YOLO-Master/discussions)
 - [Issues and feature requests](https://github.com/Tencent/YOLO-Master/issues)
-- [Development diff from v26.02](https://github.com/Tencent/YOLO-Master/compare/YOLO-Master-v26.02...v26.08)
+- [Development diff from v26.02](https://github.com/Tencent/YOLO-Master/compare/YOLO-Master-v26.02...YOLO-Master-v26.08)
 
 ---
 
