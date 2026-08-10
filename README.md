@@ -3,7 +3,8 @@
 <p align="center">
   <a href="https://huggingface.co/spaces/gatilin/YOLO-Master-WebUI-Demo"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-blue" alt="Hugging Face Spaces"></a>
   <a href="https://colab.research.google.com/drive/1gTKkCsE4sXIOWpu1cdNBjdFHEahBoZD0?usp=sharing"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a>
-  <a href="https://arxiv.org/abs/2512.23273"><img src="https://img.shields.io/badge/arXiv-2512.23273-b31b1b.svg" alt="arXiv"></a>
+  <a href="https://arxiv.org/abs/2512.23273"><img src="https://img.shields.io/badge/arXiv-2512.23273-b31b1b.svg" alt="arXiv: YOLO-Master"></a>
+  <a href="https://arxiv.org/abs/2608.07051"><img src="https://img.shields.io/badge/arXiv-2608.07051-b31b1b.svg" alt="arXiv: YOLO-PEFT"></a>
   <a href="#-citation"><img src="https://img.shields.io/badge/CVPR-2026-6420AA.svg" alt="CVPR 2026"></a>
   <a href="https://github.com/Tencent/YOLO-Master/releases/tag/YOLO-Master-v26.08"><img src="https://img.shields.io/badge/%F0%9F%93%A6-YOLO--Master--v26.08%20Release-orange" alt="YOLO-Master v26.08 release"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-AGPL%203.0-blue.svg" alt="AGPL 3.0"></a>
@@ -11,7 +12,7 @@
 </p>
 
 <p align="center">
-  <b>YOLO-Master: <u>M</u>OE-<u>A</u>ccelerated with <u>S</u>pecialized <u>T</u>ransformers for <u>E</u>nhanced <u>R</u>eal-time Detection.</b>
+  <b>YOLO-Master: A <u>R</u>outed Real-Time <u>V</u>ision Framework.<br>Learn what to compute, where, how, and for which task.</b>
 </p>
 
 <p align="center">
@@ -39,14 +40,15 @@
   align="left"
 />
 
-`YOLO-Master` is a YOLO-style framework tailored for **Real-Time Object Detection (RTOD)**. It marks the first deep integration of **Mixture-of-Experts (MoE)** into the YOLO architecture for general datasets. By leveraging **Efficient Sparse MoE (ES-MoE)** and lightweight **Dynamic Routing**, the framework achieves **instance-conditional adaptive computation**. This "compute-on-demand" paradigm allows the model to allocate FLOPs based on scene complexity, reaching a superior Pareto frontier between high precision and ultra-low latency.
+`YOLO-Master` is a **routed real-time vision framework** that extends YOLO beyond static dense computation. Instead of applying the same computation to every input, YOLO-Master routes through three axes — **Architecture** (which expert computes), **Adaptation** (which parameters learn), and **Task** (which branch activates). Built on Ultralytics 8.4.101 / YOLO26, it integrates ES-MoE, MoA, MoT, Latent Mixture, MoLoRA, PEFT Planner, and MultiTask learning under a shared routing protocol with production-grade hardening.
 
 **Key Highlights:**
-- **Methodological Innovation (ES-MoE + Dynamic Routing)**: Utilizes dynamic routing networks to guide expert specialization during training and activates only the most relevant experts during inference, significantly reducing redundant computation while boosting detection performance.
-- **Performance Validated (Accuracy × Latency)**: On MS COCO, YOLO-Master-N achieves **42.4% AP @ 1.62ms latency**, outperforming YOLOv13-N with a **+0.8% mAP gain while being 17.8% faster**.
-- **Compute-on-Demand Intuition**: Transitions from "static dense computation" to "input-adaptive compute allocation," yielding more pronounced gains in dense or challenging scenarios.
-- **Out-of-the-Box Pipeline**: Provides a complete end-to-end workflow including installation, validation, training, inference, and deployment (ONNX, TensorRT, etc.).
-- **Continuous Engineering Evolution**: Includes advanced utilities such as MoE pruning and diagnostic tools (`diagnose_model` / `prune_moe_model`), CW-NMS, and Sparse SAHI inference modes.
+- **Routed Architecture** — ES-MoE (sparse expert dispatch), MoA (routed attention heads), MoT (routed transformer experts), Latent Mixture (dense latent routing) — all sharing a unified auxiliary-loss protocol, temperature scheduling, and diagnostics.
+- **Routed Adaptation** — Standard LoRA, PEFT Planner (architecture-conditioned placement with V-PEFT solvers), MoLoRA (routed adapter experts with Top-K dispatch), FewShot-LoRA (scheduled DropConnect).
+- **Routed Tasks** — MultiTask learning with TaskRouter: detect, segment, and pose from a shared backbone; partial-label masks, resumable sampling.
+- **Edge Deployment** — ONNX Runtime, NCNN, MNN, TensorRT, Core ML across Windows / Linux / Jetson / macOS, with export preflight governance.
+- **Performance Validated** — On MS COCO, YOLO-Master-N achieves **42.4% AP @ 1.62ms latency**, outperforming YOLOv13-N with a **+0.8% mAP gain while being 17.8% faster**.
+- **Production Hardening** — P0-P2 lifecycle: NaN recovery, AMP-safe sparse dispatch, DDP checkpoint coordination, EMA synchronization, export capability matrix.
 
 <br clear="left" />
 
@@ -56,11 +58,11 @@
 
 > **"Exploring the frontiers of Dynamic Intelligence in YOLO."**
 
-This work represents our passionate exploration into the evolution of Real-Time Object Detection (RTOD). To the best of our knowledge, **YOLO-Master is the first work to deeply integrate Mixture-of-Experts (MoE) with the YOLO architecture on general-purpose datasets.**
+YOLO-Master began as the first deep integration of Mixture-of-Experts (MoE) into the YOLO architecture on general-purpose datasets. **v26.08 evolves this from an MoE detector into a routed real-time vision framework** — learning not only *what* to see, but *where*, *how*, and *for which task* to compute.
 
-Most existing YOLO models rely on static, dense computation—allocating the same computational budget to a simple sky background as they do to a complex, crowded intersection. We believe detection models should be more "adaptive", much like the human visual system. While this initial exploration may be not perfect, it demonstrates the significant potential of **Efficient Sparse MoE (ES-MoE)** in balancing high precision with ultra-low latency. We are committed to continuous iteration and optimization to refine this approach further.
+Most existing YOLO models rely on static, dense computation — allocating the same computational budget to a simple sky background as they do to a complex, crowded intersection. We believe detection models should be more "adaptive", much like the human visual system. While this exploration may not be perfect, it demonstrates the significant potential of **routed computation** in balancing high precision with ultra-low latency. We are committed to continuous iteration and optimization.
 
-Looking forward, we draw inspiration from the transformative advancements in LLMs and VLMs. We are committed to refining this approach and extending these insights to fundamental vision tasks, with the ultimate goal of tackling more ambitious frontiers like Open-Vocabulary Detection and Open-Set Segmentation.
+Looking forward, we draw inspiration from the transformative advancements in LLMs and VLMs. We are extending these insights to fundamental vision tasks, with the ultimate goal of tackling more ambitious frontiers like Open-Vocabulary Detection and Open-Set Segmentation.
 
 <details>
   <summary>
@@ -79,7 +81,7 @@ Comprehensive experiments on five large-scale benchmarks demonstrate the superio
 
 <div align="center">
   <img width="90%" alt="YOLO-Master Architecture" src="https://github.com/user-attachments/assets/6caa1065-af77-4f77-8faf-7551c013dacd" />
-  <p><i>YOLO-Master introduces ES-MoE blocks to achieve "compute-on-demand" via dynamic routing.</i></p>
+  <p><i>YOLO-Master v26.08: a routed real-time vision framework. Three routing axes — Architecture, Adaptation, Task — share a unified routing protocol for auxiliary losses, temperature scheduling, and diagnostics.</i></p>
 </div>
 
 ### 📚 In-Depth Documentation
@@ -92,7 +94,7 @@ For a deep dive into the design philosophy of MoE modules, detailed routing mech
 - [A Humble Beginning](#-a-humble-beginning-introduction)
 - [Architecture](#-architecture)
 - [Updates](#-updates-latest-first)
-- [New Features (v2026.02)](#-new-features-v202602)
+- [New Features (v26.08)](#-new-features-v2608)
   - [Mixture of Experts (MoE)](#1%EF%B8%8F⃣-mixture-of-experts-moe-support)
   - [LoRA Fine-Tuning](#2%EF%B8%8F⃣-lora-support---parameter-efficient-fine-tuning)
   - [Sparse SAHI](#3%EF%B8%8F⃣-sparse-sahi-mode)
@@ -117,12 +119,14 @@ For a deep dive into the design philosophy of MoE modules, detailed routing mech
 - [Community & Contributing](#-community--contributing)
 - [License](#-license)
 - [Acknowledgements](#-acknowledgements)
+- [Paper](#-paper)
 - [Citation](#-citation)
 
 
 
 ## 🚀 Updates (Latest First)
 
+- **2026-08-08**: 🔀🚀 **[YOLO-Master v26.08 Released](https://github.com/Tencent/YOLO-Master/releases/tag/YOLO-Master-v26.08)** — Routed Vision Framework. Ultralytics 8.4.101 / YOLO26 rebase, Shared Expert MoE, MoA + MoT routing, Latent Mixture, MultiTask (detect / segment / pose), PEFT Planner / MoLoRA / FewShot-LoRA, shared routing protocol, export governance, P0-P2 lifecycle hardening. 377 passed · 1 xfailed release gate.
 - **2026-06-29**: 🤖✅ **Agent Skill System Validation Complete** — Full end-to-end validation of `yolo-master-agent` Skill with 50/50 test cases passing across 8 suites (quick / fast-smoke / cli-smoke / dry-run / contract / deep-smoke / extended / all). Fixed `AttributeError` from missing `end2end` field in `default.yaml`. Verified complete training → validation → inference pipeline with MPS auto-selection and workers=0 auto-completion. Skill runners: `yolo.train`, `yolo.val`, `yolo.predict`, `yolo.benchmark`, `yolo.export`, `yolo.lora.diagnose`, `yolo.eval.peft_compare`, `yolo.multimodal.infer`, `yolo.system.doctor`.
 - **2026-06-29**: 🦏🏆 **Selected for Tencent Rhino Bird Open Source Program 2026** — YOLO-Master has been officially selected for the [Tencent Rhino Bird Open Source Program](https://opensource.tencent.com/summer-of-code/) (Summer of Code 2026). This program aims to cultivate outstanding open-source talents and promote the prosperity and development of the open-source community. YOLO-Master will receive continuous support from the Tencent Open Source Fund, including mentorship, resource allocation, and community promotion, to further advance the integration of dynamic intelligence and MoE architecture in real-time object detection.
 - **2026-06-28**: 🔀 **MoA + MoT Integration** — Mixture-of-Attention (MoA) and Mixture-of-Transformers (MoT) modules merged into main with regression tests. **MoA**: lightweight router assigns tokens to attention heads with different receptive fields (Local / Regional / Global). **MoT**: content-aware router assigns tokens to distinct Transformer experts (LocalConvTransformer / WindowTransformer / DeformableTransformer) with soft Top-K blending and optional load-balancing aux loss. New model configs added under `ultralytics/cfg/models/master/v0_1/`.
@@ -149,7 +153,7 @@ For a deep dive into the design philosophy of MoE modules, detailed routing mech
 - **2025/12/30**: arXiv paper published.
 
 
-## 🔥 New Features (v2026.02)
+## 🔥 New Features (v26.08)
 
 ### 1️⃣ Mixture of Experts (MoE) Support
 
@@ -557,15 +561,15 @@ python agent/scripts/run_yolo_master_skill.py \
   <img width="45%" alt="Model Performance 4" src="https://github.com/user-attachments/assets/9f17ac3e-f839-4950-8661-76a5d4714443" />
 </div>
 
-> Pretrained `.pt` weights are synced from the [YOLO-Master-v26.02 release](https://github.com/Tencent/YOLO-Master/releases/tag/YOLO-Master-v26.02).
+> Pretrained `.pt` weights are hosted on [Hugging Face 🤗](https://huggingface.co/gatilin) and synced from the [YOLO-Master-v26.08 release](https://github.com/Tencent/YOLO-Master/releases/tag/YOLO-Master-v26.08).
 
-[esomoe-n-weights]: https://github.com/Tencent/YOLO-Master/releases/download/YOLO-Master-v26.02/YOLO-Master-EsMoE-N.pt
-[esomoe-s-weights]: https://github.com/Tencent/YOLO-Master/releases/download/YOLO-Master-v26.02/YOLO-Master-EsMoE-S.pt
-[esomoe-m-weights]: https://github.com/Tencent/YOLO-Master/releases/download/YOLO-Master-v26.02/YOLO-Master-EsMoE-M.pt
-[v01-n-weights]: https://github.com/Tencent/YOLO-Master/releases/download/YOLO-Master-v26.02/YOLO-Master-v0.1-N.pt
-[v01-s-weights]: https://github.com/Tencent/YOLO-Master/releases/download/YOLO-Master-v26.02/YOLO-Master-v0.1-S.pt
-[v01-m-weights]: https://github.com/Tencent/YOLO-Master/releases/download/YOLO-Master-v26.02/YOLO-Master-v0.1-M.pt
-[v01-l-weights]: https://github.com/Tencent/YOLO-Master/releases/download/YOLO-Master-v26.02/YOLO-Master-v0.1-L.pt
+[esomoe-n-weights]: https://huggingface.co/gatilin/YOLO-Master-ckpts-v0/resolve/main/YOLO-Master-EsMoE-N/YOLO-Master-EsMoE-N.pt?download=true
+[esomoe-s-weights]: https://huggingface.co/gatilin/YOLO-Master-ckpts-v0/resolve/main/YOLO-Master-EsMoE-S/YOLO-Master-EsMoE-S.pt?download=true
+[esomoe-m-weights]: https://huggingface.co/gatilin/YOLO-Master-ckpts-v0/resolve/main/YOLO-Master-EsMoE-M/YOLO-Master-EsMoE-M.pt?download=true
+[v01-n-weights]: https://huggingface.co/gatilin/YOLO-Master-ckpts-v0_1/resolve/main/YOLO-Master-v0.1-N/YOLO-Master-v0.1-N.pt?download=true
+[v01-s-weights]: https://huggingface.co/gatilin/YOLO-Master-ckpts-v0_1/resolve/main/YOLO-Master-v0.1-S/YOLO-Master-v0.1-S.pt?download=true
+[v01-m-weights]: https://huggingface.co/gatilin/YOLO-Master-ckpts-v0_1/resolve/main/YOLO-Master-v0.1-M/YOLO-Master-v0.1-M.pt?download=true
+[v01-l-weights]: https://huggingface.co/gatilin/YOLO-Master-ckpts-v0_1/resolve/main/YOLO-Master-v0.1-L/YOLO-Master-v0.1-L.pt?download=true
 
 ### YOLO-Master-EsMoE Series
 
@@ -725,16 +729,58 @@ This project is licensed under the [GNU Affero General Public License v3.0 (AGPL
 
 This work builds upon the excellent [Ultralytics](https://github.com/ultralytics/ultralytics) framework. Huge thanks to the community for contributions, deployments, and tutorials!
 
+## 📄 Paper
+
+**YOLO-Master: MOE-Accelerated with Specialized Transformers for Enhanced Real-time Detection**
+
+Xu Lin<sup>1*</sup>, Jinlong Peng<sup>1*</sup>, Zhenye Gan<sup>1</sup>, Jiawen Zhu<sup>2</sup>, Jun Liu<sup>1</sup>
+
+<sup>1</sup> Tencent Youtu Lab &nbsp;&nbsp; <sup>2</sup> Singapore Management University &nbsp;&nbsp; <sup>*</sup> Equal Contribution
+
+- **Venue:** IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR 2026)
+- **arXiv:** [2512.23273](https://arxiv.org/abs/2512.23273)
+- **DOI:** [10.48550/arXiv.2512.23273](https://doi.org/10.48550/arXiv.2512.23273)
+
+**Abstract.** Existing Real-Time Object Detection (RTOD) methods commonly adopt YOLO-like architectures for their favorable trade-off between accuracy and speed. However, these models rely on static dense computation that applies uniform processing to all inputs, misallocating representational capacity and computational resources such as over-allocating on trivial scenes while under-serving complex ones. This mismatch results in both computational redundancy and suboptimal detection performance. To overcome this limitation, we propose YOLO-Master, a novel YOLO-like framework that introduces instance-conditional adaptive computation for RTOD. This is achieved through an Efficient Sparse Mixture-of-Experts (ES-MoE) block that dynamically allocates computational resources to each input according to its scene complexity. At its core, a lightweight dynamic routing network guides expert specialization during training through a diversity enhancing objective, encouraging complementary expertise among experts. Additionally, the routing network adaptively learns to activate only the most relevant experts, thereby improving detection performance while minimizing computational overhead during inference. Comprehensive experiments on five large-scale benchmarks demonstrate the superiority of YOLO-Master. On MS COCO, our model achieves 42.4% AP with 1.62ms latency, outperforming YOLOv13-N by +0.8% mAP and 17.8% faster inference. Notably, the gains are most pronounced on challenging dense scenes, while the model preserves efficiency on typical inputs and maintains real-time inference speed.
+
+---
+
+**YOLO-PEFT: Parameter-Efficient Fine-Tuning on YOLO Family**
+
+Xu Lin<sup>1</sup>, WenJie Nie<sup>1</sup>, Jinlong Peng<sup>1</sup>, Weifu Fu<sup>1</sup>, YueXiao Ma<sup>1</sup>, Xiawu Zheng<sup>1</sup>, Yong Liu<sup>1</sup>
+
+<sup>1</sup> Tencent Youtu Lab
+
+- **arXiv:** [2608.07051](https://arxiv.org/abs/2608.07051)
+- **DOI:** [10.48550/arXiv.2608.07051](https://doi.org/10.48550/arXiv.2608.07051)
+
+**Abstract.** Generic parameter-efficient fine-tuning (PEFT) methods transferred from language models can fail silently on real-time detectors, whose heterogeneous operators and detection-specific components impose placement constraints absent from regular Transformer stacks. We propose YOLO-PEFT, a structure-aware framework that formulates adapter placement as an auditable constraint-planning problem. Given a detector graph, a PEFT request, and a resource budget, YOLO-PEFT assigns operator and semantic roles, evaluates explicit operator-validity, detector-semantic, graph-interface, and deployment predicates, records a reason code for each excluded module, and either emits a budgeted target-module plan or returns Refuse before training. Under the official VOC07+12 trainval-to-VOC07 test protocol, planner-selected RS-LoRA reaches 0.7138 and 0.7307 mAP50-95 on YOLO11s and YOLO12s, respectively, compared with 0.6428 and 0.6662 for Full-SFT. On RT-DETR-L, all seven evaluated LoRA-family configurations cross the predefined catastrophic threshold, supporting a calibrated Refuse-to-Full-SFT decision within the evaluated coverage. A controlled YOLO11 audit further shows that LoRA reduces peak training memory by 43.9 percent, although training takes 1.72 times longer. Within the evaluated detector families, placement policies, and calibration coverage, YOLO-PEFT replaces manual target-module trial and error with explicit, inspectable planning while preserving verified train-save-merge-export paths; refusal on unseen detector architectures remains an open validation problem.
+
 ## 📝 Citation
 
-If you use YOLO-Master in your research, please cite our paper:
+If you use YOLO-Master in your research, please cite our papers:
 
 ```bibtex
 @inproceedings{lin2026yolomaster,
-  title={{YOLO-Master}: MOE-Accelerated with Specialized Transformers for Enhanced Real-time Detection},
-  author={Lin, Xu and Peng, Jinlong and Gan, Zhenye and Zhu, Jiawen and Liu, Jun},
-  booktitle={Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
-  year={2026}
+  title        = {{YOLO-Master}: {MOE}-Accelerated with Specialized Transformers for Enhanced Real-time Detection},
+  author       = {Lin, Xu and Peng, Jinlong and Gan, Zhenye and Zhu, Jiawen and Liu, Jun},
+  booktitle    = {Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
+  year         = {2026},
+  doi          = {10.48550/arXiv.2512.23273},
+  eprint       = {2512.23273},
+  archivePrefix = {arXiv},
+}
+```
+
+```bibtex
+@article{lin2026yolopeft,
+  title        = {{YOLO-PEFT}: Parameter-Efficient Fine-Tuning on {YOLO} Family},
+  author       = {Lin, Xu and Nie, WenJie and Peng, Jinlong and Fu, Weifu and Ma, YueXiao and Zheng, Xiawu and Liu, Yong},
+  year         = {2026},
+  doi          = {10.48550/arXiv.2608.07051},
+  eprint       = {2608.07051},
+  archivePrefix = {arXiv},
+  primaryClass = {cs.CV},
 }
 ```
 
