@@ -54,6 +54,7 @@ class BaseTransform:
         labels = self.apply_image(labels, params)
         labels = self.apply_instances(labels, params)
         labels = self.apply_semantic(labels, params)
+        labels = self.apply_dense(labels, params)
         return labels
 
     def get_params(self, labels):
@@ -103,6 +104,15 @@ class BaseTransform:
 
         Returns:
             (dict): Updated labels dictionary.
+        """
+        return labels
+
+    def apply_dense(self, labels, params=None):
+        """Apply a spatial transform to optional dense regression targets.
+
+        Dense multi-task samples use ``depth``/``depth_valid`` and
+        ``normal``/``normal_valid``. Keeping this hook separate from
+        ``semantic_mask`` preserves nearest-neighbour class-map semantics.
         """
         return labels
 
@@ -1355,6 +1365,27 @@ class RandomPerspective(BaseTransform):
         labels["semantic_mask"] = mask
         return labels
 
+    def apply_dense(self, labels: dict[str, Any], params: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Apply the sampled affine matrix to dense depth and normal targets."""
+        M = params["M"]
+        size = params["size"]
+        for key, interpolation, border_value in (
+            ("depth", cv2.INTER_LINEAR, 0),
+            ("depth_valid", cv2.INTER_NEAREST, 0),
+            ("normal", cv2.INTER_LINEAR, 0),
+            ("normal_valid", cv2.INTER_NEAREST, 0),
+            ("panoptic_mask", cv2.INTER_NEAREST, 0),
+        ):
+            value = labels.get(key)
+            if value is None:
+                continue
+            if self.perspective:
+                value = cv2.warpPerspective(value, M, dsize=size, flags=interpolation, borderValue=border_value)
+            else:
+                value = cv2.warpAffine(value, M[:2], dsize=size, flags=interpolation, borderValue=border_value)
+            labels[key] = value
+        return labels
+
     @staticmethod
     def box_candidates(
         box1: np.ndarray,
@@ -1601,6 +1632,16 @@ class RandomFlip(BaseTransform):
                 labels["semantic_mask"] = np.ascontiguousarray(np.fliplr(labels["semantic_mask"]))
         return labels
 
+    def apply_dense(self, labels: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+        """Flip dense multi-task targets with the image."""
+        if not params["flip"]:
+            return labels
+        flip = np.flipud if params["direction"] == "vertical" else np.fliplr
+        for key in ("depth", "depth_valid", "normal", "normal_valid", "panoptic_mask"):
+            if labels.get(key) is not None:
+                labels[key] = np.ascontiguousarray(flip(labels[key]))
+        return labels
+
 
 class LetterBox(BaseTransform):
     """Resize image and padding for detection, instance segmentation, pose.
@@ -1693,6 +1734,7 @@ class LetterBox(BaseTransform):
         if not return_image_only:
             labels = self.apply_instances(labels, params)
         labels = self.apply_semantic(labels, params)
+        labels = self.apply_dense(labels, params)
         if return_image_only:
             return labels["img"]
         return labels
@@ -1802,6 +1844,27 @@ class LetterBox(BaseTransform):
         left, right = params["left"], params["right"]
         mask = cv2.copyMakeBorder(mask, top, bottom, left, right, cv2.BORDER_CONSTANT, value=255)
         labels["semantic_mask"] = mask
+        return labels
+
+    def apply_dense(self, labels: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
+        """Letterbox dense depth, normal, and panoptic maps with their matching validity masks."""
+        shape = params["orig_shape"]
+        new_unpad = params["new_unpad"]
+        top, bottom = params["top"], params["bottom"]
+        left, right = params["left"], params["right"]
+        for key, interpolation, border_value in (
+            ("depth", cv2.INTER_LINEAR, 0),
+            ("depth_valid", cv2.INTER_NEAREST, 0),
+            ("normal", cv2.INTER_LINEAR, 0),
+            ("normal_valid", cv2.INTER_NEAREST, 0),
+            ("panoptic_mask", cv2.INTER_NEAREST, 0),
+        ):
+            value = labels.get(key)
+            if value is None:
+                continue
+            if shape[::-1] != new_unpad:
+                value = cv2.resize(value, new_unpad, interpolation=interpolation)
+            labels[key] = cv2.copyMakeBorder(value, top, bottom, left, right, cv2.BORDER_CONSTANT, value=border_value)
         return labels
 
     def apply_instances(self, labels: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
@@ -2295,6 +2358,19 @@ class Format(BaseTransform):
         img = labels.pop("img", None)
         if img is not None:
             labels["img"] = self._format_img(img)
+        if "semantic_mask" in labels:
+            labels["semantic_mask"] = torch.from_numpy(np.ascontiguousarray(labels["semantic_mask"])).to(torch.int32)
+        if "depth" in labels:
+            labels["depth"] = torch.from_numpy(np.ascontiguousarray(labels["depth"])).unsqueeze(0).float()
+            labels["depth_valid"] = torch.from_numpy(np.ascontiguousarray(labels["depth_valid"])).bool()
+        if "normal" in labels:
+            labels["normal"] = torch.from_numpy(np.ascontiguousarray(labels["normal"].transpose(2, 0, 1))).float()
+            labels["normal_valid"] = torch.from_numpy(np.ascontiguousarray(labels["normal_valid"])).bool()
+        if "panoptic_mask" in labels:
+            labels["panoptic_mask"] = torch.from_numpy(np.ascontiguousarray(labels["panoptic_mask"])).long()
+        if "cls_img" in labels:
+            labels["cls_img"] = torch.from_numpy(np.ascontiguousarray(labels["cls_img"])).float()
+            labels["cls_img_valid"] = torch.as_tensor(labels.get("cls_img_valid", True), dtype=torch.bool)
         return labels
 
     def apply_instances(self, labels: dict[str, Any], params: dict[str, Any] | None = None) -> dict[str, Any]:

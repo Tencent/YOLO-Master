@@ -1,6 +1,8 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import torch
+
 from ultralytics.engine.validator import convert_ndjson_to_yolo_if_needed
 from ultralytics.models.yolo.detect.val import DetectionValidator
 
@@ -76,3 +78,23 @@ def test_gather_stats_skips_collectives_without_a_multi_rank_process_group():
         validator.gather_stats()
 
     gather.assert_not_called()
+
+
+def test_training_validation_accumulates_loss_items_on_accumulator_device():
+    """Validation must accept model loss items from a device different from its accumulator."""
+    validator = DetectionValidator.__new__(DetectionValidator)
+    validator.loss = torch.zeros(2)
+
+    class LossItems:
+        def __init__(self):
+            self.device = None
+
+        def to(self, device):
+            self.device = device
+            return torch.tensor([1.25, 2.5])
+
+    loss_items = LossItems()
+    validator._accumulate_loss_items(loss_items)
+
+    assert loss_items.device == validator.loss.device
+    assert validator.loss.tolist() == [1.25, 2.5]

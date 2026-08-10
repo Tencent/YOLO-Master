@@ -23,6 +23,8 @@ from ultralytics.utils.torch_utils import TORCH_2_4, convert_optimizer_state_dic
 class TrainingRecoveryController:
     """Own healthy checkpoint serialization and coordinated NaN/Inf recovery."""
 
+    _FINITE_CHECK_CHUNK_SIZE = 32
+
     def __init__(self, trainer):
         self.trainer = trainer
 
@@ -47,9 +49,66 @@ class TrainingRecoveryController:
         return True
 
     @classmethod
+    def iter_floating_tensors(cls, value):
+        """Yield floating tensors nested in model, optimizer, or scaler state."""
+        if isinstance(value, torch.Tensor):
+            if value.is_floating_point() or value.is_complex():
+                yield value
+        elif isinstance(value, nn.Module):
+            yield from cls.iter_floating_tensors(value.state_dict())
+        elif isinstance(value, dict):
+            for item in value.values():
+                yield from cls.iter_floating_tensors(item)
+        elif isinstance(value, (list, tuple)):
+            for item in value:
+                yield from cls.iter_floating_tensors(item)
+
+    @classmethod
+    def tensors_are_finite(cls, tensors) -> bool:
+        """Check a tensor collection without synchronizing once per tensor."""
+        tensors_by_device = {}
+        for tensor in tensors:
+            if not isinstance(tensor, torch.Tensor) or not (tensor.is_floating_point() or tensor.is_complex()):
+                continue
+            tensors_by_device.setdefault(tensor.device, []).append(tensor)
+        for tensors in tensors_by_device.values():
+            if not cls._tensors_are_finite_on_device(tensors):
+                return False
+        return True
+
+    @classmethod
+    def _tensors_are_finite_on_device(cls, tensors) -> bool:
+        """Check one-device tensor collection in batches that map to one foreach kernel each."""
+        for offset in range(0, len(tensors), cls._FINITE_CHECK_CHUNK_SIZE):
+            chunk = tensors[offset : offset + cls._FINITE_CHECK_CHUNK_SIZE]
+            real_tensors = [tensor for tensor in chunk if not tensor.is_complex()]
+            complex_tensors = [tensor for tensor in chunk if tensor.is_complex()]
+            if real_tensors:
+                found_inf = torch.zeros(1, device=real_tensors[0].device, dtype=torch.float32)
+                inverse_scale = torch.ones(1, device=real_tensors[0].device, dtype=torch.float32)
+                try:
+                    with torch.no_grad():
+                        torch._amp_foreach_non_finite_check_and_unscale_(real_tensors, found_inf, inverse_scale)
+                    finite = not bool(found_inf.item())
+                except (NotImplementedError, RuntimeError):
+                    finite = all(cls.state_is_finite(tensor) for tensor in real_tensors)
+                if not finite:
+                    return False
+            if complex_tensors and not all(bool(torch.isfinite(tensor).all().item()) for tensor in complex_tensors):
+                return False
+        return True
+
+    @classmethod
+    def state_is_finite_batched(cls, value) -> bool:
+        """Check module and optimizer states with batched device-side finite checks."""
+        return cls.tensors_are_finite(cls.iter_floating_tensors(value))
+
+    @classmethod
     def replace_nonfinite_tensors(cls, target: nn.Module, source: nn.Module) -> bool:
         """Replace non-finite target tensors with matching finite source tensors."""
         target_state = target.state_dict()
+        if cls.tensors_are_finite(target_state.values()):
+            return True
         source_state = source.state_dict()
         with torch.no_grad():
             for key, value in target_state.items():
@@ -62,7 +121,7 @@ class TrainingRecoveryController:
                     and cls.state_is_finite(source_value)
                 ):
                     value.copy_(source_value.to(device=value.device, dtype=value.dtype))
-        return cls.state_is_finite(target)
+        return cls.tensors_are_finite(target_state.values())
 
     def sync_nonfinite_flag(self, local_nonfinite: bool) -> bool:
         """Reduce a local non-finite flag across all initialized ranks."""
@@ -167,16 +226,32 @@ class TrainingRecoveryController:
         for snapshot in (model, ema):
             if snapshot is None:
                 continue
+            runtime_buffers = {
+                name: value.detach().clone()
+                for name, value in snapshot.named_buffers()
+                if name.endswith("temperature") or name.endswith("_sparse_train_step")
+            }
             snapshot.half()
+            for name, value in runtime_buffers.items():
+                parts = name.rsplit(".", 1)
+                owner = snapshot.get_submodule(parts[0]) if len(parts) == 2 else snapshot
+                local_name = parts[-1]
+                if local_name in owner._buffers:
+                    owner._buffers[local_name] = value.to(device=owner._buffers[local_name].device)
             if hasattr(snapshot, "criterion"):
                 snapshot.criterion = None
             for value in snapshot.state_dict().values():
                 if isinstance(value, torch.Tensor) and value.is_floating_point():
                     torch.nan_to_num_(value)
         metadata_model = model if model is not None else ema if ema is not None else source_model
+        runtime_state_fn = getattr(trainer, "checkpoint_runtime_state", None)
+        runtime_state = runtime_state_fn() if callable(runtime_state_fn) else {}
+        if not isinstance(runtime_state, dict):
+            raise TypeError("checkpoint_runtime_state() must return a dictionary")
         torch.save(
             {
                 "epoch": getattr(trainer, "epoch", trainer.start_epoch - 1),
+                "optimizer_steps": int(getattr(trainer, "optimizer_steps", 0)),
                 "best_fitness": trainer.best_fitness,
                 "model": model if include_online_model else None,
                 "ema": ema,
@@ -192,6 +267,7 @@ class TrainingRecoveryController:
                 "license": "AGPL-3.0 (https://ultralytics.com/license)",
                 "docs": "https://docs.ultralytics.com",
                 "mixture_checkpoint": checkpoint_runtime_metadata(metadata_model),
+                "runtime_state": runtime_state,
             },
             buffer,
         )
@@ -246,7 +322,7 @@ class TrainingRecoveryController:
             checkpoint = torch_load(Path(path), map_location="cpu", weights_only=False)
         except (OSError, RuntimeError, ValueError, EOFError, pickle.UnpicklingError) as exc:
             return False, f"unreadable checkpoint: {type(exc).__name__}: {exc}"
-        if not isinstance(checkpoint, dict) or not self.state_is_finite(checkpoint):
+        if not isinstance(checkpoint, dict) or not self.state_is_finite_batched(checkpoint):
             return False, "checkpoint contains missing or non-finite state"
         return self.checkpoint_forward_smoke(checkpoint)
 
@@ -320,7 +396,7 @@ class TrainingRecoveryController:
         if rank in {-1, 0}:
             try:
                 healthy = all(
-                    self.state_is_finite(state)
+                    self.state_is_finite_batched(state)
                     for state in (
                         unwrap_model(trainer.model),
                         trainer.optimizer.state_dict(),
@@ -353,7 +429,7 @@ class TrainingRecoveryController:
             trainer.scaler.state_dict(),
         )
         if not self.aux_state_is_finite() or not all(
-            self.state_is_finite(state) for state in states if state is not None
+            self.state_is_finite_batched(state) for state in states if state is not None
         ):
             LOGGER.warning("Preserving the previous recovery checkpoint because the latest live state is non-finite.")
             return False
@@ -389,7 +465,7 @@ class TrainingRecoveryController:
         if rank in {-1, 0} and path is not None and Path(path).exists():
             try:
                 candidate = torch_load(path, map_location="cpu", weights_only=False)
-                if self.state_is_finite(candidate):
+                if self.state_is_finite_batched(candidate):
                     payload = Path(path).read_bytes()
             except (OSError, RuntimeError, ValueError, EOFError, pickle.UnpicklingError):
                 payload = None

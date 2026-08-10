@@ -1,0 +1,3 @@
+dataset,model,evaluation,best_epoch,precision,recall,mAP50,mAP50-95,train_hours,best_weight_mb,wandb_url
+SKU-110K,v0.1-N,standard,91,0.90319,0.83643,0.88250,0.54279,3.275,14.8,https://wandb.ai/465114810-ab/yolo-master-issue49-465114810/runs/68e3g0lf
+SKU-110K,EsMoE-N,dense,93,0.90764,0.83626,0.88434,0.54519,3.301,5.9,https://wandb.ai/465114810-ab/yolo-master-issue49-465114810/runs/674mjnj5

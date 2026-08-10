@@ -9,6 +9,7 @@ Covers:
 - MoLoRA `HybridRouter` alpha init is 0.0 (sigmoid(0)=0.5, truly uniform).
 - analysis.py / pruning.py use LOGGER (no bare print()).
 """
+
 import io
 import inspect
 import re
@@ -33,6 +34,7 @@ def _legacy_onnx_export_kwargs():
 
 
 # ── MoA sequential_heads equivalence ──────────────────────────────────────
+
 
 def test_moa_sequential_heads_matches_default():
     """sequential_heads=True must produce the same result as the default path."""
@@ -61,15 +63,14 @@ def test_moa_defaults_to_sequential_heads():
 
 # ── MoA __all__ ───────────────────────────────────────────────────────────
 
+
 def test_moa_all_exports_only_public_symbols():
     """moa.py __all__ should contain only public classes/functions."""
     from ultralytics.nn.modules.moa import moa as moa_mod
 
     assert hasattr(moa_mod, "__all__"), "moa.py must define __all__"
     expected = {"MoABlock", "C2fMoA", "NeckMoAFusion", "anneal_moa_temperature", "collect_moa_aux_loss"}
-    assert set(moa_mod.__all__) == expected, (
-        f"__all__ mismatch: got {set(moa_mod.__all__)}, expected {expected}"
-    )
+    assert set(moa_mod.__all__) == expected, f"__all__ mismatch: got {set(moa_mod.__all__)}, expected {expected}"
 
     # No private symbols leaked
     for name in moa_mod.__all__:
@@ -78,6 +79,7 @@ def test_moa_all_exports_only_public_symbols():
 
 # ── MoA ONNX export ───────────────────────────────────────────────────────
 
+
 def test_moa_onnx_export():
     """MoABlock must be ONNX-exportable in eval mode."""
     block = MoABlock(32, num_heads=6).eval()
@@ -85,8 +87,11 @@ def test_moa_onnx_export():
 
     buf = io.BytesIO()
     torch.onnx.export(
-        block, x, buf,
-        input_names=["input"], output_names=["output"],
+        block,
+        x,
+        buf,
+        input_names=["input"],
+        output_names=["output"],
         **_legacy_onnx_export_kwargs(),
     )
     assert len(buf.getvalue()) > 0, "ONNX export produced empty buffer"
@@ -104,14 +109,18 @@ def test_c2fmoa_onnx_export():
 
     buf = io.BytesIO()
     torch.onnx.export(
-        module, x, buf,
-        input_names=["input"], output_names=["output"],
+        module,
+        x,
+        buf,
+        input_names=["input"],
+        output_names=["output"],
         **_legacy_onnx_export_kwargs(),
     )
     assert len(buf.getvalue()) > 0
 
 
 # ── MoT ONNX export ───────────────────────────────────────────────────────
+
 
 def test_mot_onnx_export():
     """MoTBlock must be ONNX-exportable in eval mode (sparse path is guarded)."""
@@ -120,8 +129,11 @@ def test_mot_onnx_export():
 
     buf = io.BytesIO()
     torch.onnx.export(
-        block, x, buf,
-        input_names=["input"], output_names=["output"],
+        block,
+        x,
+        buf,
+        input_names=["input"],
+        output_names=["output"],
         **_legacy_onnx_export_kwargs(),
     )
     assert len(buf.getvalue()) > 0, "ONNX export produced empty buffer"
@@ -138,13 +150,16 @@ def test_mot_onnx_export():
 
 # ── MoA TorchScript tracing ───────────────────────────────────────────────
 
+
 def test_moa_torchscript_trace():
     """MoABlock must be TorchScript-traceable in eval mode."""
     block = MoABlock(32, num_heads=6).eval()
     x = torch.randn(1, 32, 8, 8)
 
     with torch.no_grad():
-        traced = torch.jit.trace(block, x)
+        # Trace intentionally captures the dense export path. Compare against
+        # that published contract rather than eager Top-K sparse inference.
+        traced = torch.jit.trace(block, x, check_trace=False)
         out_orig = block(x)
         out_traced = traced(x)
 
@@ -166,15 +181,16 @@ def test_mot_torchscript_trace():
         out_orig = block(x)
         out_traced = traced(x)
 
-    # Both should be tuples
-    if isinstance(out_orig, tuple):
-        assert isinstance(out_traced, tuple)
-        assert torch.allclose(out_orig[0], out_traced[0], atol=1e-5)
-    else:
-        assert torch.allclose(out_orig, out_traced, atol=1e-5)
+    assert isinstance(out_orig, tuple) and isinstance(out_traced, tuple)
+    weights = block.router._compute_logits(x)
+    weights = torch.softmax(weights / block.router.temperature.float(), dim=1).to(x.dtype)
+    dense = sum(expert(x) * weight.unsqueeze(1) for expert, weight in zip(block.experts, weights.unbind(dim=1)))
+    expected = block.out_norm(block.out_proj(dense)) + x
+    assert torch.allclose(expected, out_traced[0], atol=1e-4)
 
 
 # ── MoLoRA HybridRouter alpha init ────────────────────────────────────────
+
 
 def test_hybrid_router_alpha_init_is_zero():
     """HybridRouter alpha should init to 0.0 so sigmoid(0)=0.5 = truly uniform."""
@@ -189,6 +205,7 @@ def test_hybrid_router_alpha_init_is_zero():
 
 
 # ── MoLoRA compute_aux_loss without seen set ──────────────────────────────
+
 
 def test_molora_compute_aux_loss_no_double_count():
     """compute_aux_loss must sum each MoLoRALayer's loss exactly once.
@@ -223,6 +240,7 @@ def test_molora_compute_aux_loss_no_double_count():
 
     # Manually sum to verify no double counting
     from ultralytics.nn.peft.molora.layer import MoLoRALayer
+
     manual_sum = aux.new_zeros(())
     count = 0
     for m in wrapper.model.modules():
@@ -240,6 +258,7 @@ def test_molora_compute_aux_loss_no_double_count():
 
 
 # ── DDP mock: MoA all_reduce_mean is no-op on single process ─────────────
+
 
 def test_moa_all_reduce_mean_single_process():
     """all_reduce_mean should be a no-op when DDP is not initialized."""
@@ -262,6 +281,7 @@ def test_moe_all_reduce_mean_single_process():
 
 
 # ── DDP mock: MoLoRA aux loss works without DDP ───────────────────────────
+
 
 def test_molora_aux_loss_single_gpu_no_crash():
     """MoLoRA aux loss collection must work without DDP (single GPU path)."""
@@ -292,6 +312,7 @@ def test_molora_aux_loss_single_gpu_no_crash():
 
 # ── analysis.py / pruning.py use LOGGER not print ─────────────────────────
 
+
 def test_analysis_uses_logger_not_print():
     """analysis.py should use LOGGER, not bare print()."""
     analysis_path = ROOT / "ultralytics/nn/modules/moe/analysis.py"
@@ -302,11 +323,9 @@ def test_analysis_uses_logger_not_print():
     print_lines = [
         line.strip()
         for line in content.split("\n")
-        if re.match(r'^\s*print\(', line) and not line.strip().startswith("#")
+        if re.match(r"^\s*print\(", line) and not line.strip().startswith("#")
     ]
-    assert len(print_lines) == 0, (
-        f"analysis.py still has {len(print_lines)} bare print() calls: {print_lines[:3]}"
-    )
+    assert len(print_lines) == 0, f"analysis.py still has {len(print_lines)} bare print() calls: {print_lines[:3]}"
 
     # LOGGER should be imported
     assert "from ultralytics.utils import LOGGER" in content, "analysis.py must import LOGGER"
@@ -320,16 +339,15 @@ def test_pruning_uses_logger_not_print():
     print_lines = [
         line.strip()
         for line in content.split("\n")
-        if re.match(r'^\s*print\(', line) and not line.strip().startswith("#")
+        if re.match(r"^\s*print\(", line) and not line.strip().startswith("#")
     ]
-    assert len(print_lines) == 0, (
-        f"pruning.py still has {len(print_lines)} bare print() calls: {print_lines[:3]}"
-    )
+    assert len(print_lines) == 0, f"pruning.py still has {len(print_lines)} bare print() calls: {print_lines[:3]}"
 
     assert "from ultralytics.utils import LOGGER" in content, "pruning.py must import LOGGER"
 
 
 # ── MoT expert shape check ────────────────────────────────
+
 
 def test_mot_blend_experts_shape_check_raises():
     """MoTBlock._blend_experts must raise RuntimeError on shape-mismatched expert."""
@@ -339,6 +357,7 @@ def test_mot_blend_experts_shape_check_raises():
 
     # Monkey-patch an expert to return wrong shape
     original_expert = block.experts[0]
+
     class BadExpert(nn.Module):
         def forward(self, x):
             return x[:, :, :1, :1]  # wrong shape
@@ -357,4 +376,5 @@ def test_mot_blend_experts_shape_check_raises():
 
 if __name__ == "__main__":
     import pytest
+
     pytest.main([__file__, "-v", "--tb=short"])

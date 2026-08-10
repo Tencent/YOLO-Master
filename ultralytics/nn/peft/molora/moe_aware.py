@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Union
 
 import torch
+import warnings
 import torch.nn as nn
 
 from .config import MoLoRAConfig
@@ -202,6 +203,7 @@ class MoLoRAMoEAwareConfig(MoLoRAConfig):
     rank_allocator_mode: str = "frequency"  # "uniform" | "frequency"
     rank_budget_total: int = 32
     rank_min: int = 2
+    allow_synthetic_usage_fallback: bool = True
 
     def __post_init__(self):
         super().__post_init__()
@@ -294,18 +296,21 @@ def build_moe_aware_layer(
             mode=cfg.rank_allocator_mode,
         )
         if usage_history is None:
-            # Fall back to uniform if no history provided
             if cfg.rank_allocator_mode == "frequency":
-                # Provide a skewed default distribution so frequency mode behaves
-                # differently from uniform; this enables meaningful ablation even
-                # when no prior usage stats are available.
-                # NOTE: The num_experts==4 fast-path is an ablation convenience
-                # for the most common MoLoRA configuration; the else-branch
-                # generalises to any expert count via exponential decay.
+                if not cfg.allow_synthetic_usage_fallback:
+                    raise ValueError(
+                        "frequency rank allocation requires measured usage_history when "
+                        "allow_synthetic_usage_fallback=False"
+                    )
+                warnings.warn(
+                    "MoE-aware frequency allocation is using synthetic expert usage; "
+                    "provide usage_history for production or disable the fallback.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
                 if cfg.num_experts == 4:
                     usage_history = torch.tensor([0.5, 0.2, 0.2, 0.1])
                 else:
-                    # Generalise: linearly interpolate to any num_experts
                     x = torch.linspace(0, 1, cfg.num_experts)
                     usage_history = torch.exp(-3 * x)
                     usage_history = usage_history / usage_history.sum()

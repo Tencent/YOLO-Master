@@ -1,76 +1,133 @@
-# YOLO-Master-EsMoE-N LoRA - VisDrone 密集航拍场景
-# ============================================================
-# 改进要点:
-#   - imgsz=640: 平衡精度与训练速度
-#   - lr0=0.001: 航拍领域偏移大, 需要更快适配
-#   - lora_alpha=r×4: 增强 LoRA 更新信号
-#   - 包含路由层: 航拍场景可能需要调整 expert 分配
-# 使用: yolo train cfg=examples/lora_examples/yolo_master_visdrone_lora.yaml lora_r=8
+# Ultralytics YOLO 🚀, AGPL-3.0 license
+# LoRA Training Configuration for YOLO-Master-EsMoE-N on VisDrone
+#
+# This config is optimized for NVIDIA A40 (48 GB VRAM) full-dataset training.
+# Usage: yolo train cfg=examples/lora_examples/yolo_master_visdrone_lora.yaml lora_r=8 lora_alpha=16
+#
+# Rank sweep: r=4 (alpha=8), r=8 (alpha=16), r=16 (alpha=32), r=32 (alpha=64)
 
-task: detect
-mode: train
-device: 0
+# Global settings ------------------------------------------------------------------------------------------------------
+task: detect            # YOLO task: detect, segment, classify, pose, or obb
+mode: train             # YOLO mode: train, val, predict, export, track, or benchmark
+device: 0               # GPU device index; -1 for auto-select
 
-model: yolo-master-n.pt
-data: VisDrone.yaml
-epochs: 40
-patience: 15
-batch: 8
-imgsz: 640
-save: True
-workers: 4
-pretrained: True
-optimizer: AdamW
-cos_lr: True
-close_mosaic: 10
-amp: True
-seed: 42
-deterministic: True
-val: True
-max_det: 1000
-plots: True
+# Train settings -------------------------------------------------------------------------------------------------------
+model: ultralytics/cfg/models/master/v0_10/det/yolo-master-n.yaml
+                        # YOLO-Master-EsMoE-N model definition (VisualEnhancedAdaptiveGateMoE)
+data: ultralytics/cfg/datasets/VisDrone.yaml
+                        # VisDrone2019-DET: 10 classes, 6471 train / 548 val images
+epochs: 30              # 20-50 epoch range for few-shot domain adaptation
+time:                   # Optional max training hours; overrides epochs if set
+patience: 15            # Early-stop after N epochs without val improvement
+batch: 16               # A40 48GB allows larger batch than consumer GPUs
+imgsz: 768              # Higher resolution for small-object recall in drone imagery
+save: True              # Save checkpoints and predictions
+save_period: -1         # Save checkpoint every N epochs; -1 = disabled
+cache: False            # Cache images in RAM/disk to speed dataloading
+workers: 8              # Dataloader worker processes (per RANK in DDP)
+project: runs/lora_examples
+                        # Root output directory
+name: yolo_master_visdrone_lora_r8
+                        # Run name; override per rank (visdrone_r4/r8/r16/r32)
+exist_ok: False         # Overwrite existing project/name directory
+pretrained: True        # Use pretrained YOLO-Master-EsMoE-N weights
+optimizer: auto         # Auto-select optimizer (AdamW for transformer, SGD for conv)
+verbose: True           # Detailed training logs
+seed: 0                 # Fixed random seed for reproducibility
+deterministic: True     # Deterministic CUDA ops (slightly slower but reproducible)
+single_cls: False       # Keep all 10 VisDrone classes separate
+rect: False             # Rectangular training batches
+cos_lr: True            # Cosine LR schedule for smooth convergence
+close_mosaic: 10        # Disable mosaic augmentation for final 10 epochs
+resume: False           # Start fresh; set True to resume from last.pt
+amp: True               # Automatic Mixed Precision (FP16 where safe)
+fraction: 1.0           # Full VisDrone dataset (6471 train images); A40 48GB handles this
+profile: False          # Profile ONNX/TensorRT speeds
+freeze:                 # Freeze first N layers (int) or specific indices (list)
+multi_scale: True       # Multi-scale training essential for aerial viewpoint variation
+compile: False          # torch.compile(); set to 'default' or 'max-autotune' for speed
 
-# ---- LoRA 核心参数 ----
-lora_r: 8
-lora_alpha: 32
-lora_use_rslora: True
-lora_include_attention: False
-lora_gradient_checkpointing: True
+# Val/Test settings ----------------------------------------------------------------------------------------------------
+val: True               # Run validation during training
+split: val              # Validate on val split (548 images)
+save_json: False        # Save COCO-format JSON results
+conf:                   # Default confidence: predict=0.25, val=0.001
+iou: 0.7                # NMS IoU threshold
+max_det: 1000           # High cap for dense drone scenes (hundreds of objects/image)
+half: False             # FP16 inference
+dnn: False              # OpenCV DNN ONNX inference
+plots: True             # Save training/validation plots
 
-# ---- 目标模块 (覆盖 Conv2d + MoE Expert 核心模块) ----
+# LoRA settings --------------------------------------------------------------------------------------------------------
+lora_r: 8               # Default rank; sweep r=4, 8, 16, 32 with lora_alpha=2*r
+lora_alpha: 16          # LoRA scaling factor; keep alpha = 2 * r
+lora_dropout: 0.05      # Dropout on LoRA adapters for regularization
+lora_bias: "none"       # Bias adaptation: "none", "all", or "lora_only"
+lora_backend: "auto"    # Auto-select PEFT backend; falls back to internal if peft unavailable
+lora_variant: "lora"    # Adapter type: "lora", "loha", or "dora"
+lora_include_head: False
+                        # Train detection head normally, do not wrap with LoRA
+lora_freeze_bn: True    # Freeze BatchNorm — critical for stable short-run adaptation
 lora_target_modules: [
-  "conv", "fused_conv", "bottleneck.0",
-  "static_net.0", "static_net.3",
-  "shared_feature.0", "shared_feature.3", "proj",
-  "feature_refiner.0",
-  "pool_projections.0.0", "pool_projections.1.0",
-  "expert_projections.0.0","expert_projections.1.0",
-  "expert_projections.2.0","expert_projections.3.0",
-  "expert_projections.4.0","expert_projections.5.0",
-  "expert_projections.6.0","expert_projections.7.0",
-  "expert_projections.8.0","expert_projections.9.0",
-  "expert_projections.10.0","expert_projections.11.0",
-  "expert_projections.12.0","expert_projections.13.0",
-  "expert_projections.14.0","expert_projections.15.0",
+  "conv", "fused_conv",
+  "bottleneck.0", "shared_feature.0", "static_net.3", "proj",
+  "expert_projections.0.0", "expert_projections.1.0", "expert_projections.2.0",
+  "expert_projections.3.0", "expert_projections.4.0", "expert_projections.5.0",
+  "expert_projections.6.0", "expert_projections.7.0", "expert_projections.8.0",
+  "expert_projections.9.0", "expert_projections.10.0", "expert_projections.11.0",
+  "expert_projections.12.0", "expert_projections.13.0", "expert_projections.14.0",
+  "expert_projections.15.0"
 ]
-
-# ---- MoE 路由策略 ----
-# 包含路由层: 航拍场景领域偏移大，expert 路由分配可能需要调整
-lora_exclude_modules: []
-
-# ---- 训练优化参数 ----
-lora_backend: "fallback"
-lora_include_head: True
-lora_freeze_bn: False
-lora_lr_mult: 0.5
-lr0: 0.001
-warmup_epochs: 5
-lora_dropout: 0.0
-lora_bias: "none"
-lora_variant: "lora"
-lora_only_3x3: False
-lora_use_dora: False
-lora_init_lora_weights: "gaussian"
-lora_only_backbone: False
-lora_include_moe: True
+                        # Target YOLO-Master v0.10 Conv2d layers and all 16 MoE expert projections.
+                        # Modules are regex-matched against named_modules() and safety-filtered
+                        # to exclude Detect/DFL heads and non-trainable parameters.
 lora_save_adapters: True
+                        # Save standalone LoRA adapter weights for deployment
+lora_adapter_dir: "lora_adapter"
+                        # Subdirectory for adapter weight files
+lora_auto_r_ratio: 0.0  # Disable auto-rank calculation; use fixed lora_r
+lora_use_dora: False    # DoRA disabled — Conv2d-heavy model benefits less from weight decomposition
+lora_use_rslora: True   # RS-LoRA scaling: divides by sqrt(r) for stable high-rank training
+lora_init_lora_weights: "gaussian"
+                        # Gaussian init is compatible with Conv2d LoRA targets.
+                        # PiSSA and OLoRA are Linear-layer oriented and may fail on conv targets.
+lora_type: "lora"       # Standard LoRA (not LoHa or LoKr)
+lora_quantization: "none"
+                        # No quantization; A40 48GB has ample memory for full-precision LoRA
+lora_include_moe: True  # Include EsMoE expert projection convolutions as LoRA targets
+lora_include_attention: False
+                        # Exclude A2C2f attention paths (attn.qkv, attn.proj, attn.pe).
+                        # Detection config is Conv/MoE-heavy; attention LoRA is a separate study.
+lora_only_backbone: False
+                        # Allow neck Conv layers; Detect/DFL layers filtered by safety logic
+lora_only_3x3: False    # Include 1x1 convs — many MoE projections and expert paths use 1x1
+
+# ── MoE Routing Layer Strategy ──
+# router / gate / routing / gating layers are EXCLUDED from LoRA targets.
+#
+# Rationale: VisualEnhancedAdaptiveGateMoE uses DualStreamGateRouter (global_fc + local_conv
+# + alpha gate) for expert selection. In short-domain fine-tuning (30 epochs), adapting
+# routing dynamics risks expert-assignment drift: the model learns to route differently
+# on limited domain data, but this new routing policy may not generalize to unseen samples.
+# Training loss improves while validation mAP degrades — a classic routing overfit signal.
+#
+# Router LoRA should ONLY be enabled as a dedicated ablation experiment with:
+#   - Longer training (50+ epochs) to stabilize routing distributions
+#   - Monitoring of MoE balance loss and per-expert usage histograms
+#   - Separate comparison against the no-routing-LoRA baseline
+#
+# For the rank sweep that this config targets, routing is kept frozen.
+lora_exclude_modules: ["router", "routing", "gate", "gating"]
+
+lora_last_n:            # Only apply LoRA to last N layers (optional)
+lora_from_layer:        # Start LoRA from specific layer index (optional)
+lora_to_layer:          # Stop LoRA at specific layer index (optional)
+lora_allow_depthwise: False
+                        # Exclude depthwise convolutions from LoRA targeting
+lora_kernels:           # Filter by kernel size; empty = all sizes
+lora_gradient_checkpointing: True
+                        # Gradient checkpointing reduces peak memory ~30% with minor speed cost
+lora_alpha_warmup: 5    # Warm up LoRA contribution for first 5 epochs
+lr0: 0.0005             # Base learning rate — lower for full-dataset LoRA stability
+lrf: 0.01               # Final LR factor (lr0 * lrf = min LR)
+lora_lr_mult: 0.5       # LoRA adapter LR multiplier relative to base lr0

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
+from copy import copy
 from itertools import repeat
 from multiprocessing.pool import ThreadPool
 from pathlib import Path
@@ -31,7 +32,7 @@ from .augment import (
     v8_transforms,
 )
 from .base import BaseDataset
-from .converter import merge_multi_segment
+from .converter import coco91_to_coco80_class, merge_multi_segment
 from .utils import (
     HELP_URL,
     check_file_speeds,
@@ -83,11 +84,16 @@ class YOLODataset(BaseDataset):
             *args (Any): Additional positional arguments for the parent class.
             **kwargs (Any): Additional keyword arguments for the parent class.
         """
+        # Multi-task datasets may combine task heads while providing only a
+        # subset of annotations (for example COCO detection boxes without
+        # YOLO polygon labels). Enable mask parsing only for an explicit
+        # segmentation dataset; MultiTaskLoss skips absent task annotations.
         self.use_segments = task == "segment"
         self.use_keypoints = task == "pose"
         self.use_obb = task == "obb"
         self.data = data
-        assert not (self.use_segments and self.use_keypoints), "Can not use both segments and keypoints."
+        if self.use_segments and self.use_keypoints:
+            LOGGER.warning("Both segments and keypoints enabled for multitask. Label format may be mixed.")
         super().__init__(*args, channels=self.data.get("channels", 3), **kwargs)
 
     def cache_labels(self, path: Path = Path("./labels.cache")) -> dict:
@@ -304,7 +310,19 @@ class YOLODataset(BaseDataset):
         values = list(zip(*[list(b.values()) for b in batch]))
         for i, k in enumerate(keys):
             value = values[i]
-            if k in {"img", "text_feats", "semantic_mask", "sem_masks"}:
+            if k in {
+                "img",
+                "text_feats",
+                "semantic_mask",
+                "sem_masks",
+                "depth",
+                "depth_valid",
+                "normal",
+                "normal_valid",
+                "panoptic_mask",
+                "cls_img",
+                "cls_img_valid",
+            }:
                 value = torch.stack(value, 0)
             elif k == "visuals":
                 value = torch.nn.utils.rnn.pad_sequence(value, batch_first=True)
@@ -317,6 +335,340 @@ class YOLODataset(BaseDataset):
                 new_batch["batch_idx"][i] += i  # add target image index for build_targets()
             new_batch["batch_idx"] = torch.cat(new_batch["batch_idx"], 0)
         return new_batch
+
+
+class COCOMultiTaskDataset(YOLODataset):
+    """COCO JSON dataset with aligned sparse and optional dense multi-task targets.
+
+    COCO instances provide detection, instance masks, pose, and image-level multi-label targets. Optional COCO-Stuff
+    or COCO Panoptic annotations provide semantic maps, while local depth and normal maps are consumed only where
+    present. Missing supervision is represented with false validity masks or semantic ignore pixels, never zero labels.
+    """
+
+    def __init__(self, *args, data: dict | None = None, task: str = "multitask", **kwargs):
+        """Initialize a COCO-backed multi-task dataset."""
+        self.use_segments = True
+        self.use_keypoints = True
+        self.use_obb = False
+        self.data = data or {}
+        BaseDataset.__init__(
+            self,
+            *args,
+            channels=self.data.get("channels", 3),
+            **kwargs,
+        )
+
+    def _resolve_annotation_path(
+        self, value: str | Path | None, prefix: str = "", optional: bool = False
+    ) -> Path | None:
+        """Resolve an annotation path relative to the configured COCO root."""
+        if not value:
+            if optional:
+                return None
+            raise FileNotFoundError(f"{prefix}Missing COCO annotation path")
+        path = Path(value)
+        if not path.is_absolute():
+            path = Path(self.data.get("path", "")) / path
+        if not path.is_file():
+            if optional:
+                LOGGER.warning(f"{prefix}Optional COCO keypoint annotation not found: {path}")
+                return None
+            raise FileNotFoundError(f"{prefix}COCO annotation file not found: {path}")
+        return path
+
+    def _resolve_data_path(self, value: str | Path | None, prefix: str = "", optional: bool = True) -> Path | None:
+        """Resolve an optional file or directory below the configured COCO root."""
+        if not value:
+            return None
+        path = Path(value)
+        if not path.is_absolute():
+            path = Path(self.data.get("path", "")) / path
+        if path.exists():
+            return path
+        if optional:
+            LOGGER.warning(f"{prefix}Optional dense-label source not found: {path}")
+            return None
+        raise FileNotFoundError(f"{prefix}Dense-label source not found: {path}")
+
+    @staticmethod
+    def _coco_panoptic_id(mask: np.ndarray) -> np.ndarray:
+        """Decode COCO's RGB panoptic PNG encoding into integer segment IDs."""
+        return (
+            mask[..., 0].astype(np.int32) + 256 * mask[..., 1].astype(np.int32) + 256**2 * mask[..., 2].astype(np.int32)
+        )
+
+    @staticmethod
+    def _image_multilabel(annotations: list[dict[str, Any]], class_map: list[int | None], nc: int) -> np.ndarray:
+        """Build a complete image-level COCO-80 multi-hot target, including valid all-background images."""
+        target = np.zeros(nc, dtype=np.float32)
+        for ann in annotations:
+            if ann.get("iscrowd", 0):
+                continue
+            category_index = (
+                class_map[int(ann.get("category_id", 0)) - 1]
+                if 0 < int(ann.get("category_id", 0)) <= len(class_map)
+                else None
+            )
+            if category_index is not None and category_index < nc:
+                target[category_index] = 1.0
+        return target
+
+    def get_labels(self) -> list[dict]:
+        """Load and align all configured COCO sparse/dense targets for the requested image files."""
+        split = "val" if "val" in self.prefix.lower() else "train"
+        instances_path = self._resolve_annotation_path(
+            self.data.get(f"{split}_instances", self.data.get("train_instances")), self.prefix
+        )
+        keypoints_path = self._resolve_annotation_path(
+            self.data.get(f"{split}_keypoints", self.data.get("train_keypoints")), self.prefix, optional=True
+        )
+        with instances_path.open(encoding="utf-8") as file:
+            instances_data = json.load(file)
+        keypoint_by_id = {}
+        if keypoints_path is not None:
+            with keypoints_path.open(encoding="utf-8") as file:
+                keypoint_by_id = {ann["id"]: ann for ann in json.load(file).get("annotations", [])}
+
+        images = {image["file_name"]: image for image in instances_data.get("images", [])}
+        annotations = defaultdict(list)
+        for ann in instances_data.get("annotations", []):
+            annotations[ann["image_id"]].append(ann)
+        class_map = coco91_to_coco80_class()
+        nc = len(self.data.get("names", {}))
+        active_tasks = set(self.data.get("tasks", ("detect",)))
+
+        semantic_source = str(self.data.get("semantic_source", "")).lower() if "semantic" in active_tasks else ""
+        if semantic_source not in {"", "stuff", "panoptic"}:
+            raise ValueError(
+                f"{self.prefix}semantic_source must be one of '', 'stuff', or 'panoptic', got {semantic_source!r}"
+            )
+        stuff_dir = self._resolve_data_path(self.data.get(f"stuff_{split}_masks"), self.prefix)
+        panoptic_dir = self._resolve_data_path(self.data.get(f"panoptic_{split}_masks"), self.prefix)
+        panoptic_by_image: dict[int, dict[str, Any]] = {}
+        panoptic_category_map: dict[int, int] = {}
+        stuff_category_map: dict[int, int] = {}
+        if semantic_source == "panoptic":
+            panoptic_json = self._resolve_data_path(
+                self.data.get(f"panoptic_{split}_annotations"), self.prefix, optional=False
+            )
+            if panoptic_dir is None:
+                raise FileNotFoundError(
+                    f"{self.prefix}panoptic_{split}_masks is required when semantic_source='panoptic'"
+                )
+            with panoptic_json.open(encoding="utf-8") as file:
+                panoptic_data = json.load(file)
+            categories = sorted(panoptic_data.get("categories", []), key=lambda category: int(category["id"]))
+            panoptic_category_map = {int(category["id"]): index for index, category in enumerate(categories)}
+            configured_nc = int(self.data.get("semantic_nc", len(panoptic_category_map)))
+            if configured_nc != len(panoptic_category_map):
+                raise ValueError(
+                    f"{self.prefix}semantic_nc={configured_nc} does not match COCO Panoptic categories={len(panoptic_category_map)}"
+                )
+            panoptic_by_image = {int(annotation["image_id"]): annotation for annotation in panoptic_data["annotations"]}
+        elif semantic_source == "stuff":
+            stuff_json = self._resolve_data_path(
+                self.data.get(f"stuff_{split}_annotations"), self.prefix, optional=False
+            )
+            if stuff_dir is None:
+                raise FileNotFoundError(f"{self.prefix}stuff_{split}_masks is required when semantic_source='stuff'")
+            with stuff_json.open(encoding="utf-8") as file:
+                stuff_data = json.load(file)
+            categories = sorted(stuff_data.get("categories", []), key=lambda category: int(category["id"]))
+            stuff_category_map = {int(category["id"]): index for index, category in enumerate(categories)}
+            configured_nc = int(self.data.get("semantic_nc", len(stuff_category_map)))
+            if configured_nc != len(stuff_category_map):
+                raise ValueError(
+                    f"{self.prefix}semantic_nc={configured_nc} does not match COCO Stuff categories={len(stuff_category_map)}"
+                )
+
+        depth_dir = (
+            self._resolve_data_path(self.data.get("depth_dir", "depth"), self.prefix)
+            if "depth" in active_tasks
+            else None
+        )
+        normal_dir = (
+            self._resolve_data_path(self.data.get("normal_dir", "normal"), self.prefix)
+            if "normal" in active_tasks
+            else None
+        )
+        labels = []
+        missing_images = []
+        for im_file in self.im_files:
+            image_name = Path(im_file).name
+            image = images.get(image_name)
+            if image is None:
+                missing_images.append(image_name)
+                continue
+            height, width = image["height"], image["width"]
+            classes, boxes, segments, keypoints = [], [], [], []
+            image_annotations = annotations.get(image["id"], [])
+            for ann in image_annotations:
+                if ann.get("iscrowd", 0):
+                    continue
+                category_id = int(ann.get("category_id", 0))
+                cls = class_map[category_id - 1] if 0 < category_id <= len(class_map) else None
+                if cls is None or cls >= len(self.data.get("names", {})):
+                    continue
+                x, y, box_width, box_height = map(float, ann.get("bbox", [0, 0, 0, 0]))
+                if box_width <= 0 or box_height <= 0:
+                    continue
+                segmentation = ann.get("segmentation")
+                if not isinstance(segmentation, list) or not segmentation:
+                    continue
+                polygons = [
+                    np.asarray(poly, dtype=np.float32).reshape(-1, 2) for poly in segmentation if len(poly) >= 6
+                ]
+                if not polygons:
+                    continue
+                polygon = np.concatenate(merge_multi_segment(polygons), axis=0) if len(polygons) > 1 else polygons[0]
+                polygon = polygon.astype(np.float32)
+                polygon[:, 0] /= width
+                polygon[:, 1] /= height
+                classes.append([cls])
+                boxes.append(
+                    [
+                        (x + box_width / 2) / width,
+                        (y + box_height / 2) / height,
+                        box_width / width,
+                        box_height / height,
+                    ]
+                )
+                segments.append(polygon)
+                kp = keypoint_by_id.get(ann["id"], {}).get("keypoints")
+                if kp is None:
+                    keypoints.append(np.zeros((17, 3), dtype=np.float32))
+                else:
+                    keypoints.append(
+                        np.asarray(kp, dtype=np.float32).reshape(17, 3) / np.array([width, height, 1], dtype=np.float32)
+                    )
+            label = {
+                "im_file": im_file,
+                "shape": (height, width),
+                "cls": np.asarray(classes, dtype=np.float32).reshape(-1, 1),
+                "bboxes": np.asarray(boxes, dtype=np.float32).reshape(-1, 4),
+                "segments": segments,
+                "keypoints": np.asarray(keypoints, dtype=np.float32).reshape(-1, 17, 3),
+                "normalized": True,
+                "bbox_format": "xywh",
+            }
+            if "classify" in active_tasks:
+                label["cls_img"] = self._image_multilabel(image_annotations, class_map, nc)
+                label["cls_img_valid"] = True
+            stem = Path(image["file_name"]).stem
+            if depth_dir is not None:
+                depth_path = depth_dir / f"{stem}_depth.png"
+                if depth_path.is_file():
+                    label["depth_path"] = str(depth_path)
+            if normal_dir is not None:
+                normal_path = normal_dir / f"{stem}_normal.png"
+                if normal_path.is_file():
+                    label["normal_path"] = str(normal_path)
+            if semantic_source == "stuff":
+                stuff_path = stuff_dir / f"{stem}.png"
+                if stuff_path.is_file():
+                    label["semantic_path"] = str(stuff_path)
+                    label["stuff_category_map"] = stuff_category_map
+            elif semantic_source == "panoptic":
+                panoptic_annotation = panoptic_by_image.get(int(image["id"]))
+                if panoptic_annotation is not None:
+                    panoptic_path = panoptic_dir / str(panoptic_annotation["file_name"])
+                    if panoptic_path.is_file():
+                        label["panoptic_path"] = str(panoptic_path)
+                        label["panoptic_segments"] = {
+                            int(segment["id"]): panoptic_category_map[int(segment["category_id"])]
+                            for segment in panoptic_annotation.get("segments_info", [])
+                            if int(segment["category_id"]) in panoptic_category_map
+                        }
+            labels.append(label)
+        if missing_images:
+            examples = ", ".join(missing_images[:3])
+            suffix = "" if len(missing_images) <= 3 else ", ..."
+            raise ValueError(
+                f"{self.prefix}{len(missing_images)} requested image files were not present in the COCO annotation JSON "
+                f"{instances_path}: {examples}{suffix}. Ensure the split image list and '{split}_instances' use the "
+                "same COCO split."
+            )
+        if not labels:
+            raise RuntimeError(f"{self.prefix}No images matched the COCO annotation JSON: {instances_path}")
+        return labels
+
+    def get_image_and_label(self, index: int) -> dict[str, Any]:
+        """Load optional dense maps and initialize absent targets as ignored before geometric transforms."""
+        label = super().get_image_and_label(index)
+        h, w = label["img"].shape[:2]
+
+        active_tasks = set(self.data.get("tasks", ("detect",)))
+        depth_path = label.pop("depth_path", None)
+        if "depth" in active_tasks:
+            depth = np.zeros((h, w), dtype=np.float32)
+            depth_valid = np.zeros((h, w), dtype=np.uint8)
+        if "depth" in active_tasks and depth_path:
+            raw_depth = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
+            if raw_depth is not None:
+                if raw_depth.ndim == 3:
+                    raw_depth = raw_depth[..., 0]
+                if raw_depth.shape != (h, w):
+                    raw_depth = cv2.resize(raw_depth, (w, h), interpolation=cv2.INTER_LINEAR)
+                minimum = float(self.data.get("depth_valid_min", 0))
+                depth_valid = (raw_depth > minimum).astype(np.uint8)
+                depth = raw_depth.astype(np.float32) * float(self.data.get("depth_scale", 1.0 / 255.0))
+
+        normal_path = label.pop("normal_path", None)
+        if "normal" in active_tasks:
+            normal = np.zeros((h, w, 3), dtype=np.float32)
+            normal_valid = np.zeros((h, w), dtype=np.uint8)
+        if "normal" in active_tasks and normal_path:
+            raw_normal = cv2.imread(normal_path, cv2.IMREAD_COLOR)
+            if raw_normal is not None:
+                if raw_normal.shape[:2] != (h, w):
+                    raw_normal = cv2.resize(raw_normal, (w, h), interpolation=cv2.INTER_LINEAR)
+                normal = cv2.cvtColor(raw_normal, cv2.COLOR_BGR2RGB).astype(np.float32) / 127.5 - 1.0
+                magnitude = np.linalg.norm(normal, axis=-1)
+                normal_valid = (magnitude > float(self.data.get("normal_valid_min", 0.1))).astype(np.uint8)
+                normal = normal / np.maximum(magnitude[..., None], 1e-6)
+                normal[normal_valid == 0] = 0.0
+
+        semantic_path = label.pop("semantic_path", None)
+        stuff_category_map = label.pop("stuff_category_map", {})
+        if "semantic" in active_tasks:
+            semantic_mask = np.full((h, w), 255, dtype=np.uint8)
+            panoptic_mask = np.zeros((h, w), dtype=np.int32)
+        if "semantic" in active_tasks and semantic_path:
+            raw_semantic = cv2.imread(semantic_path, cv2.IMREAD_UNCHANGED)
+            if raw_semantic is not None:
+                if raw_semantic.ndim == 3:
+                    raw_semantic = raw_semantic[..., 0]
+                raw_semantic = cv2.resize(raw_semantic, (w, h), interpolation=cv2.INTER_NEAREST)
+                semantic_mask = np.full((h, w), 255, dtype=np.uint8)
+                for source_id, target_id in stuff_category_map.items():
+                    semantic_mask[raw_semantic == source_id] = target_id
+        panoptic_path = label.pop("panoptic_path", None)
+        panoptic_segments = label.pop("panoptic_segments", {})
+        if "semantic" in active_tasks and panoptic_path:
+            raw_panoptic = cv2.imread(panoptic_path, cv2.IMREAD_COLOR)
+            if raw_panoptic is not None:
+                raw_panoptic = cv2.cvtColor(raw_panoptic, cv2.COLOR_BGR2RGB)
+                ids = self._coco_panoptic_id(raw_panoptic)
+                if ids.shape != (h, w):
+                    ids = cv2.resize(ids, (w, h), interpolation=cv2.INTER_NEAREST)
+                panoptic_mask = ids.astype(np.int32)
+                for segment_id, category_id in panoptic_segments.items():
+                    semantic_mask[ids == segment_id] = category_id
+
+        if "depth" in active_tasks:
+            label.update(depth=depth, depth_valid=depth_valid)
+        if "normal" in active_tasks:
+            label.update(normal=normal, normal_valid=normal_valid)
+        if "semantic" in active_tasks:
+            label.update(semantic_mask=semantic_mask, panoptic_mask=panoptic_mask)
+        return label
+
+    def build_transforms(self, hyp: dict | None = None) -> Compose:
+        """Build transforms while disabling image mixing that has no dense-label composition contract."""
+        if self.augment and {"classify", "semantic", "depth", "normal"}.intersection(self.data.get("tasks", ())):
+            hyp = copy(hyp)
+            hyp.mosaic = hyp.mixup = hyp.cutmix = hyp.copy_paste = 0.0
+        return super().build_transforms(hyp)
 
 
 class YOLOMultiModalDataset(YOLODataset):

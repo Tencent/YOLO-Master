@@ -2,7 +2,9 @@
 
 from .base import BaseDataset
 from .build import build_dataloader, build_grounding, build_yolo_dataset, load_inference_source
+from .multitask_sampler import MultiTaskBatchSampler, TaskRoutedDataset
 from .dataset import (
+    COCOMultiTaskDataset,
     ClassificationDataset,
     GroundingDataset,
     PolygonSemanticDataset,
@@ -15,6 +17,7 @@ from .dataset import (
 __all__ = (
     "BaseDataset",
     "ClassificationDataset",
+    "COCOMultiTaskDataset",
     "GroundingDataset",
     "PolygonSemanticDataset",
     "SemanticDataset",
@@ -25,4 +28,6 @@ __all__ = (
     "build_grounding",
     "build_yolo_dataset",
     "load_inference_source",
+    "MultiTaskBatchSampler",
+    "TaskRoutedDataset",
 )

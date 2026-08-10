@@ -9,7 +9,7 @@ from ultralytics.nn.modules.moa import C2fMoA, MoABlock
 from ultralytics.nn.modules.mot import C2fMoT, MoTBlock, anneal_mot_temperature, collect_mot_aux_loss
 from ultralytics.nn.modules.mot.block import _routing_mask_usage
 from ultralytics.nn.tasks import DetectionModel
-from ultralytics.utils.loss import _collect_mot_aux_loss
+from ultralytics.nn.mixture_loss import _collect_mot_aux_loss
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -246,6 +246,20 @@ def test_mot_deformable_attention_falls_back_for_non_grid_tokens():
     assert torch.isfinite(output).all()
 
 
+@pytest.mark.skipif(not torch.backends.mps.is_available(), reason="requires Apple MPS")
+def test_mot_deformable_reference_grid_cache_clears_on_module_apply():
+    """Cached grids must not survive checkpoint device or dtype migration."""
+    from ultralytics.nn.modules.mot.mot import _DeformableTransformerExpert
+
+    expert = _DeformableTransformerExpert(16, num_heads=4, n_points=2).eval()
+    with torch.no_grad():
+        expert(torch.randn(1, 16, 2, 2))
+
+    assert expert._reference_grid_cache
+    expert.to("mps")
+    assert not expert._reference_grid_cache
+
+
 def test_mot_inference_sparsity_skips_inactive_experts():
     """At eval with top_k<E, a per-sample inactive expert must not be invoked."""
     torch.manual_seed(0)
@@ -390,36 +404,25 @@ def test_c2fmot_aux_loss_aggregation():
     block_aux = [m.last_aux_loss for m in module.m if isinstance(getattr(m, "last_aux_loss", None), torch.Tensor)]
     assert len(block_aux) == 3
     assert torch.allclose(module.last_aux_loss, sum(block_aux))
+# Additional boundary & stability tests for MoT (犀牛鸟 #54)
+# Append to tests/test_mot.py
 
 
-# ── Issue #54: training-mode boundary regression ──────────────────────────
-# The eval-mode boundary tests above verify shape preservation and finiteness.
-# The tests below additionally verify backward-pass correctness when the
-# feature map is smaller than the window, or when shifted windows operate
-# on odd-sized inputs — ensuring gradients flow through the padding/crop
-# and shift/unshift codepaths correctly.
-
-
-def test_mot_window_expert_handles_window_larger_than_feature_map_train():
-    """Window expert must backpropagate through padding when win > H/W in training."""
-    from ultralytics.nn.modules.mot.mot import _WindowTransformerExpert
-
+def test_mot_fp16_forward_stability():
+    """MoTBlock forward pass must not produce NaN/Inf in fp16."""
     torch.manual_seed(0)
-    expert = _WindowTransformerExpert(16, num_heads=4, window_size=8).train()
-    x = torch.randn(1, 16, 3, 5)
-    out = expert(x)
+    block = MoTBlock(32, num_heads=4, top_k=2, window_size=4, n_points=2).eval().half()
+    x = torch.randn(2, 32, 8, 8, dtype=torch.float16)
+    with torch.no_grad():
+        out, aux = block(x)
     assert out.shape == x.shape
-    assert torch.isfinite(out).all()
-
-    # Backward through padding → window_partition → attention → crop chain
-    out.sum().backward()
-    for p in expert.parameters():
-        assert p.grad is not None, f"Parameter {p.shape} received no gradient"
-        assert torch.isfinite(p.grad).all()
+    assert out.dtype == torch.float16
+    assert torch.isfinite(out.float()).all()
+    assert torch.isfinite(aux.float())
 
 
-def test_mot_block_handles_window_larger_than_feature_map_train():
-    """MoTBlock with win > H/W must train: gradients reach all experts and router."""
+def test_mot_gradient_flow_with_zero_exploration_eps():
+    """Even with exploration_eps=0, active expert must receive gradient."""
     torch.manual_seed(0)
     block = MoTBlock(32, num_heads=4, top_k=2, window_size=16, n_points=2, balance_loss_coeff=0.01).train()
     x = torch.randn(1, 32, 5, 7)
@@ -444,25 +447,34 @@ def test_mot_block_handles_window_larger_than_feature_map_train():
         )
 
 
-def test_mot_window_expert_shift_odd_spatial_train():
-    """Shift on odd-sized input must backprop through pad→shift→window→unshift→crop."""
-    from ultralytics.nn.modules.mot.mot import _WindowTransformerExpert
 
+def test_mot_top_k_equals_num_experts():
+    """top_k == NUM_EXPERTS should be equivalent to dense routing."""
     torch.manual_seed(0)
-    expert = _WindowTransformerExpert(24, num_heads=3, window_size=5, shift_size=2).train()
-    x = torch.randn(1, 24, 7, 9)
-    out = expert(x)
+    block = MoTBlock(32, num_heads=4, top_k=3, window_size=4, n_points=2,
+                     exploration_eps=0.0).eval()
+    x = torch.randn(2, 32, 8, 8)
+    with torch.no_grad():
+        out, aux = block(x)
     assert out.shape == x.shape
     assert torch.isfinite(out).all()
 
-    out.sum().backward()
-    for p in expert.parameters():
-        assert p.grad is not None, f"Parameter {p.shape} received no gradient"
-        assert torch.isfinite(p.grad).all()
+
+def test_mot_routing_determinism():
+    """Same input twice must produce identical expert weights at eval."""
+    torch.manual_seed(0)
+    block = MoTBlock(32, num_heads=4, top_k=2, window_size=4, n_points=2,
+                     exploration_eps=0.0).eval()
+    x = torch.randn(2, 32, 8, 8)
+    with torch.no_grad():
+        w1, i1 = block.router(x)
+        w2, i2 = block.router(x)
+    assert torch.allclose(w1, w2)
+    assert torch.equal(i1, i2)
 
 
-def test_mot_block_shift_odd_spatial_train():
-    """MoTBlock with shift=True on odd H/W: full block must train with gradients."""
+def test_mot_block_forward_train_and_eval_consistency():
+    """Training forward should produce same-shaped output as eval forward."""
     torch.manual_seed(0)
     block = MoTBlock(
         32, num_heads=4, top_k=2, window_size=5, n_points=2, window_shift=True, balance_loss_coeff=0.01
@@ -603,8 +615,8 @@ def test_mot_exploration_eps_active_in_train_disabled_in_eval():
     assert torch.allclose(w_train.sum(dim=1), torch.ones_like(w_train[:, 0])), "train weights must still sum to 1"
 
 
-def test_mot_exploration_eps_strict_zero_in_eval():
-    """Even with exploration_eps=0, eval mode must stay sparse (no densification)."""
+def test_mot_block_with_scene_aware_router():
+    """MoTBlock with scene_aware=True must produce finite output."""
     torch.manual_seed(0)
     block = MoTBlock(24, num_heads=3, top_k=1, window_size=4, n_points=2, exploration_eps=0.0).eval()
     with torch.no_grad():

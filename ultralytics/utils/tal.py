@@ -188,16 +188,17 @@ class TaskAlignedAssigner(nn.Module):
         overlaps = torch.zeros([self.bs, self.n_max_boxes, na], dtype=pd_bboxes.dtype, device=pd_bboxes.device)
         bbox_scores = torch.zeros([self.bs, self.n_max_boxes, na], dtype=pd_scores.dtype, device=pd_scores.device)
 
-        ind = torch.zeros([2, self.bs, self.n_max_boxes], dtype=torch.long)  # 2, b, max_num_obj
-        ind[0] = torch.arange(end=self.bs).view(-1, 1).expand(-1, self.n_max_boxes)  # b, max_num_obj
-        ind[1] = gt_labels.squeeze(-1)  # b, max_num_obj
-        # Get the scores of each grid for each gt cls
-        bbox_scores[mask_gt] = pd_scores[ind[0], :, ind[1]][mask_gt]  # b, max_num_obj, h*w
-
-        # (b, max_num_obj, 1, 4), (b, 1, h*w, 4)
-        pd_boxes = pd_bboxes.unsqueeze(1).expand(-1, self.n_max_boxes, -1, -1)[mask_gt]
-        gt_boxes = gt_bboxes.unsqueeze(2).expand(-1, -1, na, -1)[mask_gt]
-        overlaps[mask_gt] = self.iou_calculation(gt_boxes, pd_boxes)
+        # Do not boolean-index expanded views here. On MPS, the backend can return different numbers of
+        # selected elements for equivalent expanded views, which makes the predicted and ground-truth box
+        # lists misaligned for IoU calculation on high-object-count batches. A single nonzero index list keeps
+        # all three tensors aligned and avoids materializing the full (batch, gt, anchor, 4) expanded views.
+        batch_idx, gt_idx, anchor_idx = mask_gt.nonzero(as_tuple=True)
+        if batch_idx.numel():
+            labels = gt_labels[batch_idx, gt_idx, 0].long()
+            bbox_scores[batch_idx, gt_idx, anchor_idx] = pd_scores[batch_idx, anchor_idx, labels]
+            pd_boxes = pd_bboxes[batch_idx, anchor_idx]
+            gt_boxes = gt_bboxes[batch_idx, gt_idx]
+            overlaps[batch_idx, gt_idx, anchor_idx] = self.iou_calculation(gt_boxes, pd_boxes)
 
         align_metric = bbox_scores.pow(self.alpha) * overlaps.pow(self.beta)
         return align_metric, overlaps

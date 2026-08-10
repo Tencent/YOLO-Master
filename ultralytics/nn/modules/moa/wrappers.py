@@ -75,17 +75,20 @@ class C2fMoA(nn.Module):
         sequential_heads: bool = True,
         regional_max_kv_tokens: int | None = 4096,
         sparse_inference: bool = False,
-        sparse_inference_threshold: float | None = None,
-        *,
+        sparse_inference_threshold: float = 0.02,
         inference_sparse_threshold: float | None = None,
     ):
         super().__init__()
-        self.sparse_inference = bool(sparse_inference or inference_sparse_threshold is not None)
-        self.sparse_inference_threshold = _resolve_sparse_inference_threshold(
-            sparse_inference_threshold, inference_sparse_threshold
-        )
-        if not 0.0 <= self.sparse_inference_threshold < 1.0:
-            raise ValueError("sparse_inference_threshold must be in [0, 1)")
+        if inference_sparse_threshold is not None:
+            if sparse_inference_threshold != 0.02 and sparse_inference_threshold != inference_sparse_threshold:
+                raise ValueError(
+                    "Specify only one sparse inference threshold: "
+                    "sparse_inference_threshold or inference_sparse_threshold."
+                )
+            sparse_inference_threshold = inference_sparse_threshold
+            sparse_inference = True
+        self.sparse_inference = bool(sparse_inference)
+        self.sparse_inference_threshold = float(sparse_inference_threshold)
         self.c = int(c2 * e)
         self.cv1 = Conv(c1, 2 * self.c, 1)
         self.cv2 = Conv((2 + n) * self.c, c2, 1)
@@ -118,20 +121,17 @@ class C2fMoA(nn.Module):
         eff_heads = max(eff_heads, MoABlock.NUM_GROUPS)
 
         self.m = nn.ModuleList(
-            MoABlock(
-                self.c,
-                num_heads=eff_heads,
-                mlp_ratio=mlp_ratio,
-                temperature=temperature,
-                shortcut=shortcut,
-                aux_loss_coeff=aux_loss_coeff,
-                block_index=i,
-                local_window_size=local_window_size,
-                sequential_heads=sequential_heads,
-                regional_max_kv_tokens=regional_max_kv_tokens,
-                sparse_inference=self.sparse_inference,
-                sparse_inference_threshold=self.sparse_inference_threshold,
-            )
+            MoABlock(self.c, num_heads=eff_heads,
+                     mlp_ratio=mlp_ratio,
+                     temperature=temperature,
+                     shortcut=shortcut,
+                     aux_loss_coeff=aux_loss_coeff,
+                     block_index=i,
+                     local_window_size=local_window_size,
+                     sequential_heads=sequential_heads,
+                     regional_max_kv_tokens=regional_max_kv_tokens,
+                     sparse_inference=sparse_inference,
+                     sparse_inference_threshold=sparse_inference_threshold)
             for i in range(n)
         )
         self.last_aux_loss: torch.Tensor = torch.zeros((), requires_grad=False)

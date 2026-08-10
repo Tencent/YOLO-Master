@@ -33,6 +33,7 @@ from ultralytics.engine.extensions import (
     update_args_with_lora_runtime_metadata,
     validate_adapter_configuration,
 )
+from ultralytics.engine.telemetry import TrainingTelemetry
 from ultralytics.data.utils import check_cls_dataset, check_det_dataset, convert_ndjson_to_yolo_if_needed
 from ultralytics.nn.distill_model import DistillationModel
 from ultralytics.nn.mixture_loss import has_routed_modules
@@ -135,12 +136,7 @@ def _optimizer_state_family(state_dict) -> str | None:
     groups = state_dict.get("param_groups", ())
     if any("use_muon" in group for group in groups):
         return "musgd"
-    state_keys = {
-        key
-        for state in state_dict.get("state", {}).values()
-        if isinstance(state, dict)
-        for key in state
-    }
+    state_keys = {key for state in state_dict.get("state", {}).values() if isinstance(state, dict) for key in state}
     if {"exp_avg", "exp_avg_sq"} <= state_keys:
         return "adam"
     if "square_avg" in state_keys:
@@ -246,6 +242,9 @@ class BaseTrainer:
         self.batch_size = self.args.batch
         self.epochs = self.args.epochs or 100  # in case users accidentally pass epochs=None with timed training
         self.start_epoch = 0
+        # Number of successful optimizer updates. Kept separate from epochs
+        # because gradient accumulation and resume can split an epoch.
+        self.optimizer_steps = 0
         if RANK == -1:
             print_args(vars(self.args))
 
@@ -255,6 +254,12 @@ class BaseTrainer:
 
         # Callbacks - initialize early so on_pretrain_routine_start can capture original args.data
         self.callbacks = _callbacks or callbacks.get_default_callbacks()
+        self.training_telemetry = TrainingTelemetry.from_environment()
+        if self.training_telemetry.enabled:
+            self.add_callback("on_pretrain_routine_end", self.training_telemetry.on_pretrain_routine_end)
+            self.add_callback("on_train_batch_start", self.training_telemetry.on_train_batch_start)
+            self.add_callback("on_train_batch_end", self.training_telemetry.on_train_batch_end)
+            self.add_callback("teardown", self.training_telemetry.on_teardown)
 
         if self.device.type in {"cpu", "mps"}:
             world_size = 0
@@ -393,7 +398,15 @@ class BaseTrainer:
         )
         self.accumulate = max(round(self.args.nbs / self.batch_size), 1)  # accumulate loss before optimizing
         weight_decay = self.args.weight_decay * self.batch_size * self.accumulate / self.args.nbs  # scale weight_decay
-        iterations = math.ceil(len(self.train_loader.dataset) / max(self.batch_size, self.args.nbs)) * self.epochs
+        # A custom batch sampler may intentionally use a different effective
+        # epoch length than the underlying dataset (weighted multi-source runs).
+        # Use its scheduled steps for optimizer/adapter warmup and decay.
+        train_size = (
+            len(self.train_loader)
+            if getattr(self, "task_sampler", None) is not None
+            else len(self.train_loader.dataset)
+        )
+        iterations = math.ceil(train_size / max(self.batch_size, self.args.nbs)) * self.epochs
         self.adapter_controller.prepare_optimizer(iterations)
         self.optimizer = self.build_optimizer(
             model=self.model,
@@ -616,7 +629,7 @@ class BaseTrainer:
                 self.scheduler.step()
 
             self._model_train()
-            if RANK != -1:
+            if not getattr(self.train_loader, "set_epoch", lambda _: False)(epoch) and RANK != -1:
                 self.train_loader.sampler.set_epoch(epoch)
             pbar = enumerate(self.train_loader)
             # Update dataloader attributes (optional)
@@ -629,6 +642,7 @@ class BaseTrainer:
                 pbar = TQDM(enumerate(self.train_loader), total=nb)
             self.tloss = None
             for i, batch in pbar:
+                self.batch = batch
                 self.run_callbacks("on_train_batch_start")
                 # Warmup
                 ni = i + nb * epoch
@@ -750,9 +764,7 @@ class BaseTrainer:
 
             # Validation
             final_epoch = epoch + 1 >= self.epochs
-            validated = self._sync_validation_gate(
-                self.args.val or final_epoch or self.stopper.possible_stop or self.stop
-            )
+            validated = self._sync_validation_gate(self.args.val)
             if validated:
                 self._clear_memory(None if self.device.type == "mps" else 0.5)  # prevent VRAM spike
                 if self._recover_before_validation(epoch):
@@ -813,8 +825,9 @@ class BaseTrainer:
 
         seconds = time.time() - self.train_time_start
         LOGGER.info(f"\n{epoch - self.start_epoch + 1} epochs completed in {seconds / 3600:.3f} hours.")
-        # Do final val with best.pt
-        self.final_eval()
+        if self.args.val:
+            # Do final val with best.pt only when validation was requested.
+            self.final_eval()
         if RANK in {-1, 0}:
             if self.args.plots:
                 self.plot_metrics()
@@ -963,9 +976,8 @@ class BaseTrainer:
     def optimizer_step(self):
         """Perform a single step of the training optimizer with gradient clipping and EMA update."""
         self.scaler.unscale_(self.optimizer)  # unscale gradients
-        local_nonfinite = any(
-            parameter.grad is not None and not bool(torch.isfinite(parameter.grad).all().item())
-            for parameter in self.model.parameters()
+        local_nonfinite = not self._recovery_controller().tensors_are_finite(
+            parameter.grad for parameter in self.model.parameters() if parameter.grad is not None
         )
         if self._sync_nonfinite_flag(local_nonfinite):
             self._gradient_nonfinite = True
@@ -979,6 +991,7 @@ class BaseTrainer:
         if controller is not None:
             controller.after_optimizer_step()
         self.optimizer.zero_grad()
+        self.optimizer_steps = int(getattr(self, "optimizer_steps", 0)) + 1
         if self.ema:
             self.ema.update(self.model)
         return True
@@ -1000,7 +1013,15 @@ class BaseTrainer:
             adapter_controller.sync_ema_treatment()
         self._sync_ema_buffers_for_validation()
         ema_model = getattr(getattr(self, "ema", None), "ema", None)
-        if ema_model is not None and not self._state_is_finite(unwrap_model(ema_model)):
+        finite_checker = getattr(self, "_state_is_finite", None)
+        ema_finite = (
+            finite_checker(unwrap_model(ema_model))
+            if ema_model is not None and finite_checker is not None
+            else self._recovery_controller().state_is_finite_batched(unwrap_model(ema_model))
+            if ema_model is not None
+            else True
+        )
+        if ema_model is not None and not ema_finite:
             self._ema_nonfinite = True
             return {}, float("nan")
         self._ema_nonfinite = False
@@ -1083,7 +1104,7 @@ class BaseTrainer:
         finite_state = None
         if live_state_available:
             finite_state = all(
-                self._state_is_finite(state)
+                self._recovery_controller().state_is_finite_batched(state)
                 for state in (
                     unwrap_model(model),
                     getattr(getattr(self, "ema", None), "ema", None),
@@ -1114,11 +1135,11 @@ class BaseTrainer:
 
     def _collect_prevalidation_nonfinite_flags(self):
         """Collect model and EMA non-finite flags across initialized ranks."""
-        model_nonfinite = getattr(self, "model", None) is not None and not self._state_is_finite(
-            unwrap_model(self.model)
-        )
+        model_nonfinite = getattr(
+            self, "model", None
+        ) is not None and not self._recovery_controller().state_is_finite_batched(unwrap_model(self.model))
         ema = getattr(getattr(self, "ema", None), "ema", None)
-        ema_nonfinite = ema is not None and not self._state_is_finite(unwrap_model(ema))
+        ema_nonfinite = ema is not None and not self._recovery_controller().state_is_finite_batched(unwrap_model(ema))
         return {
             "model_nonfinite": self._sync_nonfinite_flag(model_nonfinite),
             "ema_nonfinite": self._sync_nonfinite_flag(ema_nonfinite),
@@ -1275,6 +1296,8 @@ class BaseTrainer:
                     "save_period",
                     "workers",
                     "cache",
+                    "epochs",
+                    "fraction",
                     "patience",
                     "time",
                     "freeze",
@@ -1327,6 +1350,7 @@ class BaseTrainer:
                     LOGGER.warning("[PEFT] Resume optimizer state is incompatible; using the initialized optimizer.")
         if ckpt.get("scaler") is not None:
             self.scaler.load_state_dict(ckpt["scaler"])
+        self.optimizer_steps = int(ckpt.get("optimizer_steps", getattr(self, "optimizer_steps", 0)))
         if self.ema and ckpt.get("ema"):
             from ultralytics.nn.mixture_loss import initialize_mixture_loss_ema_buffer
 
@@ -1355,6 +1379,9 @@ class BaseTrainer:
                 ema_target.load_state_dict(ema_state, strict=False)
             self.ema.updates = ckpt["updates"]
         self.best_fitness = ckpt.get("best_fitness")
+        restore_runtime_state = getattr(self, "restore_checkpoint_runtime_state", None)
+        if callable(restore_runtime_state):
+            restore_runtime_state(ckpt.get("runtime_state", {}))
 
     def _restore_lora_resume_model(self, ckpt):
         """Restore adapter-only EMA weights into the online model before optimizer state loading."""
@@ -1511,6 +1538,22 @@ class BaseTrainer:
                     g[1][fullname] = param
                 else:  # weight (with decay)
                     g[0][fullname] = param
+        trainable = {id(parameter): name for name, parameter in model.named_parameters() if parameter.requires_grad}
+        memberships = {}
+        for group_index, group in enumerate(g):
+            for parameter in group.values():
+                memberships.setdefault(id(parameter), []).append(group_index)
+        missing = sorted(trainable[parameter_id] for parameter_id in trainable.keys() - memberships.keys())
+        duplicated = sorted(
+            trainable[parameter_id]
+            for parameter_id, groups in memberships.items()
+            if parameter_id in trainable and len(groups) != 1
+        )
+        if missing or duplicated:
+            raise RuntimeError(
+                "optimizer trainable-parameter partition is incomplete: "
+                f"missing={missing[:8]}, duplicated={duplicated[:8]}"
+            )
         num_params = [len(g[0]), len(g[1]), len(g[2]), len(g[4]), len(g[5])]  # parameters by policy
         if use_muon:
             router_index, adapter_index = 4, 5

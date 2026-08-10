@@ -1,0 +1,3 @@
+dataset,model,evaluation,best_epoch,precision,recall,mAP50,mAP50-95,train_hours,best_weight_mb,wandb_url
+VisDrone,v0.1-N,standard,88,0.43025,0.33008,0.30384,0.17009,2.178,14.812060356140137,https://wandb.ai/465114810-ab/yolo-master-issue49-465114810/runs/o2ur8w66
+VisDrone,EsMoE-N,dense,89,0.43094,0.33943,0.30861,0.17344,2.962,5.814877510070801,https://wandb.ai/465114810-ab/yolo-master-issue49-465114810/runs/6qd0dn71

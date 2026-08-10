@@ -201,6 +201,7 @@ nav:
   - Home:
       - Home: index.md
       - Quickstart: quickstart.md
+      - Release notes: release-notes/v26.08.md
       - Usage:
           - CLI: usage/cli.md
           - Python: usage/python.md

@@ -78,11 +78,18 @@ class MoABlock(nn.Module):
         sequential_heads: bool = True,
         regional_max_kv_tokens: int | None = 4096,
         sparse_inference: bool = False,
-        sparse_inference_threshold: float | None = None,
-        *,
+        sparse_inference_threshold: float = 0.02,
         inference_sparse_threshold: float | None = None,
     ):
         super().__init__()
+        if inference_sparse_threshold is not None:
+            if sparse_inference_threshold != 0.02 and sparse_inference_threshold != inference_sparse_threshold:
+                raise ValueError(
+                    "Specify only one sparse inference threshold: "
+                    "sparse_inference_threshold or inference_sparse_threshold."
+                )
+            sparse_inference_threshold = inference_sparse_threshold
+            sparse_inference = True
         self.sequential_heads = sequential_heads
         self.sparse_inference = bool(sparse_inference or inference_sparse_threshold is not None)
         self.sparse_inference_threshold = _resolve_sparse_inference_threshold(
@@ -222,7 +229,7 @@ class MoABlock(nn.Module):
         sparse_eval = not self.training and self.sparse_inference and not exporting
         active = None
         executed_groups = self.NUM_GROUPS
-        approximation_error = 0.0
+        dropped_routing_mass = 0.0
         if sparse_eval:
             # Skip a group only when it contributes less than the configured
             # threshold for every token in this batch.  The decision is batch-
@@ -270,6 +277,26 @@ class MoABlock(nn.Module):
             out_g = self.global_head(x)
             mixed = w_l * out_l + w_r * out_r + w_g * out_g  # [B, C, H, W]
         mixed = self.attn_drop(self.fusion(mixed))
+
+        # ── Routing snapshot (detached diagnostics) ──────────────────────
+        if not exporting:
+            with torch.no_grad():
+                mean_w = weights.detach().float().mean(dim=(0, 2, 3))  # [3]
+                self.last_routing_snapshot = {
+                    "num_experts": self.NUM_GROUPS,
+                    "top_k": self.NUM_GROUPS,
+                    "expert_usage": mean_w,
+                    "mean_router_probs": mean_w,
+                    "aux_loss": float(self.last_aux_loss.detach()),
+                    "finite_diagnostics": finite_diagnostics,
+                    "executed_groups": executed_groups,
+                    "dropped_routing_mass": dropped_routing_mass,
+                    # Legacy diagnostics exposed this value as an approximation
+                    # error. It is a routing-mass proxy, not a tensor error norm.
+                    "approximation_error": dropped_routing_mass,
+                }
+        else:
+            self.last_routing_snapshot = {}
 
         # ── Residual + layer-scale ────────────────────────────────────────
         # `shortcut` controls *all* block-level residual paths consistently:

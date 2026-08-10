@@ -18,6 +18,7 @@ from torch.utils.data import Dataset, dataloader, distributed
 
 from ultralytics.cfg import IterableSimpleNamespace
 from ultralytics.data.dataset import (
+    COCOMultiTaskDataset,
     GroundingDataset,
     PolygonSemanticDataset,
     SemanticDataset,
@@ -101,6 +102,29 @@ class InfiniteDataLoader(dataloader.DataLoader):
         """Reset the iterator to allow modifications to the dataset during training."""
         self.close()  # free old worker pipes before creating new iterator
         self.iterator = self._get_iterator()
+
+    def set_epoch(self, epoch: int) -> bool:
+        """Set the epoch on the first wrapped sampler that supports deterministic scheduling.
+
+        Ultralytics wraps the underlying batch sampler in ``_RepeatSampler``. Walking the
+        sampler chain keeps both the standard distributed sampler and custom resumable
+        batch samplers on the same trainer lifecycle.
+        """
+        candidates = [getattr(self, "sampler", None), getattr(self, "batch_sampler", None)]
+        seen = set()
+        while candidates:
+            candidate = candidates.pop(0)
+            if candidate is None or id(candidate) in seen:
+                continue
+            seen.add(id(candidate))
+            setter = getattr(candidate, "set_epoch", None)
+            if callable(setter):
+                setter(epoch)
+                return True
+            nested = getattr(candidate, "sampler", None)
+            if nested is not None:
+                candidates.append(nested)
+        return False
 
 
 class _RepeatSampler:
@@ -245,7 +269,9 @@ def build_yolo_dataset(
 ) -> Dataset:
     """Build and return a YOLO dataset based on configuration parameters."""
     pad = 0.0 if mode == "train" else 0.5
-    if cfg.task == "semantic":
+    if cfg.task == "multitask" and data.get("multitask_format") == "coco":
+        dataset = COCOMultiTaskDataset
+    elif cfg.task == "semantic":
         data_path = Path(data.get("path", ""))
         if "masks_dir" in data:
             dataset = SemanticDataset
@@ -319,6 +345,7 @@ def build_dataloader(
     rank: int = -1,
     drop_last: bool = False,
     pin_memory: bool = True,
+    batch_sampler=None,
 ) -> InfiniteDataLoader:
     """Create and return an InfiniteDataLoader for training or validation.
 
@@ -339,6 +366,15 @@ def build_dataloader(
         >>> dataset = YOLODataset(...)
         >>> dataloader = build_dataloader(dataset, batch=16, workers=4, shuffle=True)
     """
+    if batch_sampler is not None:
+        return InfiniteDataLoader(
+            dataset=dataset,
+            batch_sampler=batch_sampler,
+            num_workers=0 if len(batch_sampler) <= 1 else min(workers, os.cpu_count() or 1),
+            pin_memory=torch.cuda.device_count() > 0 and pin_memory,
+            collate_fn=getattr(dataset, "collate_fn", None),
+            worker_init_fn=seed_worker,
+        )
     dataset_len = len(dataset)
     batch = min(batch, dataset_len)
     sampler = (

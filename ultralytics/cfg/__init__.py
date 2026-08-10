@@ -57,7 +57,7 @@ SOLUTION_MAP = {
 
 # Define valid tasks and modes
 MODES = frozenset({"train", "val", "predict", "export", "track", "benchmark"})
-TASKS = frozenset({"detect", "segment", "classify", "pose", "obb", "semantic"})
+TASKS = frozenset({"detect", "segment", "classify", "pose", "obb", "semantic", "multitask"})
 TASK2DATA = {
     "detect": "coco8.yaml",
     "segment": "coco8-seg.yaml",
@@ -65,6 +65,7 @@ TASK2DATA = {
     "pose": "coco8-pose.yaml",
     "obb": "dota8.yaml",
     "semantic": "cityscapes8.yaml",
+    "multitask": "coco8.yaml",
 }
 TASK2CALIBRATIONDATA = {
     "detect": "coco128.yaml",
@@ -73,6 +74,7 @@ TASK2CALIBRATIONDATA = {
     "pose": "coco8-pose.yaml",
     "obb": "dota128.yaml",
     "semantic": "cityscapes8.yaml",
+    "multitask": "coco128.yaml",
 }
 TASK2MODEL = {
     "detect": "yolo26n.pt",
@@ -81,6 +83,7 @@ TASK2MODEL = {
     "pose": "yolo26n-pose.pt",
     "obb": "yolo26n-obb.pt",
     "semantic": "yolo26n-sem.pt",
+    "multitask": "yolo26-master-mt-n.yaml",
 }
 TASK2METRIC = {
     "detect": "metrics/mAP50-95(B)",
@@ -89,6 +92,7 @@ TASK2METRIC = {
     "pose": "metrics/mAP50-95(P)",
     "obb": "metrics/mAP50-95(B)",
     "semantic": "metrics/mIoU",
+    "multitask": "metrics/mAP50-95(B)",
 }
 
 ARGV = sys.argv or ["", ""]  # sometimes sys.argv = []
@@ -366,6 +370,7 @@ CFG_INT_MIN = {  # minimum valid values for integer arguments used as divisors, 
     "mask_ratio": 1,
     "vid_stride": 1,
     "seed": 0,
+    "moe_prune_calibration_steps": 1,
     "mot_sparse_train_warmup_steps": 0,
     "mot_local_attn_window": 0,
     "moa_regional_max_kv_tokens": 0,

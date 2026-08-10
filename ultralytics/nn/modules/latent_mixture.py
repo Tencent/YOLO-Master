@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any, Sequence
 
@@ -310,6 +311,9 @@ class _LatentAuxMixin:
         aux: torch.Tensor,
         balance: torch.Tensor,
         z_loss: torch.Tensor,
+        *,
+        executed_experts: int | None = None,
+        dispatch_policy: str | None = None,
     ) -> None:
         with torch.no_grad():
             p = probs.detach().float()
@@ -332,15 +336,19 @@ class _LatentAuxMixin:
                 "num_experts": int(self.num_experts),
                 "top_k": int(self.top_k),
                 "training_top_k": int(self.top_k),
-                "inference_top_k": int(self.top_k),
+                "inference_top_k": int(getattr(self, "inference_top_k", self.top_k)),
                 "configured_top_k": int(self.top_k),
-                "executed_experts": int(self.num_experts),
+                "executed_experts": int(executed_experts if executed_experts is not None else self.num_experts),
                 "active_experts_per_sample": torch.full(
-                    (p.shape[0],), int(self.num_experts), dtype=torch.long
+                    (p.shape[0],),
+                    int(executed_experts if executed_experts is not None else self.num_experts),
+                    dtype=torch.long,
                 ),
-                "mean_active_experts_per_sample": float(self.num_experts),
-                "batch_expert_union": int(self.num_experts),
-                "kernel_calls": int(self.num_experts),
+                "mean_active_experts_per_sample": float(
+                    executed_experts if executed_experts is not None else self.num_experts
+                ),
+                "batch_expert_union": int(executed_experts if executed_experts is not None else self.num_experts),
+                "kernel_calls": int(executed_experts if executed_experts is not None else self.num_experts),
                 "mean_router_probs": mean_probs.cpu(),
                 "expert_usage": mean_probs.cpu(),
                 "entropy": float(entropy.cpu()),
@@ -357,6 +365,7 @@ class _LatentAuxMixin:
                     self.training and (float(self.balance_loss_coeff) > 0.0 or float(self.router_z_loss_coeff) > 0.0)
                 ),
                 "ddp_balance_synced": bool(self._last_ddp_balance_synced),
+                "dispatch_policy": dispatch_policy or "dense",
                 "finite": bool(
                     routing_finite_diagnostics(logits=logits, probabilities=probs, aux_loss=aux).get("all_finite", True)
                 ),
@@ -370,6 +379,10 @@ class _LatentAuxMixin:
             if hasattr(self, "value_fusion_mode"):
                 snapshot["value_fusion_mode"] = self.value_fusion_mode
                 snapshot["value_fusion_weights"] = self.value_fusion_weights.detach().float().cpu()
+                snapshot["inference_calibrated"] = bool(getattr(self, "_inference_calibrated", True))
+                snapshot["inference_calibration_error"] = getattr(self, "_inference_calibration_error", None)
+                snapshot["inference_calibration_batches"] = int(getattr(self, "_inference_calibration_batches", 0))
+                snapshot["inference_calibration_tolerance"] = getattr(self, "_inference_calibration_tolerance", None)
             if hasattr(self, "residual_gain"):
                 snapshot["residual_gain"] = self.residual_gain.detach().float().cpu()
             self.last_routing_snapshot = snapshot
@@ -395,6 +408,18 @@ class _LatentAuxMixin:
                 if eager_sparse
                 else "Latent mixture uses dense expert execution only."
             ),
+            inference_top_k=int(getattr(self, "inference_top_k", self.num_experts)),
+            inference_calibrated=bool(getattr(self, "_inference_calibrated", True)),
+            sparse_inference_requires_calibration=bool(getattr(self, "require_inference_calibration", False)),
+            eager_compute_semantics=(
+                "top_k_sparse"
+                if getattr(self, "inference_top_k", self.num_experts) < self.num_experts
+                else "dense_all_experts"
+            ),
+            export_compute_semantics="dense_all_experts",
+            inference_calibration_error=getattr(self, "_inference_calibration_error", None),
+            inference_calibration_batches=int(getattr(self, "_inference_calibration_batches", 0)),
+            inference_calibration_tolerance=getattr(self, "_inference_calibration_tolerance", None),
         )
         return capabilities
 
@@ -418,6 +443,7 @@ class LatentMixture(_LatentAuxMixin, nn.Module):
         inference_top_k: int | None = None,
         value_fusion_mode: str = "router_only",
         value_fusion_weights: Sequence[float] | None = None,
+        require_inference_calibration: bool = False,
     ):
         super().__init__()
         if isinstance(in_channels, int):
@@ -448,6 +474,12 @@ class LatentMixture(_LatentAuxMixin, nn.Module):
         self.inference_top_k = self.num_experts if inference_top_k is None else int(inference_top_k)
         if not 1 <= self.inference_top_k <= self.num_experts:
             raise ValueError(f"inference_top_k must be in [1, {self.num_experts}]")
+        self.require_inference_calibration = bool(require_inference_calibration)
+        self._inference_calibrated = self.inference_top_k == self.num_experts
+        self._inference_calibration_error = None
+        self._inference_calibration_batches = 0
+        self._inference_calibration_tolerance = None
+        self._dispatch_override = None
         self.balance_loss_coeff = _non_negative_float(balance_loss_coeff, "balance_loss_coeff")
         self.router_z_loss_coeff = _non_negative_float(router_z_loss_coeff, "router_z_loss_coeff")
         self.base_proj = (
@@ -474,6 +506,193 @@ class LatentMixture(_LatentAuxMixin, nn.Module):
         self.residual_gain = nn.Parameter(torch.tensor(float(residual_init), dtype=torch.float32))
         self._init_runtime_state()
 
+    def get_extra_state(self) -> dict[str, Any]:
+        """Persist non-parameter routing configuration in the module state."""
+
+        return {
+            "schema_version": 1,
+            "value_fusion_mode": self.value_fusion_mode,
+            "value_fusion_weights": self.value_fusion_weights.detach().float().cpu().tolist(),
+            "inference_top_k": int(self.inference_top_k),
+            "require_inference_calibration": self.require_inference_calibration,
+            "inference_calibrated": self._inference_calibrated,
+            "inference_calibration_error": self._inference_calibration_error,
+            "inference_calibration_batches": self._inference_calibration_batches,
+            "inference_calibration_tolerance": self._inference_calibration_tolerance,
+        }
+
+    def set_extra_state(self, state: Any) -> None:
+        """Restore and validate non-parameter routing configuration."""
+
+        if not isinstance(state, dict):
+            raise ValueError("LatentMixture extra state must be a dictionary")
+        if int(state.get("schema_version", 0)) != 1:
+            raise ValueError("Unsupported LatentMixture extra-state schema")
+        mode = str(state.get("value_fusion_mode", self.value_fusion_mode))
+        if mode not in {"router_only", "weighted_sum"}:
+            raise ValueError(f"Invalid LatentMixture value_fusion_mode in checkpoint: {mode!r}")
+        if mode != self.value_fusion_mode:
+            raise ValueError(
+                "LatentMixture checkpoint value_fusion_mode does not match the constructed module: "
+                f"checkpoint={mode!r}, module={self.value_fusion_mode!r}. "
+                "Construct the model with the checkpoint's fusion mode before strict loading."
+            )
+        weights = torch.as_tensor(state.get("value_fusion_weights", ()), dtype=torch.float32)
+        if weights.numel() != self.num_inputs or not bool(torch.isfinite(weights).all()) or bool((weights < 0).any()):
+            raise ValueError("Invalid LatentMixture value_fusion_weights in checkpoint")
+        if float(weights.sum()) <= 0:
+            raise ValueError("LatentMixture value_fusion_weights must have a positive sum")
+        self.value_fusion_weights.copy_(weights.to(self.value_fusion_weights.device) / weights.sum())
+        inference_top_k = int(state.get("inference_top_k", self.inference_top_k))
+        if not 1 <= inference_top_k <= self.num_experts:
+            raise ValueError("LatentMixture checkpoint inference_top_k is outside the expert range")
+        self.inference_top_k = inference_top_k
+        self.require_inference_calibration = bool(
+            state.get("require_inference_calibration", self.require_inference_calibration)
+        )
+        self._inference_calibrated = bool(state.get("inference_calibrated", inference_top_k == self.num_experts))
+        error = state.get("inference_calibration_error")
+        self._inference_calibration_error = None if error is None else float(error)
+        self._inference_calibration_batches = int(state.get("inference_calibration_batches", 0))
+        tolerance = state.get("inference_calibration_tolerance")
+        self._inference_calibration_tolerance = None if tolerance is None else float(tolerance)
+
+    def set_inference_calibration(self, calibrated: bool = True) -> None:
+        """Record whether sparse inference top-k has been compared with dense routing."""
+        self._inference_calibrated = bool(calibrated)
+        if not calibrated:
+            self._inference_calibration_error = None
+            self._inference_calibration_batches = 0
+            self._inference_calibration_tolerance = None
+        if self.last_routing_snapshot:
+            self.last_routing_snapshot.update(
+                inference_calibrated=self._inference_calibrated,
+                inference_calibration_error=self._inference_calibration_error,
+                inference_calibration_batches=self._inference_calibration_batches,
+                inference_calibration_tolerance=self._inference_calibration_tolerance,
+            )
+
+    @staticmethod
+    def _calibration_inputs(batch: Any) -> list[torch.Tensor]:
+        """Normalize a calibration item to the aligned feature list expected by ``forward``."""
+        if isinstance(batch, torch.Tensor):
+            return [batch]
+        if isinstance(batch, (list, tuple)) and batch and all(isinstance(value, torch.Tensor) for value in batch):
+            return list(batch)
+        raise TypeError("LatentMixture calibration data must yield a Tensor or a list/tuple of feature tensors")
+
+    def calibrate_inference(
+        self,
+        calibration_data: Any,
+        *,
+        max_batches: int | None = 32,
+        tolerance: float = 1e-3,
+        strict: bool = True,
+    ) -> dict[str, Any]:
+        """Compare dense and sparse eager outputs and arm the sparse-inference gate.
+
+        ``calibration_data`` must yield the same aligned feature lists used by the
+        module's forward call. The returned report is persisted in module metadata,
+        making the sparse-vs-dense error visible in checkpoints and export manifests.
+        """
+        if self.inference_top_k >= self.num_experts:
+            self._inference_calibrated = True
+            return {"batches": 0, "relative_l2_error": 0.0, "tolerance": float(tolerance), "calibrated": True}
+        tolerance = float(tolerance)
+        if not math.isfinite(tolerance) or tolerance < 0.0:
+            raise ValueError("calibration tolerance must be finite and non-negative")
+        if max_batches is not None and int(max_batches) <= 0:
+            raise ValueError("max_batches must be positive or None")
+        was_training = self.training
+        self.eval()
+        dense_error = []
+        batches = 0
+        iterator = iter(calibration_data)
+        try:
+            while max_batches is None or batches < int(max_batches):
+                try:
+                    item = next(iterator)
+                except StopIteration:
+                    break
+                xs = self._calibration_inputs(item)
+                with torch.no_grad():
+                    self._dispatch_override = "dense"
+                    dense = self(xs).detach().float()
+                    self._dispatch_override = "sparse"
+                    sparse = self(xs).detach().float()
+                denominator = torch.linalg.vector_norm(dense).clamp_min(1e-8)
+                dense_error.append(float((torch.linalg.vector_norm(sparse - dense) / denominator).cpu()))
+                batches += 1
+        finally:
+            self._dispatch_override = None
+            self.train(was_training)
+        if not batches:
+            raise ValueError("calibration_data produced no batches")
+        error = max(dense_error)
+        calibrated = bool(error <= tolerance)
+        self._inference_calibration_error = error
+        self._inference_calibration_batches = batches
+        self._inference_calibration_tolerance = tolerance
+        self._inference_calibrated = calibrated
+        if self.last_routing_snapshot:
+            self.last_routing_snapshot.update(
+                inference_calibrated=calibrated,
+                inference_calibration_error=error,
+                inference_calibration_batches=batches,
+                inference_calibration_tolerance=tolerance,
+            )
+        report = {"batches": batches, "relative_l2_error": error, "tolerance": tolerance, "calibrated": calibrated}
+        if strict and not calibrated:
+            raise ValueError(
+                f"LatentMixture sparse inference calibration error {error:.6g} exceeds tolerance {tolerance:.6g}"
+            )
+        return report
+
+    def load_state_dict(self, state_dict, strict: bool = True, assign: bool = False):
+        """Load weights while keeping non-strict ablation transfers constructor-driven.
+
+        ``strict=False`` is used by model surgery and ablation tests to transfer
+        compatible tensors across intentionally different fusion configurations.
+        In that mode the serialized extra state is validated by the normal
+        checkpoint path only when callers request a strict restore, and is
+        otherwise ignored so the destination configuration remains authoritative.
+        """
+
+        state_dict = dict(state_dict)
+        if "_extra_state" not in state_dict:
+            # Checkpoints written before fusion metadata was introduced remain
+            # valid; their constructor configuration is the only available
+            # source of truth.
+            state_dict["_extra_state"] = self.get_extra_state()
+        elif not strict:
+            state_dict.pop("_extra_state", None)
+        return super().load_state_dict(state_dict, strict=strict, assign=assign)
+
+    def _load_from_state_dict(
+        self,
+        state_dict,
+        prefix,
+        local_metadata,
+        strict,
+        missing_keys,
+        unexpected_keys,
+        error_msgs,
+    ):
+        """Accept pre-metadata checkpoints when this module is loaded as a child."""
+
+        extra_state_key = prefix + "_extra_state"
+        if extra_state_key not in state_dict:
+            state_dict[extra_state_key] = self.get_extra_state()
+        super()._load_from_state_dict(
+            state_dict,
+            prefix,
+            local_metadata,
+            strict,
+            missing_keys,
+            unexpected_keys,
+            error_msgs,
+        )
+
     def _build_context(self, xs: Sequence[torch.Tensor]) -> tuple[torch.Tensor, LatentRoutingContext]:
         checked = _validate_inputs(xs, self.in_channels, require_same_spatial=True)
         projected = [proj(x) for x, proj in zip(checked, self.token_projs)]
@@ -494,6 +713,13 @@ class LatentMixture(_LatentAuxMixin, nn.Module):
         sparse_eval = (
             not self.training
             and self.inference_top_k < self.num_experts
+            and (
+                self._dispatch_override == "sparse"
+                or (
+                    self._dispatch_override is None
+                    and (not self.require_inference_calibration or self._inference_calibrated)
+                )
+            )
             and not torch.jit.is_tracing()
             and not torch.onnx.is_in_onnx_export()
         )
@@ -512,16 +738,35 @@ class LatentMixture(_LatentAuxMixin, nn.Module):
                 mixed[batch_indices] = mixed[batch_indices] + expert(base[batch_indices]) * gates.to(
                     device=base.device, dtype=base.dtype
                 ).view(-1, 1, 1, 1)
+            executed_experts = int((top_indices.unique()).numel())
+            dispatch_policy = "sparse_eval"
         else:
             mixed = torch.zeros_like(base)
             for e, expert in enumerate(self.experts):
                 gate = context.probs[:, e].to(device=base.device, dtype=base.dtype).view(-1, 1, 1, 1)
                 mixed = mixed + expert(base) * gate
+            executed_experts = self.num_experts
+            dispatch_policy = (
+                "dense_uncalibrated_inference"
+                if not self.training
+                and self.inference_top_k < self.num_experts
+                and self.require_inference_calibration
+                and not self._inference_calibrated
+                else "dense"
+            )
         output = base + self.residual_gain.to(device=base.device, dtype=base.dtype) * mixed
         aux, balance, z_loss = self._compute_aux(context.logits, context.probs)
         published = _publish_aux_loss(self, aux, kind="latent", training=self.training)
         self._last_aux_loss = published.detach()
-        self._record_routing(context.logits, context.probs, self._last_aux_loss, balance, z_loss)
+        self._record_routing(
+            context.logits,
+            context.probs,
+            self._last_aux_loss,
+            balance,
+            z_loss,
+            executed_experts=executed_experts,
+            dispatch_policy=dispatch_policy,
+        )
         return output
 
 

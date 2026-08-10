@@ -203,6 +203,7 @@ class BaseValidator:
                 "pose",
                 "obb",
                 "semantic",
+                "multitask",
             }:
                 self.data = check_det_dataset(self.args.data, split=self.args.split)
             else:
@@ -245,7 +246,7 @@ class BaseValidator:
                 # Loss
                 with dt[2]:
                     if self.training:
-                        self.loss += model.loss(batch, preds)[1]
+                        self._accumulate_loss_items(model.loss(batch, preds)[1])
 
             # Postprocess
             with dt[3]:
@@ -292,6 +293,10 @@ class BaseValidator:
             if self.args.plots or self.args.save_json:
                 LOGGER.info(f"Results saved to {colorstr('bold', self.save_dir)}")
             return stats
+
+    def _accumulate_loss_items(self, loss_items: torch.Tensor) -> None:
+        """Add model loss items to the validation accumulator on its device."""
+        self.loss += loss_items.to(self.loss.device)
 
     def match_predictions(
         self, pred_classes: torch.Tensor, true_classes: torch.Tensor, iou: torch.Tensor, use_scipy: bool = False

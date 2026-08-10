@@ -192,6 +192,21 @@ def test_yolo26_latent_yaml_builds_and_runs():
     assert output is not None
 
 
+def test_latent_detection_model_load_skips_non_tensor_extra_state():
+    config = ROOT / "ultralytics/cfg/models/26/yolo26-master-latent-n-resinit010.yaml"
+    source = DetectionModel(config, ch=3, nc=80, verbose=False)
+    target = DetectionModel(config, ch=3, nc=80, verbose=False)
+    source_latent = next(module for module in source.modules() if isinstance(module, LatentMixture))
+    target_latent = next(module for module in target.modules() if isinstance(module, LatentMixture))
+    source_latent.residual_gain.data.fill_(0.37)
+
+    assert any(key.endswith("._extra_state") for key in source.state_dict())
+    target.load(source, verbose=False)
+
+    assert target_latent.residual_gain.item() == pytest.approx(0.37)
+    assert target_latent.value_fusion_mode == "router_only"
+
+
 def test_yolo26_latent_initperturb_yaml_builds_and_runs():
     model = DetectionModel(
         ROOT / "ultralytics/cfg/models/26/yolo26-master-latent-n-initperturb020.yaml",
@@ -297,3 +312,91 @@ def test_latent_value_fusion_is_opt_in_and_checkpoint_compatible():
     assert "value_fusion_weights" not in default.state_dict()
     with pytest.raises(ValueError, match="value_fusion_mode"):
         LatentMixture([8, 8], 8, value_fusion_mode="unknown")
+
+
+def test_latent_fusion_metadata_round_trips_and_legacy_state_remains_loadable():
+    source = LatentMixture(
+        [8, 8], 8, inference_top_k=2, value_fusion_mode="weighted_sum", value_fusion_weights=[1.0, 3.0]
+    )
+    restored = LatentMixture(
+        [8, 8], 8, inference_top_k=4, value_fusion_mode="weighted_sum", value_fusion_weights=[1.0, 1.0]
+    )
+    restored.load_state_dict(source.state_dict())
+    assert restored.inference_top_k == 2
+    assert torch.allclose(restored.value_fusion_weights, torch.tensor([0.25, 0.75]))
+
+    legacy_state = source.state_dict()
+    legacy_state.pop("_extra_state")
+    legacy = LatentMixture([8, 8], 8, value_fusion_mode="weighted_sum", value_fusion_weights=[1.0, 1.0])
+    legacy.load_state_dict(legacy_state)
+    assert torch.allclose(legacy.value_fusion_weights, torch.tensor([0.5, 0.5]))
+
+
+def test_latent_sparse_inference_calibration_records_dense_error_and_arms_gate():
+    torch.manual_seed(31)
+    module = LatentMixture([8, 8], 8, num_experts=3, inference_top_k=1, residual_init=0.1).eval()
+    xs = [[torch.randn(2, 8, 4, 4), torch.randn(2, 8, 4, 4)] for _ in range(2)]
+    report = module.calibrate_inference(xs, tolerance=10.0)
+    assert report["batches"] == 2
+    assert report["calibrated"] is True
+    assert module.routing_snapshot()["inference_calibrated"] is True
+    capabilities = module.export_capabilities()
+    assert capabilities["inference_calibration_batches"] == 2
+    assert capabilities["inference_calibration_error"] == pytest.approx(report["relative_l2_error"])
+
+
+def test_latent_sparse_inference_calibration_strict_gate_rejects_bad_tolerance():
+    module = LatentMixture([8, 8], 8, num_experts=3, inference_top_k=1, residual_init=0.1).eval()
+    xs = [[torch.randn(1, 8, 4, 4), torch.randn(1, 8, 4, 4)]]
+    with pytest.raises(ValueError, match="calibration error"):
+        module.calibrate_inference(xs, tolerance=0.0, strict=True)
+    assert module._inference_calibrated is False
+
+
+def test_parser_rejects_list_to_list_latent_mixture_registration(monkeypatch):
+    """A list->list module must never enter the parser's list->Tensor registry."""
+    from ultralytics.nn import mixture_registry
+
+    monkeypatch.setattr(
+        mixture_registry,
+        "MIXTURE_MULTI_INPUT_MODULES",
+        frozenset({MultiScaleLatentMixture}),
+    )
+    with pytest.raises((TypeError, ValueError)):
+        mixture_registry.adapt_mixture_args(
+            MultiScaleLatentMixture,
+            [-1, 0],
+            [8, 16],
+            [16],
+            1,
+            nc=80,
+            width=1.0,
+            max_channels=1024,
+        )
+
+
+def test_latent_named_config_and_sparse_inference_calibration_gate():
+    from ultralytics.nn import mixture_registry
+
+    adapted, c2, _, _ = mixture_registry.adapt_mixture_args(
+        LatentMixture,
+        [0, 1],
+        [8, 8],
+        [{"out_channels": 8, "num_experts": 2, "inference_top_k": 1, "require_inference_calibration": True}],
+        1,
+        nc=80,
+        width=1.0,
+        max_channels=1024,
+    )
+    module = LatentMixture(*adapted)
+    assert c2 == 8 and module.inference_top_k == 1
+    assert module.export_capabilities()["sparse_inference_requires_calibration"] is True
+    module.eval()
+    xs = [torch.randn(2, 8, 4, 4), torch.randn(2, 8, 4, 4)]
+    with torch.no_grad():
+        module(xs)
+    assert module.routing_snapshot()["executed_experts"] == module.num_experts
+    module.set_inference_calibration(True)
+    with torch.no_grad():
+        module(xs)
+    assert module.routing_snapshot()["executed_experts"] <= module.num_experts

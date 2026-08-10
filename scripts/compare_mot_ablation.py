@@ -15,6 +15,7 @@ import csv
 import json
 import math
 import os
+import platform
 import sys
 import time
 from dataclasses import dataclass
@@ -28,9 +29,16 @@ sys.path.insert(0, str(ROOT))
 import torch  # noqa: E402
 
 from ultralytics import YOLO  # noqa: E402
-from ultralytics.nn.modules.moa import C2fMoA, MoABlock, anneal_moa_temperature  # noqa: E402
-from ultralytics.nn.modules.mot import C2fMoT, MoTBlock, anneal_mot_temperature  # noqa: E402
-from ultralytics.nn.tasks import DetectionModel  # noqa: E402
+from ultralytics.engine.telemetry import (  # noqa: E402
+    TELEMETRY_ENV,
+    TELEMETRY_LOSS_STEPS_ENV,
+    device_memory_sample,
+    reset_device_memory_peak,
+    sync_device,
+)
+from ultralytics.nn.modules.moa import C2fMoA, MoABlock  # noqa: E402
+from ultralytics.nn.modules.mot import C2fMoT, MoTBlock  # noqa: E402
+from ultralytics.utils import YAML  # noqa: E402
 from ultralytics.utils.torch_utils import get_flops  # noqa: E402
 
 
@@ -39,6 +47,9 @@ class ModelSpec:
     key: str
     label: str
     cfg: Path
+    task: str = "detect"
+    variant: str = "standard"
+    runtime_overrides: tuple[tuple[str, object], ...] = ()
 
 
 SPECS = {
@@ -82,6 +93,28 @@ SPECS = {
         label="YOLO-Master v0.8 MoA+MoT",
         cfg=ROOT / "ultralytics/cfg/models/master/v0_8/det/yolo-master-moa-mot-n.yaml",
     ),
+    "mt_off": ModelSpec(
+        key="mt_off",
+        label="YOLO26-MT MPS three-task MoT off",
+        cfg=ROOT / "scripts/yolo26-master-mt-off-mps-local.yaml",
+        task="multitask",
+        variant="mot_off",
+    ),
+    "mt_mot_dense": ModelSpec(
+        key="mt_mot_dense",
+        label="YOLO26-MT MPS three-task MoT dense",
+        cfg=ROOT / "scripts/yolo26-master-mt-mot-dense-mps-local.yaml",
+        task="multitask",
+        variant="mot_dense",
+    ),
+    "mt_mot_sparse": ModelSpec(
+        key="mt_mot_sparse",
+        label="YOLO26-MT MPS three-task MoT sparse-train",
+        cfg=ROOT / "scripts/yolo26-master-mt-mot-runtime-mps-local.yaml",
+        task="multitask",
+        variant="mot_sparse_train",
+        runtime_overrides=(("mot_sparse_train", True), ("mot_local_attn_window", 7)),
+    ),
 }
 
 METRIC_KEYS = (
@@ -89,12 +122,24 @@ METRIC_KEYS = (
     "metrics/recall(B)",
     "metrics/mAP50(B)",
     "metrics/mAP50-95(B)",
+    "metrics/precision(M)",
+    "metrics/recall(M)",
+    "metrics/mAP50(M)",
+    "metrics/mAP50-95(M)",
+    "metrics/precision(P)",
+    "metrics/recall(P)",
+    "metrics/mAP50(P)",
+    "metrics/mAP50-95(P)",
     "val/box_loss",
     "val/cls_loss",
     "val/dfl_loss",
+    "val/seg_loss",
+    "val/pose_loss",
     "train/box_loss",
     "train/cls_loss",
     "train/dfl_loss",
+    "train/seg_loss",
+    "train/pose_loss",
     "train/moe_loss",
     "train/moa_loss",
     "train/mot_loss",
@@ -104,10 +149,14 @@ LOSS_KEYS = (
     "train/box_loss",
     "train/cls_loss",
     "train/dfl_loss",
+    "train/seg_loss",
+    "train/pose_loss",
     "train/moe_loss",
     "train/moa_loss",
     "train/mot_loss",
 )
+
+MULTITASK_ABLATION_TASKS = frozenset(("detect", "segment", "pose"))
 
 
 def default_data_yaml() -> Path:
@@ -135,6 +184,29 @@ def select_specs(keys: list[str]) -> list[ModelSpec]:
             raise SystemExit(f"missing config for {key}: {spec.cfg}")
         specs.append(spec)
     return specs
+
+
+def validate_training_specs(specs: list[ModelSpec], data_yaml: Path) -> None:
+    """Reject mixed task families and non-comparable data contracts before training."""
+    task_families = {spec.task for spec in specs}
+    if len(task_families) != 1:
+        raise SystemExit(
+            "--train cannot mix task families. Run detection and three-task multi-task ablations in separate projects."
+        )
+    if task_families != {"multitask"}:
+        return
+    if not data_yaml.exists():
+        raise SystemExit(f"missing multi-task data YAML: {data_yaml}")
+    data = YAML.load(data_yaml)
+    data_tasks = data.get("tasks") if isinstance(data, dict) else None
+    if not isinstance(data_tasks, (list, tuple, set)) or set(data_tasks) != MULTITASK_ABLATION_TASKS:
+        raise SystemExit(
+            "three-task MoT ablation requires the data YAML to declare exactly tasks: [detect, segment, pose]."
+        )
+    if data.get("multitask_format") != "coco":
+        raise SystemExit(
+            "three-task MoT ablation requires multitask_format: coco for aligned mask and pose supervision."
+        )
 
 
 def count_modules(model: torch.nn.Module, cls: type[torch.nn.Module]) -> int:
@@ -195,8 +267,9 @@ def profile_flops(model: torch.nn.Module, imgsz: int, actual: bool = False) -> t
         return float(get_flops(model, imgsz=imgsz)), "thop_stride_scaled_fallback"
 
 
-def build_model(spec: ModelSpec, device: str = "cpu") -> DetectionModel:
-    model = DetectionModel(str(spec.cfg), ch=3, nc=80, verbose=False).eval()
+def build_model(spec: ModelSpec, device: str = "cpu") -> torch.nn.Module:
+    """Build the exact task model declared by one ablation specification."""
+    model = YOLO(str(spec.cfg), task=spec.task, verbose=False).model.eval()
     if device:
         model.to(torch.device(normalize_torch_device(device)))
     return model
@@ -209,6 +282,8 @@ def build_row(spec: ModelSpec, device: str = "cpu", imgsz: int = 640, include_fl
         "key": spec.key,
         "label": spec.label,
         "cfg": str(spec.cfg.relative_to(ROOT)),
+        "task": spec.task,
+        "variant": spec.variant,
         "params": str(params),
         "params_m": f"{params / 1e6:.6f}",
         "moablocks": str(count_modules(model, MoABlock)),
@@ -220,14 +295,6 @@ def build_row(spec: ModelSpec, device: str = "cpu", imgsz: int = 640, include_fl
         flops, method = profile_flops(model, imgsz=imgsz, actual=False)
         row.update({"imgsz": str(imgsz), "flops_g": f"{flops:.6f}", "flops_method": method})
     return row
-
-
-def sync_device(device: str) -> None:
-    device = normalize_torch_device(device)
-    if device.startswith("cuda") and torch.cuda.is_available():
-        torch.cuda.synchronize()
-    elif device == "mps" and hasattr(torch, "mps"):
-        torch.mps.synchronize()
 
 
 def benchmark_row(
@@ -242,11 +309,27 @@ def benchmark_row(
     model = build_model(spec, device=device)
     device_name = normalize_torch_device(device)
     x = torch.randn(1, 3, imgsz, imgsz, device=torch.device(device_name))
+    reset_device_memory_peak(device_name)
+    memory = device_memory_sample(device_name)
 
     with torch.inference_mode():
         for _ in range(warmup):
             _ = model(x)
             sync_device(device)
+            sample = device_memory_sample(device_name)
+            if sample["peak_device_memory_bytes"] is not None:
+                memory["peak_device_memory_bytes"] = max(
+                    int(memory.get("peak_device_memory_bytes") or 0), int(sample["peak_device_memory_bytes"])
+                )
+                total = sample.get("device_total_memory_bytes")
+                if total:
+                    memory["device_total_memory_bytes"] = int(total)
+                    memory["peak_device_memory_fraction"] = memory["peak_device_memory_bytes"] / total
+            if sample["sampled_current_memory_bytes"] is not None:
+                memory["sampled_current_memory_bytes_max"] = max(
+                    int(memory.get("sampled_current_memory_bytes_max") or 0),
+                    int(sample["sampled_current_memory_bytes"]),
+                )
 
         times = []
         for _ in range(reps):
@@ -254,6 +337,20 @@ def benchmark_row(
             _ = model(x)
             sync_device(device)
             times.append((time.perf_counter() - t0) * 1000.0)
+            sample = device_memory_sample(device_name)
+            if sample["peak_device_memory_bytes"] is not None:
+                memory["peak_device_memory_bytes"] = max(
+                    int(memory.get("peak_device_memory_bytes") or 0), int(sample["peak_device_memory_bytes"])
+                )
+                total = sample.get("device_total_memory_bytes")
+                if total:
+                    memory["device_total_memory_bytes"] = int(total)
+                    memory["peak_device_memory_fraction"] = memory["peak_device_memory_bytes"] / total
+            if sample["sampled_current_memory_bytes"] is not None:
+                memory["sampled_current_memory_bytes_max"] = max(
+                    int(memory.get("sampled_current_memory_bytes_max") or 0),
+                    int(sample["sampled_current_memory_bytes"]),
+                )
 
     flops, flops_method = profile_flops(model, imgsz=imgsz, actual=actual_flops)
     base = build_row(spec, device=device)
@@ -270,23 +367,15 @@ def benchmark_row(
             "flops_g": f"{flops:.6f}",
             "flops_method": flops_method,
             "reps": str(reps),
+            "memory_measurement": str(memory["measurement"]),
+            "memory_is_true_peak": str(memory["is_true_peak"]),
+            "peak_device_memory_bytes": str(memory["peak_device_memory_bytes"] or ""),
+            "device_total_memory_bytes": str(memory.get("device_total_memory_bytes") or ""),
+            "peak_device_memory_fraction": str(memory.get("peak_device_memory_fraction") or ""),
+            "sampled_current_memory_bytes_max": str(memory.get("sampled_current_memory_bytes_max") or ""),
         }
     )
     return base
-
-
-def add_mixture_callbacks(model: YOLO, spec: ModelSpec, args: argparse.Namespace) -> None:
-    if "moa" in spec.key:
-        def on_moa_epoch_end(trainer):
-            anneal_moa_temperature(trainer.model, factor=args.moa_temp_factor, min_temp=args.moa_min_temp)
-
-        model.add_callback("on_train_epoch_end", on_moa_epoch_end)
-
-    if "mot" in spec.key:
-        def on_mot_epoch_end(trainer):
-            anneal_mot_temperature(trainer.model, factor=args.mot_temp_factor, min_temp=args.mot_min_temp)
-
-        model.add_callback("on_train_epoch_end", on_mot_epoch_end)
 
 
 def read_csv_rows(path: Path) -> list[dict[str, str]]:
@@ -365,11 +454,152 @@ def benchmark_rows_by_key(project: Path) -> dict[str, dict[str, str]]:
     return rows_by_key
 
 
-def train_spec(args: argparse.Namespace, spec: ModelSpec, data_yaml: Path, project: Path) -> None:
+def read_json(path: Path) -> dict[str, object]:
+    """Read a JSON object or return an empty mapping for absent/invalid optional artifacts."""
+    if not path.exists():
+        return {}
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _telemetry_value(value: object) -> str:
+    """Format optional telemetry values for the string-oriented CSV writer."""
+    return "" if value is None else str(value)
+
+
+def telemetry_summary_fields(telemetry: dict[str, object]) -> dict[str, str]:
+    """Flatten the rank-zero telemetry record into stable summary CSV fields."""
+    aggregate = telemetry.get("aggregation", {})
+    ranks = telemetry.get("ranks", [])
+    if not isinstance(aggregate, dict) or not isinstance(ranks, list) or not ranks:
+        return {}
+    rank_zero = next(
+        (record for record in ranks if isinstance(record, dict) and record.get("metadata", {}).get("rank") == 0),
+        ranks[0],
+    )
+    if not isinstance(rank_zero, dict):
+        return {}
+    steps = rank_zero.get("steps", {})
+    memory = rank_zero.get("memory", {})
+    if not isinstance(steps, dict) or not isinstance(memory, dict):
+        return {}
+    return {
+        "train_world_size": _telemetry_value(aggregate.get("world_size")),
+        "train_rank_step_counts_consistent": _telemetry_value(aggregate.get("rank_step_counts_consistent")),
+        "train_rank_loss_relative_spread_max": _telemetry_value(aggregate.get("rank_loss_relative_spread_max")),
+        "train_global_samples_per_second": _telemetry_value(aggregate.get("global_samples_per_second")),
+        "train_samples_per_second_rank0": _telemetry_value(steps.get("samples_per_second")),
+        "train_step_ms_p50": _telemetry_value(steps.get("p50_milliseconds")),
+        "train_step_ms_p95": _telemetry_value(steps.get("p95_milliseconds")),
+        "train_memory_measurement": _telemetry_value(memory.get("measurement")),
+        "train_memory_is_true_peak": _telemetry_value(memory.get("is_true_peak")),
+        "train_peak_device_memory_bytes": _telemetry_value(memory.get("peak_device_memory_bytes")),
+        "train_device_total_memory_bytes": _telemetry_value(memory.get("device_total_memory_bytes")),
+        "train_peak_device_memory_fraction": _telemetry_value(memory.get("peak_device_memory_fraction")),
+        "train_rank_peak_device_memory_fraction_max": _telemetry_value(
+            aggregate.get("rank_peak_device_memory_fraction_max")
+        ),
+        "train_sampled_current_memory_bytes_max": _telemetry_value(memory.get("sampled_current_memory_bytes_max")),
+    }
+
+
+def routing_manifest(
+    model: YOLO,
+    runtime_overrides: tuple[tuple[str, object], ...] = (),
+) -> list[dict[str, object]]:
+    """Capture construction state and requested run-time routing policy separately."""
+    overrides = dict(runtime_overrides)
+    rows = []
+    for name, module in model.model.named_modules():
+        if not isinstance(module, (MoABlock, MoTBlock)):
+            continue
+        local_expert = module.experts[0] if isinstance(module, MoTBlock) and module.experts else None
+        sparse_at_construction = bool(getattr(module, "sparse_train", False))
+        local_window_at_construction = getattr(local_expert, "local_window_size", None)
+        rows.append(
+            {
+                "name": name,
+                "module_type": type(module).__name__,
+                "top_k": getattr(module, "top_k", None),
+                "num_experts": getattr(module, "num_experts", None),
+                "sparse_train_at_construction": sparse_at_construction,
+                "sparse_train_requested": bool(overrides.get("mot_sparse_train", sparse_at_construction)),
+                "local_attn_window_at_construction": local_window_at_construction,
+                "local_attn_window_requested": overrides.get("mot_local_attn_window", local_window_at_construction),
+                "ddp_contract_source": getattr(module, "_ddp_contract_source", None),
+            }
+        )
+    return rows
+
+
+def write_run_manifest(args: argparse.Namespace, spec: ModelSpec, project: Path, seed: int, model: YOLO) -> Path:
+    """Write the reproducibility contract for one model/seed training run."""
+    run_dir = project / spec.key
+    manifest = {
+        "schema_version": 1,
+        "model": {
+            "key": spec.key,
+            "label": spec.label,
+            "cfg": str(spec.cfg),
+            "task": spec.task,
+            "variant": spec.variant,
+        },
+        "seed": seed,
+        "data": str(args.data),
+        "training": {
+            "epochs": args.epochs,
+            "imgsz": args.imgsz,
+            "batch": args.batch,
+            "workers": args.workers,
+            "optimizer": args.optimizer,
+            "mosaic": args.mosaic,
+            "mixup": args.mixup,
+            "cutmix": args.cutmix,
+            "copy_paste": args.copy_paste,
+            "device": args.device,
+            "amp_requested": args.amp,
+            "deterministic": args.deterministic,
+            "resume_requested": args.resume,
+            "telemetry_enabled": args.telemetry,
+            "telemetry_loss_steps": args.telemetry_loss_steps,
+            "moa_mot_temperature_factor": args.temperature_factor,
+            "moa_mot_min_temperature": args.temperature_min,
+            "runtime_overrides_requested": dict(spec.runtime_overrides),
+        },
+        "environment": {
+            "platform": platform.platform(),
+            "python": platform.python_version(),
+            "torch": str(torch.__version__),
+            "cuda_available": torch.cuda.is_available(),
+            "cuda_device_count": torch.cuda.device_count() if torch.cuda.is_available() else 0,
+            "mps_available": bool(getattr(torch.backends, "mps", None) and torch.backends.mps.is_available()),
+        },
+        "routing_requested": routing_manifest(model, spec.runtime_overrides),
+        "evidence_boundary": (
+            "This manifest records requested configuration only. Runtime dispatch, DDP consistency, and memory "
+            "evidence are recorded in telemetry.json after training."
+        ),
+    }
+    run_dir.mkdir(parents=True, exist_ok=True)
+    out = run_dir / "run_manifest.json"
+    out.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return out
+
+
+def train_spec(args: argparse.Namespace, spec: ModelSpec, data_yaml: Path, project: Path, seed: int) -> None:
     resume_ckpt = project / spec.key / "weights" / "last.pt"
     resume = bool(args.resume and resume_ckpt.exists())
-    model = YOLO(str(resume_ckpt if resume else spec.cfg))
-    add_mixture_callbacks(model, spec, args)
+    model = YOLO(str(resume_ckpt if resume else spec.cfg), task=spec.task)
+    if args.telemetry:
+        os.environ[TELEMETRY_ENV] = "1"
+        os.environ[TELEMETRY_LOSS_STEPS_ENV] = str(args.telemetry_loss_steps)
+    else:
+        os.environ.pop(TELEMETRY_ENV, None)
+        os.environ.pop(TELEMETRY_LOSS_STEPS_ENV, None)
+    manifest = write_run_manifest(args, spec, project, seed, model)
     model.train(
         data=str(data_yaml),
         epochs=args.epochs,
@@ -377,7 +607,7 @@ def train_spec(args: argparse.Namespace, spec: ModelSpec, data_yaml: Path, proje
         batch=args.batch,
         device=args.device,
         workers=args.workers,
-        seed=args.seed,
+        seed=seed,
         deterministic=args.deterministic,
         project=str(project),
         name=spec.key,
@@ -387,10 +617,19 @@ def train_spec(args: argparse.Namespace, spec: ModelSpec, data_yaml: Path, proje
         plots=args.plots,
         cache=args.cache,
         patience=args.patience,
+        optimizer=args.optimizer,
+        mosaic=args.mosaic,
+        mixup=args.mixup,
+        cutmix=args.cutmix,
+        copy_paste=args.copy_paste,
         amp=args.amp,
+        moa_mot_temperature_factor=args.temperature_factor,
+        moa_mot_min_temperature=args.temperature_min,
         resume=resume,
         verbose=args.verbose,
+        **dict(spec.runtime_overrides),
     )
+    print(f"[manifest] wrote {manifest}")
 
 
 def write_csv(path: Path, rows: list[dict[str, str]]) -> None:
@@ -409,16 +648,31 @@ def write_summary(project: Path, specs: list[ModelSpec]) -> Path:
         run_dir = project / spec.key
         metrics = read_last_metrics(run_dir / "results.csv")
         row = build_row(spec, device="cpu")
-        row.update({
-            "run_dir": str(run_dir.relative_to(ROOT)) if run_dir.is_relative_to(ROOT) else str(run_dir),
-            "epoch": metrics.get("epoch", ""),
-        })
+        row.update(
+            {
+                "run_dir": str(run_dir.relative_to(ROOT)) if run_dir.is_relative_to(ROOT) else str(run_dir),
+                "epoch": metrics.get("epoch", ""),
+            }
+        )
         for key, value in benchmark_rows.get(spec.key, {}).items():
-            if key not in {"key", "label", "cfg", "params", "params_m", "moablocks", "c2fmoa", "motblocks", "c2fmot"}:
+            if key not in {
+                "key",
+                "label",
+                "cfg",
+                "task",
+                "variant",
+                "params",
+                "params_m",
+                "moablocks",
+                "c2fmoa",
+                "motblocks",
+                "c2fmot",
+            }:
                 row[key] = value
         for key in METRIC_KEYS:
             row[key] = metrics.get(key, "")
         row.update(stability_from_results(run_dir / "results.csv"))
+        row.update(telemetry_summary_fields(read_json(run_dir / "telemetry.json")))
         rows.append(row)
     out = project / "summary.csv"
     write_csv(out, rows)
@@ -434,26 +688,57 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--imgsz", type=int, default=640)
     parser.add_argument("--check-build", action="store_true")
     parser.add_argument("--benchmark", action="store_true")
-    parser.add_argument("--actual-flops", action="store_true", help="Use torch profiler on the full input size for FLOPs.")
+    parser.add_argument(
+        "--actual-flops", action="store_true", help="Use torch profiler on the full input size for FLOPs."
+    )
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--reps", type=int, default=5)
     parser.add_argument("--train", action="store_true")
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--batch", type=int, default=8)
     parser.add_argument("--workers", type=int, default=0)
+    parser.add_argument("--optimizer", default="auto")
+    parser.add_argument("--mosaic", type=float, default=1.0)
+    parser.add_argument("--mixup", type=float, default=0.0)
+    parser.add_argument("--cutmix", type=float, default=0.0)
+    parser.add_argument("--copy-paste", type=float, default=0.0)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--seeds",
+        type=int,
+        nargs="+",
+        help="Run each model for these seeds under PROJECT/seed_<seed>. Overrides --seed for --train.",
+    )
     parser.add_argument("--deterministic", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--resume", action="store_true", help="Resume each model from PROJECT/<key>/weights/last.pt when present.")
+    parser.add_argument(
+        "--resume", action="store_true", help="Resume each model from PROJECT/<key>/weights/last.pt when present."
+    )
     parser.add_argument("--patience", type=int, default=0)
     parser.add_argument("--amp", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--telemetry",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Write per-rank training timing, memory, routing, and DDP-consistency telemetry JSON artifacts.",
+    )
+    parser.add_argument(
+        "--telemetry-loss-steps",
+        type=int,
+        default=20,
+        help="Number of initial rank-local training losses retained for DDP consistency analysis.",
+    )
     parser.add_argument("--cache", action="store_true")
     parser.add_argument("--plots", action="store_true")
     parser.add_argument("--exist-ok", action="store_true")
     parser.add_argument("--summary-only", action="store_true")
-    parser.add_argument("--moa-temp-factor", type=float, default=0.97)
-    parser.add_argument("--moa-min-temp", type=float, default=0.3)
-    parser.add_argument("--mot-temp-factor", type=float, default=0.97)
-    parser.add_argument("--mot-min-temp", type=float, default=0.3)
+    parser.add_argument(
+        "--temperature-factor", type=float, default=0.97, help="Shared MoA/MoT per-epoch router temperature multiplier."
+    )
+    parser.add_argument("--temperature-min", type=float, default=0.3, help="Shared MoA/MoT router temperature floor.")
+    parser.add_argument("--moa-temp-factor", type=float, help=argparse.SUPPRESS)
+    parser.add_argument("--moa-min-temp", type=float, help=argparse.SUPPRESS)
+    parser.add_argument("--mot-temp-factor", type=float, help=argparse.SUPPRESS)
+    parser.add_argument("--mot-min-temp", type=float, help=argparse.SUPPRESS)
     parser.add_argument("--verbose", action="store_true")
     return parser.parse_args()
 
@@ -463,6 +748,23 @@ def main() -> int:
     specs = select_specs(args.models)
     project = args.project if args.project.is_absolute() else ROOT / args.project
     data_yaml = args.data if args.data.is_absolute() else ROOT / args.data
+    if args.telemetry_loss_steps < 0:
+        raise SystemExit("--telemetry-loss-steps must be non-negative")
+    if args.seeds is not None and not args.seeds:
+        raise SystemExit("--seeds must contain at least one seed")
+    legacy_factors = [value for value in (args.moa_temp_factor, args.mot_temp_factor) if value is not None]
+    legacy_mins = [value for value in (args.moa_min_temp, args.mot_min_temp) if value is not None]
+    if len(set(legacy_factors)) > 1 or len(set(legacy_mins)) > 1:
+        raise SystemExit(
+            "Separate MoA and MoT temperature schedules are not compatible with DDP-safe execution; "
+            "use one shared --temperature-factor and --temperature-min."
+        )
+    if legacy_factors:
+        args.temperature_factor = legacy_factors[0]
+    if legacy_mins:
+        args.temperature_min = legacy_mins[0]
+    if args.temperature_factor <= 0 or args.temperature_min <= 0:
+        raise SystemExit("--temperature-factor and --temperature-min must be positive")
 
     if args.check_build:
         rows = [build_row(spec, device=args.device, imgsz=args.imgsz, include_flops=True) for spec in specs]
@@ -472,22 +774,31 @@ def main() -> int:
         print(f"[build] wrote {out}")
 
     if args.benchmark:
-        rows = [benchmark_row(spec, args.device, args.imgsz, args.warmup, args.reps, args.actual_flops) for spec in specs]
+        rows = [
+            benchmark_row(spec, args.device, args.imgsz, args.warmup, args.reps, args.actual_flops) for spec in specs
+        ]
         out = project / f"latency_{args.device}_{args.imgsz}.csv"
         write_csv(out, rows)
         print(json.dumps(rows, indent=2, ensure_ascii=False))
         print(f"[benchmark] wrote {out}")
 
     if args.train:
+        validate_training_specs(specs, data_yaml)
         project.mkdir(parents=True, exist_ok=True)
-        for spec in specs:
-            train_spec(args, spec, data_yaml, project)
-            out = write_summary(project, specs)
-            print(f"[summary] wrote {out}")
+        seeds = args.seeds or [args.seed]
+        multi_seed = args.seeds is not None
+        for seed in seeds:
+            seed_project = project / f"seed_{seed}" if multi_seed else project
+            for spec in specs:
+                train_spec(args, spec, data_yaml, seed_project, seed)
+                out = write_summary(seed_project, specs)
+                print(f"[summary] wrote {out}")
 
     if args.summary_only:
-        out = write_summary(project, specs)
-        print(f"[summary] wrote {out}")
+        summary_projects = [project / f"seed_{seed}" for seed in args.seeds] if args.seeds else [project]
+        for summary_project in summary_projects:
+            out = write_summary(summary_project, specs)
+            print(f"[summary] wrote {out}")
 
     if not any((args.check_build, args.benchmark, args.train, args.summary_only)):
         raise SystemExit("choose one or more actions: --check-build, --benchmark, --train, --summary-only")

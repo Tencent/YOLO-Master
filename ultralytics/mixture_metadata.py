@@ -27,6 +27,7 @@ MIXTURE_MODULE_KINDS = MappingProxyType(
         "MultiHeadRouterMoE": "moe",
         "OptimalHybridGateMoE": "moe",
         "RefinedLowRankHybridAdaptiveGateMoE": "moe",
+        "SharedExpertMoE": "moe",  # Issue #54: Cross-Scale Expert Pool Sharing
         "UltimateOptimizedMoE": "moe",
         "UltraOptimizedMoE": "moe",
         "VisualEnhancedAdaptiveGateMoE": "moe",

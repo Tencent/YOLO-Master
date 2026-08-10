@@ -357,6 +357,15 @@ class CompositeCriterion:
         self.native_criterion = native_criterion
         self.enabled = has_routed_modules(model)
 
+    @property
+    def updates(self) -> int:
+        """Expose the native criterion schedule position."""
+        return int(getattr(self.native_criterion, "updates", 0))
+
+    @updates.setter
+    def updates(self, value: int) -> None:
+        setattr(self.native_criterion, "updates", int(value))
+
     def __getattr__(self, name: str):
         if name in {"model", "native_criterion", "enabled"}:
             raise AttributeError(name)

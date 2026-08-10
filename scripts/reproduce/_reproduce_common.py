@@ -215,6 +215,20 @@ def _make_wandb_callbacks(run_name: str, dataset: "DatasetSpec", spec: "ModelSpe
                     log[out_key] = float(v)
                 except (TypeError, ValueError):
                     pass
+
+        # Issue #49 requires the canonical metric name "moe_loss".
+        # Current trainers may expose the same routed auxiliary loss as
+        # "mixture_aux_loss", so publish both names without overwriting a
+        # native moe_loss value when one is available.
+        for prefix in ("train", "val"):
+            canonical = f"{prefix}/moe_loss"
+            fallback = f"{prefix}/mixture_aux_loss"
+            if canonical not in log and data.get(fallback) is not None:
+                try:
+                    log[canonical] = float(data[fallback])
+                except (TypeError, ValueError):
+                    pass
+
         try:
             run.log(log, step=epoch)
         except Exception as exc:  # noqa: BLE001
@@ -272,8 +286,15 @@ def write_summary(project: Path, dataset: DatasetSpec, models=MODELS, sparse_eva
                 "dense_eval": (spec.uses_esmoe and not sparse_eval) if spec.uses_esmoe else "n/a",
                 "epoch": res.get("epoch", ""),
             }
+            metric_fallbacks = {
+                "train/moe_loss": "train/mixture_aux_loss",
+                "val/moe_loss": "val/mixture_aux_loss",
+            }
             for k in METRIC_KEYS:
-                row[k] = _float_or_blank(res.get(k))
+                value = res.get(k)
+                if value in (None, "") and k in metric_fallbacks:
+                    value = res.get(metric_fallbacks[k])
+                row[k] = _float_or_blank(value)
             w.writerow(row)
     return out
 

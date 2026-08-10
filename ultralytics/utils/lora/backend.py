@@ -98,6 +98,12 @@ class MoLoRABackend:
                 "format": "molora_adapter",
                 "config": getattr(config, "__dict__", dict(config) if isinstance(config, dict) else {}),
                 "structure": _molora_structure(model),
+                "model_fingerprint": _model_fingerprint(model),
+                "merge_metadata": {
+                    name: dict(getattr(layer, "_merge_metadata", {}))
+                    for name, layer in model.named_modules()
+                    if layer.__class__.__name__ == "MoLoRALayer"
+                },
                 "state_dict": {
                     k: v
                     for k, v in model.state_dict().items()
@@ -164,8 +170,8 @@ class MoLoRABackend:
         model = _unwrap(model)
         config = getattr(model, "molora_config", None)
         merge_records = [
-            getattr(module, "_merge_metadata", {})
-            for module in model.modules()
+            {"name": name, **dict(getattr(module, "_merge_metadata", {}))}
+            for name, module in model.named_modules()
             if module.__class__.__name__ == "MoLoRALayer"
         ]
         return {
@@ -176,6 +182,8 @@ class MoLoRABackend:
             "num_experts": getattr(config, "num_experts", None),
             "top_k": getattr(config, "top_k", None),
             "router_type": getattr(config, "router_type", None),
+            "model_fingerprint": _model_fingerprint(model),
+            "placement_plan": getattr(model, "molora_placement_plan", None),
             "merge_mode": "dynamic",
             "exact_merge": False,
             "merge_records": merge_records,
@@ -185,6 +193,21 @@ class MoLoRABackend:
                 for record in merge_records
             ),
         }
+
+
+def _model_fingerprint(model: nn.Module) -> str:
+    """Build a stable graph/parameter-shape binding for adapter artifacts."""
+
+    import hashlib
+
+    entries = []
+    for name, module in model.named_modules():
+        if name:
+            entries.append((name, module.__class__.__qualname__))
+    for name, parameter in model.named_parameters():
+        entries.append((f"param:{name}", tuple(parameter.shape), str(parameter.dtype)))
+    payload = json.dumps(entries, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 _BACKENDS = (MoLoRABackend(), StandardLoRABackend())

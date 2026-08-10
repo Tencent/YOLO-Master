@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from threading import Lock
-from typing import Any, Iterable, Protocol, runtime_checkable
+from typing import Any, Iterable, Mapping, Protocol, runtime_checkable
 import weakref
 
 import torch
@@ -39,6 +39,20 @@ class RoutingAuxPublisher(Protocol):
     def routing_snapshot(self) -> dict[str, Any]: ...
 
     def export_capabilities(self) -> dict[str, Any]: ...
+
+
+@runtime_checkable
+class RoutedModule(Protocol):
+    """Structural protocol shared by every expert-routing module."""
+
+    num_experts: int
+    top_k: int
+
+    @property
+    def aux_loss(self) -> torch.Tensor: ...
+
+    @property
+    def last_routing_snapshot(self) -> dict[str, Any]: ...
 
 
 _RECORDS: weakref.WeakKeyDictionary[nn.Module, AuxLossRecord] = weakref.WeakKeyDictionary()
@@ -317,7 +331,110 @@ def routing_snapshot(module: nn.Module) -> dict[str, Any]:
     snapshot = getattr(module, "last_routing_snapshot", {})
     if not isinstance(snapshot, dict):
         return {}
-    return dict(snapshot)
+    result = dict(snapshot)
+    # Usage EMA and capacity counters are rank-local unless the producer
+    # explicitly publishes a reduced global value.
+    result.setdefault("usage_scope", "rank_local")
+    result.setdefault("global_usage_available", False)
+    return result
+
+
+def _routing_gini(usage: torch.Tensor) -> float:
+    """Compute a bounded Gini coefficient from detached expert usage."""
+
+    values = usage.detach().float().reshape(-1).clamp_min(0.0)
+    if values.numel() == 0 or not bool(torch.isfinite(values).all().item()):
+        return 0.0
+    total = values.sum()
+    if float(total) <= 0.0:
+        return 0.0
+    ordered = values.sort().values
+    index = torch.arange(1, ordered.numel() + 1, device=ordered.device, dtype=ordered.dtype)
+    gini = 2.0 * (index * ordered).sum() / (ordered.numel() * total) - (ordered.numel() + 1.0) / ordered.numel()
+    return float(gini.clamp(0.0, 1.0).item())
+
+
+def global_routing_metrics(
+    snapshot: Mapping[str, Any] | None,
+    *,
+    device: torch.device | None = None,
+) -> dict[str, Any]:
+    """Add optional all-reduced usage diagnostics without retaining gradients.
+
+    The producer's ``expert_usage`` remains rank-local. When a process group is
+    active, the detached usage vector is reduced independently and exposed as
+    ``global_expert_usage``, ``global_entropy``, and ``global_gini``. If no
+    process group exists, the local vector is reused and marked unavailable.
+    """
+
+    result = dict(snapshot or {})
+    usage = result.get("expert_usage", result.get("usage"))
+    if isinstance(usage, torch.Tensor):
+        local = usage.detach().float().reshape(-1)
+    elif usage is None:
+        local = torch.empty(0, dtype=torch.float32)
+    else:
+        local = torch.as_tensor(usage, dtype=torch.float32).reshape(-1)
+    local = torch.nan_to_num(local, nan=0.0, posinf=0.0, neginf=0.0).clamp_min(0.0)
+    global_usage = local.clone()
+    reduced = False
+    if local.numel() and torch.distributed.is_available() and torch.distributed.is_initialized():
+        world = int(torch.distributed.get_world_size())
+        if world > 1:
+            reduce_device = device
+            backend = str(torch.distributed.get_backend()).lower()
+            if backend == "nccl":
+                if reduce_device is None or reduce_device.type != "cuda":
+                    reduce_device = torch.device("cuda", torch.cuda.current_device())
+            elif reduce_device is not None and reduce_device.type != "cpu":
+                reduce_device = torch.device("cpu")
+            elif reduce_device is None and local.is_cuda:
+                reduce_device = torch.device("cpu")
+            if reduce_device is not None:
+                global_usage = local.to(reduce_device)
+            torch.distributed.all_reduce(global_usage, op=torch.distributed.ReduceOp.SUM)
+            global_usage = global_usage / world
+            reduced = True
+            if global_usage.device != local.device:
+                global_usage = global_usage.to(local.device)
+    total = global_usage.sum().clamp_min(1e-12)
+    probs = global_usage / total
+    entropy = float((-(probs * probs.clamp_min(1e-12).log()).sum()).item()) if probs.numel() else 0.0
+    result.update(
+        usage_scope=str(result.get("usage_scope", "rank_local")),
+        global_usage_available=bool(reduced),
+        global_expert_usage=global_usage.cpu(),
+        global_entropy=entropy,
+        global_gini=_routing_gini(global_usage),
+    )
+    result["diagnostics_schema_version"] = 1
+    return result
+
+
+def is_routed_module(module: nn.Module) -> bool:
+    """Return whether ``module`` exposes the common routed-module contract."""
+
+    if not isinstance(module, nn.Module):
+        return False
+    try:
+        num_experts = int(getattr(module, "num_experts"))
+        top_k = int(getattr(module, "top_k"))
+    except (AttributeError, TypeError, ValueError):
+        return False
+    return (
+        num_experts > 0
+        and 0 < top_k <= num_experts
+        and isinstance(getattr(module, "aux_loss", None), torch.Tensor)
+        and isinstance(getattr(module, "last_routing_snapshot", None), dict)
+    )
+
+
+def collect_routed_children(module: nn.Module) -> list[nn.Module]:
+    """Return nested routed modules, excluding the supplied root module."""
+
+    if not isinstance(module, nn.Module):
+        raise TypeError(f"module must be an nn.Module, got {type(module)!r}")
+    return [child for child in module.modules() if child is not module and is_routed_module(child)]
 
 
 def collect_aux_loss(
@@ -399,6 +516,7 @@ def collect_aux_loss(
 __all__ = [
     "AuxLossRecord",
     "RoutingAuxPublisher",
+    "RoutedModule",
     "aux_step_scope",
     "begin_aux_step",
     "clear_aux_records",
@@ -408,7 +526,10 @@ __all__ = [
     "current_aux_step",
     "export_capabilities",
     "graph_connected_finite_zero",
+    "global_routing_metrics",
     "get_aux_record",
+    "is_routed_module",
+    "collect_routed_children",
     "iter_aux_records",
     "publish_aux_loss",
     "reset_routing_runtime_state",

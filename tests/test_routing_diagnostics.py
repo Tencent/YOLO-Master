@@ -2,11 +2,13 @@
 
 import pytest
 import torch
+import torch.nn as nn
 
 from ultralytics.nn.modules.moa import C2fMoA, MoABlock
 from ultralytics.nn.modules.moa.router import _moa_router_aux_loss
 from ultralytics.nn.modules.moe.modules import ES_MOE
 from ultralytics.nn.modules.mot import MoTBlock
+from ultralytics.nn.modules.routing_protocol import global_routing_metrics
 from ultralytics.utils.errors import MoERouterError
 
 
@@ -100,10 +102,40 @@ def test_routed_modules_declare_sparse_export_boundary():
         assert "dense" in capabilities["sparse_export_limitation"].lower()
 
 
+def test_global_routing_metrics_marks_local_usage_without_process_group():
+    result = global_routing_metrics({"expert_usage": torch.tensor([0.75, 0.25])})
+    assert result["usage_scope"] == "rank_local"
+    assert result["global_usage_available"] is False
+    assert torch.allclose(result["global_expert_usage"], torch.tensor([0.75, 0.25]))
+    assert result["global_gini"] == pytest.approx(0.25)
+
+
+def test_global_routing_metrics_reduces_detached_usage(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr("torch.distributed.is_available", lambda: True)
+    monkeypatch.setattr("torch.distributed.is_initialized", lambda: True)
+    monkeypatch.setattr("torch.distributed.get_world_size", lambda: 2)
+    monkeypatch.setattr("torch.distributed.get_backend", lambda: "gloo")
+
+    def reduce(value, op=None):
+        calls.append(value)
+        value.add_(torch.tensor([0.25, 0.75]))
+
+    monkeypatch.setattr("torch.distributed.all_reduce", reduce)
+    result = global_routing_metrics({"expert_usage": torch.tensor([0.75, 0.25])})
+    assert len(calls) == 1
+    assert result["global_usage_available"] is True
+    assert torch.allclose(result["global_expert_usage"], torch.tensor([0.5, 0.5]))
+    assert result["global_gini"] == pytest.approx(0.0)
+
+
 def test_moa_sparse_inference_keeps_one_group_and_renormalizes(monkeypatch):
-    block = MoABlock(24, num_heads=3, inference_sparse_threshold=0.4).eval()
+    block = MoABlock(24, num_heads=3, inference_sparse_threshold=0.4, shortcut=False).eval()
     weights = torch.tensor([0.8, 0.1, 0.1]).view(1, 3, 1, 1).expand(2, 3, 4, 4)
     monkeypatch.setattr(block.router, "forward", lambda x, return_logits=False: (weights, weights.log()))
+    block.fusion = nn.Identity()
+    block.ffn = nn.Identity()
     calls = [0, 0, 0]
     for idx, name in enumerate(("local_head", "region_head", "global_head")):
         head = getattr(block, name)
@@ -111,7 +143,7 @@ def test_moa_sparse_inference_keeps_one_group_and_renormalizes(monkeypatch):
 
         def counted(x, *, _idx=idx, _original=original):
             calls[_idx] += 1
-            return _original(x)
+            return torch.ones_like(x)
 
         monkeypatch.setattr(head, "forward", counted)
 
@@ -119,6 +151,7 @@ def test_moa_sparse_inference_keeps_one_group_and_renormalizes(monkeypatch):
     snapshot = block.routing_snapshot()
 
     assert output.shape == (2, 24, 4, 4)
+    assert torch.allclose(output, torch.ones_like(output))
     assert calls == [1, 0, 0]
     assert snapshot["executed_groups"] == 1
     assert snapshot["approximation_error"] > 0

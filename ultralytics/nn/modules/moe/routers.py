@@ -168,10 +168,11 @@ class UltraEfficientRouter(nn.Module):
 class BaseRouter(nn.Module):
     """Base router with optional capacity factor support (P1-5 fix).
 
-    Capacity factor controls the maximum number of tokens each expert can handle
-    per step. When a batch has more tokens than ``capacity_factor * num_experts``,
-    excess tokens are routed to a deterministic round-robin overflow expert.
-    This prevents OOM when a single expert gets overloaded.
+    Capacity factor controls the maximum number of token assignments each expert
+    can handle per step. Capacity follows the standard Top-K convention:
+    ``ceil(capacity_factor * tokens * top_k / num_experts)``. Assignments beyond
+    an expert's capacity are removed, then tokens with no surviving assignment
+    fall back to expert 0. This prevents a biased router from overloading one expert.
     """
 
     def __init__(self, num_experts, top_k, capacity_factor: Optional[float] = None):
@@ -210,37 +211,45 @@ class BaseRouter(nn.Module):
         # 3) Select Top-K in fp32
         topk_vals, topk_indices = torch.topk(probs, effective_top_k, dim=1)
 
-        # P1-5: Apply capacity factor constraint if configured
+        # P1-5: Limit each expert independently using standard Top-K capacity.
         overflow_mask = None
+        assignment_overflow_mask = None
+        fallback_surrogate = None
+        capacity = None
         if self.capacity_factor is not None and training:
-            max_tokens = int(self.capacity_factor * self.num_experts)
-            if B > max_tokens:
-                capacity_mask = torch.zeros(B, dtype=torch.bool, device=logits.device)
-                # Use a rank-independent selection so DDP replicas make the
-                # same capacity decision for identical local batch shapes.
-                indices = torch.arange(max_tokens, device=logits.device)
-                capacity_mask[indices] = True
-                overflow_mask = ~capacity_mask
-                # Spread overflow tokens across experts instead of forcing all
-                # of them onto expert 0, which amplifies load imbalance.
-                topk_indices = topk_indices.clone()
-                overflow_indices = torch.nonzero(overflow_mask, as_tuple=False).flatten()
-                topk_indices[overflow_indices] = (
-                    torch.arange(overflow_indices.numel(), device=logits.device) % self.num_experts
-                ).unsqueeze(1)
+            if not math.isfinite(float(self.capacity_factor)) or self.capacity_factor <= 0:
+                raise MoERouterError("capacity_factor must be finite and > 0")
+            capacity = max(1, math.ceil(self.capacity_factor * B * effective_top_k / self.num_experts))
+            expert_positions = F.one_hot(topk_indices, num_classes=self.num_experts).cumsum(dim=0)
+            assignment_overflow_mask = (
+                expert_positions.gather(2, topk_indices.unsqueeze(-1)).squeeze(-1) > capacity
+            )
+            if assignment_overflow_mask.any():
+                topk_vals = topk_vals.masked_fill(assignment_overflow_mask, 0.0)
+                overflow_mask = assignment_overflow_mask.all(dim=1)
+                if overflow_mask.any():
+                    # Keep the established deterministic default-expert fallback.
+                    topk_indices = topk_indices.clone()
+                    topk_indices[overflow_mask, 0] = 0
+                    fallback_surrogate = probs[overflow_mask, 0]
+                    topk_vals = topk_vals.clone()
+                    topk_vals[overflow_mask, 0] = fallback_surrogate
 
-        # 4) Normalize weights
-        sum_vals = topk_vals.sum(dim=1, keepdim=True) + 1e-6
-        topk_vals = topk_vals / sum_vals
-        if overflow_mask is not None:
-            # Preserve the established hard round-robin forward assignment but
-            # use assigned router probabilities as a straight-through surrogate
-            # so overflow samples still train the router.
-            assigned_probs = probs.gather(1, topk_indices)
-            hard_weights = torch.zeros_like(assigned_probs)
+        # 4) Normalize weights. Zeroed overflow assignments stay synchronized
+        # with indices; fallback rows use hard-forward/soft-backward weights.
+        sum_vals = topk_vals.sum(dim=1, keepdim=True).clamp_min(1e-6)
+        normalized_vals = topk_vals / sum_vals
+        if overflow_mask is not None and overflow_mask.any():
+            hard_weights = torch.zeros_like(normalized_vals[overflow_mask])
             hard_weights[:, 0] = 1
-            straight_through = hard_weights + (assigned_probs - assigned_probs.detach())
-            topk_vals = torch.where(overflow_mask[:, None], straight_through, topk_vals)
+            # Normalizing a single fallback probability would be identically one
+            # and erase its derivative. Use the unnormalized default-expert
+            # probability as the straight-through surrogate instead.
+            soft_surrogate = torch.zeros_like(hard_weights)
+            soft_surrogate[:, 0] = fallback_surrogate
+            normalized_vals = normalized_vals.clone()
+            normalized_vals[overflow_mask] = hard_weights + soft_surrogate - soft_surrogate.detach()
+        topk_vals = normalized_vals
 
         # 5) Collect loss-related info (train only)
         loss_dict = {}
@@ -248,13 +257,14 @@ class BaseRouter(nn.Module):
             loss_dict['router_logits'] = logits
             loss_dict['router_probs'] = probs
             loss_dict['topk_indices'] = topk_indices
-            if overflow_mask is not None:
-                overflow_count = int(B - max_tokens)
+            if assignment_overflow_mask is not None:
+                overflow_count = int(assignment_overflow_mask.sum().item())
                 loss_dict['overflow_count'] = overflow_count
-                loss_dict['overflow_fraction'] = overflow_count / max(B, 1)
-                loss_dict['overflow_mask'] = overflow_mask.detach().clone()
-                loss_dict['capacity_limit'] = int(max_tokens)
-                loss_dict['overflow_policy'] = 'round_robin_straight_through'
+                loss_dict['overflow_fraction'] = overflow_count / max(B * effective_top_k, 1)
+                loss_dict['overflow_mask'] = assignment_overflow_mask.detach().clone()
+                loss_dict['token_overflow_mask'] = overflow_mask.detach().clone()
+                loss_dict['capacity_limit'] = int(capacity)
+                loss_dict['overflow_policy'] = 'per_expert_default_straight_through'
 
         return topk_vals, topk_indices, loss_dict
 

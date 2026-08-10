@@ -125,11 +125,13 @@ from .moe import (
     MultiHeadRouterMoE,
     OptimalHybridGateMoE,
     RefinedLowRankHybridAdaptiveGateMoE,
+    SharedExpertMoE,  # Issue #54: Cross-Scale Expert Pool Sharing
     UltimateOptimizedMoE,
     UltraOptimizedMoE,
     VisualEnhancedAdaptiveGateMoE,
 )
 from .mot import C2fMoT, MoTBlock, anneal_mot_temperature, collect_mot_aux_loss
+from .multitask import MultiTaskHead, TaskRouter
 from .latent_mixture import DenseChannelExpert, LatentMixture, LatentRouter, LatentRoutingContext, MultiScaleLatentMixture
 
 __all__ = (
@@ -236,6 +238,7 @@ __all__ = (
     "NeckMoAFusion",
     "OptimalHybridGateMoE",
     "RefinedLowRankHybridAdaptiveGateMoE",
+    "SharedExpertMoE",  # Issue #54: Cross-Scale Expert Pool Sharing
     "UltimateOptimizedMoE",
     "UltraOptimizedMoE",
     "VisualEnhancedAdaptiveGateMoE",
@@ -243,6 +246,8 @@ __all__ = (
     "anneal_mot_temperature",
     "collect_moa_aux_loss",
     "collect_mot_aux_loss",
+    "MultiTaskHead",
+    "TaskRouter",
     "DenseChannelExpert",
     "LatentMixture",
     "LatentRouter",

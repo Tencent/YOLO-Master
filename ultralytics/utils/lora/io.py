@@ -16,16 +16,17 @@ def _lora_pkg():
     """Return the public lora package module so monkeypatches on package attrs remain effective."""
     return sys.modules[__package__]
 
+
 def save_lora_adapters(model: "DetectionModel", path: Union[str, Path]) -> bool:
     """
     Save active LoRA or MoLoRA adapter weights without the frozen base model.
-    
+
     Args:
         model: LoRADetectionModel instance.
         path: Directory path for saving.
     """
     # Unwrap DDP
-    if hasattr(model, 'module'):
+    if hasattr(model, "module"):
         model = model.module
 
     if getattr(model, "molora_enabled", False) or any(
@@ -35,7 +36,7 @@ def save_lora_adapters(model: "DetectionModel", path: Union[str, Path]) -> bool:
 
         return MoLoRABackend().save(model, path)
 
-    if not getattr(model, 'lora_enabled', False):
+    if not getattr(model, "lora_enabled", False):
         LOGGER.debug("[LoRA] Save skipped: LoRA not enabled.")
         return False
 
@@ -43,7 +44,7 @@ def save_lora_adapters(model: "DetectionModel", path: Union[str, Path]) -> bool:
     path.mkdir(parents=True, exist_ok=True)
     backend = getattr(model, "lora_backend", "peft")
     variant = getattr(model, "lora_variant", "lora")
-    
+
     try:
         if backend == "fallback":
             fallback_state = _lora_pkg()._collect_fallback_adapter_state(model)
@@ -64,16 +65,12 @@ def save_lora_adapters(model: "DetectionModel", path: Union[str, Path]) -> bool:
             # backends save into the same directory (e.g. successive
             # save_lora_adapters calls). Keep an `adapter_config.json` symlink
             # for backward compatibility with older loaders.
-            (path / "fallback_meta.json").write_text(
-                json.dumps(payload, indent=2, ensure_ascii=False)
-            )
+            (path / "fallback_meta.json").write_text(json.dumps(payload, indent=2, ensure_ascii=False))
             # Backward compat: only write adapter_config.json if PEFT didn't
             # already create one in this directory.
             adapter_cfg_path = path / "adapter_config.json"
             if not adapter_cfg_path.exists():
-                adapter_cfg_path.write_text(
-                    json.dumps(payload, indent=2, ensure_ascii=False)
-                )
+                adapter_cfg_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False))
             LOGGER.info(f"[LoRA] 💾 Fallback adapter metadata saved to {path}")
             return True
 
@@ -141,6 +138,17 @@ def load_lora_adapters(
     if hasattr(model, "module"):
         model = model.module
 
+    # Fallback bundles are stateful and can be loaded onto a model that was
+    # already prepared with the same wrappers. Let the fallback loader reuse
+    # those wrappers and replace their tensors before applying the generic
+    # already-enabled guard used by PEFT adapters.
+    if payload.get("backend") == "fallback":
+        model = _lora_pkg()._load_fallback_adapter_state(model, path, payload)
+        LOGGER.info(f"[LoRA] 📥 Fallback adapter metadata loaded from {path}")
+        if merge:
+            return _lora_pkg().merge_lora_weights(model)
+        return True
+
     if getattr(model, "lora_enabled", False):
         if force_replace:
             LOGGER.info("[LoRA] Force-replacing existing LoRA adapters with new ones.")
@@ -151,13 +159,6 @@ def load_lora_adapters(
         else:
             LOGGER.warning("[LoRA] Model already has LoRA enabled. Skipping. Use force_replace=True to override.")
             return True
-
-    if payload.get("backend") == "fallback":
-        model = _lora_pkg()._load_fallback_adapter_state(model, path, payload)
-        LOGGER.info(f"[LoRA] 📥 Fallback adapter metadata loaded from {path}")
-        if merge:
-            return _lora_pkg().merge_lora_weights(model)
-        return True
 
     if not _lora_pkg().PEFT_AVAILABLE:
         LOGGER.error("[LoRA] PEFT library not found. Please install via `pip install peft`.")
@@ -204,21 +205,31 @@ def load_lora_adapters(
 def _find_original_model_class(model: "DetectionModel"):
     """Find the original model class before LoRA wrapping by inspecting MRO."""
     from ultralytics.nn.tasks import (
-        DetectionModel, SegmentationModel, PoseModel,
-        ClassificationModel, OBBModel, RTDETRDetectionModel, WorldModel
+        DetectionModel,
+        SegmentationModel,
+        PoseModel,
+        ClassificationModel,
+        OBBModel,
+        RTDETRDetectionModel,
+        WorldModel,
     )
-    
+
     # Known original classes
     ORIGINAL_CLASSES = {
-        DetectionModel, SegmentationModel, PoseModel,
-        ClassificationModel, OBBModel, RTDETRDetectionModel, WorldModel
+        DetectionModel,
+        SegmentationModel,
+        PoseModel,
+        ClassificationModel,
+        OBBModel,
+        RTDETRDetectionModel,
+        WorldModel,
     }
-    
+
     # Check all bases in MRO order
     for cls in model.__class__.__mro__:
         if cls in ORIGINAL_CLASSES:
             return cls
-    
+
     # Fallback to DetectionModel if we can't determine the original class
     return DetectionModel
 
@@ -249,26 +260,26 @@ def merge_lora_weights(model: "DetectionModel") -> bool:
             return False
 
     # Check if wrapped in PeftProxy
-    if not hasattr(model, 'model') or not hasattr(getattr(model, 'model', None), 'merge_and_unload'):
+    if not hasattr(model, "model") or not hasattr(getattr(model, "model", None), "merge_and_unload"):
         LOGGER.error("[LoRA] Cannot merge: Model does not appear to have LoRA adapters attached.")
         return False
 
     try:
         LOGGER.info("[LoRA] 🔄 Merging adapters into base model...")
-        
+
         # merge_and_unload returns the clean base model (nn.Sequential)
         merged_base = model.model.merge_and_unload()
-        
+
         # Restore structure
         model.model = merged_base
-        
+
         # Restore original class using robust MRO inspection
         original_cls = _lora_pkg()._find_original_model_class(model)
         model.__class__ = original_cls
-        
+
         # Clear flags
         _lora_pkg()._clear_lora_runtime_state(model)
-            
+
         LOGGER.info(f"[LoRA] ✅ Merge completed. Model restored to {original_cls.__name__} architecture.")
         return True
     except Exception as e:
@@ -276,4 +287,4 @@ def merge_lora_weights(model: "DetectionModel") -> bool:
         return False
 
 
-__all__ = ['save_lora_adapters', 'load_lora_adapters', 'merge_lora_weights']
+__all__ = ["save_lora_adapters", "load_lora_adapters", "merge_lora_weights"]

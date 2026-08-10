@@ -49,16 +49,22 @@ class FewShotLoRAConv(nn.Module):
     - Variational rank selection: Gumbel-Softmax based sparse rank (optional)
     """
 
-    def __init__(self, conv: nn.Conv2d, r: int = 8, alpha: int = 16,
-                 dropout: float = 0.0, dropconnect: float = 0.1,
-                 adaptive_rank: bool = True,
-                 dropconnect_schedule: str = "constant",
-                 dropconnect_max: float = 0.3,
-                 dropconnect_min: float = 0.0,
-                 gradient_importance_weighted: bool = False,
-                 variational_rank: bool = False,
-                 rank_budget: float = 0.5,
-                 use_rslora: bool = False):
+    def __init__(
+        self,
+        conv: nn.Conv2d,
+        r: int = 8,
+        alpha: int = 16,
+        dropout: float = 0.0,
+        dropconnect: float = 0.1,
+        adaptive_rank: bool = True,
+        dropconnect_schedule: str = "constant",
+        dropconnect_max: float = 0.3,
+        dropconnect_min: float = 0.0,
+        gradient_importance_weighted: bool = False,
+        variational_rank: bool = False,
+        rank_budget: float = 0.5,
+        use_rslora: bool = False,
+    ):
         super().__init__()
         self.conv = conv
         self.r = r
@@ -86,9 +92,7 @@ class FewShotLoRAConv(nn.Module):
 
         groups = conv.groups
         if groups > 1 and (r % groups != 0):
-            raise ValueError(
-                f"FewShotLoRAConv: rank r={r} must be a multiple of groups={groups}"
-            )
+            raise ValueError(f"FewShotLoRAConv: rank r={r} must be a multiple of groups={groups}")
         self.groups = groups
         self.r_per_group = r // max(groups, 1)
 
@@ -121,7 +125,9 @@ class FewShotLoRAConv(nn.Module):
         if self.dropconnect_schedule == "linear":
             rate = self.dropconnect_max - (self.dropconnect_max - self.dropconnect_min) * progress
         elif self.dropconnect_schedule == "cosine":
-            rate = self.dropconnect_min + (self.dropconnect_max - self.dropconnect_min) * 0.5 * (1 + math.cos(math.pi * progress))
+            rate = self.dropconnect_min + (self.dropconnect_max - self.dropconnect_min) * 0.5 * (
+                1 + math.cos(math.pi * progress)
+            )
         elif self.dropconnect_schedule == "exponential":
             rate = self.dropconnect_min + (self.dropconnect_max - self.dropconnect_min) * math.exp(-5 * progress)
         else:
@@ -130,7 +136,7 @@ class FewShotLoRAConv(nn.Module):
 
     def _update_importance(self):
         """Update Fisher-information importance EMA for GIW-DC.
-        
+
         NOTE: This must be called AFTER backward() but BEFORE optimizer step,
         when gradients are still available.
         """
@@ -144,11 +150,14 @@ class FewShotLoRAConv(nn.Module):
             self.importance_A = grad_A_sq.clone()
             self.importance_B = grad_B_sq.clone()
         else:
-            self.importance_A = self.importance_ema_decay * self.importance_A + (1 - self.importance_ema_decay) * grad_A_sq
-            self.importance_B = self.importance_ema_decay * self.importance_B + (1 - self.importance_ema_decay) * grad_B_sq
+            self.importance_A = (
+                self.importance_ema_decay * self.importance_A + (1 - self.importance_ema_decay) * grad_A_sq
+            )
+            self.importance_B = (
+                self.importance_ema_decay * self.importance_B + (1 - self.importance_ema_decay) * grad_B_sq
+            )
 
-    def _apply_dropconnect(self, tensor: torch.Tensor, is_A: bool = True,
-                           progress: float = 0.0) -> torch.Tensor:
+    def _apply_dropconnect(self, tensor: torch.Tensor, is_A: bool = True, progress: float = 0.0) -> torch.Tensor:
         """Apply DropConnect to LoRA matrices during training with optional scheduling and importance weighting."""
         if not self.training:
             return tensor
@@ -172,9 +181,7 @@ class FewShotLoRAConv(nn.Module):
             return tensor * mask
         else:
             # Standard random DropConnect
-            mask = torch.bernoulli(
-                torch.full_like(tensor, 1 - rate)
-            ) / (1 - rate)
+            mask = torch.bernoulli(torch.full_like(tensor, 1 - rate)) / (1 - rate)
             return tensor * mask
 
     def _get_variational_rank_mask(self):
@@ -198,7 +205,7 @@ class FewShotLoRAConv(nn.Module):
         """Get effective rank mask (adaptive or variational)."""
         if self.variational_rank:
             return self._get_variational_rank_mask()
-        elif self.adaptive_rank and hasattr(self, 'rank_mask'):
+        elif self.adaptive_rank and hasattr(self, "rank_mask"):
             return self.rank_mask
         return None
 
@@ -206,13 +213,13 @@ class FewShotLoRAConv(nn.Module):
         out = self.conv(x)
 
         k_h, k_w = self.conv.kernel_size
-        
+
         # ── v3: 1x1 conv short-circuit ──
         # For 1x1 conv with zero padding, unfold is equivalent to reshape
         # This avoids expensive memory allocation for ~40% of YOLO conv layers
-        is_1x1 = (k_h == 1 and k_w == 1)
-        no_pad = (self.conv.padding == (0, 0) or self.conv.padding == 0)
-        
+        is_1x1 = k_h == 1 and k_w == 1
+        no_pad = self.conv.padding == (0, 0) or self.conv.padding == 0
+
         if is_1x1 and no_pad:
             # x: (B, C_in, H, W) -> (B, C_in, H*W)
             B_size, C_in, H, W = x.shape
@@ -221,8 +228,7 @@ class FewShotLoRAConv(nn.Module):
             x_unfold = x.view(B_size, C_in, L)
         else:
             x_unfold = nn.functional.unfold(
-                x, (k_h, k_w), padding=self.conv.padding,
-                stride=self.conv.stride, dilation=self.conv.dilation
+                x, (k_h, k_w), padding=self.conv.padding, stride=self.conv.stride, dilation=self.conv.dilation
             )
             B_size, _, L = x_unfold.shape
             out_h, out_w = out.shape[2], out.shape[3]
@@ -271,9 +277,7 @@ class FewShotLoRAConv(nn.Module):
 
         in_per_group = x_unfold.shape[1] // groups
         x_grouped = x_unfold.view(B_size, groups, in_per_group, L).permute(1, 0, 3, 2)
-        lora = torch.bmm(
-            x_grouped.reshape(groups, B_size * L, in_per_group), A
-        )
+        lora = torch.bmm(x_grouped.reshape(groups, B_size * L, in_per_group), A)
         lora = torch.bmm(lora, B.transpose(1, 2))
         lora = lora * self.scaling
         out_per_group = B.shape[1]
@@ -294,9 +298,7 @@ class FewShotLoRAConv(nn.Module):
             return torch.tensor(0.0, device=student_feat.device)
         # Match spatial dimensions
         if student_feat.shape != teacher_feat.shape:
-            teacher_feat = nn.functional.adaptive_avg_pool2d(
-                teacher_feat, student_feat.shape[2:]
-            )
+            teacher_feat = nn.functional.adaptive_avg_pool2d(teacher_feat, student_feat.shape[2:])
         return nn.functional.mse_loss(student_feat, teacher_feat)
 
 
@@ -377,8 +379,8 @@ class ManualLoRAConv(nn.Module):
             # Dense conv: single (A, B) pair.
             # x_unfold: (B, in_per_group, L) -> transpose to (B, L, in_per_group)
             x_unfold = x_unfold.transpose(1, 2)
-            lora = x_unfold @ self.lora_A[0]            # (B, L, r)
-            lora = lora @ self.lora_B[0].t()            # (B, L, out_per_group)
+            lora = x_unfold @ self.lora_A[0]  # (B, L, r)
+            lora = lora @ self.lora_B[0].t()  # (B, L, out_per_group)
             lora = lora * self.scaling
             lora = lora.transpose(1, 2).reshape(B_size, self.conv.out_channels, out_h, out_w)
             return out + lora
@@ -407,10 +409,20 @@ def supports_peft_request(config: "LoRAConfig") -> bool:
     variant = _effective_peft_variant(config)
     if variant == "dora":
         return bool(PEFT_AVAILABLE and getattr(config, "use_dora", False))
-    return bool(PEFT_AVAILABLE and variant in {
-        "lora", "adalora", "loha", "lokr",
-        "ia3", "oft", "boft", "hra",
-    })
+    return bool(
+        PEFT_AVAILABLE
+        and variant
+        in {
+            "lora",
+            "adalora",
+            "loha",
+            "lokr",
+            "ia3",
+            "oft",
+            "boft",
+            "hra",
+        }
+    )
 
 
 def supports_fallback_request(config: "LoRAConfig") -> bool:
@@ -439,11 +451,11 @@ def _matches_target_modules(module_name: str, target_modules: Optional[List[str]
         return True
     normalized_module = str(module_name).strip().strip(".")
     while normalized_module.startswith("model."):
-        normalized_module = normalized_module[len("model."):]
+        normalized_module = normalized_module[len("model.") :]
     for requested in target_modules:
         normalized_requested = str(requested).strip().strip(".")
         while normalized_requested.startswith("model."):
-            normalized_requested = normalized_requested[len("model."):]
+            normalized_requested = normalized_requested[len("model.") :]
         if not normalized_requested:
             continue
         if normalized_module == normalized_requested:
@@ -471,7 +483,7 @@ def _build_peft_exact_target_regex(target_modules: List[str]) -> Optional[str]:
     for target in target_modules:
         normalized = str(target).strip().strip(".")
         while normalized.startswith("model."):
-            normalized = normalized[len("model."):]
+            normalized = normalized[len("model.") :]
         if normalized:
             normalized_targets.append(normalized)
     if not normalized_targets:
@@ -503,13 +515,15 @@ def _validate_peft_init_compatibility(
     return normalized_init
 
 
-def _replace_conv_with_manual_lora(module: nn.Module, config: "LoRAConfig", prefix: str = "", include_head: bool = False) -> int:
+def _replace_conv_with_manual_lora(
+    module: nn.Module, config: "LoRAConfig", prefix: str = "", include_head: bool = False
+) -> int:
     """Recursively replace eligible Conv2d children with manual LoRA wrappers.
 
     Grouped convolutions are now supported when `r % groups == 0`. Depthwise
     convs (where groups == in_channels == out_channels) are still gated by
     `config.allow_depthwise` to match the PEFT backend behavior.
-    
+
     v3: Supports layer-wise adaptive rank when few_shot_layerwise_rank=True.
     """
     replaced = 0
@@ -527,14 +541,14 @@ def _replace_conv_with_manual_lora(module: nn.Module, config: "LoRAConfig", pref
             r = int(rank_pattern.get(full_name, base_r))
             if layerwise_rank and full_name not in rank_pattern:
                 r = _compute_layer_rank(child, base_r, full_name)
-            
+
             # Grouped conv compatibility: rank must be divisible by groups.
             if groups > 1:
                 if r > 0 and (r % groups != 0):
                     # Skip silently: rank-groups mismatch
                     replaced += _replace_conv_with_manual_lora(child, config, full_name, include_head)
                     continue
-                is_depthwise = (child.in_channels == child.out_channels == groups)
+                is_depthwise = child.in_channels == child.out_channels == groups
                 if is_depthwise and not allow_depthwise:
                     replaced += _replace_conv_with_manual_lora(child, config, full_name, include_head)
                     continue
@@ -550,7 +564,8 @@ def _replace_conv_with_manual_lora(module: nn.Module, config: "LoRAConfig", pref
             if few_shot:
                 lora_cls = FewShotLoRAConv
                 lora_kwargs = {
-                    "r": r, "alpha": max(r * 2, config.alpha),
+                    "r": r,
+                    "alpha": max(r * 2, config.alpha),
                     "dropout": config.dropout,
                     "use_rslora": bool(getattr(config, "use_rslora", False)),
                     "dropconnect": getattr(config, "few_shot_dropconnect", 0.1),
@@ -719,9 +734,9 @@ def _collect_fallback_adapter_state(model: nn.Module) -> Dict[str, Any]:
             modules[name]["gradient_importance_weighted"] = getattr(module, "gradient_importance_weighted", False)
             modules[name]["variational_rank"] = getattr(module, "variational_rank", False)
             modules[name]["rank_budget"] = getattr(module, "rank_budget", 0.5)
-            if hasattr(module, 'rank_mask'):
+            if hasattr(module, "rank_mask"):
                 state[name]["rank_mask"] = module.rank_mask.detach().cpu()
-            if hasattr(module, 'rank_logits'):
+            if hasattr(module, "rank_logits"):
                 state[name]["rank_logits"] = module.rank_logits.detach().cpu()
     return {"modules": modules, "state": state}
 
@@ -771,9 +786,9 @@ def _load_fallback_adapter_state(model: nn.Module, path: Path, payload: Dict[str
         params = module_state.get(module_name, {})
         wrapped.lora_A.data.copy_(params["lora_A"])
         wrapped.lora_B.data.copy_(params["lora_B"])
-        if "rank_mask" in params and hasattr(wrapped, 'rank_mask'):
+        if "rank_mask" in params and hasattr(wrapped, "rank_mask"):
             wrapped.rank_mask.data.copy_(params["rank_mask"])
-        if "rank_logits" in params and hasattr(wrapped, 'rank_logits'):
+        if "rank_logits" in params and hasattr(wrapped, "rank_logits"):
             wrapped.rank_logits.data.copy_(params["rank_logits"])
 
     model = _wrap_top_level_lora_model(model, None)
@@ -808,20 +823,16 @@ def _merge_manual_lora_conv(module) -> nn.Conv2d:
     # Apply adaptive rank mask if present
     lora_A = module.lora_A
     lora_B = module.lora_B
-    if hasattr(module, 'rank_mask'):
+    if hasattr(module, "rank_mask"):
         lora_A = lora_A * module.rank_mask.unsqueeze(1)
         lora_B = lora_B * module.rank_mask.unsqueeze(1)
     # Per-group delta: (out_per_group, in_per_group * kH * kW)
     delta_per_group = torch.bmm(lora_B, lora_A.transpose(1, 2))
     # Reshape into Conv2d weight layout: (out_channels, in_channels/groups, kH, kW)
     in_per_group = conv.in_channels // max(groups, 1)
-    weight_delta = delta_per_group.reshape(
-        conv.out_channels, in_per_group, *conv.kernel_size
-    )
+    weight_delta = delta_per_group.reshape(conv.out_channels, in_per_group, *conv.kernel_size)
     merged_weight = conv.weight.detach().clone()
-    merged_weight.add_(
-        weight_delta.to(device=merged_weight.device, dtype=merged_weight.dtype) * module.scaling
-    )
+    merged_weight.add_(weight_delta.to(device=merged_weight.device, dtype=merged_weight.dtype) * module.scaling)
     conv.weight.data.copy_(merged_weight)
     return conv
 
@@ -864,15 +875,16 @@ def _clear_lora_runtime_state(model: "DetectionModel") -> None:
 # 1. Enhanced Proxy Class
 # ============================================================================
 
+
 class PeftProxy(PeftModel):
     """
     Advanced PEFT Proxy Wrapper.
 
-    This class bridges the gap between PEFT's arbitrary model structure and 
+    This class bridges the gap between PEFT's arbitrary model structure and
     Ultralytics' strict expectation of `nn.Sequential` behavior.
 
     Key Optimizations:
-    1. **Sequential Emulation**: intercepts `__getitem__`, `__iter__`, and `__len__` to 
+    1. **Sequential Emulation**: intercepts `__getitem__`, `__iter__`, and `__len__` to
        ensure the model behaves like a list of layers (crucial for YOLO).
     2. **Performance Passthrough**: Explicitly implements `forward` to bypass `__getattr__` overhead.
     3. **State Management**: Correctly handles `state_dict` calls.
@@ -892,7 +904,7 @@ class PeftProxy(PeftModel):
             return cached
         model = self.base_model
         # Traverse down if multiple wrappers exist (common in some PEFT versions)
-        while hasattr(model, 'model') and not isinstance(model, nn.Sequential):
+        while hasattr(model, "model") and not isinstance(model, nn.Sequential):
             model = model.model
         # Use __dict__ to bypass nn.Module's parameter registration machinery
         # — we only want to cache the reference, not register a submodule.
@@ -905,7 +917,7 @@ class PeftProxy(PeftModel):
 
     def __getitem__(self, idx: Union[int, slice]):
         """
-        Supports index and slice access. 
+        Supports index and slice access.
         This is critical for YOLO's architecture analysis (e.g., `model[i]`).
         """
         base = self._get_base()
@@ -960,15 +972,17 @@ class PeftProxy(PeftModel):
 class LoRADetectionModel:
     """
     Mixin class for LoRA-enabled models.
-    
+
     Primary Functions:
     1. Flags the model as LoRA-enabled.
     2. Disables the default Ultralytics `fuse()` logic, preventing premature weight merging.
     """
+
     def fuse(self, verbose: bool = True):
         if verbose:
             LOGGER.info("[LoRA] Fusion disabled for LoRADetectionModel.")
         return self
+
 
 # Wrapper classes for pickling support
 class LoRADetectionModelWrapper(LoRADetectionModel, DetectionModel):
@@ -1001,6 +1015,14 @@ class LoRAWorldModelWrapper(LoRADetectionModel, WorldModel):
 
 def _wrap_top_level_lora_model(model: "DetectionModel", config: Any = None) -> "DetectionModel":
     """Swap the top-level model class to its LoRA-enabled wrapper and attach flags."""
+    # Loading a fallback bundle onto an already adapted model is intentionally
+    # idempotent. Rebuilding a dynamic ``LoRAWrapped`` class would create an
+    # impossible MRO (the current class already inherits the LoRA mixin).
+    if isinstance(model, LoRADetectionModel):
+        model.lora_enabled = True
+        if config is not None:
+            model.lora_config = config
+        return model
     original_cls = model.__class__
     if not hasattr(model, "lora_original_class"):
         model.lora_original_class = original_cls
@@ -1018,6 +1040,7 @@ def _wrap_top_level_lora_model(model: "DetectionModel", config: Any = None) -> "
     if original_cls in wrappers:
         model.__class__ = wrappers[original_cls]
     else:
+
         class LoRAWrapped(LoRADetectionModel, original_cls):
             pass
 
@@ -1027,6 +1050,7 @@ def _wrap_top_level_lora_model(model: "DetectionModel", config: Any = None) -> "
     model.lora_enabled = True
     model.lora_config = config
     return model
+
 
 __all__ = [
     "FewShotLoRAConv",

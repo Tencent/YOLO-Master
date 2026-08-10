@@ -30,6 +30,8 @@ class ExportDecision:
     requires_merge: bool
     known_error: str | None = None
     matrix_known_error: str | None = None
+    eager_compute_semantics: str | None = None
+    export_compute_semantics: str | None = None
 
 
 def _load_matrix(
@@ -180,6 +182,8 @@ def export_preflight(
             requires_merge=requires_merge,
             known_error=failure or _join_reasons(matrix_error, runtime.get("known_error")),
             matrix_known_error=matrix_error,
+            eager_compute_semantics=runtime.get("eager_compute_semantics"),
+            export_compute_semantics=runtime.get("export_compute_semantics"),
         )
         decisions.append(decision)
 

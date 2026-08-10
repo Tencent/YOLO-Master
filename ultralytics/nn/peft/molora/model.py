@@ -769,7 +769,13 @@ class MoLoRAModel(nn.Module):
             "format": "molora_adapter",
             "config": config,
             "structure": _molora_structure(self.model),
+            "model_fingerprint": _molora_model_fingerprint(self.model),
             "placement_plan": getattr(self.model, "molora_placement_plan", None),
+            "merge_metadata": {
+                name: dict(getattr(layer, "_merge_metadata", {}))
+                for name, layer in self.model.named_modules()
+                if isinstance(layer, MoLoRALayer)
+            },
             "state_dict": {k: v for k, v in self.model.state_dict().items() if any(p in k for p in molora_keys)},
         }
         torch.save(state, path)
@@ -806,6 +812,18 @@ class MoLoRAModel(nn.Module):
         current_structure = _molora_structure(self.model)
         if saved_structure != current_structure:
             raise ValueError("MoLoRA checkpoint structure mismatch (target names, layer types, or dimensions differ).")
+        saved_fingerprint = state.get("model_fingerprint")
+        if not isinstance(saved_fingerprint, str) or not saved_fingerprint:
+            raise ValueError("Invalid MoLoRA checkpoint: missing model_fingerprint binding.")
+        if saved_fingerprint != _molora_model_fingerprint(self.model):
+            raise ValueError("MoLoRA checkpoint model fingerprint mismatch; rebuild the adapter for this model.")
+        saved_plan = state.get("placement_plan")
+        current_plan = getattr(self.model, "molora_placement_plan", None)
+        if saved_plan != current_plan:
+            raise ValueError("MoLoRA checkpoint PlacementPlan mismatch; rebuild the adapter with the same plan.")
+        saved_merge_metadata = state.get("merge_metadata")
+        if not isinstance(saved_merge_metadata, dict):
+            raise ValueError("Invalid MoLoRA checkpoint: missing merge_metadata dictionary.")
         checkpoint_sd = state["state_dict"]
         if not isinstance(checkpoint_sd, dict):
             raise ValueError("Invalid MoLoRA checkpoint: 'state_dict' must be a dictionary.")
@@ -831,6 +849,12 @@ class MoLoRAModel(nn.Module):
             self.model.load_state_dict(checkpoint_sd, strict=False)
         except RuntimeError as exc:
             raise RuntimeError(f"MoLoRA checkpoint tensor shape mismatch: {exc}") from exc
+        for name, layer in self.model.named_modules():
+            if isinstance(layer, MoLoRALayer) and name in saved_merge_metadata:
+                metadata = saved_merge_metadata[name]
+                if not isinstance(metadata, dict):
+                    raise ValueError(f"Invalid MoLoRA merge metadata for layer {name!r}.")
+                layer._merge_metadata = dict(metadata)
         LOGGER.info(f"[MoLoRA] Checkpoint loaded from {path}")
 
     def param_stats(self) -> Dict[str, Any]:
@@ -876,3 +900,16 @@ def _molora_structure(model: nn.Module) -> List[Dict[str, Any]]:
             item.update({"kernel_size": tuple(base.kernel_size), "groups": base.groups})
         structure.append(item)
     return structure
+
+
+def _molora_model_fingerprint(model: nn.Module) -> str:
+    """Return a stable binding hash for an injected MoLoRA graph."""
+
+    entries = []
+    for name, module in model.named_modules():
+        if name:
+            entries.append((name, module.__class__.__qualname__))
+    for name, parameter in model.named_parameters():
+        entries.append((f"param:{name}", tuple(parameter.shape), str(parameter.dtype)))
+    payload = json.dumps(entries, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()

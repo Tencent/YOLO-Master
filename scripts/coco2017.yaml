@@ -1,9 +1,10 @@
 # COCO 2017 dataset configuration for YOLO-Master MoE-aware PEFT experiments
-# Points to the user's local COCO2017 dataset at /Users/gatilin/MyWork/datasets/coco2017
+# The standard Ultralytics dataset directory is used by default. Override `path`
+# for a different checkout or pass an explicit dataset YAML to the CLI.
 
-path: /Users/gatilin/MyWork/datasets/coco2017
-train: train2017
-val: val2017
+path: coco2017
+train: images/train2017
+val: images/val2017
 
 test: test2017
 

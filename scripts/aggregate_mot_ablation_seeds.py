@@ -19,9 +19,19 @@ from pathlib import Path
 METRICS = {
     "map50_95": ("metrics/mAP50-95(B)", "mAP50-95"),
     "map50": ("metrics/mAP50(B)", "mAP50"),
+    "mask_map50_95": ("metrics/mAP50-95(M)",),
+    "pose_map50_95": ("metrics/mAP50-95(P)",),
     "final_train_total_loss": ("final_train_total_loss",),
+    "train_global_samples_per_second": ("train_global_samples_per_second",),
+    "train_step_ms_p50": ("train_step_ms_p50",),
+    "train_step_ms_p95": ("train_step_ms_p95",),
+    "train_peak_device_memory_bytes": ("train_peak_device_memory_bytes",),
+    "train_peak_device_memory_fraction": ("train_peak_device_memory_fraction",),
+    "train_rank_peak_device_memory_fraction_max": ("train_rank_peak_device_memory_fraction_max",),
+    "train_sampled_current_memory_bytes_max": ("train_sampled_current_memory_bytes_max",),
 }
 PROFILE_FIELDS = ("latency_ms_p50", "latency_ms_p95", "latency_ms_p99", "flops_g", "params_m")
+MIN_EVIDENCE_SEEDS = 3
 
 
 def read_csv(path: Path) -> list[dict[str, str]]:
@@ -47,6 +57,14 @@ def seed_sort_key(seed: str) -> tuple[int, int | str]:
 
 def mean_std(values: list[float]) -> tuple[float, float]:
     return statistics.mean(values), statistics.stdev(values) if len(values) > 1 else 0.0
+
+
+def common_text_value(rows: list[dict[str, str]], key: str) -> str | None:
+    """Return a value shared by every non-empty row, or ``mixed`` when it differs."""
+    values = {str(row.get(key, "")).strip() for row in rows if str(row.get(key, "")).strip()}
+    if not values:
+        return None
+    return values.pop() if len(values) == 1 else "mixed"
 
 
 def load_optional_by_key(path: Path | None) -> dict[str, dict[str, str]]:
@@ -92,9 +110,7 @@ def collect_seed_rows(
     if not allow_incomplete:
         expected_models = set.union(*model_sets.values())
         incomplete = {
-            seed: sorted(expected_models - keys)
-            for seed, keys in model_sets.items()
-            if keys != expected_models
+            seed: sorted(expected_models - keys) for seed, keys in model_sets.items() if keys != expected_models
         }
         if incomplete:
             raise ValueError(f"incomplete model coverage by seed: {incomplete}")
@@ -126,6 +142,7 @@ def aggregate(
             "seeds": ",".join(row["seed"] for row in ordered_rows),
             "nan_any": any(as_bool(row.get("nan_detected")) for row in ordered_rows),
             "loss_diverged_any": any(as_bool(row.get("loss_diverged")) for row in ordered_rows),
+            "evidence_status": "sufficient" if len(ordered_rows) >= MIN_EVIDENCE_SEEDS else "insufficient_evidence",
         }
         for output_name, source_names in METRICS.items():
             values = []
@@ -143,6 +160,15 @@ def aggregate(
                         f"{output_name}_max": max(values),
                     }
                 )
+        for field in (
+            "train_memory_measurement",
+            "train_memory_is_true_peak",
+            "train_world_size",
+            "train_rank_step_counts_consistent",
+        ):
+            value = common_text_value(ordered_rows, field)
+            if value is not None:
+                item[field] = value
 
         profile = {**builds.get(key, {}), **latency.get(key, {})}
         fallback = ordered_rows[0]
@@ -173,8 +199,11 @@ def aggregate(
         if latency_delta is not None:
             row["latency_delta_pct_vs_baseline"] = latency_delta
         row["meaningful_gain"] = bool(
-            (map_delta is not None and map_delta > map_gain_threshold)
-            or (latency_delta is not None and latency_delta < -latency_reduction_threshold_pct)
+            row["evidence_status"] == "sufficient"
+            and (
+                (map_delta is not None and map_delta > map_gain_threshold)
+                or (latency_delta is not None and latency_delta < -latency_reduction_threshold_pct)
+            )
         )
     return output
 
@@ -197,19 +226,22 @@ def write_markdown(path: Path, rows: list[dict[str, object]], title: str, note: 
     lines = [
         f"# {title}",
         "",
-        "| Model | Seeds | mAP50-95 mean±std | mAP50 mean±std | P50/P95/P99 ms | "
-        "Actual FLOPs (G) | Params (M) | Stable | Gain gate |",
-        "|---|---:|---:|---:|---:|---:|---:|:---:|:---:|",
+        "| Model | Seeds | Box mAP50-95 mean±std | Mask mAP50-95 mean±std | Pose mAP50-95 mean±std | "
+        "Train samples/s | Step P50/P95 ms | Memory measurement | Stable | Evidence | Gain gate |",
+        "|---|---:|---:|---:|---:|---:|---:|---|:---:|:---:|:---:|",
     ]
     for row in rows:
         map95 = f"{fmt(row, 'map50_95_mean')}±{fmt(row, 'map50_95_std')}"
-        map50 = f"{fmt(row, 'map50_mean')}±{fmt(row, 'map50_std')}"
-        latency = "/".join(fmt(row, key, 2) for key in ("latency_ms_p50", "latency_ms_p95", "latency_ms_p99"))
+        mask_map95 = f"{fmt(row, 'mask_map50_95_mean')}±{fmt(row, 'mask_map50_95_std')}"
+        pose_map95 = f"{fmt(row, 'pose_map50_95_mean')}±{fmt(row, 'pose_map50_95_std')}"
+        step_latency = "/".join(fmt(row, key, 2) for key in ("train_step_ms_p50_mean", "train_step_ms_p95_mean"))
         stable = "yes" if not row.get("nan_any") and not row.get("loss_diverged_any") else "no"
+        evidence = "sufficient" if row.get("evidence_status") == "sufficient" else "insufficient"
         gain = "pass" if row.get("meaningful_gain") else "fail"
         lines.append(
-            f"| {row.get('label', row['key'])} | {row['n_seeds']} | {map95} | {map50} | {latency} | "
-            f"{fmt(row, 'flops_g', 3)} | {fmt(row, 'params_m', 3)} | {stable} | {gain} |"
+            f"| {row.get('label', row['key'])} | {row['n_seeds']} | {map95} | {mask_map95} | {pose_map95} | "
+            f"{fmt(row, 'train_global_samples_per_second_mean', 2)} | {step_latency} | "
+            f"{row.get('train_memory_measurement', 'N/A')} | {stable} | {evidence} | {gain} |"
         )
     if note:
         lines.extend(["", f"> {note}"])

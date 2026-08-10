@@ -6,6 +6,7 @@ import torch
 from torch import nn
 
 from ultralytics.engine.extensions import AdapterRuntimeController
+from ultralytics.engine.extensions.recovery import TrainingRecoveryController
 from ultralytics.engine.trainer import BaseTrainer, validate_adapter_configuration
 from ultralytics.nn.peft.molora import MoLoRAConfig, MoLoRALayer, get_peft_molora_model
 from ultralytics.utils.errors import MoERouterError
@@ -52,6 +53,43 @@ class RTDETRSmokeModel(ImageSmokeModel):
 
     def forward(self, x):
         return self.decoder(super().forward(x))
+
+
+@pytest.mark.parametrize(
+    "device",
+    [
+        "cpu",
+        pytest.param("mps", marks=pytest.mark.skipif(not torch.backends.mps.is_available(), reason="MPS unavailable")),
+    ],
+)
+def test_batched_finite_check_detects_nonfinite_tensors(device):
+    tensors = [torch.ones(3, device=device), torch.tensor([float("nan")], device=device)]
+
+    assert TrainingRecoveryController.tensors_are_finite(tensors) is False
+
+
+def test_batched_finite_check_uses_foreach_kernel(monkeypatch):
+    tensors = [torch.ones(3), torch.ones(2)]
+    finite_check = MagicMock(wraps=torch._amp_foreach_non_finite_check_and_unscale_)
+    monkeypatch.setattr(torch, "_amp_foreach_non_finite_check_and_unscale_", finite_check)
+
+    assert TrainingRecoveryController.tensors_are_finite(tensors) is True
+    finite_check.assert_called_once()
+
+
+def test_batched_state_finite_check_handles_nested_optimizer_state():
+    state = {"state": {0: {"exp_avg": torch.ones(3), "exp_avg_sq": torch.tensor([float("inf")])}}}
+
+    assert TrainingRecoveryController.state_is_finite_batched(state) is False
+
+
+def test_finite_ema_resync_check_avoids_per_tensor_finite_checks(monkeypatch):
+    source, target = nn.Linear(3, 2), nn.Linear(3, 2)
+    finite_check = MagicMock(wraps=TrainingRecoveryController.state_is_finite)
+    monkeypatch.setattr(TrainingRecoveryController, "state_is_finite", finite_check)
+
+    assert TrainingRecoveryController.replace_nonfinite_tensors(target, source) is True
+    finite_check.assert_not_called()
 
 
 def test_adapter_configuration_rejects_lora_and_molora_together():
@@ -450,9 +488,7 @@ def test_checkpoint_restore_migrates_legacy_three_slot_ema_state():
     old_ema = nn.Linear(1, 1)
     old_ema.register_buffer("_mixture_loss_ema_buf", torch.tensor([2.0, 0.2, 0.3]))
 
-    t._load_checkpoint_state(
-        {"ema": old_ema, "optimizer": None, "scaler": None, "best_fitness": 0.0, "updates": 7}
-    )
+    t._load_checkpoint_state({"ema": old_ema, "optimizer": None, "scaler": None, "best_fitness": 0.0, "updates": 7})
 
     expected = torch.tensor([2.0, 0.2, 0.3, 0.1])
     assert torch.equal(t.model._mixture_loss_ema_buf, expected)

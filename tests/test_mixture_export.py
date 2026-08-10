@@ -11,7 +11,9 @@ so this file focuses on the remaining mixture types.
 Key test: verify that all experts/heads are present in the exported graph
 (no expert dropping during tracing) and that outputs match eager mode.
 """
+
 import io
+import numpy as np
 import torch
 import torch.nn as nn
 import pytest
@@ -23,13 +25,17 @@ from ultralytics.nn.peft.molora.layer import MoLoRALayer
 
 # ── Helpers ─────────────────────────────────────────────────────────────
 
+
 def _export_onnx(module, dummy, name="module"):
     """Export module to ONNX and return parsed model (or None if onnx not installed)."""
     module.eval()
     buf = io.BytesIO()
     torch.onnx.export(
-        module, dummy, buf,
-        input_names=["input"], output_names=["output"],
+        module,
+        dummy,
+        buf,
+        input_names=["input"],
+        output_names=["output"],
         opset_version=17,
         do_constant_folding=False,
         dynamo=False,
@@ -37,6 +43,7 @@ def _export_onnx(module, dummy, name="module"):
     buf.seek(0)
     try:
         import onnx
+
         model = onnx.load_from_string(buf.getvalue())
         return model, buf.getvalue()
     except ImportError:
@@ -61,7 +68,16 @@ def _count_matmul_nodes(model_proto):
     return count
 
 
+def _mot_dense_export_reference(module, dummy):
+    """Return the dense-routing inference value used by MoT export fallback."""
+    logits = module.router._compute_logits(dummy)
+    weights = torch.softmax(logits / module.router.temperature.float(), dim=1).to(dummy.dtype)
+    mixed = sum(expert(dummy) * weight.unsqueeze(1) for expert, weight in zip(module.experts, weights.unbind(dim=1)))
+    return module.out_norm(module.out_proj(mixed)) + dummy
+
+
 # ── MoA ONNX export tests ───────────────────────────────────────────────
+
 
 class TestMoAOnnxExport:
     """Verify MoA modules export to ONNX without losing heads."""
@@ -90,9 +106,14 @@ class TestMoAOnnxExport:
         m.eval()
         buf = io.BytesIO()
         torch.onnx.export(
-            m, (dummy_hi, dummy_lo), buf,
-            input_names=["hi", "lo"], output_names=["output"],
-            opset_version=17, do_constant_folding=False, dynamo=False,
+            m,
+            (dummy_hi, dummy_lo),
+            buf,
+            input_names=["hi", "lo"],
+            output_names=["output"],
+            opset_version=17,
+            do_constant_folding=False,
+            dynamo=False,
         )
         assert len(buf.getvalue()) > 0
 
@@ -107,13 +128,14 @@ class TestMoAOnnxExport:
         if model is not None:
             import onnxruntime as ort
             import numpy as np
+
             sess = ort.InferenceSession(raw)
             onnx_out = sess.run(None, {"input": dummy.numpy()})
-            assert np.allclose(eager_out.numpy(), onnx_out[0], atol=1e-4), \
-                "ONNX output differs from eager"
+            assert np.allclose(eager_out.numpy(), onnx_out[0], atol=1e-4), "ONNX output differs from eager"
 
 
 # ── MoT ONNX export tests ───────────────────────────────────────────────
+
 
 class TestMoTOnnxExport:
     """Verify MoT modules export to ONNX without losing experts."""
@@ -143,8 +165,24 @@ class TestMoTOnnxExport:
         model, raw = _export_onnx(m, dummy, "MoTBlock_eval")
         assert len(raw) > 0
 
+    def test_motblock_onnx_matches_dense_export_fallback(self):
+        """ONNX output must match the documented dense MoT export semantics."""
+        m = MoTBlock(64, num_heads=4, top_k=2).eval()
+        dummy = torch.randn(1, 64, 8, 8)
+        with torch.no_grad():
+            reference = _mot_dense_export_reference(m, dummy)
+        model, raw = _export_onnx(m, dummy, "MoTBlock_dense_reference")
+        if model is None:
+            pytest.skip("onnx not installed")
+        import onnxruntime as ort
+
+        session = ort.InferenceSession(raw)
+        onnx_out = session.run(None, {"input": dummy.numpy()})[0]
+        np.testing.assert_allclose(reference.numpy(), onnx_out, atol=1e-4, rtol=1e-4)
+
 
 # ── MoLoRA ONNX export tests ────────────────────────────────────────────
+
 
 class TestMoLoRAOnnxExport:
     """Verify MoLoRA layers export to ONNX."""
@@ -163,9 +201,14 @@ class TestMoLoRAOnnxExport:
         layer.eval()
         buf = io.BytesIO()
         torch.onnx.export(
-            layer, dummy, buf,
-            input_names=["input"], output_names=["output"],
-            opset_version=17, do_constant_folding=False, dynamo=False,
+            layer,
+            dummy,
+            buf,
+            input_names=["input"],
+            output_names=["output"],
+            opset_version=17,
+            do_constant_folding=False,
+            dynamo=False,
         )
         assert len(buf.getvalue()) > 0
 
@@ -189,6 +232,7 @@ class TestMoLoRAOnnxExport:
 
 # ── TorchScript export tests ────────────────────────────────────────────
 
+
 class TestTorchScriptExport:
     """Verify mixture modules can be traced/scripted to TorchScript."""
 
@@ -201,25 +245,25 @@ class TestTorchScriptExport:
         with torch.no_grad():
             eager_out = m(dummy)
             traced_out = traced(dummy)
-        assert torch.allclose(eager_out, traced_out, atol=1e-4), \
-            "MoABlock traced output differs from eager"
+        assert torch.allclose(eager_out, traced_out, atol=1e-4), "MoABlock traced output differs from eager"
 
     def test_motblock_trace(self):
         m = MoTBlock(64, num_heads=4, top_k=2)
         m.eval()
         dummy = torch.randn(1, 64, 8, 8)
         with torch.no_grad():
-            traced = torch.jit.trace(m, dummy)
-        with torch.no_grad():
-            eager_out = m(dummy)
+            # MoT tracing intentionally switches from eager sparse routing to
+            # dense export routing, so PyTorch's eager self-comparison checks
+            # the wrong contract here.
+            traced = torch.jit.trace(m, dummy, check_trace=False)
+            eager_out = _mot_dense_export_reference(m, dummy)
             traced_out = traced(dummy)
-        # MoT forward returns (out, aux) tuple
-        if isinstance(eager_out, tuple):
-            eager_out = eager_out[0]
+        # MoT forward returns an (out, aux) tuple.
         if isinstance(traced_out, tuple):
             traced_out = traced_out[0]
-        assert torch.allclose(eager_out, traced_out, atol=1e-4), \
-            "MoTBlock traced output differs from eager"
+        assert torch.allclose(eager_out, traced_out, atol=1e-4), (
+            "MoTBlock traced output differs from the dense export fallback"
+        )
 
     def test_molora_trace(self):
         base = nn.Conv2d(64, 64, 3, padding=1)
@@ -231,11 +275,11 @@ class TestTorchScriptExport:
         with torch.no_grad():
             eager_out = layer(dummy)
             traced_out = traced(dummy)
-        assert torch.allclose(eager_out, traced_out, atol=1e-4), \
-            "MoLoRA traced output differs from eager"
+        assert torch.allclose(eager_out, traced_out, atol=1e-4), "MoLoRA traced output differs from eager"
 
 
 # ── Expert preservation tests ───────────────────────────────────────────
+
 
 class TestExpertPreservation:
     """Verify that ONNX export preserves all experts (no expert dropping)."""
@@ -250,8 +294,7 @@ class TestExpertPreservation:
         # Count Conv nodes — should reflect all 3 experts, not just top_k=2
         conv_count = _count_conv_nodes(model)
         # Each expert has at least 1 conv (attention proj), plus out_proj
-        assert conv_count >= 3, \
-            f"MoTBlock ONNX has only {conv_count} Conv nodes — experts may be dropped"
+        assert conv_count >= 3, f"MoTBlock ONNX has only {conv_count} Conv nodes — experts may be dropped"
 
     def test_molora_all_experts_in_graph(self):
         """MoLoRA with 4 experts should have all 4 in the ONNX graph."""
@@ -263,8 +306,7 @@ class TestExpertPreservation:
             pytest.skip("onnx not installed")
         conv_count = _count_conv_nodes(model)
         # Base conv (1) + 4 expert convs (4) = at least 5 Conv nodes
-        assert conv_count >= 5, \
-            f"MoLoRA ONNX has only {conv_count} Conv nodes — experts may be dropped"
+        assert conv_count >= 5, f"MoLoRA ONNX has only {conv_count} Conv nodes — experts may be dropped"
 
 
 if __name__ == "__main__":

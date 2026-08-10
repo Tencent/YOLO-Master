@@ -14,6 +14,7 @@ from ultralytics.models import yolo
 from ultralytics.nn.tasks import (
     ClassificationModel,
     DetectionModel,
+    MultiTaskModel,
     OBBModel,
     PoseModel,
     SegmentationModel,
@@ -123,6 +124,12 @@ class YOLO(Model):
                 "trainer": yolo.semantic.SemanticSegmentationTrainer,
                 "validator": yolo.semantic.SemanticSegmentationValidator,
                 "predictor": yolo.semantic.SemanticSegmentationPredictor,
+            },
+            "multitask": {
+                "model": MultiTaskModel,
+                "trainer": yolo.multitask.MultiTaskTrainer,
+                "validator": yolo.multitask.MultiTaskValidator,
+                "predictor": yolo.detect.DetectionPredictor,
             },
         }
 

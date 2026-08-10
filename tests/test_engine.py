@@ -160,6 +160,34 @@ def test_resume_incomplete(task, weight, data, tmp_path):
     assert resume_model.trainer.start_epoch == resume_model.trainer.epoch == 1, "resume test failed"
 
 
+def test_resume_allows_epoch_and_fraction_overrides(tmp_path):
+    """Resume should honor an explicit extension to training duration and dataset fraction."""
+    checkpoint = tmp_path / "last.pt"
+    torch.save(
+        {
+            "model": DetectionModel("yolo26n.yaml", verbose=False),
+            "ema": None,
+            "epoch": 0,
+            "train_args": {**vars(DEFAULT_CFG), "data": "coco8.yaml", "epochs": 1, "fraction": 0.01},
+        },
+        checkpoint,
+    )
+
+    trainer = detect.DetectionTrainer(
+        overrides={
+            "resume": checkpoint,
+            "data": "coco8.yaml",
+            "epochs": 2,
+            "fraction": 1.0,
+            "device": "cpu",
+            "workers": 0,
+        }
+    )
+
+    assert trainer.args.epochs == 2
+    assert trainer.args.fraction == 1.0
+
+
 def test_distill_resume(tmp_path: Path):
     """Test knowledge distillation resumes from an incomplete checkpoint."""
     overrides = {

@@ -240,7 +240,9 @@ class _MoTRouter(FP32RouterMixin, nn.Module):
         # Also clamp the z_loss result itself to prevent inf propagation
         return ((log_z**2).clamp(max=ROUTER_Z_LOSS_LIMIT)).mean()
 
-    def forward(self, x: torch.Tensor, return_logits: bool = False) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(
+        self, x: torch.Tensor, return_logits: bool = False
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]] | Tuple[torch.Tensor, Optional[torch.Tensor], torch.Tensor]:
         """
         Returns:
             weights : [B, num_experts, H, W] or [B, num_experts, 1, 1]  (soft, sum-to-1)
@@ -259,8 +261,14 @@ class _MoTRouter(FP32RouterMixin, nn.Module):
             weights = F.softmax(logits / temp.float(), dim=1)  # [B, E, H, W]
         dense_weights = weights
 
+        # ONNX and TorchScript tracing use dense blending. Besides being the
+        # documented export semantics, avoiding Top-K/scatter here prevents a
+        # PyTorch 2.9 legacy-exporter alias-analysis failure on bool scatter_.
+        exporting = torch.jit.is_tracing() or torch.onnx.is_in_onnx_export()
+        if exporting:
+            indices = None
         # Top-K mask
-        if self.top_k < self.num_experts:
+        elif self.top_k < self.num_experts:
             # get top-k indices [B, K, H, W]
             topk_vals, topk_idx = weights.topk(self.top_k, dim=1)
             # renormalize selected weights

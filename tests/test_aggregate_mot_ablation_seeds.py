@@ -35,6 +35,19 @@ def test_aggregate_combines_seed_metrics_and_one_profile(tmp_path: Path):
     assert by_key["v10"]["map50_95_mean"] == pytest.approx(0.2)
     assert by_key["v10"]["map50_95_std"] == pytest.approx(2**0.5 / 10)
     assert by_key["v10_mot"]["latency_ms_p99"] == 22.0
+    assert by_key["v10_mot"]["evidence_status"] == "insufficient_evidence"
+    assert by_key["v10_mot"]["meaningful_gain"] is False
+
+
+def test_aggregate_allows_gain_gate_only_after_three_complete_seeds(tmp_path: Path):
+    root = tmp_path / "runs"
+    for seed in (42, 123, 3407):
+        write_seed(root, seed, ["v10,baseline,0.2,0.1,5.0,False,False\n", "v10_mot,mot,0.3,0.2,6.0,False,False\n"])
+
+    rows = aggregate(root, expected_seeds=["42", "123", "3407"])
+    by_key = {row["key"]: row for row in rows}
+
+    assert by_key["v10_mot"]["evidence_status"] == "sufficient"
     assert by_key["v10_mot"]["meaningful_gain"] is True
 
 
@@ -77,4 +90,5 @@ def test_markdown_uses_uncertainty_and_pilot_note(tmp_path: Path):
 
     assert "mean±std" in text
     assert "0.2000±0.0100" in text
+    assert "Evidence" in text
     assert "> smoke only" in text

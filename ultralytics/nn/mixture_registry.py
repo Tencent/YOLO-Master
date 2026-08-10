@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from collections.abc import Mapping
 from typing import Any
 
 from ultralytics.mixture_metadata import MIXTURE_MODULE_KINDS
@@ -24,6 +25,7 @@ from ultralytics.nn.modules.moe import (
     MultiHeadRouterMoE,
     OptimalHybridGateMoE,
     RefinedLowRankHybridAdaptiveGateMoE,
+    SharedExpertMoE,  # Issue #54: Cross-Scale Expert Pool Sharing
     UltimateOptimizedMoE,
     UltraOptimizedMoE,
     VisualEnhancedAdaptiveGateMoE,
@@ -54,6 +56,7 @@ MIXTURE_MODULES = {
     "MultiHeadRouterMoE": MultiHeadRouterMoE,
     "OptimalHybridGateMoE": OptimalHybridGateMoE,
     "RefinedLowRankHybridAdaptiveGateMoE": RefinedLowRankHybridAdaptiveGateMoE,
+    "SharedExpertMoE": SharedExpertMoE,  # Issue #54: Cross-Scale Expert Pool Sharing
     "UltimateOptimizedMoE": UltimateOptimizedMoE,
     "UltraOptimizedMoE": UltraOptimizedMoE,
     "VisualEnhancedAdaptiveGateMoE": VisualEnhancedAdaptiveGateMoE,
@@ -91,6 +94,10 @@ def adapt_mixture_args(
 ) -> tuple[list[Any], int, int, bool]:
     """Apply upstream width/depth/channel rules to one registered module."""
     if module in MIXTURE_MULTI_INPUT_MODULES:
+        if module.__name__ == "MultiScaleLatentMixture":
+            raise ValueError(
+                "MultiScaleLatentMixture returns list[Tensor] and cannot be registered in the list-to-Tensor parser path"
+            )
         if not isinstance(from_index, (list, tuple)) or not from_index:
             raise TypeError(f"{module.__name__} expects a non-empty input index list, got {from_index!r}")
         if len(from_index) < 1 or any(not isinstance(index, int) for index in from_index):
@@ -99,9 +106,38 @@ def adapt_mixture_args(
             raise ValueError(f"{module.__name__} requires an output-channel argument")
         c1 = [channels[index] for index in from_index]
         c2 = args[0]
+        named_config = isinstance(c2, Mapping)
+        if named_config:
+            config = dict(c2)
+            c2 = config.pop("out_channels", config.pop("c2", None))
+            if c2 is None:
+                raise ValueError(f"{module.__name__} named config requires 'out_channels'")
+            named_order = (
+                "num_experts",
+                "expert_ratio",
+                "router_hidden_dim",
+                "temperature",
+                "balance_loss_coeff",
+                "router_z_loss_coeff",
+                "residual_init",
+                "noise_std",
+                "router_init_std",
+                "inference_top_k",
+                "value_fusion_mode",
+                "value_fusion_weights",
+                "require_inference_calibration",
+            )
+            unknown = sorted(set(config).difference(named_order))
+            if unknown:
+                raise ValueError(f"{module.__name__} named config has unknown keys: {unknown}")
+            defaults = (4, 0.25, None, 1.0, 1e-2, 1e-3, 0.0, 0.0, 0.0, None, "router_only", None, False)
+            args = [config.get(key, default) for key, default in zip(named_order, defaults)]
         if c2 != nc:
             c2 = make_divisible(min(c2, max_channels) * width, 8)
-        return [c1, c2, *args[1:]], c2, 1, False
+        # Named configs have already removed their output-channel field;
+        # legacy positional configs still carry it at args[0].
+        adapted_tail = args if named_config else args[1:]
+        return [c1, c2, *adapted_tail], c2, 1, False
     if not isinstance(from_index, int):
         raise TypeError(f"{module.__name__} expects one input index, got {from_index!r}")
     if not args:
