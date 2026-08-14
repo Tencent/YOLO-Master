@@ -4,7 +4,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 from ultralytics.nn.modules.conv import Conv
-from ultralytics.nn.modules._numeric import should_reduce_ddp
+from ultralytics.nn.modules._numeric import should_reduce_ddp, stable_normalize
 from ultralytics.nn.modules.utils import robust_deepcopy
 from ultralytics.nn.modules.routing_protocol import (
     export_capabilities as _export_routing_capabilities,
@@ -15,6 +15,24 @@ from ultralytics.nn.modules.routing_protocol import (
 )
 from .heads import _GlobalAttnHead, _LocalAttnHead, _RegionalAttnHead, _init_conv_weights
 from .router import _MoARouter, _moa_router_aux_loss
+
+
+def _resolve_sparse_inference_threshold(
+    sparse_inference_threshold: float | None,
+    inference_sparse_threshold: float | None,
+) -> float:
+    """Resolve the canonical threshold and its legacy constructor alias."""
+    if sparse_inference_threshold is not None and inference_sparse_threshold is not None:
+        if float(sparse_inference_threshold) != float(inference_sparse_threshold):
+            raise ValueError(
+                "sparse_inference_threshold and inference_sparse_threshold must match when both are provided"
+            )
+    threshold = (
+        inference_sparse_threshold
+        if sparse_inference_threshold is None and inference_sparse_threshold is not None
+        else sparse_inference_threshold
+    )
+    return 0.02 if threshold is None else float(threshold)
 
 
 class MoABlock(nn.Module):
@@ -73,8 +91,10 @@ class MoABlock(nn.Module):
             sparse_inference_threshold = inference_sparse_threshold
             sparse_inference = True
         self.sequential_heads = sequential_heads
-        self.sparse_inference = bool(sparse_inference)
-        self.sparse_inference_threshold = float(sparse_inference_threshold)
+        self.sparse_inference = bool(sparse_inference or inference_sparse_threshold is not None)
+        self.sparse_inference_threshold = _resolve_sparse_inference_threshold(
+            sparse_inference_threshold, inference_sparse_threshold
+        )
         if not 0.0 <= self.sparse_inference_threshold < 1.0:
             raise ValueError("sparse_inference_threshold must be in [0, 1)")
         if num_heads <= 0 or num_heads % self.NUM_GROUPS != 0:
@@ -88,11 +108,9 @@ class MoABlock(nn.Module):
 
         # Three attention head-groups (global head uses a per-block RF seed).
         global_rf_seed = block_index * 7919 + 2 * 65537
-        self.local_head   = _LocalAttnHead(dim, heads_per_group, head_dim, window_size=local_window_size)
-        self.region_head  = _RegionalAttnHead(
-            dim, heads_per_group, head_dim, max_kv_tokens=regional_max_kv_tokens
-        )
-        self.global_head  = _GlobalAttnHead(dim, heads_per_group, head_dim, rf_seed=global_rf_seed)
+        self.local_head = _LocalAttnHead(dim, heads_per_group, head_dim, window_size=local_window_size)
+        self.region_head = _RegionalAttnHead(dim, heads_per_group, head_dim, max_kv_tokens=regional_max_kv_tokens)
+        self.global_head = _GlobalAttnHead(dim, heads_per_group, head_dim, rf_seed=global_rf_seed)
 
         # Router
         self.router = _MoARouter(dim, self.NUM_GROUPS, temperature=temperature)
@@ -170,7 +188,7 @@ class MoABlock(nn.Module):
         B, C, H, W = x.shape
 
         # ── Routing weights ──────────────────────────────────────────────
-        weights, router_logits = self.router(x, return_logits=True)   # [B, 3, H, W]
+        weights, router_logits = self.router(x, return_logits=True)  # [B, 3, H, W]
         exporting = is_export_or_tracing()
         if not exporting and self.training and self.aux_loss_coeff > 0:
             self.last_aux_loss, finite_diagnostics = _moa_router_aux_loss(
@@ -191,6 +209,21 @@ class MoABlock(nn.Module):
         if not exporting:
             publish_aux_loss(self, self.last_aux_loss, kind="moa", training=self.training)
 
+        # ── Routing snapshot (detached diagnostics) ──────────────────────
+        if not exporting:
+            with torch.no_grad():
+                mean_w = weights.detach().float().mean(dim=(0, 2, 3))  # [3]
+                self.last_routing_snapshot = {
+                    "num_experts": self.NUM_GROUPS,
+                    "top_k": self.NUM_GROUPS,
+                    "expert_usage": mean_w,
+                    "mean_router_probs": mean_w,
+                    "aux_loss": float(self.last_aux_loss.detach()),
+                    "finite_diagnostics": finite_diagnostics,
+                }
+        else:
+            self.last_routing_snapshot = {}
+
         # ── Attention head outputs ────────────────────────────────────────
         exporting = torch.jit.is_tracing() or torch.onnx.is_in_onnx_export()
         sparse_eval = not self.training and self.sparse_inference and not exporting
@@ -203,23 +236,25 @@ class MoABlock(nn.Module):
             # level, so no per-token Python control flow enters exported graphs.
             active = weights.detach().amax(dim=(0, 2, 3)) > self.sparse_inference_threshold
             if not bool(active.any()):
-                active = torch.zeros_like(active)
-                active[weights.detach().mean(dim=(0, 2, 3)).argmax()] = True
+                dominant = weights.detach().mean(dim=(0, 2, 3)).argmax()
+                active = torch.arange(self.NUM_GROUPS, device=weights.device) == dominant
             if bool(active.all()):
                 active = None
             else:
+                active_weights = weights * active.view(1, -1, 1, 1).to(dtype=weights.dtype)
+                approximation_error = float((weights - active_weights).sum(dim=1).mean().detach())
+                weights = stable_normalize(active_weights, dim=1)
                 executed_groups = int(active.sum())
-                dropped_routing_mass = float(weights[:, ~active].detach().float().sum(dim=1).mean())
 
-        blend_weights = weights
-        if active is not None:
-            # Re-normalize retained groups per token so sparse inference
-            # approximates dense routing without shrinking the activation.
-            blend_weights = weights * active.view(1, -1, 1, 1)
-            blend_weights = blend_weights / blend_weights.sum(dim=1, keepdim=True).clamp_min(torch.finfo(weights.dtype).eps)
-        w_l = blend_weights[:, 0:1]  # [B, 1, H, W]
-        w_r = blend_weights[:, 1:2]
-        w_g = blend_weights[:, 2:3]
+        if not exporting:
+            self.last_routing_snapshot.update(
+                executed_groups=executed_groups,
+                approximation_error=approximation_error,
+            )
+
+        w_l = weights[:, 0:1]  # [B, 1, H, W]
+        w_r = weights[:, 1:2]
+        w_g = weights[:, 2:3]
 
         if active is not None:
             mixed = x.new_zeros(x.shape)

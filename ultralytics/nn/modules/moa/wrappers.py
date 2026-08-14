@@ -18,7 +18,7 @@ from ultralytics.nn.modules.routing_protocol import (
     routing_finite_diagnostics,
     routing_snapshot as _routing_snapshot,
 )
-from .block import MoABlock
+from .block import MoABlock, _resolve_sparse_inference_threshold
 from .heads import _LocalAttnHead, _flash_attn, _init_conv_weights
 from .router import _MoARouter, _moa_router_aux_loss
 
@@ -309,7 +309,7 @@ class NeckMoAFusion(nn.Module):
             self_out = self.self_out_proj(self_out)
 
         # ── Router blend ─────────────────────────────────────────────────
-        weights, router_logits = self.router(hi, return_logits=True)         # [B, 2, H, W]
+        weights, router_logits = self.router(hi, return_logits=True)  # [B, 2, H, W]
         exporting = is_export_or_tracing()
         if not exporting and self.training and self.aux_loss_coeff > 0:
             self.last_aux_loss, finite_diagnostics = _moa_router_aux_loss(

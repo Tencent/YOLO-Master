@@ -1,0 +1,9 @@
+.gitattributes -text whitespace=cr-at-eol
+PHASE3_FORMAL_ROOT.txt -text whitespace=cr-at-eol
+README.md -text whitespace=cr-at-eol
+SOURCE_PROVENANCE.json -text whitespace=cr-at-eol
+SOURCE_SHA256SUMS -text whitespace=cr-at-eol
+PUBLIC_SHA256SUMS -text whitespace=cr-at-eol
+phase3_mot_global_summary.json -text whitespace=cr-at-eol
+phase3_formal_registry.json -text whitespace=cr-at-eol
+reports/* -text whitespace=cr-at-eol

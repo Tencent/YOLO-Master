@@ -1,0 +1,4 @@
+architecture,model_key,seed_count,seeds,mean_mAP50,sample_std_mAP50,mean_mAP50-95,sample_std_mAP50-95,statistical_scope
+EsMoE,v10,3,"0,1,2",0.16001000,0.00350099,0.08368000,0.00200277,sample mean and sample standard deviation
+MoA,v10_moa,1,0,0.15844000,,0.08164000,,single-seed descriptive result; no between-seed variance estimate
+MoT,v10_mot,5,"0,1,2,3,4",0.16036600,0.00292791,0.08311200,0.00183376,sample mean and sample standard deviation

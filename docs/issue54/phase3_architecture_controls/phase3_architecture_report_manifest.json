@@ -1,0 +1,193 @@
+{
+  "architecture_summary": [
+    {
+      "architecture": "EsMoE",
+      "mean_mAP50": "0.16001000",
+      "mean_mAP50-95": "0.08368000",
+      "model_key": "v10",
+      "sample_std_mAP50": "0.00350099",
+      "sample_std_mAP50-95": "0.00200277",
+      "seed_count": 3,
+      "seeds": "0,1,2",
+      "statistical_scope": "sample mean and sample standard deviation"
+    },
+    {
+      "architecture": "MoA",
+      "mean_mAP50": "0.15844000",
+      "mean_mAP50-95": "0.08164000",
+      "model_key": "v10_moa",
+      "sample_std_mAP50": null,
+      "sample_std_mAP50-95": null,
+      "seed_count": 1,
+      "seeds": "0",
+      "statistical_scope": "single-seed descriptive result; no between-seed variance estimate"
+    },
+    {
+      "architecture": "MoT",
+      "mean_mAP50": "0.16036600",
+      "mean_mAP50-95": "0.08311200",
+      "model_key": "v10_mot",
+      "sample_std_mAP50": "0.00292791",
+      "sample_std_mAP50-95": "0.00183376",
+      "seed_count": 5,
+      "seeds": "0,1,2,3,4",
+      "statistical_scope": "sample mean and sample standard deviation"
+    }
+  ],
+  "controls_root": "/root/autodl-tmp/MoT/results/phase3_controls_20260801T181817Z",
+  "generated_at": "2026-08-02T13:03:43Z",
+  "generator_script": "/root/autodl-tmp/MoT/YOLO-Master/scripts/issue54/build_phase3_architecture_controls_report.py",
+  "generator_script_sha256": "786468a4afe98ecd23f76181a043c45ed80341908e6ad3d5a140e635d2b1c85e",
+  "integrity": {
+    "all_runs_completed_30_epochs": true,
+    "all_runs_passed": true,
+    "checkpoint_sha256_unique_count": 9,
+    "controls_have_no_mot_routing": true,
+    "formal_run_count": 9
+  },
+  "mot_root": "/root/autodl-tmp/MoT/results/phase3_formal_20260731T214515Z",
+  "protocol": {
+    "batch": 8,
+    "dataset": "VisDrone2019-DET",
+    "epochs": 30,
+    "esmoe_precision": "amp",
+    "imgsz": 640,
+    "moa_precision": "amp",
+    "mot_precision": "fp32"
+  },
+  "report_files": [
+    {
+      "path": "PHASE3_ARCHITECTURE_CONTROLS_REPORT.md",
+      "sha256": "fadde1e0e6835112b0405b9b5d0c89acbc77842eb86cd5f8cbe747d11ff57c3e"
+    },
+    {
+      "path": "phase3_architecture_run_metrics.csv",
+      "sha256": "f6cf472a31733b8dcb964e657b8c373b9f38b4efbdaff9792dfa49dc6f6b8c65"
+    },
+    {
+      "path": "phase3_architecture_summary.csv",
+      "sha256": "44b9feb6e14c19652893293c20c97515d588dd3e7b33a3c30d498e3dbfb5f75f"
+    }
+  ],
+  "report_type": "phase3_architecture_controls",
+  "schema_version": 1,
+  "source_runs": [
+    {
+      "architecture": "EsMoE",
+      "checkpoint_path": "/root/autodl-tmp/MoT/results/phase3_controls_20260801T181817Z/phase3_v10_seed0/training/v10/weights/best.pt",
+      "checkpoint_sha256": "64d8c53b001b3db57fb38a1686d5896087f06be898a22e5a75cbd0ae297bd2e0",
+      "manifest_path": "/root/autodl-tmp/MoT/results/phase3_controls_20260801T181817Z/phase3_v10_seed0/experiment_manifest.json",
+      "manifest_sha256": "13d9e8d55d41d1fb5efab76346a12c2e82657ac883e50b0bc3f3cdadda5ece27",
+      "model_key": "v10",
+      "results_path": "/root/autodl-tmp/MoT/results/phase3_controls_20260801T181817Z/phase3_v10_seed0/training/v10/results.csv",
+      "results_sha256": "3854fa0c405ee730c32a26717321b73b1e21b9845894875861ce7818c046b7a3",
+      "run_dir": "/root/autodl-tmp/MoT/results/phase3_controls_20260801T181817Z/phase3_v10_seed0",
+      "run_id": "phase3_v10_seed0",
+      "seed": 0
+    },
+    {
+      "architecture": "EsMoE",
+      "checkpoint_path": "/root/autodl-tmp/MoT/results/phase3_controls_20260801T181817Z/phase3_v10_seed1/training/v10/weights/best.pt",
+      "checkpoint_sha256": "39561c585c98081c3c6f8297074cdafe7225a7e8878727fb2fac4bb61d6305d3",
+      "manifest_path": "/root/autodl-tmp/MoT/results/phase3_controls_20260801T181817Z/phase3_v10_seed1/experiment_manifest.json",
+      "manifest_sha256": "30c6db64431ce639268a18ab735d504f577c374ecb93060b6706a698fa86ff6b",
+      "model_key": "v10",
+      "results_path": "/root/autodl-tmp/MoT/results/phase3_controls_20260801T181817Z/phase3_v10_seed1/training/v10/results.csv",
+      "results_sha256": "54ea16f1b0a3b0e7ff54c5ecf7d0ec5613d3891b143db18958347233f37c0fbf",
+      "run_dir": "/root/autodl-tmp/MoT/results/phase3_controls_20260801T181817Z/phase3_v10_seed1",
+      "run_id": "phase3_v10_seed1",
+      "seed": 1
+    },
+    {
+      "architecture": "EsMoE",
+      "checkpoint_path": "/root/autodl-tmp/MoT/results/phase3_controls_20260801T181817Z/phase3_v10_seed2/training/v10/weights/best.pt",
+      "checkpoint_sha256": "4b805479ceb38d0c2cde0662a258f381c0fa0f506b20a08b50b9c0d72c7c09a2",
+      "manifest_path": "/root/autodl-tmp/MoT/results/phase3_controls_20260801T181817Z/phase3_v10_seed2/experiment_manifest.json",
+      "manifest_sha256": "645fd7fc4be2628d030b7bd57958881c59e1cec09990254dd7054d078dc04374",
+      "model_key": "v10",
+      "results_path": "/root/autodl-tmp/MoT/results/phase3_controls_20260801T181817Z/phase3_v10_seed2/training/v10/results.csv",
+      "results_sha256": "68f5957eeab62f4b3821cf1b9a94b2f3d4f0966d5ef0294b001b23ee08a5ca33",
+      "run_dir": "/root/autodl-tmp/MoT/results/phase3_controls_20260801T181817Z/phase3_v10_seed2",
+      "run_id": "phase3_v10_seed2",
+      "seed": 2
+    },
+    {
+      "architecture": "MoA",
+      "checkpoint_path": "/root/autodl-tmp/MoT/results/phase3_controls_20260801T181817Z/phase3_v10_moa_seed0/training/v10_moa/weights/best.pt",
+      "checkpoint_sha256": "9d939680ac80d802a5d46eab8d5262990af2d7991936edccb64a8316fda2978c",
+      "manifest_path": "/root/autodl-tmp/MoT/results/phase3_controls_20260801T181817Z/phase3_v10_moa_seed0/experiment_manifest.json",
+      "manifest_sha256": "c5c4f3cbf964be2a00cafb90e155f0df7ae6f397db665f2af00650f0780d568c",
+      "model_key": "v10_moa",
+      "results_path": "/root/autodl-tmp/MoT/results/phase3_controls_20260801T181817Z/phase3_v10_moa_seed0/training/v10_moa/results.csv",
+      "results_sha256": "d4666a2b955d0799fa2251ab0f6f23ab54fc96eeef9bbcd9a9883e6ac845e930",
+      "run_dir": "/root/autodl-tmp/MoT/results/phase3_controls_20260801T181817Z/phase3_v10_moa_seed0",
+      "run_id": "phase3_v10_moa_seed0",
+      "seed": 0
+    },
+    {
+      "architecture": "MoT",
+      "checkpoint_path": "/root/autodl-tmp/MoT/results/phase3_formal_20260731T214515Z/phase3_v10_mot_seed0/training/v10_mot/weights/best.pt",
+      "checkpoint_sha256": "ec18580cdafe91b49684007c1391b759a5612c2733bd6d5c0009d2e5b3117bda",
+      "manifest_path": "/root/autodl-tmp/MoT/results/phase3_formal_20260731T214515Z/phase3_v10_mot_seed0/experiment_manifest.json",
+      "manifest_sha256": "8293e9e9eb882e03898be04ba28dfb348fc01a4a9e9996fe49ad28a34ce45a85",
+      "model_key": "v10_mot",
+      "results_path": "/root/autodl-tmp/MoT/results/phase3_formal_20260731T214515Z/phase3_v10_mot_seed0/training/v10_mot/results.csv",
+      "results_sha256": "fc65ea04859a5fac9581749cf4e0d61e39b069805b6a5183a23eab82aed5b7fb",
+      "run_dir": "/root/autodl-tmp/MoT/results/phase3_formal_20260731T214515Z/phase3_v10_mot_seed0",
+      "run_id": "phase3_v10_mot_seed0",
+      "seed": 0
+    },
+    {
+      "architecture": "MoT",
+      "checkpoint_path": "/root/autodl-tmp/MoT/results/phase3_formal_20260731T214515Z/phase3_v10_mot_seed1/training/v10_mot/weights/best.pt",
+      "checkpoint_sha256": "fd9a959f34fcc4c75db71f3ecb91dd7c43afa162a4664b5a136cd44453da3b97",
+      "manifest_path": "/root/autodl-tmp/MoT/results/phase3_formal_20260731T214515Z/phase3_v10_mot_seed1/experiment_manifest.json",
+      "manifest_sha256": "8a923c0ceb115a9d7472ca1b86b6f2d4436602177ad0c3afa2246ee7876a991b",
+      "model_key": "v10_mot",
+      "results_path": "/root/autodl-tmp/MoT/results/phase3_formal_20260731T214515Z/phase3_v10_mot_seed1/training/v10_mot/results.csv",
+      "results_sha256": "7059186821795d11244b73def4d53ece024bd4e406dc7fc0e6d5a959f3a2df85",
+      "run_dir": "/root/autodl-tmp/MoT/results/phase3_formal_20260731T214515Z/phase3_v10_mot_seed1",
+      "run_id": "phase3_v10_mot_seed1",
+      "seed": 1
+    },
+    {
+      "architecture": "MoT",
+      "checkpoint_path": "/root/autodl-tmp/MoT/results/phase3_formal_20260731T214515Z/phase3_v10_mot_seed2/training/v10_mot/weights/best.pt",
+      "checkpoint_sha256": "fa9ed0cd300ea2f2ec2eb2b506d668c7710f4d0f2d26217d6c0978ea1acab858",
+      "manifest_path": "/root/autodl-tmp/MoT/results/phase3_formal_20260731T214515Z/phase3_v10_mot_seed2/experiment_manifest.json",
+      "manifest_sha256": "54c4baeb91a1bdb57f0ae1725cf2d7e06261c11e9b563c0fc809fca19f540319",
+      "model_key": "v10_mot",
+      "results_path": "/root/autodl-tmp/MoT/results/phase3_formal_20260731T214515Z/phase3_v10_mot_seed2/training/v10_mot/results.csv",
+      "results_sha256": "12314b261c986e6675b0976768bbd56f4277d6be2dda906d8d6a9d71c9906ff3",
+      "run_dir": "/root/autodl-tmp/MoT/results/phase3_formal_20260731T214515Z/phase3_v10_mot_seed2",
+      "run_id": "phase3_v10_mot_seed2",
+      "seed": 2
+    },
+    {
+      "architecture": "MoT",
+      "checkpoint_path": "/root/autodl-tmp/MoT/results/phase3_formal_20260731T214515Z/phase3_v10_mot_seed3/training/v10_mot/weights/best.pt",
+      "checkpoint_sha256": "b2e2dcd75497ae47430b2b17ac9c7514e3847930d7b49374723eefcb591e4dce",
+      "manifest_path": "/root/autodl-tmp/MoT/results/phase3_formal_20260731T214515Z/phase3_v10_mot_seed3/experiment_manifest.json",
+      "manifest_sha256": "655eec2f9787ee7bd8fc49a5bedc4e96f0d256f01662b037fc0cc9270d7a2a9c",
+      "model_key": "v10_mot",
+      "results_path": "/root/autodl-tmp/MoT/results/phase3_formal_20260731T214515Z/phase3_v10_mot_seed3/training/v10_mot/results.csv",
+      "results_sha256": "db819e09d706af6988cc945e5770a758b6c70a01cadefb379559fd979412cf85",
+      "run_dir": "/root/autodl-tmp/MoT/results/phase3_formal_20260731T214515Z/phase3_v10_mot_seed3",
+      "run_id": "phase3_v10_mot_seed3",
+      "seed": 3
+    },
+    {
+      "architecture": "MoT",
+      "checkpoint_path": "/root/autodl-tmp/MoT/results/phase3_formal_20260731T214515Z/phase3_v10_mot_seed4/training/v10_mot/weights/best.pt",
+      "checkpoint_sha256": "43a7a6d20a84782d9078312e9030210086eac2a8d0cad9d1457b9c6beaa37ad7",
+      "manifest_path": "/root/autodl-tmp/MoT/results/phase3_formal_20260731T214515Z/phase3_v10_mot_seed4/experiment_manifest.json",
+      "manifest_sha256": "38ce17cbbbe374993b250d918552ba739a31157d13bc1d9dc766b11247689675",
+      "model_key": "v10_mot",
+      "results_path": "/root/autodl-tmp/MoT/results/phase3_formal_20260731T214515Z/phase3_v10_mot_seed4/training/v10_mot/results.csv",
+      "results_sha256": "e9ec6052308e94ef6b9c75d9ddade42eb655ca1e6defbcad28b42d99cc50defa",
+      "run_dir": "/root/autodl-tmp/MoT/results/phase3_formal_20260731T214515Z/phase3_v10_mot_seed4",
+      "run_id": "phase3_v10_mot_seed4",
+      "seed": 4
+    }
+  ]
+}

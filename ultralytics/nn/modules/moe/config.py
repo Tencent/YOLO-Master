@@ -146,6 +146,8 @@ def annotate_mixture_yaml_config(module: nn.Module, module_name: str, yaml_args:
             (6, "aux_loss_coeff"),
             (7, "local_window_size"),
             (9, "regional_max_kv_tokens"),
+            (10, "sparse_inference"),
+            (11, "sparse_inference_threshold"),
         ):
             if len(yaml_args) > index:
                 explicit[key] = yaml_args[index]
@@ -171,6 +173,8 @@ def annotate_mixture_yaml_config(module: nn.Module, module_name: str, yaml_args:
             (6, "aux_loss_coeff"),
             (8, "local_window_size"),
             (10, "regional_max_kv_tokens"),
+            (11, "sparse_inference"),
+            (12, "sparse_inference_threshold"),
         ):
             if len(yaml_args) > index:
                 explicit[key] = yaml_args[index]
@@ -350,10 +354,13 @@ def apply_mixture_config(model: nn.Module, resolved: ResolvedMixtureConfig) -> i
                     if child is not module and hasattr(child, "sparse_inference"):
                         child.sparse_inference = module.sparse_inference
             if hasattr(module, "sparse_inference_threshold") and "sparse_inference_threshold" not in inherited_explicit:
-                module.sparse_inference_threshold = float(config["sparse_inference_threshold"])
+                threshold = float(config["sparse_inference_threshold"])
+                if not 0.0 <= threshold < 1.0:
+                    raise ValueError("moa_sparse_inference_threshold must be in [0, 1)")
+                module.sparse_inference_threshold = threshold
                 for child in module.modules():
                     if child is not module and hasattr(child, "sparse_inference_threshold"):
-                        child.sparse_inference_threshold = module.sparse_inference_threshold
+                        child.sparse_inference_threshold = threshold
         elif kind == "mot":
             if hasattr(module, "balance_loss_coeff") and "balance_loss_coeff" not in inherited_explicit:
                 module.balance_loss_coeff = config["balance_loss_coeff"]

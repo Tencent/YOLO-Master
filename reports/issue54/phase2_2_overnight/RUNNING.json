@@ -1,0 +1,45 @@
+{
+  "admission_decisions": [
+    {
+      "admitted": true,
+      "available_seconds": 20997.36469592899,
+      "experiment_id": "calibration_mot_amp",
+      "kind": "initial",
+      "predicted_seconds_with_buffers": 3600.0,
+      "timestamp": "2026-07-30T03:17:39.044275Z"
+    },
+    {
+      "admitted": true,
+      "available_seconds": 19737.120448756963,
+      "experiment_id": "calibration_mot_fp32",
+      "kind": "initial",
+      "predicted_seconds_with_buffers": 3600.0,
+      "timestamp": "2026-07-30T03:38:39.288521Z"
+    }
+  ],
+  "controller_failure": "RuntimeError: FP32 calibration/routing was not stable; protocol calibration is incomplete",
+  "controller_pid": 49459,
+  "current_task": "failed",
+  "elapsed_seconds": 2223.061959527433,
+  "evidence_label": "diagnostic_not_formal_evidence",
+  "expected_end_at": "2026-07-30T09:37:36.408980Z",
+  "precision_selection": {
+    "amp_over_fp32_speed_ratio": null,
+    "amp_seconds_per_epoch": null,
+    "amp_stable": false,
+    "fp32_seconds_per_epoch": null,
+    "fp32_stable": false,
+    "interpretation": "precision calibration only; AMP and FP32 are not independent seeds",
+    "reason": "FP32 calibration/routing was not stable; protocol calibration is incomplete",
+    "same_seed_independent_runs": false,
+    "selected": null,
+    "threshold_amp_max_speed_ratio": 0.9
+  },
+  "remaining_total_seconds": 20576.93803988397,
+  "remaining_training_admission_seconds": 18776.938038915396,
+  "routing_exports_recorded": 0,
+  "runs_recorded": 2,
+  "started_at": "2026-07-30T03:17:36.408968Z",
+  "status": "implementation_failed",
+  "updated_at": "2026-07-30T03:54:39.470914Z"
+}

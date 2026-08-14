@@ -1,0 +1,35 @@
+{
+  "evidence_label": "diagnostic_not_formal_evidence",
+  "remote_result_root": "/root/autodl-tmp/MoT/results/phase2_3_recovery_20260730T111516Z",
+  "all_loadable": true,
+  "checkpoints": [
+    {
+      "experiment_id": "calibration_mot_amp",
+      "kind": "best",
+      "recovered_without_training": true,
+      "size_bytes": 8711054,
+      "sha256": "70ff9e97539a772cb009539f16159d7eb9a623d1a8df28c8f5ee68af2ab19b8b"
+    },
+    {
+      "experiment_id": "calibration_mot_fp32",
+      "kind": "best",
+      "recovered_without_training": true,
+      "size_bytes": 8710478,
+      "sha256": "d2d81d184519ca0dc14a78b93e1c2ca310a6aeb7557cbe505639842903d99361"
+    },
+    {
+      "experiment_id": "calibration_esmoe_amp",
+      "kind": "best",
+      "recovered_without_training": false,
+      "size_bytes": 7347688,
+      "sha256": "06021f02c538d640a1426c6a29bbc8b0a677b0e846179381b0addc97a610bdd6"
+    },
+    {
+      "experiment_id": "calibration_moa_amp",
+      "kind": "best",
+      "recovered_without_training": false,
+      "size_bytes": 7689534,
+      "sha256": "ab8bc2bdb47f2bb4c4f64e53c489bfece17d1578eb3694c4575a7ee29b0fe38b"
+    }
+  ]
+}

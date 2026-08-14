@@ -37,6 +37,8 @@ def test_mixture_defaults_parse_with_expected_types():
     assert cfg.mot_sparse_train_warmup_steps == 0
     assert cfg.mot_scene_hidden_dim is None
     assert cfg.mot_scene_inference_mode == "dynamic"
+    assert cfg.moa_sparse_inference is False
+    assert cfg.moa_sparse_inference_threshold == 0.02
     assert cfg.moa_regional_max_kv_tokens == 4096
 
 
@@ -48,6 +50,23 @@ def test_new_mixture_float_key_is_type_checked():
         assert "latent_aux_gain" in str(exc)
     else:
         raise AssertionError("latent_aux_gain must reject string values")
+
+
+def test_moa_sparse_inference_config_types_are_checked():
+    check_cfg({"moa_sparse_inference": True, "moa_sparse_inference_threshold": 0.02})
+    for invalid in (1.0, "true"):
+        try:
+            check_cfg({"moa_sparse_inference": invalid})
+        except TypeError:
+            pass
+        else:
+            raise AssertionError("moa_sparse_inference must remain boolean")
+    try:
+        check_cfg({"moa_sparse_inference_threshold": "0.02"})
+    except TypeError:
+        pass
+    else:
+        raise AssertionError("moa_sparse_inference_threshold must remain numeric")
 
 
 def test_scene_inference_mode_is_type_checked():

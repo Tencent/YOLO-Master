@@ -1,0 +1,13 @@
+{
+  "actual_batch": 8,
+  "checkpoint_loadable": false,
+  "duration_seconds": 1237.0451533980668,
+  "ended_at": "2026-07-30T03:38:17.758306Z",
+  "evidence_label": "diagnostic_not_formal_evidence",
+  "failure_reason": "TypeError: update expected at most 1 argument, got 2",
+  "peak_gpu_memory_bytes": 8482816512,
+  "pid": 49537,
+  "requested_batch": 8,
+  "started_at": "2026-07-30T03:17:40.713174Z",
+  "status": "failed"
+}

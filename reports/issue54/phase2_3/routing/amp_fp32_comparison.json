@@ -1,0 +1,67 @@
+{
+  "aligned_image_layer_rows": 192,
+  "available": true,
+  "entropy_difference_left_minus_right": 3.426121890925948e-05,
+  "interpretation": "precision-mode checkpoint comparison only; not a cross-seed inference",
+  "layers": [
+    {
+      "entropy_difference_left_minus_right": 0.00015208694007462498,
+      "layer_name": "model.14.m.0",
+      "mean_entropy_left": 1.0985841919923982,
+      "mean_entropy_right": 1.0984321050523236,
+      "mean_jsd": 6.161565486130282e-05,
+      "rows": 32,
+      "top1_agreement": 1.0
+    },
+    {
+      "entropy_difference_left_minus_right": -7.318701906955383e-06,
+      "layer_name": "model.14.m.1",
+      "mean_entropy_left": 1.098595192264017,
+      "mean_entropy_right": 1.0986025109659239,
+      "mean_jsd": 7.778047894460898e-07,
+      "rows": 32,
+      "top1_agreement": 0.0
+    },
+    {
+      "entropy_difference_left_minus_right": 5.981084584183449e-05,
+      "layer_name": "model.20.m.0",
+      "mean_entropy_left": 1.0986122854111606,
+      "mean_entropy_right": 1.0985524745653188,
+      "mean_jsd": 1.5151829684365019e-05,
+      "rows": 32,
+      "top1_agreement": 0.0
+    },
+    {
+      "entropy_difference_left_minus_right": 9.864845753604357e-07,
+      "layer_name": "model.20.m.1",
+      "mean_entropy_left": 1.098612271064659,
+      "mean_entropy_right": 1.0986112845800837,
+      "mean_jsd": 2.05153638939942e-07,
+      "rows": 32,
+      "top1_agreement": 1.0
+    },
+    {
+      "entropy_difference_left_minus_right": -1.4285306271233367e-09,
+      "layer_name": "model.23.m.0",
+      "mean_entropy_left": 1.098612290608764,
+      "mean_entropy_right": 1.0986122920372947,
+      "mean_jsd": 7.676342401348197e-11,
+      "rows": 32,
+      "top1_agreement": 0.0
+    },
+    {
+      "entropy_difference_left_minus_right": 3.173400209277588e-09,
+      "layer_name": "model.23.m.1",
+      "mean_entropy_left": 1.0986122927078985,
+      "mean_entropy_right": 1.0986122895344983,
+      "mean_jsd": 9.406596719680268e-12,
+      "rows": 32,
+      "top1_agreement": 1.0
+    }
+  ],
+  "mean_entropy_left": 1.0986047540081496,
+  "mean_entropy_right": 1.0985704927892403,
+  "mean_jsd": 1.2958421524012434e-05,
+  "same_seed_independent_runs": false,
+  "top1_agreement": 0.5
+}

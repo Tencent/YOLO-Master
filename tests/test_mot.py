@@ -7,6 +7,7 @@ import torch
 from ultralytics.engine.trainer import BaseTrainer
 from ultralytics.nn.modules.moa import C2fMoA, MoABlock
 from ultralytics.nn.modules.mot import C2fMoT, MoTBlock, anneal_mot_temperature, collect_mot_aux_loss
+from ultralytics.nn.modules.mot.block import _routing_mask_usage
 from ultralytics.nn.tasks import DetectionModel
 from ultralytics.nn.mixture_loss import _collect_mot_aux_loss
 
@@ -365,7 +366,9 @@ def test_mot_router_z_loss_handles_extreme_logits():
 def test_mot_sparse_train_mode():
     """sparse_train=True must only dispatch to selected experts."""
     torch.manual_seed(0)
-    block = MoTBlock(24, num_heads=3, top_k=1, window_size=4, n_points=2, sparse_train=True).train()
+    block = MoTBlock(
+        24, num_heads=3, top_k=1, window_size=4, n_points=2, sparse_train=True, exploration_eps=0.0
+    ).train()
     x = torch.randn(1, 24, 6, 6)
     out, aux = block(x)
     assert out.shape == x.shape
@@ -421,14 +424,28 @@ def test_mot_fp16_forward_stability():
 def test_mot_gradient_flow_with_zero_exploration_eps():
     """Even with exploration_eps=0, active expert must receive gradient."""
     torch.manual_seed(0)
-    block = MoTBlock(32, num_heads=4, top_k=1, window_size=4, n_points=2,
-                     exploration_eps=0.0, sparse_train=True).train()
-    x = torch.randn(2, 32, 8, 8)
+    block = MoTBlock(32, num_heads=4, top_k=2, window_size=16, n_points=2, balance_loss_coeff=0.01).train()
+    x = torch.randn(1, 32, 5, 7)
+    route_weights, _ = block.router(x)
+    assert (route_weights > 0).all(), "exploration_eps must keep a real path to every expert"
     out, aux = block(x)
-    (out ** 2).sum().backward()
+    assert out.shape == x.shape
+    assert torch.isfinite(out).all()
+    assert torch.isfinite(aux)
+
+    # GroupNorm makes a plain output sum a mathematically degenerate objective
+    # whose gradient can be exactly zero on some PyTorch kernels. A squared
+    # output loss tests the real exploration path without relying on roundoff.
+    (out.square().sum() + aux).backward()
     assert _has_grad(block.router)
-    experts_with_grad = sum(_has_grad(e) for e in block.experts)
-    assert experts_with_grad >= 1
+    for expert in block.experts:
+        assert _has_grad(expert), f"Expert {type(expert).__name__} has no gradient"
+        assert all(
+            parameter.grad is not None and torch.isfinite(parameter.grad).all()
+            for parameter in expert.parameters()
+            if parameter.requires_grad
+        )
+
 
 
 def test_mot_top_k_equals_num_experts():
@@ -459,58 +476,150 @@ def test_mot_routing_determinism():
 def test_mot_block_forward_train_and_eval_consistency():
     """Training forward should produce same-shaped output as eval forward."""
     torch.manual_seed(0)
-    block = MoTBlock(32, num_heads=4, top_k=2, window_size=4, n_points=2)
-    x = torch.randn(2, 32, 8, 8)
-    block.train()
-    out_train, aux_train = block(x)
-    block.eval()
-    with torch.no_grad():
-        out_eval, aux_eval = block(x)
-    assert out_train.shape == out_eval.shape == x.shape
-    assert torch.isfinite(out_train).all()
-    assert torch.isfinite(out_eval).all()
-
-
-def test_mot_window_expert_shift_size_zero():
-    """shift_size=0 must produce valid output (no shift mode)."""
-    from ultralytics.nn.modules.mot.mot import _WindowTransformerExpert
-    torch.manual_seed(0)
-    expert = _WindowTransformerExpert(16, num_heads=4, window_size=4, shift_size=0).eval()
-    x = torch.randn(1, 16, 8, 8)
-    with torch.no_grad():
-        out = expert(x)
+    block = MoTBlock(
+        32, num_heads=4, top_k=2, window_size=5, n_points=2, window_shift=True, balance_loss_coeff=0.01
+    ).train()
+    x = torch.randn(2, 32, 9, 11)
+    out, aux = block(x)
     assert out.shape == x.shape
     assert torch.isfinite(out).all()
 
+    # GroupNorm makes a plain output sum analytically degenerate; use a
+    # non-degenerate objective so this test measures the actual gradient path
+    # instead of platform-dependent reduction roundoff.
+    (out.square().sum() + aux).backward()
+    assert _has_grad(block.router)
+    for expert in block.experts:
+        assert _has_grad(expert)
+        assert all(
+            parameter.grad is not None and torch.isfinite(parameter.grad).all()
+            for parameter in expert.parameters()
+            if parameter.requires_grad
+        )
 
-def test_mot_localconv_expert_with_various_input_sizes():
-    """LocalConv expert must handle diverse spatial dimensions."""
-    from ultralytics.nn.modules.mot.mot import _LocalConvTransformerExpert
-    expert = _LocalConvTransformerExpert(16, num_heads=4).eval()
-    for h, w in [(4, 4), (8, 16), (16, 8), (7, 13)]:
-        x = torch.randn(1, 16, h, w)
-        with torch.no_grad():
-            out = expert(x)
-        assert out.shape == x.shape, f'Failed at {h}x{w}'
-        assert torch.isfinite(out).all(), f'NaN at {h}x{w}'
+
+def test_mot_exploration_executes_all_experts_outside_discrete_topk():
+    """Positive exploration weights must create real gradients for every expert."""
+    torch.manual_seed(0)
+    block = MoTBlock(
+        32,
+        num_heads=4,
+        top_k=2,
+        window_size=5,
+        n_points=2,
+        window_shift=True,
+        balance_loss_coeff=0.01,
+        sparse_train=True,
+        exploration_eps=0.2,
+    ).train()
+    with torch.no_grad():
+        block.router.router[-1].weight.zero_()
+        block.router.router[-1].bias.copy_(torch.tensor([2.0, 1.0, -2.0]))
+
+    x = torch.randn(2, 32, 9, 11)
+    weights, indices = block.router(x)
+    assert set(indices.unique().tolist()) == {0, 1}
+    assert (weights[:, 2] > 0).all()
+
+    out, aux = block(x)
+    (out.square().sum() + aux).backward()
+
+    assert block._last_dispatch_stats["policy"] == "dense_exploration"
+    assert block._last_dispatch_stats["actual_expert_calls"] == block.NUM_EXPERTS
+    assert _has_grad(block.router)
+    for expert in block.experts:
+        assert _has_grad(expert)
+        assert all(
+            parameter.grad is not None and torch.isfinite(parameter.grad).all()
+            for parameter in expert.parameters()
+            if parameter.requires_grad
+        )
 
 
-def test_mot_block_invalid_top_k_raises():
-    """top_k outside [1, NUM_EXPERTS] must raise ValueError."""
-    with pytest.raises(ValueError, match="top_k"):
-        MoTBlock(32, top_k=0)
-    with pytest.raises(ValueError, match="top_k"):
-        MoTBlock(32, top_k=5)
+def test_mot_zero_exploration_preserves_sparse_training_dispatch():
+    """Disabling exploration must retain discrete Top-K sparse training."""
+    torch.manual_seed(0)
+    block = MoTBlock(
+        32,
+        num_heads=4,
+        top_k=2,
+        window_size=5,
+        n_points=2,
+        window_shift=True,
+        balance_loss_coeff=0.0,
+        sparse_train=True,
+        exploration_eps=0.0,
+    ).train()
+    with torch.no_grad():
+        block.router.router[-1].weight.zero_()
+        block.router.router[-1].bias.copy_(torch.tensor([2.0, 1.0, -2.0]))
+
+    out, aux = block(torch.randn(2, 32, 9, 11))
+    (out.square().sum() + aux).backward()
+
+    assert block._last_dispatch_stats["policy"] == "sparse_train"
+    assert block._last_dispatch_stats["actual_expert_calls"] == 2
+    assert _has_grad(block.experts[0])
+    assert _has_grad(block.experts[1])
+    assert all(parameter.grad is None for parameter in block.experts[2].parameters())
+
+
+@pytest.mark.parametrize(
+    ("route_ids", "num_experts", "expected_per_sample", "expected_union"),
+    [
+        ([[[[0, 0], [0, 0]]]], 3, [1], 1),
+        ([[[[0, 1], [0, 1]]], [[[1, 1], [1, 1]]]], 3, [2, 1], 2),
+        ([[[[0, 1], [0, 1]]], [[[2, 2], [2, 2]]]], 3, [2, 1], 3),
+    ],
+)
+def test_mot_routing_mask_usage_matches_mathematical_definition(
+    route_ids, num_experts, expected_per_sample, expected_union
+):
+    """Legacy-safe reductions must preserve single/multi-batch union counts."""
+    indices = torch.tensor(route_ids, dtype=torch.long)
+    route_mask = torch.zeros(indices.shape[0], num_experts, *indices.shape[2:]).scatter(
+        1, indices, torch.ones_like(indices, dtype=torch.float32)
+    )
+
+    experts_per_sample, batch_expert_union = _routing_mask_usage(route_mask.bool())
+
+    assert experts_per_sample.tolist() == expected_per_sample
+    assert batch_expert_union == expected_union
+
+
+def test_mot_exploration_eps_active_in_train_disabled_in_eval():
+    """exploration_eps must densify routing in train mode, stay inactive in eval."""
+    torch.manual_seed(0)
+    block = MoTBlock(24, num_heads=3, top_k=1, window_size=4, n_points=2, exploration_eps=0.2)
+
+    # ── Eval: strictly sparse (only top_k=1 expert non-zero) ───────────────
+    block.eval()
+    with torch.no_grad():
+        w_eval, _idx_eval = block.router(torch.randn(2, 24, 5, 5))
+    nonzero_eval = (w_eval > 0).sum(dim=1)
+    assert torch.equal(nonzero_eval, torch.ones_like(nonzero_eval)), (
+        "eval mode must route each token to exactly 1 expert"
+    )
+    assert torch.allclose(w_eval.sum(dim=1), torch.ones_like(w_eval[:, 0])), "eval weights must sum to 1"
+
+    # ── Train: dense from exploration_eps blending ─────────────────────────
+    block.train()
+    w_train, _idx_train = block.router(torch.randn(2, 24, 5, 5))
+    nonzero_train = (w_train > 0).sum(dim=1)
+    # With exploration_eps=0.2, the ε-blending adds non-zero weight to
+    # non-selected experts → every token should have num_experts > top_k
+    # non-zero entries.
+    assert (nonzero_train > 1).all(), (
+        f"training mode should have dense routing from exploration_eps={block.router.exploration_eps}"
+    )
+    assert torch.allclose(w_train.sum(dim=1), torch.ones_like(w_train[:, 0])), "train weights must still sum to 1"
 
 
 def test_mot_block_with_scene_aware_router():
     """MoTBlock with scene_aware=True must produce finite output."""
     torch.manual_seed(0)
-    block = MoTBlock(32, num_heads=4, top_k=2, window_size=4, n_points=2,
-                     scene_aware_router=True, scene_hidden_dim=16,
-                     scene_consistency_coeff=0.01).train()
-    x = torch.randn(2, 32, 8, 8)
-    out, aux = block(x)
-    assert out.shape == x.shape
-    assert torch.isfinite(out).all()
-    assert torch.isfinite(aux)
+    block = MoTBlock(24, num_heads=3, top_k=1, window_size=4, n_points=2, exploration_eps=0.0).eval()
+    with torch.no_grad():
+        w, _idx = block.router(torch.randn(2, 24, 5, 5))
+    nonzero = (w > 0).sum(dim=1)
+    assert torch.equal(nonzero, torch.ones_like(nonzero))

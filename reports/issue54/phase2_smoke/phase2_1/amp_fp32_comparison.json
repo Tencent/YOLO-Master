@@ -1,0 +1,68 @@
+{
+  "aligned_image_layer_rows": 192,
+  "available": true,
+  "entropy_difference_amp_minus_fp32": 3.302537676663775e-07,
+  "evidence_label": "diagnostic_not_formal_evidence",
+  "interpretation": "AMP and FP32 are precision conditions, not independent seeds or cross-seed evidence",
+  "layers": [
+    {
+      "entropy_difference_amp_minus_fp32": 1.9258781502884403e-06,
+      "layer_name": "model.14.m.0",
+      "mean_entropy_amp": 1.0986120825663452,
+      "mean_entropy_fp32": 1.098610156688195,
+      "mean_jsd": 2.6300398123317345e-07,
+      "rows": 32,
+      "top1_agreement": 1.0
+    },
+    {
+      "entropy_difference_amp_minus_fp32": 8.356315639446166e-10,
+      "layer_name": "model.14.m.1",
+      "mean_entropy_amp": 1.0986122803374514,
+      "mean_entropy_fp32": 1.0986122795018198,
+      "mean_jsd": 9.421880851210174e-09,
+      "rows": 32,
+      "top1_agreement": 0.0
+    },
+    {
+      "entropy_difference_amp_minus_fp32": 5.411849790526446e-08,
+      "layer_name": "model.20.m.0",
+      "mean_entropy_amp": 1.0986122880304492,
+      "mean_entropy_fp32": 1.0986122339119513,
+      "mean_jsd": 1.8157198269570537e-08,
+      "rows": 32,
+      "top1_agreement": 0.0
+    },
+    {
+      "entropy_difference_amp_minus_fp32": 6.001501517971519e-10,
+      "layer_name": "model.20.m.1",
+      "mean_entropy_amp": 1.0986122892473298,
+      "mean_entropy_fp32": 1.0986122886471796,
+      "mean_jsd": 1.2812291822009793e-10,
+      "rows": 32,
+      "top1_agreement": 0.78125
+    },
+    {
+      "entropy_difference_amp_minus_fp32": -9.284817359400677e-11,
+      "layer_name": "model.23.m.0",
+      "mean_entropy_amp": 1.0986122900446498,
+      "mean_entropy_fp32": 1.098612290137498,
+      "mean_jsd": 2.1656647055665367e-13,
+      "rows": 32,
+      "top1_agreement": 1.0
+    },
+    {
+      "entropy_difference_amp_minus_fp32": 1.8302359627853093e-10,
+      "layer_name": "model.23.m.1",
+      "mean_entropy_amp": 1.0986122892184838,
+      "mean_entropy_fp32": 1.0986122890354602,
+      "mean_jsd": 1.421155242887584e-13,
+      "rows": 32,
+      "top1_agreement": 0.96875
+    }
+  ],
+  "mean_entropy_amp": 1.098612253240785,
+  "mean_entropy_fp32": 1.0986119229870173,
+  "mean_jsd": 4.845192365902818e-08,
+  "same_seed_independent_runs": false,
+  "top1_agreement": 0.625
+}
