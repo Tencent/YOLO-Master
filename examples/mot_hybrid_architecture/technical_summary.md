@@ -1,8 +1,8 @@
-# VisDrone MoT Hybrid Architecture Ablation: Stable Training, Negative Hybrid Synergy, and Scene-Invariant Routing
+# VisDrone MoT Hybrid Architecture Ablation: Stable Training, Negative Hybrid Synergy, and Layer-Specific Occlusion Routing
 
 This post summarizes the YOLO-Master v0.10 MoT hybrid architecture experiment on VisDrone. The goal was to compare the MoE baseline, MoT, MoA, and a MoA+MoT hybrid; benchmark accuracy, latency, FLOPs, and stability; and inspect MoT expert routing behavior across scene groups.
 
-Repository branch:
+Published experiment branch (four-model results and plotting assets):
 
 ```text
 https://github.com/kimariyb/YOLO-Master/tree/feat/mot-hybrid-architecture
@@ -64,6 +64,11 @@ The Seaborn figures are embedded below and stored in the example result director
 
 ![Deformable lift](https://raw.githubusercontent.com/kimariyb/YOLO-Master/feat/mot-hybrid-architecture/examples/mot_hybrid_architecture/results/figures/mot_deformable_lift.svg)
 
+The ground-truth token follow-up also produces a spatial activation map. When
+publishing this Markdown as a GitHub Discussion, upload
+`examples/mot_hybrid_architecture/results/routing_interpretability/heatmap_spatial.png`
+as an attachment at this point so GitHub replaces it with a hosted image URL.
+
 Figure files:
 
 - `examples/mot_hybrid_architecture/results/figures/mot_model_tradeoff.svg`
@@ -93,7 +98,7 @@ Scene folders were generated from VisDrone label statistics: dense, sparse, smal
 | sparse_large | 0.333 | 0.000 | 0.667 | 0.339497 |
 | irregular_occluded | 0.333 | 0.000 | 0.667 | 0.339505 |
 
-The routing pattern is almost scene-invariant. `DeformableTransformer` is selected as top-1 for two thirds of tokens in every scene. `LocalConvTransformer` receives one third. `WindowTransformer` is never the top-1 expert in this checkpoint.
+The 50-epoch proxy-scene pattern is almost scene-invariant. Deformable is top-1 for two thirds of tokens in every proxy scene, LocalConv receives one third, and Window is never top-1. This result is scoped to that checkpoint and proxy grouping.
 
 ## DeformableTransformer In Irregular/Occluded Scenes
 
@@ -103,7 +108,24 @@ The issue asked whether `DeformableTransformer` activation rises significantly i
 - Mean router weight: pooled non-irregular comparison has `mean_diff=0.000004`, `p=0.0002`, and relative lift about 0.0013%.
 - The measured mean-weight lift is statistically detectable because variance is tiny, but the effect size is too small to call a meaningful scene-specific routing preference.
 
-The correct conclusion is: `DeformableTransformer` is globally preferred by this MoT checkpoint, but the VisDrone scene split does not validate a meaningful Deformable activation increase specifically for irregular/occluded scenes.
+For this 50-epoch proxy run, Deformable is globally preferred but the proxy scene split does not validate a meaningful occlusion-specific increase.
+
+### Ground-truth token-level follow-up
+
+A separate, converged 100-epoch MoT checkpoint was analysed on all 548 VisDrone
+validation images with ground-truth occlusion labels. The hook compares tokens
+within images, matches object size, and controls the FDR test family.
+
+At `model.20.m.1`, 488 size-matched single-object pairs give Deformable mean
+weights 0.154569 (occluded) versus 0.136347 (clear): +13.36%, `p=8.16e-05`,
+BH `q=2.35e-04`. The hypothesis is therefore supported in this layer. It is not
+model-wide: `model.23.m.1` is fully collapsed to LocalConv. Forced single-expert
+routing reduces mAP50-95 by 2.98%-5.25%, supporting learned mixed routing overall.
+
+The routing checkpoint's natural mAP50-95 is 0.169861. It is a separate mechanism
+study and is not substituted into the controlled 50-epoch comparison. Provenance
+and reviewable outputs are in
+`examples/mot_hybrid_architecture/results/routing_interpretability/`.
 
 ## Boundary Tests And Fixes
 
@@ -115,16 +137,16 @@ The branch also hardens the test surface:
 - v0.10 MoT and MoA+MoT YAMLs parse successfully.
 - `ultralytics/engine/validator.py` now imports the standalone validation helpers it uses and provides `convert_ndjson_to_yolo_if_needed`.
 
-Verification:
+Current verification (Python 3.12, CPU; includes the two-rank Gloo DDP gate):
 
 ```text
-15 passed, 1 warning in 3.50s
+144 passed, 1 skipped
 ```
 
 ## Scenario Recommendations
 
 1. Use EsMoE-N as the VisDrone small-model default for this setting. It has the highest mAP50-95 (0.12324), lowest P50 latency (34.355 ms), lowest actual FLOPs (8.671 G), and stable training.
 2. Avoid treating MoT-N as a free accuracy upgrade. It is stable, but mAP50-95 decreases by 0.00243 and P50 latency increases by 80.38% versus EsMoE-N.
-3. Do not claim WindowTransformer specialization for dense or small-object scenes from this run. WindowTransformer top-1 routing share is 0.000 across all measured scene groups.
-4. Do not claim a meaningful occlusion-specific DeformableTransformer rise. Top-1 share has zero lift, and pooled mean-weight lift is only about 0.0013%.
+3. Do not claim WindowTransformer specialization from the 50-epoch proxy run; its top-1 share is 0.000 there, and this is checkpoint-specific.
+4. For occlusion-sensitive routing, inspect `model.20.m.1`: Deformable rises 13.36% after size matching (`q=2.35e-04`). Do not generalize to every layer.
 5. Do not merge the current heavy MoA+MoT layout as a performance improvement. It is a useful negative result: -0.00535 mAP50-95 and +85.73% P50 latency versus EsMoE-N.

@@ -1,0 +1,22 @@
+[
+  {
+    "image": "/root/autodl-tmp/datasets/VisDrone/VisDrone2019-DET-val/VisDrone2019-DET-val/images/0000287_03401_d_0000776.jpg",
+    "occlusion_rate": 0.0,
+    "n_objects": 56
+  },
+  {
+    "image": "/root/autodl-tmp/datasets/VisDrone/VisDrone2019-DET-val/VisDrone2019-DET-val/images/0000289_04201_d_0000832.jpg",
+    "occlusion_rate": 0.125,
+    "n_objects": 88
+  },
+  {
+    "image": "/root/autodl-tmp/datasets/VisDrone/VisDrone2019-DET-val/VisDrone2019-DET-val/images/0000196_04512_d_0000144.jpg",
+    "occlusion_rate": 0.9130434782608695,
+    "n_objects": 69
+  },
+  {
+    "image": "/root/autodl-tmp/datasets/VisDrone/VisDrone2019-DET-val/VisDrone2019-DET-val/images/0000364_01765_d_0000782.jpg",
+    "occlusion_rate": 0.9382716049382716,
+    "n_objects": 81
+  }
+]

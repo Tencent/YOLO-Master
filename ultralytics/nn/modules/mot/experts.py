@@ -1,16 +1,19 @@
 """Transformer experts for Mixture-of-Transformer blocks."""
+
 from __future__ import annotations
-from typing import Optional, Tuple
+
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
+
 from ultralytics.nn.modules.conv import Conv
-from ultralytics.nn.modules.utils import get_safe_groups as _safe_groups
 from ultralytics.nn.modules.mot._constants import SDPA_EXPLICIT_MAX_TOKENS, SDPA_FALLBACK_CHUNK
+from ultralytics.nn.modules.utils import get_safe_groups as _safe_groups
 from ultralytics.utils import LOGGER
 
 _SDPA_EXPLICIT_MAX_TOKENS = SDPA_EXPLICIT_MAX_TOKENS
 _SDPA_FALLBACK_CHUNK = SDPA_FALLBACK_CHUNK
+
 
 def _roll_via_cat(x: torch.Tensor, shift: int, dims: tuple) -> torch.Tensor:
     """ONNX-compatible alternative to ``torch.roll`` for 2-D spatial shifts.
@@ -30,8 +33,10 @@ def _roll_via_cat(x: torch.Tensor, shift: int, dims: tuple) -> torch.Tensor:
         x = torch.cat([x.narrow(dim, n - s, s), x.narrow(dim, 0, n - s)], dim=dim)
     return x
 
-def _sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
-          scale: float, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+
+def _sdpa(
+    q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, scale: float, mask: torch.Tensor | None = None
+) -> torch.Tensor:
     """Scaled dot-product attention.
 
     Uses ``F.scaled_dot_product_attention`` (Flash-Attention / memory-efficient
@@ -70,6 +75,7 @@ def _sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
         attn = attn + mask
     return attn.softmax(dim=-1) @ v
 
+
 class _LocalConvTransformerExpert(nn.Module):
     """Transformer expert with convolutional inductive bias.
 
@@ -79,14 +85,18 @@ class _LocalConvTransformerExpert(nn.Module):
     which would gate with SiLU/Swish instead of Sigmoid.)
     """
 
-    def __init__(self, dim: int, num_heads: int, mlp_ratio: float = 2.0,
-                 dropout: float = 0.0):
+    def __init__(
+        self, dim: int, num_heads: int, mlp_ratio: float = 2.0, dropout: float = 0.0, local_window_size: int = 0
+    ):
         super().__init__()
         if num_heads <= 0 or dim % num_heads != 0:
             raise ValueError(f"dim ({dim}) must be divisible by positive num_heads ({num_heads})")
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
-        self.scale = self.head_dim ** -0.5
+        self.scale = self.head_dim**-0.5
+        if int(local_window_size) < 0:
+            raise ValueError("local_window_size must be non-negative (0 disables window attention)")
+        self.local_window_size = int(local_window_size)
 
         # DW-3×3 pre-mixing before QKV projection
         self.dw_mix = nn.Conv2d(dim, dim, 3, padding=1, groups=dim, bias=False)
@@ -102,8 +112,8 @@ class _LocalConvTransformerExpert(nn.Module):
         ffn_hidden = int(dim * mlp_ratio)
         # split into gate + value projections
         self.ffn_gate = nn.Sequential(Conv(dim, ffn_hidden, 1), nn.Sigmoid())
-        self.ffn_val  = Conv(dim, ffn_hidden, 1)
-        self.ffn_out  = Conv(ffn_hidden, dim, 1, act=False)
+        self.ffn_val = Conv(dim, ffn_hidden, 1)
+        self.ffn_out = Conv(ffn_hidden, dim, 1, act=False)
 
         self.ls1 = nn.Parameter(torch.ones(dim, 1, 1) * 0.1)
         self.ls2 = nn.Parameter(torch.ones(dim, 1, 1) * 0.1)
@@ -123,7 +133,7 @@ class _LocalConvTransformerExpert(nn.Module):
 
         # ── Attention ────────────────────────────────────────────────────
         xn = self.norm1(x)
-        qkv = self.qkv(self.dw_mix(xn)).flatten(2)       # [B, 3C, N]
+        qkv = self.qkv(self.dw_mix(xn)).flatten(2)  # [B, 3C, N]
         q, k, v = qkv.split(C, dim=1)
 
         def to_heads(t):
@@ -134,8 +144,29 @@ class _LocalConvTransformerExpert(nn.Module):
         v_2d = v_2d + self.pe(v_2d)
         v = v_2d.flatten(2)
 
-        out = _sdpa(to_heads(q), to_heads(k), to_heads(v), self.scale)
-        out = out.transpose(2, 3).reshape(B, C, H, W)
+        if self.local_window_size > 0 and N > self.local_window_size**2:
+            # Keep convolutional QKV but bound attention to padded local windows.
+            win = self.local_window_size
+            q_nhwc = q.reshape(B, C, H, W).permute(0, 2, 3, 1)
+            k_nhwc = k.reshape(B, C, H, W).permute(0, 2, 3, 1)
+            v_nhwc = v.reshape(B, C, H, W).permute(0, 2, 3, 1)
+            q_nhwc, _, _ = _WindowTransformerExpert._pad_to_window(q_nhwc, win)
+            k_nhwc, _, _ = _WindowTransformerExpert._pad_to_window(k_nhwc, win)
+            v_nhwc, _, _ = _WindowTransformerExpert._pad_to_window(v_nhwc, win)
+            padded_h, padded_w = q_nhwc.shape[1:3]
+            q_win = _WindowTransformerExpert._window_partition(q_nhwc, win)
+            k_win = _WindowTransformerExpert._window_partition(k_nhwc, win)
+            v_win = _WindowTransformerExpert._window_partition(v_nhwc, win)
+            q_win = q_win.reshape(-1, win * win, nh, hd).permute(0, 2, 1, 3)
+            k_win = k_win.reshape(-1, win * win, nh, hd).permute(0, 2, 1, 3)
+            v_win = v_win.reshape(-1, win * win, nh, hd).permute(0, 2, 1, 3)
+            out_win = _sdpa(q_win, k_win, v_win, self.scale)
+            out_win = out_win.transpose(1, 2).reshape(-1, win * win, C)
+            out = _WindowTransformerExpert._window_reverse(out_win, win, padded_h, padded_w)
+            out = out[:, :H, :W, :].permute(0, 3, 1, 2).contiguous()
+        else:
+            out = _sdpa(to_heads(q), to_heads(k), to_heads(v), self.scale)
+            out = out.transpose(2, 3).reshape(B, C, H, W)
         x = x + self.ls1 * self.drop(self.proj(out))
 
         # ── Gated FFN ─────────────────────────────────────────────────────
@@ -143,6 +174,7 @@ class _LocalConvTransformerExpert(nn.Module):
         ffn = self.ffn_gate(xn) * self.ffn_val(xn)
         x = x + self.ls2 * self.ffn_out(ffn)
         return x
+
 
 class _WindowTransformerExpert(nn.Module):
     """Swin-style window-partitioned Transformer expert.
@@ -155,9 +187,15 @@ class _WindowTransformerExpert(nn.Module):
     both receptive fields, exactly as in Swin Transformer.
     """
 
-    def __init__(self, dim: int, num_heads: int, window_size: int = 7,
-                 mlp_ratio: float = 2.0, dropout: float = 0.0,
-                 shift_size: int = 0):
+    def __init__(
+        self,
+        dim: int,
+        num_heads: int,
+        window_size: int = 7,
+        mlp_ratio: float = 2.0,
+        dropout: float = 0.0,
+        shift_size: int = 0,
+    ):
         super().__init__()
         if num_heads <= 0 or dim % num_heads != 0:
             raise ValueError(f"dim ({dim}) must be divisible by positive num_heads ({num_heads})")
@@ -165,7 +203,7 @@ class _WindowTransformerExpert(nn.Module):
             raise ValueError(f"window_size must be >= 1, got {window_size}")
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
-        self.scale = self.head_dim ** -0.5
+        self.scale = self.head_dim**-0.5
         self.win = int(window_size)
         # Fixed cyclic shift (0 = regular window). An explicit shift_size is
         # honoured as a value and wrapped into [0, win); ``True`` means the
@@ -199,9 +237,9 @@ class _WindowTransformerExpert(nn.Module):
                     nn.init.zeros_(m.bias)
 
     @staticmethod
-    def _pad_to_window(x: torch.Tensor, win: int) -> Tuple[torch.Tensor, int, int]:
+    def _pad_to_window(x: torch.Tensor, win: int) -> tuple[torch.Tensor, int, int]:
         """Pad spatial dims to be divisible by win."""
-        B, H, W, C = x.shape
+        _B, H, W, _C = x.shape
         pad_h = (win - H % win) % win
         pad_w = (win - W % win) % win
         if pad_h > 0 or pad_w > 0:
@@ -255,7 +293,7 @@ class _WindowTransformerExpert(nn.Module):
         x = x.permute(0, 2, 3, 1)  # [B, H, W, C]
 
         # Pad
-        x, pad_h, pad_w = self._pad_to_window(x, win)
+        x, _pad_h, _pad_w = self._pad_to_window(x, win)
         H, W = x.shape[1], x.shape[2]
 
         # Cyclic shift (fixed at construction → deterministic & trace-stable)
@@ -270,12 +308,12 @@ class _WindowTransformerExpert(nn.Module):
 
         # ── Window Attention ─────────────────────────────────────────────
         xn = self.norm1(x)
-        windows = self._window_partition(xn, win)        # [Bw, win², C]
+        windows = self._window_partition(xn, win)  # [Bw, win², C]
         Bw = windows.shape[0]
         nh, hd = self.num_heads, self.head_dim
 
         qkv = self.qkv(windows).reshape(Bw, win * win, 3, nh, hd).permute(2, 0, 3, 1, 4)
-        q, k, v = qkv.unbind(0)                         # each [Bw, nh, win², hd]
+        q, k, v = qkv.unbind(0)  # each [Bw, nh, win², hd]
 
         # Shifted windows wrap opposite edges together → mask cross-edge pairs.
         attn_mask = None
@@ -287,7 +325,7 @@ class _WindowTransformerExpert(nn.Module):
         attn_out = self.drop(self.proj(attn_out))
 
         # Reverse window partition
-        attn_out = self._window_reverse(attn_out, win, H, W)   # [B, H, W, C]
+        attn_out = self._window_reverse(attn_out, win, H, W)  # [B, H, W, C]
 
         # Reverse shift
         if shift > 0:
@@ -315,6 +353,7 @@ class _WindowTransformerExpert(nn.Module):
 
         return x.permute(0, 3, 1, 2).contiguous()
 
+
 class _DeformableTransformerExpert(nn.Module):
     """Deformable-attention Transformer expert.
 
@@ -326,9 +365,15 @@ class _DeformableTransformerExpert(nn.Module):
         Zhu et al., "Deformable DETR" (ICLR 2021)
     """
 
-    def __init__(self, dim: int, num_heads: int, n_points: int = 4,
-                 mlp_ratio: float = 2.0, dropout: float = 0.0,
-                 align_corners: bool = True):
+    def __init__(
+        self,
+        dim: int,
+        num_heads: int,
+        n_points: int = 4,
+        mlp_ratio: float = 2.0,
+        dropout: float = 0.0,
+        align_corners: bool = True,
+    ):
         super().__init__()
         if num_heads <= 0 or dim % num_heads != 0:
             raise ValueError(f"dim ({dim}) must be divisible by positive num_heads ({num_heads})")
@@ -355,7 +400,8 @@ class _DeformableTransformerExpert(nn.Module):
         self.norm2 = nn.LayerNorm(dim)
         ffn_hidden = int(dim * mlp_ratio)
         self.ffn = nn.Sequential(
-            nn.Linear(dim, ffn_hidden), nn.GELU(),
+            nn.Linear(dim, ffn_hidden),
+            nn.GELU(),
             nn.Dropout(dropout),
             nn.Linear(ffn_hidden, dim),
         )
@@ -380,8 +426,7 @@ class _DeformableTransformerExpert(nn.Module):
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
 
-    def _deform_attn(self, q: torch.Tensor, value: torch.Tensor,
-                     H: int, W: int) -> torch.Tensor:
+    def _deform_attn(self, q: torch.Tensor, value: torch.Tensor, H: int, W: int) -> torch.Tensor:
         """Core deformable attention.
 
         Args:
@@ -403,23 +448,23 @@ class _DeformableTransformerExpert(nn.Module):
             return self.out_proj(dense.transpose(1, 2).reshape(B, N, C))
 
         # Predict sampling offsets & attention weights from query
-        offsets = self.offset_proj(q)                         # [B, N, nh*np*2]
-        offsets = offsets.reshape(B, N, nh, np_, 2)           # [B, N, nh, np, 2]
-        offsets = offsets.tanh()                               # clamp to [-1,1]
+        offsets = self.offset_proj(q)  # [B, N, nh*np*2]
+        offsets = offsets.reshape(B, N, nh, np_, 2)  # [B, N, nh, np, 2]
+        offsets = offsets.tanh()  # clamp to [-1,1]
 
-        attn_w = self.attn_proj(q).reshape(B, N, nh, np_)     # [B, N, nh, np]
-        attn_w = F.softmax(attn_w, dim=-1)                    # normalize over points
+        attn_w = self.attn_proj(q).reshape(B, N, nh, np_)  # [B, N, nh, np]
+        attn_w = F.softmax(attn_w, dim=-1)  # normalize over points
 
         # Build reference grid: each token's own position (normalised to [-1,1])
         # Token index → (row, col) → (x_norm, y_norm)
         idx = torch.arange(N, device=q.device)
-        row = (idx // W).float() / max(H - 1, 1) * 2 - 1    # y in [-1,1]
-        col = (idx %  W).float() / max(W - 1, 1) * 2 - 1    # x in [-1,1]
-        ref = torch.stack([col, row], dim=-1)                 # [N, 2]
+        row = (idx // W).float() / max(H - 1, 1) * 2 - 1  # y in [-1,1]
+        col = (idx % W).float() / max(W - 1, 1) * 2 - 1  # x in [-1,1]
+        ref = torch.stack([col, row], dim=-1)  # [N, 2]
         ref = ref[None, :, None, None, :].expand(B, -1, nh, np_, -1)  # [B,N,nh,np,2]
 
         # Sampling locations = reference + learned offsets (scaled, clamped to valid range)
-        sample_locs = (ref + offsets * 0.25).clamp(-1.0, 1.0)   # [B, N, nh, np, 2]
+        sample_locs = (ref + offsets * 0.25).clamp(-1.0, 1.0)  # [B, N, nh, np, 2]
 
         # Value: [B, H*W, C] → reshape for grid_sample [B, C, H, W]
         v_4d = self.v_proj(value).permute(0, 2, 1).reshape(B, C, H, W)
@@ -440,10 +485,12 @@ class _DeformableTransformerExpert(nn.Module):
             v_4d = v_4d.float()
             locs = locs.float()
         sampled = F.grid_sample(
-            v_4d,                                              # [B*nh, hd, H, W]
-            locs,                                              # [B*nh, N, np, 2]
-            mode="bilinear", align_corners=self.align_corners, padding_mode="zeros"
-        )                                                      # [B*nh, hd, N, np]
+            v_4d,  # [B*nh, hd, H, W]
+            locs,  # [B*nh, N, np, 2]
+            mode="bilinear",
+            align_corners=self.align_corners,
+            padding_mode="zeros",
+        )  # [B*nh, hd, N, np]
         if orig_dtype != torch.float32:
             sampled = sampled.to(orig_dtype)
 
@@ -451,7 +498,7 @@ class _DeformableTransformerExpert(nn.Module):
         sampled = sampled.reshape(B, nh, hd, N, np_).permute(0, 3, 1, 4, 2).contiguous()
 
         # Weighted sum over sampling points: [B, N, nh, hd]
-        out = (attn_w.unsqueeze(-1) * sampled).sum(dim=3)    # [B, N, nh, hd]
+        out = (attn_w.unsqueeze(-1) * sampled).sum(dim=3)  # [B, N, nh, hd]
         out = out.reshape(B, N, C)
         return self.out_proj(out)
 
@@ -473,4 +520,11 @@ class _DeformableTransformerExpert(nn.Module):
 
         return x_flat.transpose(1, 2).reshape(B, C, H, W)
 
-__all__ = ("_DeformableTransformerExpert", "_LocalConvTransformerExpert", "_WindowTransformerExpert", "_roll_via_cat", "_sdpa")
+
+__all__ = (
+    "_DeformableTransformerExpert",
+    "_LocalConvTransformerExpert",
+    "_WindowTransformerExpert",
+    "_roll_via_cat",
+    "_sdpa",
+)

@@ -26,20 +26,20 @@ os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-import torch  # noqa: E402
+import torch
 
-from ultralytics import YOLO  # noqa: E402
-from ultralytics.engine.telemetry import (  # noqa: E402
+from ultralytics import YOLO
+from ultralytics.engine.telemetry import (
     TELEMETRY_ENV,
     TELEMETRY_LOSS_STEPS_ENV,
     device_memory_sample,
     reset_device_memory_peak,
     sync_device,
 )
-from ultralytics.nn.modules.moa import C2fMoA, MoABlock  # noqa: E402
-from ultralytics.nn.modules.mot import C2fMoT, MoTBlock  # noqa: E402
-from ultralytics.utils import YAML  # noqa: E402
-from ultralytics.utils.torch_utils import get_flops  # noqa: E402
+from ultralytics.nn.modules.moa import C2fMoA, MoABlock
+from ultralytics.nn.modules.mot import C2fMoT, MoTBlock
+from ultralytics.utils import YAML
+from ultralytics.utils.torch_utils import get_flops
 
 
 @dataclass(frozen=True)
@@ -298,7 +298,7 @@ def profile_flops(model: torch.nn.Module, imgsz: int, actual: bool = False) -> t
         with torch.no_grad(), torch.profiler.profile(with_flops=True) as prof:
             _ = model(x)
         return sum(evt.flops for evt in prof.key_averages()) / 1e9, "torch_profile_actual"
-    except Exception:
+    except (AttributeError, NotImplementedError, RuntimeError, TypeError):
         return float(get_flops(model, imgsz=imgsz)), "thop_stride_scaled_fallback"
 
 
@@ -565,7 +565,11 @@ def benchmark_rows_by_key(project: Path) -> dict[str, dict[str, str]]:
             if not key:
                 continue
             existing = rows_by_key.get(key)
-            if existing is not None and existing.get("sampling") == "interleaved" and row.get("sampling") != "interleaved":
+            if (
+                existing is not None
+                and existing.get("sampling") == "interleaved"
+                and row.get("sampling") != "interleaved"
+            ):
                 continue
             rows_by_key[key] = row
     return rows_by_key

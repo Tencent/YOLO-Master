@@ -1,20 +1,29 @@
 """Core Mixture-of-Transformer block."""
+
 from __future__ import annotations
+
 import torch
-import torch.nn as nn
-from typing import Optional, Tuple
+from torch import nn
+
 from ultralytics.nn.modules._numeric import should_reduce_ddp
-from ultralytics.nn.modules.utils import get_safe_groups as _safe_groups, robust_deepcopy
 from ultralytics.nn.modules.routing_protocol import (
     export_capabilities as _export_routing_capabilities,
+)
+from ultralytics.nn.modules.routing_protocol import (
     graph_connected_finite_zero,
     publish_aux_loss,
     routing_finite_diagnostics,
+)
+from ultralytics.nn.modules.routing_protocol import (
     routing_snapshot as _routing_snapshot,
 )
-from .experts import _DeformableTransformerExpert, _LocalConvTransformerExpert, _WindowTransformerExpert
-from .router import _MoTRouter, _mot_router_aux_loss
+from ultralytics.nn.modules.utils import get_safe_groups as _safe_groups
+from ultralytics.nn.modules.utils import robust_deepcopy
 from ultralytics.utils import LOGGER
+
+from .experts import _DeformableTransformerExpert, _LocalConvTransformerExpert, _WindowTransformerExpert
+from .router import _mot_router_aux_loss, _MoTRouter
+
 
 class MoTBlock(nn.Module):
     """Mixture-of-Transformers Block.
@@ -40,6 +49,7 @@ class MoTBlock(nn.Module):
         dropout (float): Dropout for attention/FFN.
         exploration_eps (float): Training-only dense routing floor that keeps all experts trainable.
         sparse_train_warmup_steps (int): Dense training forwards before enabled sparse dispatch begins.
+        local_attn_window (int): LocalConv attention window; 0 keeps global attention.
 
     Shape:
         Input:  [B, dim, H, W]
@@ -66,10 +76,11 @@ class MoTBlock(nn.Module):
         grid_align_corners: bool = True,
         sparse_train: bool = False,
         scene_aware_router: bool = False,
-        scene_hidden_dim: Optional[int] = None,
+        scene_hidden_dim: int | None = None,
         scene_consistency_coeff: float = 0.0,
         sparse_train_warmup_steps: int = 0,
         scene_inference_mode: str = "dynamic",
+        local_attn_window: int = 0,
     ):
         super().__init__()
         if not 1 <= top_k <= self.NUM_EXPERTS:
@@ -87,7 +98,7 @@ class MoTBlock(nn.Module):
             raise ValueError("sparse_train_warmup_steps must be non-negative")
         self.sparse_train_warmup_steps = int(sparse_train_warmup_steps)
         self.register_buffer("_sparse_train_step", torch.tensor(0, dtype=torch.long), persistent=True)
-        self._ddp_find_unused_parameters: Optional[bool] = None
+        self._ddp_find_unused_parameters: bool | None = None
         self._ddp_contract_source = "unconfigured"
         self.scene_consistency_coeff = max(float(scene_consistency_coeff), 0.0)
         # Legacy YAML/checkpoints used balance_loss_coeff for z-loss only; when
@@ -107,19 +118,33 @@ class MoTBlock(nn.Module):
             )
 
         # Three Transformer experts
-        self.experts = nn.ModuleList([
-            _LocalConvTransformerExpert(dim, expert_heads, mlp_ratio, dropout),
-            _WindowTransformerExpert(dim, expert_heads, window_size, mlp_ratio, dropout,
-                                     shift_size=window_size // 2 if window_shift else 0),
-            _DeformableTransformerExpert(
-                dim, expert_heads, n_points, mlp_ratio, dropout,
-                align_corners=grid_align_corners,
-            ),
-        ])
+        self.experts = nn.ModuleList(
+            [
+                _LocalConvTransformerExpert(dim, expert_heads, mlp_ratio, dropout, local_window_size=local_attn_window),
+                _WindowTransformerExpert(
+                    dim,
+                    expert_heads,
+                    window_size,
+                    mlp_ratio,
+                    dropout,
+                    shift_size=window_size // 2 if window_shift else 0,
+                ),
+                _DeformableTransformerExpert(
+                    dim,
+                    expert_heads,
+                    n_points,
+                    mlp_ratio,
+                    dropout,
+                    align_corners=grid_align_corners,
+                ),
+            ]
+        )
 
         # Router
         self.router = _MoTRouter(
-            dim, self.NUM_EXPERTS, top_k,
+            dim,
+            self.NUM_EXPERTS,
+            top_k,
             use_spatial=use_spatial_router,
             temperature=temperature,
             exploration_eps=exploration_eps,
@@ -232,16 +257,14 @@ class MoTBlock(nn.Module):
 
     def _sparse_training_ready(self) -> bool:
         """Return whether training has completed the configured dense warmup."""
-        return bool(
-            self.sparse_train and int(self._sparse_train_step.item()) >= self.sparse_train_warmup_steps
-        )
+        return bool(self.sparse_train and int(self._sparse_train_step.item()) >= self.sparse_train_warmup_steps)
 
     def configure_ddp_sparse_training(self, *, find_unused_parameters: bool, source: str = "external") -> None:
         """Record the DDP unused-parameter contract required by sparse expert dispatch."""
         self._ddp_find_unused_parameters = bool(find_unused_parameters)
         self._ddp_contract_source = str(source)
 
-    def _ddp_sparse_training_state(self) -> Tuple[bool, bool, Optional[str]]:
+    def _ddp_sparse_training_state(self) -> tuple[bool, bool, str | None]:
         """Return whether active DDP can safely tolerate locally unused experts."""
         ddp_active = bool(
             self.training
@@ -282,7 +305,7 @@ class MoTBlock(nn.Module):
         self,
         x: torch.Tensor,
         weights: torch.Tensor,
-        indices: Optional[torch.Tensor] = None,
+        indices: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Blend expert outputs; sparse when eval or ``sparse_train``.
 
@@ -322,7 +345,7 @@ class MoTBlock(nn.Module):
                 if batch_idx.numel() == 0:
                     continue
                 expert_calls += 1
-                w = weights[batch_idx, e_idx:e_idx + 1]
+                w = weights[batch_idx, e_idx : e_idx + 1]
                 expert_out = expert(x[batch_idx])
                 if expert_out.shape != x[batch_idx].shape:
                     raise RuntimeError(
@@ -350,7 +373,7 @@ class MoTBlock(nn.Module):
             }
         else:
             for e_idx, expert in enumerate(self.experts):
-                w = weights[:, e_idx:e_idx + 1]
+                w = weights[:, e_idx : e_idx + 1]
                 expert_out = expert(x)
                 if expert_out.shape != x.shape:
                     raise RuntimeError(
@@ -379,14 +402,14 @@ class MoTBlock(nn.Module):
             self._sparse_train_step.add_(1)
         return out
 
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Returns:
             out           : [B, C, H, W]
             aux_loss      : scalar (GShard balance + router z-loss, 0 if both coeffs==0)
         """
         # ── Routing weights ──────────────────────────────────────────────
-        weights, indices, router_logits = self.router(x, return_logits=True)   # [B, E, H, W]
+        weights, indices, router_logits = self.router(x, return_logits=True)  # [B, E, H, W]
 
         # ── Expert computation ───────────────────────────────────────────
         out = self._blend_experts(x, weights, indices)
@@ -418,9 +441,7 @@ class MoTBlock(nn.Module):
         else:
             aux = x.new_zeros(())
             scene_consistency = x.new_zeros(())
-            finite_diagnostics = routing_finite_diagnostics(
-                logits=router_logits, probabilities=weights, aux_loss=aux
-            )
+            finite_diagnostics = routing_finite_diagnostics(logits=router_logits, probabilities=weights, aux_loss=aux)
 
         exporting = torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()
         if self.training and not exporting and not torch.isfinite(aux):
@@ -450,5 +471,6 @@ class MoTBlock(nn.Module):
             }
 
         return out, aux
+
 
 __all__ = ("MoTBlock",)
