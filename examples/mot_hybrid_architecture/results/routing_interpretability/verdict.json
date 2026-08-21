@@ -1,0 +1,41 @@
+{
+  "deformable_rises_with_occlusion": true,
+  "deformable_sized_significant_layers": [
+    "model.20.m.1"
+  ],
+  "deformable_solo_significant_layers": [
+    "model.14.m.0"
+  ],
+  "deformable_image_significant_layers": [
+    "model.14.m.0",
+    "model.20.m.0",
+    "model.20.m.1",
+    "model.23.m.0"
+  ],
+  "largest_sized_effect": {
+    "expert": "DeformableTransformer",
+    "layer": "model.20.m.1",
+    "group_a": "occluded_solo_sized",
+    "group_b": "clear_solo_sized",
+    "description": "single-box tokens, size-matched boxes",
+    "in_fdr_family": true,
+    "n_pairs": 488,
+    "mean_a": 0.15456859634227318,
+    "mean_b": 0.1363468920071533,
+    "mean_difference": 0.01822170433511988,
+    "hodges_lehmann": 0.016882503405213356,
+    "superiority": 0.5594262295081968,
+    "wilcoxon_statistic": 71128.0,
+    "p_value": 8.16442430843538e-05,
+    "relative_difference": 0.13364224198204605,
+    "q_value_bh": 0.00023513542008293895,
+    "significant_after_fdr": true
+  },
+  "max_forced_cost_relative": -0.052500512124680515,
+  "shuffle_cost_relative": -0.010251549295838555,
+  "collapsed_layers": [
+    "model.23.m.1"
+  ],
+  "n_token_tests_significant": 25,
+  "n_image_tests_significant": 6
+}

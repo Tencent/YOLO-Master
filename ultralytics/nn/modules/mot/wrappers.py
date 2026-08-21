@@ -1,13 +1,27 @@
 """YAML-facing wrappers and collection helpers for Mixture-of-Transformer."""
+
 from __future__ import annotations
+
 import torch
 import torch.distributed as dist
-import torch.nn as nn
+from torch import nn
+
 from ultralytics.nn.modules.conv import Conv
+from ultralytics.nn.modules.routing_protocol import (
+    collect_aux_loss,
+    publish_aux_loss,
+)
+from ultralytics.nn.modules.routing_protocol import (
+    export_capabilities as _export_routing_capabilities,
+)
+from ultralytics.nn.modules.routing_protocol import (
+    routing_snapshot as _routing_snapshot,
+)
 from ultralytics.nn.modules.utils import robust_deepcopy
-from ultralytics.nn.modules.routing_protocol import collect_aux_loss, export_capabilities as _export_routing_capabilities, publish_aux_loss, routing_snapshot as _routing_snapshot
 from ultralytics.utils import LOGGER
+
 from .block import MoTBlock
+
 
 class C2fMoT(nn.Module):
     """C2f-style feature-flow wrapper around MoTBlock.
@@ -57,8 +71,16 @@ class C2fMoT(nn.Module):
         sparse_train_warmup_steps: int = 0,
         scene_inference_mode: str = "dynamic",
         local_attn_window: int = 0,
+        window_shift: bool | str = "alternate",
     ):
         super().__init__()
+        # Compatibility for the issue #54 YAML contract, where the first
+        # optional value after ``scene_inference_mode`` was ``window_shift``.
+        # Main later assigned that position to ``local_attn_window``.  The two
+        # forms are unambiguous by type: shift is bool, local window is int.
+        if isinstance(local_attn_window, bool) and window_shift == "alternate":
+            window_shift = local_attn_window
+            local_attn_window = 0
         self.c = int(c2 * e)
         self.cv1 = Conv(c1, 2 * self.c, 1)
         self.cv2 = Conv((2 + n) * self.c, c2, 1)
@@ -76,9 +98,19 @@ class C2fMoT(nn.Module):
                 f"(must divide channels and yield head_dim ≥ 8)"
             )
 
-        # Alternate window shift by block index (Swin-style): even blocks use
-        # regular windows, odd blocks use shifted windows. Fixed at build time
-        # → deterministic inference and trace-stable export.
+        # Window shift policy, fixed at build time → deterministic inference and
+        # trace-stable export.  "alternate" is the Swin-style default: even blocks
+        # use regular windows, odd blocks shifted.  A plain bool forces one policy
+        # on every block, which is what a shift-strategy ablation needs; before
+        # this was exposed the alternating rule was unreachable from YAML.
+        if isinstance(window_shift, str):
+            if window_shift != "alternate":
+                raise ValueError(f"window_shift must be 'alternate' or a bool, got {window_shift!r}")
+            shift_flags = [bool(i % 2) for i in range(n)]
+        else:
+            shift_flags = [bool(window_shift)] * n
+        self.window_shift = window_shift
+
         self.m = nn.ModuleList(
             MoTBlock(
                 dim=dim,
@@ -89,7 +121,7 @@ class C2fMoT(nn.Module):
                 mlp_ratio=mlp_ratio,
                 temperature=temperature,
                 balance_loss_coeff=balance_loss_coeff,
-                window_shift=bool(i % 2),
+                window_shift=shift_flags[i],
                 sparse_train=sparse_train,
                 scene_aware_router=scene_aware_router,
                 scene_hidden_dim=scene_hidden_dim,
@@ -189,12 +221,14 @@ class C2fMoT(nn.Module):
     def __deepcopy__(self, memo):
         return robust_deepcopy(self, memo)
 
+
 def _aux_loss_device(model: nn.Module) -> torch.device:
     """Best-effort device lookup for zero aux-loss fallbacks."""
     try:
         return next(model.parameters()).device
     except StopIteration:
         return torch.device("cpu")
+
 
 def collect_mot_aux_loss(model: nn.Module, ddp_sync: bool = True) -> torch.Tensor:
     """Sum all MoT router aux losses in the model and optionally DDP-sync across ranks.
@@ -229,5 +263,6 @@ def collect_mot_aux_loss(model: nn.Module, ddp_sync: bool = True) -> torch.Tenso
         total = total + (global_value.to(dtype=total.dtype) - total.detach())
 
     return total
+
 
 __all__ = ("C2fMoT", "collect_mot_aux_loss")

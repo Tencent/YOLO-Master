@@ -26,20 +26,20 @@ os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-import torch  # noqa: E402
+import torch
 
-from ultralytics import YOLO  # noqa: E402
-from ultralytics.engine.telemetry import (  # noqa: E402
+from ultralytics import YOLO
+from ultralytics.engine.telemetry import (
     TELEMETRY_ENV,
     TELEMETRY_LOSS_STEPS_ENV,
     device_memory_sample,
     reset_device_memory_peak,
     sync_device,
 )
-from ultralytics.nn.modules.moa import C2fMoA, MoABlock  # noqa: E402
-from ultralytics.nn.modules.mot import C2fMoT, MoTBlock  # noqa: E402
-from ultralytics.utils import YAML  # noqa: E402
-from ultralytics.utils.torch_utils import get_flops  # noqa: E402
+from ultralytics.nn.modules.moa import C2fMoA, MoABlock
+from ultralytics.nn.modules.mot import C2fMoT, MoTBlock
+from ultralytics.utils import YAML
+from ultralytics.utils.torch_utils import get_flops
 
 
 @dataclass(frozen=True)
@@ -72,6 +72,33 @@ SPECS = {
         key="v10_moa_mot",
         label="YOLO-Master-v0.10-MoA+MoT-N",
         cfg=ROOT / "ultralytics/cfg/models/master/v0_10/det/yolo-master-moa-mot-n.yaml",
+    ),
+    # Backbone-only MoT: MoT replaces MoE at the three backbone junctions and the
+    # neck stays plain C3k2. Every other routed arm here is the cascaded
+    # backbone+neck case that the paper's placement ablation found worst; this one
+    # tests the placement it found best.
+    "v10_mot_bb": ModelSpec(
+        key="v10_mot_bb",
+        label="YOLO-Master-v0.10-MoT-Backbone-N",
+        cfg=ROOT / "ultralytics/cfg/models/master/v0_10/det/yolo-master-mot-backbone-n.yaml",
+    ),
+    # Hybrid arms: same MoE backbone, different neck mixture placement. H3 is the
+    # cheapest (one MoT stage, sited where the router diagnostics showed the highest
+    # entropy); H2 layers MoT over MoA; H4 crosses one MoA stage with one MoT stage.
+    "v10_h2": ModelSpec(
+        key="v10_h2",
+        label="YOLO-Master-v0.10-Hybrid-H2-N (MoT P4 + MoA P5)",
+        cfg=ROOT / "ultralytics/cfg/models/master/v0_10/det/yolo-master-hybrid-h2-n.yaml",
+    ),
+    "v10_h3": ModelSpec(
+        key="v10_h3",
+        label="YOLO-Master-v0.10-Hybrid-H3-N (single MoT stage)",
+        cfg=ROOT / "ultralytics/cfg/models/master/v0_10/det/yolo-master-hybrid-h3-n.yaml",
+    ),
+    "v10_h4": ModelSpec(
+        key="v10_h4",
+        label="YOLO-Master-v0.10-Hybrid-H4-N (MoA + MoT cross)",
+        cfg=ROOT / "ultralytics/cfg/models/master/v0_10/det/yolo-master-hybrid-h4-n.yaml",
     ),
     "v08": ModelSpec(
         key="v08",
@@ -117,6 +144,17 @@ SPECS = {
     ),
 }
 
+# Trainer emits a single fused auxiliary column, `train/mixture_aux_loss` (see
+# `BaseTrainer.loss_names` in ultralytics/engine/trainer.py). The per-mixture
+# `train/{moe,moa,mot}_loss` names are legacy and only appear in pre-fusion runs;
+# they are kept so older results.csv files still parse.
+AUX_LOSS_KEYS = (
+    "train/mixture_aux_loss",
+    "train/moe_loss",
+    "train/moa_loss",
+    "train/mot_loss",
+)
+
 METRIC_KEYS = (
     "metrics/precision(B)",
     "metrics/recall(B)",
@@ -135,14 +173,13 @@ METRIC_KEYS = (
     "val/dfl_loss",
     "val/seg_loss",
     "val/pose_loss",
+    "val/mixture_aux_loss",
     "train/box_loss",
     "train/cls_loss",
     "train/dfl_loss",
     "train/seg_loss",
     "train/pose_loss",
-    "train/moe_loss",
-    "train/moa_loss",
-    "train/mot_loss",
+    *AUX_LOSS_KEYS,
 )
 
 LOSS_KEYS = (
@@ -151,9 +188,7 @@ LOSS_KEYS = (
     "train/dfl_loss",
     "train/seg_loss",
     "train/pose_loss",
-    "train/moe_loss",
-    "train/moa_loss",
-    "train/mot_loss",
+    *AUX_LOSS_KEYS,
 )
 
 MULTITASK_ABLATION_TASKS = frozenset(("detect", "segment", "pose"))
@@ -263,7 +298,7 @@ def profile_flops(model: torch.nn.Module, imgsz: int, actual: bool = False) -> t
         with torch.no_grad(), torch.profiler.profile(with_flops=True) as prof:
             _ = model(x)
         return sum(evt.flops for evt in prof.key_averages()) / 1e9, "torch_profile_actual"
-    except Exception:
+    except (AttributeError, NotImplementedError, RuntimeError, TypeError):
         return float(get_flops(model, imgsz=imgsz)), "thop_stride_scaled_fallback"
 
 
@@ -367,6 +402,7 @@ def benchmark_row(
             "flops_g": f"{flops:.6f}",
             "flops_method": flops_method,
             "reps": str(reps),
+            "sampling": "contiguous",
             "memory_measurement": str(memory["measurement"]),
             "memory_is_true_peak": str(memory["is_true_peak"]),
             "peak_device_memory_bytes": str(memory["peak_device_memory_bytes"] or ""),
@@ -376,6 +412,77 @@ def benchmark_row(
         }
     )
     return base
+
+
+def benchmark_rows_interleaved(
+    specs: list[ModelSpec],
+    device: str,
+    imgsz: int,
+    warmup: int,
+    reps: int,
+    actual_flops: bool = False,
+) -> list[dict[str, str]]:
+    """Time every spec round-robin within a single session.
+
+    ``benchmark_row`` measures each model in one contiguous block, so any drift in
+    GPU state during that block -- vGPU contention, clock throttling -- is charged
+    entirely to whichever arm happened to hold the GPU.  On this host that made two
+    sessions disagree enough to flip conclusions: the baseline measured p50 16.87 ms
+    in one session and 11.66 ms in another, and h3 came out both faster and slower
+    than the pure-MoT arm depending on run order.
+
+    Interleaving spreads each arm's samples across the whole session, so drift lands
+    on every arm alike and cross-arm *differences* stay valid even if absolute
+    numbers move.  The per-half p50s in the output make any remaining drift visible
+    instead of silently biasing one arm.
+    """
+    torch.set_grad_enabled(False)
+    device_name = normalize_torch_device(device)
+    models = {spec.key: build_model(spec, device=device) for spec in specs}
+    x = torch.randn(1, 3, imgsz, imgsz, device=torch.device(device_name))
+
+    samples: dict[str, list[float]] = {spec.key: [] for spec in specs}
+    with torch.inference_mode():
+        for spec in specs:
+            for _ in range(warmup):
+                _ = models[spec.key](x)
+                sync_device(device)
+
+        for cycle in range(reps):
+            # Rotate visit order so no arm sits at a fixed position in every cycle.
+            order = specs[cycle % len(specs) :] + specs[: cycle % len(specs)]
+            for spec in order:
+                t0 = time.perf_counter()
+                _ = models[spec.key](x)
+                sync_device(device)
+                samples[spec.key].append((time.perf_counter() - t0) * 1000.0)
+
+    rows = []
+    for spec in specs:
+        times = samples[spec.key]
+        half = max(1, len(times) // 2)
+        flops, flops_method = profile_flops(models[spec.key], imgsz=imgsz, actual=actual_flops)
+        row = build_row(spec, device=device)
+        row.update(
+            {
+                "device": device_name,
+                "imgsz": str(imgsz),
+                "latency_ms_mean": f"{sum(times) / len(times):.3f}",
+                "latency_ms_p50": f"{percentile(times, 0.50):.3f}",
+                "latency_ms_p95": f"{percentile(times, 0.95):.3f}",
+                "latency_ms_p99": f"{percentile(times, 0.99):.3f}",
+                "latency_ms_min": f"{min(times):.3f}",
+                "latency_ms_max": f"{max(times):.3f}",
+                "latency_ms_p50_first_half": f"{percentile(times[:half], 0.50):.3f}",
+                "latency_ms_p50_second_half": f"{percentile(times[half:], 0.50):.3f}",
+                "flops_g": f"{flops:.6f}",
+                "flops_method": flops_method,
+                "reps": str(reps),
+                "sampling": "interleaved",
+            }
+        )
+        rows.append(row)
+    return rows
 
 
 def read_csv_rows(path: Path) -> list[dict[str, str]]:
@@ -445,12 +552,26 @@ def stability_from_results(results_csv: Path) -> dict[str, str]:
 
 
 def benchmark_rows_by_key(project: Path) -> dict[str, dict[str, str]]:
+    """Latest latency row per arm, preferring interleaved sampling.
+
+    Interleaved rows are cross-arm comparable (see ``benchmark_rows_interleaved``);
+    contiguous ones are not, so they must never shadow an interleaved measurement
+    regardless of the filename sort order.
+    """
     rows_by_key: dict[str, dict[str, str]] = {}
     for path in sorted(project.glob("latency_*.csv")):
         for row in read_csv_rows(path):
             key = row.get("key", "")
-            if key:
-                rows_by_key[key] = row
+            if not key:
+                continue
+            existing = rows_by_key.get(key)
+            if (
+                existing is not None
+                and existing.get("sampling") == "interleaved"
+                and row.get("sampling") != "interleaved"
+            ):
+                continue
+            rows_by_key[key] = row
     return rows_by_key
 
 
@@ -691,6 +812,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--actual-flops", action="store_true", help="Use torch profiler on the full input size for FLOPs."
     )
+    parser.add_argument(
+        "--interleave",
+        action="store_true",
+        help="Benchmark all models round-robin in one session so GPU drift hits every arm alike.",
+    )
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--reps", type=int, default=5)
     parser.add_argument("--train", action="store_true")
@@ -774,10 +900,15 @@ def main() -> int:
         print(f"[build] wrote {out}")
 
     if args.benchmark:
-        rows = [
-            benchmark_row(spec, args.device, args.imgsz, args.warmup, args.reps, args.actual_flops) for spec in specs
-        ]
-        out = project / f"latency_{args.device}_{args.imgsz}.csv"
+        if args.interleave:
+            rows = benchmark_rows_interleaved(specs, args.device, args.imgsz, args.warmup, args.reps, args.actual_flops)
+            out = project / f"latency_{args.device}_{args.imgsz}_interleaved.csv"
+        else:
+            rows = [
+                benchmark_row(spec, args.device, args.imgsz, args.warmup, args.reps, args.actual_flops)
+                for spec in specs
+            ]
+            out = project / f"latency_{args.device}_{args.imgsz}.csv"
         write_csv(out, rows)
         print(json.dumps(rows, indent=2, ensure_ascii=False))
         print(f"[benchmark] wrote {out}")

@@ -1,13 +1,14 @@
 """Transformer experts for Mixture-of-Transformer blocks."""
 
 from __future__ import annotations
-from typing import Optional, Tuple
+
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
+
 from ultralytics.nn.modules.conv import Conv
-from ultralytics.nn.modules.utils import get_safe_groups as _safe_groups, _grid_sample
 from ultralytics.nn.modules.mot._constants import SDPA_EXPLICIT_MAX_TOKENS, SDPA_FALLBACK_CHUNK
+from ultralytics.nn.modules.utils import get_safe_groups as _safe_groups
 from ultralytics.utils import LOGGER
 
 _SDPA_EXPLICIT_MAX_TOKENS = SDPA_EXPLICIT_MAX_TOKENS
@@ -34,7 +35,7 @@ def _roll_via_cat(x: torch.Tensor, shift: int, dims: tuple) -> torch.Tensor:
 
 
 def _sdpa(
-    q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, scale: float, mask: Optional[torch.Tensor] = None
+    q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, scale: float, mask: torch.Tensor | None = None
 ) -> torch.Tensor:
     """Scaled dot-product attention.
 
@@ -44,9 +45,15 @@ def _sdpa(
     fallback automatically switches to a **query-chunked** computation that
     bounds peak memory to O(chunk·N) instead of materialising the full N×N
     matrix — so it no longer crashes at high resolution, only runs slower.
+
+    A boolean ``mask`` follows the SDPA convention (``True`` = attend); a float
+    mask is additive. Both are honoured by the pre-2.0 fallbacks as well.
     """
     if hasattr(F, "scaled_dot_product_attention"):
         return F.scaled_dot_product_attention(q, k, v, attn_mask=mask, scale=scale)
+    if mask is not None and mask.dtype == torch.bool:
+        # The fallbacks below add the mask, so turn attend/ignore flags into 0/-inf.
+        mask = torch.zeros_like(mask, dtype=q.dtype).masked_fill_(~mask, float("-inf"))
     n_tokens = q.shape[-2]
     if n_tokens > _SDPA_EXPLICIT_MAX_TOKENS:
         # Memory-bounded chunked softmax-attention fallback (PyTorch < 2.0).
@@ -138,9 +145,7 @@ class _LocalConvTransformerExpert(nn.Module):
         v = v_2d.flatten(2)
 
         if self.local_window_size > 0 and N > self.local_window_size**2:
-            # Keep the convolutional QKV path, but bound attention to local
-            # windows. Padding is removed before the residual is formed, so
-            # non-divisible feature maps retain their original shape.
+            # Keep convolutional QKV but bound attention to padded local windows.
             win = self.local_window_size
             q_nhwc = q.reshape(B, C, H, W).permute(0, 2, 3, 1)
             k_nhwc = k.reshape(B, C, H, W).permute(0, 2, 3, 1)
@@ -148,7 +153,7 @@ class _LocalConvTransformerExpert(nn.Module):
             q_nhwc, _, _ = _WindowTransformerExpert._pad_to_window(q_nhwc, win)
             k_nhwc, _, _ = _WindowTransformerExpert._pad_to_window(k_nhwc, win)
             v_nhwc, _, _ = _WindowTransformerExpert._pad_to_window(v_nhwc, win)
-            Hp, Wp = q_nhwc.shape[1:3]
+            padded_h, padded_w = q_nhwc.shape[1:3]
             q_win = _WindowTransformerExpert._window_partition(q_nhwc, win)
             k_win = _WindowTransformerExpert._window_partition(k_nhwc, win)
             v_win = _WindowTransformerExpert._window_partition(v_nhwc, win)
@@ -157,7 +162,7 @@ class _LocalConvTransformerExpert(nn.Module):
             v_win = v_win.reshape(-1, win * win, nh, hd).permute(0, 2, 1, 3)
             out_win = _sdpa(q_win, k_win, v_win, self.scale)
             out_win = out_win.transpose(1, 2).reshape(-1, win * win, C)
-            out = _WindowTransformerExpert._window_reverse(out_win, win, Hp, Wp)
+            out = _WindowTransformerExpert._window_reverse(out_win, win, padded_h, padded_w)
             out = out[:, :H, :W, :].permute(0, 3, 1, 2).contiguous()
         else:
             out = _sdpa(to_heads(q), to_heads(k), to_heads(v), self.scale)
@@ -194,12 +199,18 @@ class _WindowTransformerExpert(nn.Module):
         super().__init__()
         if num_heads <= 0 or dim % num_heads != 0:
             raise ValueError(f"dim ({dim}) must be divisible by positive num_heads ({num_heads})")
+        if int(window_size) < 1:
+            raise ValueError(f"window_size must be >= 1, got {window_size}")
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
         self.scale = self.head_dim**-0.5
-        self.win = window_size
-        # Fixed cyclic shift (0 = regular window, win//2 = shifted window).
-        self.shift_size = (window_size // 2) if shift_size else 0
+        self.win = int(window_size)
+        # Fixed cyclic shift (0 = regular window). An explicit shift_size is
+        # honoured as a value and wrapped into [0, win); ``True`` means the
+        # Swin default win//2. Must stay < win or windows would realign.
+        if isinstance(shift_size, bool):
+            shift_size = (self.win // 2) if shift_size else 0
+        self.shift_size = int(shift_size) % self.win
 
         self.qkv = nn.Linear(dim, dim * 3, bias=False)
         self.proj = nn.Linear(dim, dim, bias=False)
@@ -226,9 +237,9 @@ class _WindowTransformerExpert(nn.Module):
                     nn.init.zeros_(m.bias)
 
     @staticmethod
-    def _pad_to_window(x: torch.Tensor, win: int) -> Tuple[torch.Tensor, int, int]:
+    def _pad_to_window(x: torch.Tensor, win: int) -> tuple[torch.Tensor, int, int]:
         """Pad spatial dims to be divisible by win."""
-        B, H, W, C = x.shape
+        _B, H, W, _C = x.shape
         pad_h = (win - H % win) % win
         pad_w = (win - W % win) % win
         if pad_h > 0 or pad_w > 0:
@@ -251,6 +262,29 @@ class _WindowTransformerExpert(nn.Module):
         x = windows.view(B, H // win, W // win, win, win, C)
         return x.permute(0, 1, 3, 2, 4, 5).contiguous().view(B, H, W, C)
 
+    def _shift_attn_mask(self, H: int, W: int, device: torch.device) -> torch.Tensor:
+        """Swin cyclic-shift attention mask: ``[nW, 1, win², win²]``, True = attend.
+
+        The cyclic roll brings opposite image edges into the same window. Without
+        this mask those spatially distant tokens attend each other, leaking
+        information across the feature map border (canonical Swin masks them).
+        Groups are labelled directly in the *rolled* frame (as in canonical Swin,
+        which is why no roll is applied here): the trailing ``shift`` rows/cols of
+        the rolled map are the wrapped ones, so band edges land on the window grid
+        and every fully-interior window stays completely unmasked.
+        """
+        win, shift = self.win, self.shift_size
+        img_mask = torch.zeros((1, H, W, 1), device=device, dtype=torch.long)
+        bands = (slice(0, -win), slice(-win, -shift), slice(-shift, None))
+        cnt = 0
+        for h in bands:
+            for w in bands:
+                img_mask[:, h, w, :] = cnt
+                cnt += 1
+        mask_windows = self._window_partition(img_mask, win).squeeze(-1)  # [nW, win²]
+        same = mask_windows.unsqueeze(1) == mask_windows.unsqueeze(2)  # [nW, win², win²]
+        return same.unsqueeze(1)  # broadcast over heads
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, C, H_orig, W_orig = x.shape
         win = self.win
@@ -259,7 +293,7 @@ class _WindowTransformerExpert(nn.Module):
         x = x.permute(0, 2, 3, 1)  # [B, H, W, C]
 
         # Pad
-        x, pad_h, pad_w = self._pad_to_window(x, win)
+        x, _pad_h, _pad_w = self._pad_to_window(x, win)
         H, W = x.shape[1], x.shape[2]
 
         # Cyclic shift (fixed at construction → deterministic & trace-stable)
@@ -281,7 +315,12 @@ class _WindowTransformerExpert(nn.Module):
         qkv = self.qkv(windows).reshape(Bw, win * win, 3, nh, hd).permute(2, 0, 3, 1, 4)
         q, k, v = qkv.unbind(0)  # each [Bw, nh, win², hd]
 
-        attn_out = _sdpa(q, k, v, self.scale)  # [Bw, nh, win², hd]
+        # Shifted windows wrap opposite edges together → mask cross-edge pairs.
+        attn_mask = None
+        if shift > 0:
+            attn_mask = self._shift_attn_mask(H, W, x.device).repeat(B, 1, 1, 1)
+
+        attn_out = _sdpa(q, k, v, self.scale, mask=attn_mask)  # [Bw, nh, win², hd]
         attn_out = attn_out.transpose(1, 2).reshape(Bw, win * win, C)
         attn_out = self.drop(self.proj(attn_out))
 
@@ -338,13 +377,14 @@ class _DeformableTransformerExpert(nn.Module):
         super().__init__()
         if num_heads <= 0 or dim % num_heads != 0:
             raise ValueError(f"dim ({dim}) must be divisible by positive num_heads ({num_heads})")
+        if int(n_points) < 1:
+            # n_points=0 silently zeroes the whole attention branch (empty
+            # weighted sum), leaving only the FFN — fail fast instead.
+            raise ValueError(f"n_points must be >= 1, got {n_points}")
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
-        self.n_points = n_points
+        self.n_points = int(n_points)
         self.align_corners = align_corners
-        # Reference coordinates depend only on the spatial shape and device;
-        # cache them to avoid rebuilding an N-element grid on every forward.
-        self._reference_grid_cache: dict[tuple, torch.Tensor] = {}
 
         # Query projection
         self.q_proj = nn.Linear(dim, dim, bias=False)
@@ -386,11 +426,6 @@ class _DeformableTransformerExpert(nn.Module):
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
 
-    def _apply(self, fn):
-        """Clear non-buffered reference grids whenever the module changes device or dtype."""
-        self._reference_grid_cache.clear()
-        return super()._apply(fn)
-
     def _deform_attn(self, q: torch.Tensor, value: torch.Tensor, H: int, W: int) -> torch.Tensor:
         """Core deformable attention.
 
@@ -420,20 +455,13 @@ class _DeformableTransformerExpert(nn.Module):
         attn_w = self.attn_proj(q).reshape(B, N, nh, np_)  # [B, N, nh, np]
         attn_w = F.softmax(attn_w, dim=-1)  # normalize over points
 
-        # Build/reference cache: each token's own position (normalised to
-        # [-1,1]).  The singleton dimensions are expanded without copying.
-        cache_key = (N, H, W, q.device.type, q.device.index)
-        ref = self._reference_grid_cache.get(cache_key)
-        if ref is None or ref.device != q.device:
-            idx = torch.arange(N, device=q.device)
-            row = (idx // W).float() / max(H - 1, 1) * 2 - 1
-            col = (idx % W).float() / max(W - 1, 1) * 2 - 1
-            ref = torch.stack([col, row], dim=-1)[None, :, None, None, :]
-            # Keep the cache bounded for workloads that sweep many resolutions.
-            if len(self._reference_grid_cache) >= 8:
-                self._reference_grid_cache.pop(next(iter(self._reference_grid_cache)))
-            self._reference_grid_cache[cache_key] = ref
-        ref = ref.expand(B, -1, nh, np_, -1)
+        # Build reference grid: each token's own position (normalised to [-1,1])
+        # Token index → (row, col) → (x_norm, y_norm)
+        idx = torch.arange(N, device=q.device)
+        row = (idx // W).float() / max(H - 1, 1) * 2 - 1  # y in [-1,1]
+        col = (idx % W).float() / max(W - 1, 1) * 2 - 1  # x in [-1,1]
+        ref = torch.stack([col, row], dim=-1)  # [N, 2]
+        ref = ref[None, :, None, None, :].expand(B, -1, nh, np_, -1)  # [B,N,nh,np,2]
 
         # Sampling locations = reference + learned offsets (scaled, clamped to valid range)
         sample_locs = (ref + offsets * 0.25).clamp(-1.0, 1.0)  # [B, N, nh, np, 2]
@@ -456,7 +484,7 @@ class _DeformableTransformerExpert(nn.Module):
         if orig_dtype != torch.float32:
             v_4d = v_4d.float()
             locs = locs.float()
-        sampled = _grid_sample(
+        sampled = F.grid_sample(
             v_4d,  # [B*nh, hd, H, W]
             locs,  # [B*nh, N, np, 2]
             mode="bilinear",

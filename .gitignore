@@ -219,3 +219,4 @@ wiki/repowiki/*/meta/repowiki-metadata.json
 # Checked-in, reproducible figures for Tencent/YOLO-Master Issue #52
 !reports/issue52-figs/
 !reports/issue52-figs/*.png
+agent/logs/

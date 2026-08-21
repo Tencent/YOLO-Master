@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import torch
 import torch.distributed as dist
-import torch.nn as nn
+from torch import nn
 
 from ultralytics.utils import LOGGER
 
@@ -35,7 +36,7 @@ def _collect_mot_aux_loss(model: nn.Module | None, device: torch.device) -> torc
         return mot_loss
     try:
         from ultralytics.nn.modules.mot import collect_mot_aux_loss
-    except Exception:
+    except (ImportError, RuntimeError):
         return mot_loss
     loss_t = collect_mot_aux_loss(model)
     if isinstance(loss_t, torch.Tensor):
@@ -54,7 +55,7 @@ def _collect_moa_aux_loss(model: nn.Module | None, device: torch.device) -> torc
         return moa_loss
     try:
         from ultralytics.nn.modules.moa import collect_moa_aux_loss
-    except Exception:
+    except (ImportError, RuntimeError):
         return moa_loss
     loss_t = collect_moa_aux_loss(model)
     if isinstance(loss_t, torch.Tensor):
@@ -110,12 +111,10 @@ def _get_mixture_loss_ema(model: nn.Module | None) -> dict[str, float] | None:
     parameter = next(owner.parameters(), None)
     if parameter is not None:
         target_device = parameter.device
-    elif torch.cuda.is_available():
-        # No parameters available (e.g. frozen params, stripped model).
-        # Default to CUDA so the buffer doesn't end up on CPU, which would
-        # break NCCL validation broadcasts.
-        target_device = torch.device("cuda")
     else:
+        # Parameter-free modules have no device affinity. Keep their state on
+        # CPU; callers that need a CUDA/NCCL buffer must move the owning model
+        # or provide at least one parameter before initialization.
         target_device = torch.device("cpu")
     if buf is None:
         defaults = [_MIXTURE_LOSS_EMA_DEFAULTS[k] for k in _MIXTURE_LOSS_EMA_KEYS]
@@ -148,7 +147,7 @@ def _get_mixture_loss_ema(model: nn.Module | None) -> dict[str, float] | None:
     for i in range(len(_MIXTURE_LOSS_EMA_KEYS)):
         v = float(buf[i])
         # Guard against NaN/Inf leakage from corrupted buffers
-        if not (v == v and abs(v) < 1e6):  # NaN self-check + magnitude bound
+        if not (math.isfinite(v) and abs(v) < 1e6):
             result[_MIXTURE_LOSS_EMA_KEYS[i]] = _MIXTURE_LOSS_EMA_DEFAULTS[_MIXTURE_LOSS_EMA_KEYS[i]]
         else:
             result[_MIXTURE_LOSS_EMA_KEYS[i]] = v
@@ -177,12 +176,12 @@ def _mixture_aux_isolation_flags(losses: tuple[torch.Tensor, ...]) -> list[bool]
     if dist.is_available() and dist.is_initialized():
         try:
             dist.all_reduce(flags, op=dist.ReduceOp.MAX)
-        except Exception:
+        except (RuntimeError, OSError) as error:
             # If the DDP process group is in a bad state (e.g. one rank has
             # already crashed or GPU-hung), swallow the error and fall back to
             # local flags.  This prevents a 600-second NCCL timeout; training
             # will likely fail soon anyway, but we get a cleaner traceback.
-            pass
+            LOGGER.warning(f"Failed to synchronize mixture aux-loss isolation flags; using local flags: {error}")
     # One host transfer for all routed loss flags instead of one ``.item()``
     # synchronization per component.
     return [bool(flag) for flag in flags.detach().cpu().tolist()]
@@ -220,7 +219,7 @@ def _update_mixture_loss_ema_batch(model: nn.Module | None, losses: tuple[torch.
     Python-side normalization factors.
     """
     if model is None or not getattr(model, "training", False):
-        return tuple()
+        return ()
     owner = _mixture_loss_ema_owner(model)
     buf = owner._buffers.get("_mixture_loss_ema_buf") if owner is not None else None
     if buf is None:
@@ -387,7 +386,7 @@ class CompositeCriterion:
 
     @updates.setter
     def updates(self, value: int) -> None:
-        setattr(self.native_criterion, "updates", int(value))
+        self.native_criterion.updates = int(value)
 
     def __getattr__(self, name: str):
         if name in {"model", "native_criterion", "enabled"}:
@@ -453,13 +452,13 @@ def compose_native_result(model: nn.Module, native_loss: torch.Tensor, native_it
 
 __all__ = [
     "CompositeCriterion",
+    "_collect_mixture_aux_loss",
+    "_collect_moa_aux_loss",
+    "_collect_moe_aux_loss",
+    "_collect_mot_aux_loss",
+    "_get_mixture_loss_ema",
     "build_composite_criterion",
     "compose_native_result",
     "has_routed_modules",
-    "_collect_moe_aux_loss",
-    "_collect_mot_aux_loss",
-    "_collect_moa_aux_loss",
-    "_collect_mixture_aux_loss",
-    "_get_mixture_loss_ema",
     "initialize_mixture_loss_ema_buffer",
 ]
