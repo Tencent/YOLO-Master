@@ -3,7 +3,7 @@
 
 Reproducible training strategy for the two YOLO-Master nano variants on three vertical scenes, with per-epoch logging of the required metrics (mAP50, mAP50-95, box_loss, cls_loss, moe_loss)
 
-📊 **Live training curves for all eight runs (Weights & Biases):** https://wandb.ai/yolo-master-reproduce/yolo-master-reproduce
+📊 **Live training curves for all eight runs (Weights & Biases):** https://wandb.ai/1853979230-company-/yolo-master-reproduce
 
 | Model | Config | # Params | MoE characteristics |
 | --- | --- | --- | --- |
@@ -36,9 +36,10 @@ Below is a comprehensive guide on how to reproduce the full training pipeline
 - [2. Dataset Download](#2-dataset-download)
 - [3. Training](#3-training)
   - [⚡️ (NEW!) DDP Training](#new-ddp-training)
-- [4. Known issues + solutions/takeaways](#4-known-issues--solutionstakeaways)
-- [5. Directory for Run logs](#5-directory-for-run-logs)
-- [6. P2 & UoMoE Variants for Tiny Object Detection](#p2--uomoe-variants-for-tiny-object-detection)
+- [4. Additional Reproduction Results](#4-additional-reproduction-results)
+- [5. Known issues + solutions/takeaways](#5-known-issues--solutionstakeaways)
+- [6. Directory for Run logs](#6-directory-for-run-logs)
+- [7. P2 & UoMoE Variants for Tiny Object Detection](#p2--uomoe-variants-for-tiny-object-detection)
 
 ## 1. Setup
 
@@ -117,7 +118,7 @@ python scripts/reproduce/reproduce_visdrone.py --model EsMoE-N --epochs <epoch> 
 # ------ SKU-110K ------
 # YOLO-Master-v0.1-N
 python scripts/reproduce/reproduce_sku110k.py  --model v0.1-N  --epochs <epoch> --batch <batch-size> 
-# YOLO-Master-EsMoE-N
+# YOLO-Master-EsMoE-N (use --no-sparse-eval for correct dense evaluation)
 python scripts/reproduce/reproduce_sku110k.py  --model EsMoE-N --epochs <epoch> --batch <batch-size>  --no-sparse-eval
 
 # ------ AI-TOD-v2 ------
@@ -235,7 +236,31 @@ python scripts/reproduce/reproduce_ddp.py --dataset VisDrone --model UoMoE-N --d
 
 ***Expected qualitative trend: `--no-sparse-eval` lifts `EsMoE-N` from collapsed (VisDrone) / far-below-baseline (SKU-110K) up to outperform the `v0.1-N` mAP, only with ~1/3 of its parameters. However, it may not help on AI-TOD-v2 since the rounting mechanism itself is incapable of handling it.***
 
-## 4. Known issues + solutions/takeaways
+## 4. Additional Reproduction Results
+
+Below are the results from a reproduction run on RTX 4050 6GB GPU (Windows 11), training for 100 epochs with `batch=4`:
+
+| Model | Dataset | Eval Mode | mAP50 | mAP50-95 | W&B Run |
+| --- | --- | --- | --- | --- | --- |
+| v0.1-N | VisDrone | default | 0.2916 | 0.1666 | [View](https://wandb.ai/1853979230-company-/yolo-master-reproduce/runs/501cw1pq) |
+| EsMoE-N | VisDrone | default (sparse) | 0.3008 | 0.1731 | [View](https://wandb.ai/1853979230-company-/yolo-master-reproduce/runs/h9doimnp) |
+| EsMoE-N | VisDrone | dense (`--no-sparse-eval`) | 0.3037 | 0.1758 | [View](https://wandb.ai/1853979230-company-/yolo-master-reproduce/runs/h9doimnp) |
+| v0.1-N | SKU-110K | default | 0.8877 | 0.5636 | [View](https://wandb.ai/1853979230-company-/yolo-master-reproduce/runs/hkqclc61) |
+| EsMoE-N | SKU-110K | default (sparse) | 0.2577 | 0.1106 | [View](https://wandb.ai/1853979230-company-/yolo-master-reproduce/runs/fivhxn27) |
+| EsMoE-N | SKU-110K | dense (`--no-sparse-eval`) | 0.8970 | 0.5728 | [View](https://wandb.ai/1853979230-company-/yolo-master-reproduce/runs/l0cdknhd) |
+
+**WandB Project**: [https://wandb.ai/1853979230-company-/yolo-master-reproduce](https://wandb.ai/1853979230-company-/yolo-master-reproduce)
+
+**Key Observations**:
+- v0.1-N reproduces closely with official reference (VisDrone: ~85% of official mAP50-95, SKU-110K: ~97% of official mAP50-95) at 100 epochs
+- EsMoE-N shows depressed mAP on SKU-110K under default sparse inference mode, consistent with the known issue described below
+- With `--no-sparse-eval` (dense eval), EsMoE-N mAP50 recovers dramatically on SKU-110K: 0.2577 → 0.8970, reaching parity with v0.1-N (0.8877)
+- On VisDrone, dense eval provides marginal improvement (0.3008 → 0.3037), as sparse inference already performs comparably
+- This confirms the ES_MOE sparse inference issue identified in PR #81
+
+---
+
+## 5. Known issues + solutions/takeaways
 
 ### 1. **`EsMoE-N` validation mAP collapses on VisDrone & SKU-110k (ES_MOE sparse inference)**
 
@@ -267,7 +292,7 @@ The weights are fine; but the inference path is wrongly configured.
 
 This is fixed at run time (a script flag), not in the library — `ES_MOE`'s default `use_sparse_inference=True` and `_sparse_forward` are unchanged. A plain `yolo val` or an exported `EsMoE-N` model will still exhibit the same collapse.
 
-### 2. SKU-110K extraction error (`tar ... Operation not permitted`)
+### 5. SKU-110K extraction error (`tar ... Operation not permitted`)
 
 **The mechanism.** The dataset downloader extracts the SKU-110K archive with `tar xfz`, which tries to restore the files' archived ownership (`uid` / `gid`). On filesystems that disallow `chown` — for example, many networked, rootless, or container mounts — `tar` prints:
 
@@ -285,7 +310,7 @@ tar -xzf SKU110K_fixed.tar.gz --no-same-owner --no-same-permissions -C <datasets
 
 Then let Ultralytics re-run `check_det_dataset('SKU-110K.yaml')` to build the labels and the `train.txt`, `val.txt`, and `test.txt` split files.
 
-### 3. `model.val()` hangs/crashes with dataloader workers on Python 3.14 (minor)
+### 4. `model.val()` hangs/crashes with dataloader workers on Python 3.14 (minor)
 
 **Mechanism.** A standalone `model.val()` call with `workers >0` can hit a multiprocessing forkserver `ConnectionResetError` on Python 3.14.
 
@@ -296,13 +321,13 @@ Full training is unaffected because it validates each epoch through the training
 ```python
 model.val(workers=0)
 ```
-### 4. `ES_MOE` routing collapses on AI-TOD-v2
+### 6. `ES_MOE` routing collapses on AI-TOD-v2
 
 **Mechanism.** On AI-TOD-v2's homogeneous tiny objects, `EsMoE-N`'s pure top-k router collapses onto a single expert — one early MoE layer reaches `>0.8` max-usage — and validation mAP freezes at the noise floor (≈1e-5), even with the built-in routing-collapse recovery. `v0.1-N`'s `ModularRouterExpertMoE` keeps an always-on **shared expert** (a guaranteed signal path independent of the router), so on the *identical* data it trains cleanly to 0.28 mAP50.
 
 **Takeaway.** On tiny-object / low-diversity data, prefer the shared-expert `v0.1-N`; `ES_MOE` needs a larger, more diverse distribution to keep its experts balanced. The AI-TOD-v2 `EsMoE-N` weights above are included for completeness — they are a collapsed model. 
 
-## 5. Directory for Run logs
+## 6. Directory for Run logs
 
 Per run, Ultralytics writes to:
 
@@ -325,7 +350,7 @@ runs/reproduce/<dataset>/summary.csv
 
 aggregates the final metrics for both models, including a `dense_eval` column that records whether `--no-sparse-eval` was applied.
 
-## 6. P2 & UoMoE Variants for Tiny Object Detection
+## 7. P2 & UoMoE Variants for Tiny Object Detection
 
 This formally integrates the improved models in issues [#98](https://github.com/Tencent/YOLO-Master/issues/98) & [#126](https://github.com/Tencent/YOLO-Master/issues/126). 
 
