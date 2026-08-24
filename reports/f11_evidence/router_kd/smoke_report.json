@@ -1,0 +1,28 @@
+{
+  "task": "F11 · Router KD 闭环冒烟",
+  "config": {
+    "epochs": 1,
+    "layers": 1,
+    "experts": 2,
+    "device": "0",
+    "batch": 2,
+    "imgsz": 320,
+    "kd_lambda": 0.5,
+    "lr": 0.0001,
+    "q_teacher_path": "runs/f11_q_teacher_check/q_teacher.pt",
+    "out": "runs/f11_smoke_kd"
+  },
+  "device": "cuda:0",
+  "grad_check": {
+    "router_grad_norm": 0.11903078109025955,
+    "kd_loss": 0.09966139495372772,
+    "task_loss": 1.029187560081482
+  },
+  "router_grad_nonzero": true,
+  "task_loss_decreased": true,
+  "kd_loss_finite": true,
+  "pass": true,
+  "outputs": {
+    "report": "G:\\Codes\\OpenSource\\Rhino-bird\\Practice\\Code\\YOLO-Master\\runs\\f11_smoke_kd\\smoke_report.json"
+  }
+}
