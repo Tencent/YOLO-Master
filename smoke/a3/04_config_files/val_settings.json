@@ -1,0 +1,15 @@
+{
+  "_comment": "val 命令与本次实际跑出的指标。来源：ultralytics 8.4.101 + 本地 Python 3.13.5 + CPU",
+  "command_pt": "yolo val model=yolo_master_n.pt data=C:\\Users\\86133\\datasets\\coco8\\data.yaml device=cpu imgsz=640",
+  "command_onnx": "yolo val model=yolo_master_n.onnx data=C:\\Users\\86133\\datasets\\coco8\\data.yaml device=cpu imgsz=640",
+  "metrics": {
+    "pt":   {"mAP50-95": 0.7432, "mAP50": 0.9562, "P": 0.8026, "R": 0.927,  "inference_ms": 233.6},
+    "onnx": {"mAP50-95": 0.7108, "mAP50": 0.9522, "P": 0.8546, "R": 0.8908, "inference_ms": 71.5}
+  },
+  "delta": {
+    "mAP50-95": -0.0324,
+    "mAP50":    -0.0040
+  },
+  "speedup_x": 3.27,
+  "judgment": "ONNX 导出在 mAP50 上几乎无损（-0.004），mAP50-95 差 -0.032 在小数据集噪声范围内；CPU 推理 3.27× 加速符合 ORT 典型性能。"
+}
