@@ -83,6 +83,8 @@ Speed: 80.1ms preprocess, 574.9ms inference, 11.5ms postprocess per image at sha
 Results saved to D:\YOLO_MASTER\runs\detect\predict-3
 ```
 
+> 注：574.9ms 为**单张首帧推理**（含模型加载 + warmup），非稳态吞吐；稳态推理耗时见下方 val 段（ONNX 71.5ms / image）。
+
 **视觉证据**：`06_result_evidence/ort_predict_sample/bus_pred.jpg`（带检测框的 bus.jpg，4 persons + 1 bus）
 
 ---
@@ -100,8 +102,10 @@ val: Scanning C:\Users\86133\datasets\coco8\labels\val.cache... 4 images, 0 back
 
                Class    Images  Instances    Box(P)     R    mAP50   mAP50-95
                  all        4         17      0.803   0.927    0.956      0.743
-Speed: 2.7ms preprocess, 198.2ms inference, 0.0ms loss, 1.8ms postprocess per image
+Speed: 2.7ms preprocess, 233.6ms inference, 0.0ms loss, 1.8ms postprocess per image
 Results saved to D:\YOLO_MASTER\runs\detect\val-6
+
+> 注：本段为 CLI 首次跑（val-6）的输出；inference 时间以 `06_result_evidence/val_metrics.json`（Python API 稳态重跑）的 233.6ms 为最终口径。
 ```
 
 **全 metrics**：`06_result_evidence/val_metrics.json`（PT 块）
@@ -122,7 +126,7 @@ val: Scanning C:\Users\86133\datasets\coco8\labels\val.cache... 4 images, 0 back
 
                Class    Images  Instances    Box(P)     R    mAP50   mAP50-95
                  all        4         17      0.855   0.891    0.952      0.711
-Speed: 2.2ms preprocess, 71.0ms inference, 0.0ms loss, 2.7ms postprocess per image
+Speed: 2.2ms preprocess, 71.5ms inference, 0.0ms loss, 2.7ms postprocess per image
 Results saved to D:\YOLO_MASTER\runs\detect\val-7
 ```
 
