@@ -25,24 +25,52 @@ import ultralytics.engine.trainer as _trainer_mod
 
 
 def _safe_save_model(self):
+    import time as _t
     serialized_ckpt = self._serialize_checkpoint()
     self.wdir.mkdir(parents=True, exist_ok=True)
-    self.last.write_bytes(serialized_ckpt)  # last 关键，必须成功(供 resume)
+    # last.pt 是 resume 命根子：锁了重试几次再放弃(仍失败仅丢当前 epoch)
+    for attempt in range(5):
+        try:
+            self.last.write_bytes(serialized_ckpt)
+            break
+        except (PermissionError, OSError) as e:
+            if attempt == 4:
+                print(f"[WARN] last.pt 5次重试仍被锁，放弃本次保存(仅丢当前epoch): {e}")
+            else:
+                _t.sleep(0.5)
     if self.best_fitness == self.fitness:
         try:
             self.best.write_bytes(serialized_ckpt)
-        except PermissionError as e:
+        except (PermissionError, OSError) as e:
             print(f"[WARN] best.pt 被杀毒软件锁住，跳过本次 best 保存(训练继续): {e}")
     if (self.save_period > 0) and (self.epoch % self.save_period == 0):
         try:
             (self.wdir / f"epoch{self.epoch}.pt").write_bytes(serialized_ckpt)
         except Exception:
             pass
-    self._refresh_healthy_checkpoint()
+    try:
+        self._refresh_healthy_checkpoint()
+    except Exception as e:
+        print(f"[WARN] last_healthy.pt 写入失败(非致命，训练继续): {e}")
     return True
 
 
 _trainer_mod.BaseTrainer.save_model = _safe_save_model
+
+# ---- 异常安全补丁(二)：args.yaml 启动期写入也会被火绒锁住(同因) ----
+# 原 _save_run_args 仅在启动写 args.yaml(纯记录用)，锁了就跳过，不影响训练数值。
+_orig_save_run_args = _trainer_mod.BaseTrainer._save_run_args
+
+
+def _safe_save_run_args(self):
+    try:
+        _orig_save_run_args(self)
+    except (PermissionError, OSError) as e:
+        print(f"[WARN] args.yaml 被杀毒软件锁住，跳过本次写入(训练继续): {e}")
+
+
+_trainer_mod.BaseTrainer._save_run_args = _safe_save_run_args
+print("[PATCH] BaseTrainer._save_run_args 已打异常安全补丁(args.yaml 锁自动跳过)")
 print("[PATCH] BaseTrainer.save_model 已打异常安全补丁(best.pt 锁自动跳过)")
 # ---------------------------------------------------------------------------------
 
