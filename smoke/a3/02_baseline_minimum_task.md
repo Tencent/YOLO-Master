@@ -25,7 +25,7 @@
 | PyTorch → ONNX → ONNX Runtime CPU 端到端 | ✅ 在范围 |
 | 导出预检机制（export_preflight）验证 | ✅ 在范围 |
 | EsMoE-N（YOLO-Master-EsMoE-N）全链路 | ✅ 在范围 |
-| TensorRT FP16 / GPU 部署 | ❌ 本机无 GPU，P1 阶段挂云端补 |
+| TensorRT FP16 / GPU 部署 | ❌ 本次 smoke 走 CPU（8.24 当时未启用独显）；2026-08-28 起本机 RTX 5060 8GB 可用，P1 阶段本机+云端 GPU 补 |
 | COCO 完整 val2017 (5000 张) 精度 | ❌ CPU 跑全集耗时不经济；用 COCO8 (4 train + 4 val) 降级 |
 | INT8 PTQ 量化 | ❌ P1 范围 |
 | MoT/MoA/MoA-MOT 路由族（已具备 yaml，缺预训练权重） | ❌ P1 范围 |

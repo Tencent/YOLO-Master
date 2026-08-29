@@ -7,10 +7,14 @@
 ## 已识别风险
 
 ### R1：无 NVIDIA GPU（本机硬限制）
-- **影响**：无法跑 TensorRT FP16 / INT8 真实部署；无法挂 COCO val2017 完整集
-- **降级**：按任务规则 "无卡降级 ONNX Runtime CPU 后端"，本次仅做 FP32 PyTorch → FP32 ONNX → FP32 ORT CPU
+- **状态更新（2026-08-28）**：本机确认为 ThinkBook 16+（i5-1240P + **RTX 5060 8GB 独显**）。8.24 smoke 当时未启用/未识别独显，按“无卡降级”跑 CPU；P1 起独显可用。
+- **原影响**：无法跑 TensorRT FP16 / INT8 真实部署；无法挂 COCO val2017 完整集
+- **降级（8.24，仍有效）**：按任务规则 “无卡降级 ONNX Runtime CPU 后端”，本次仅做 FP32 PyTorch → FP32 ONNX → FP32 ORT CPU
 - **声明位置**：`01_environment_install.md`（环境声明）+ 本文件
-- **后续**：P1 阶段挂云端 GPU 补做
+- **后续（P1 双轨）**：
+  1. 本机 5060 8GB — ORT-GPU / ONNX INT8 / 路由漂移分析 / 小数据集推理时延
+  2. 云端 24GB GPU — TensorRT FP16/INT8、INT8 PTQ 校准、MoT/MoA 五族训练、QAT
+  3. 8.24 的 CPU 数字（233.6 ms → 71.5 ms，3.27×）作为历史基线保留，不重算
 
 ### R2：COCO 完整 val2017 跑全集耗时不经济
 - **影响**：本机 CPU 单卡跑 5000 张 val 需数小时，8.24 时间窗不允许
@@ -52,7 +56,7 @@
 
 | 风险 | 等级 | 是否在 P0 范围内解决 |
 |---|---|---|
-| R1 无 GPU | 高 | ❌ 降级到 CPU 后端 |
+| R1 无 GPU → 2026-08-28 起本机 5060 8GB 可用 | 高 → 中 | ❌ smoke 仍按 CPU 降级口径；P1 本机+云端双轨补 |
 | R2 COCO 完整集耗时 | 中 | ❌ 降级到 COCO8 |
 | R3 网络限制 | 中 | ❌ 用镜像源 |
 | R4 笔误 | 低 | ✅ 已修复 |

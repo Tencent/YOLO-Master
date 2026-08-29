@@ -7,6 +7,11 @@
 > **immutable tag**：`rhino-2026-0824-a3-baseline`（annotated，不允许 force-push）
 > **本目录位置**：`smoke/a3/`
 
+> 📌 **2026-08-28 状态更新（不改动 8.24 历史数字）**：
+> 1. 工作目录迁移至本机 `D:\YOLO_Master\YOLO_Master\`（无 .git，原 3710 untracked 状态随之失效，P1 需重新 init/clone 对齐 BASE_REF）
+> 2. COCO8 已解压至 `datasets/coco8/`，数据配置改为 `04_config_files/coco8_data.yaml`（历史日志中 `C:\Users\86133\` 路径为原机器记录，保留不改）
+> 3. 本机确认 **RTX 5060 8GB 独显**可用（8.24 smoke 按无卡降级口径跑 CPU，数字仍有效）；P1 起本机 + 云端 GPU 双轨，详见 `01_environment_install.md` 与 `08_risk_degradation.md` R1
+
 ---
 
 ## 9 份交付物对应登记表

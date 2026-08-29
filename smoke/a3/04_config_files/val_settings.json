@@ -1,5 +1,6 @@
 {
   "_comment": "val 命令与本次实际跑出的指标。来源：ultralytics 8.4.101 + 本地 Python 3.13.5 + CPU",
+  "_device_migration_note": "2026-08-28 设备迁移：原命令中 C:\\Users\\86133\\... 为 8.24 首次 smoke 所在机器路径，保留作历史证据；本机复现请改用 data=smoke/a3/04_config_files/coco8_data.yaml（已指向 D:/YOLO_Master/YOLO_Master/datasets/coco8）",
   "command_pt": "yolo val model=yolo_master_n.pt data=C:\\Users\\86133\\datasets\\coco8\\data.yaml device=cpu imgsz=640",
   "command_onnx": "yolo val model=yolo_master_n.onnx data=C:\\Users\\86133\\datasets\\coco8\\data.yaml device=cpu imgsz=640",
   "metrics": {

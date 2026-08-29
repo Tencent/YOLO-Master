@@ -6,12 +6,17 @@
 
 ## 硬件
 
+> ⚠️ **2026-08-28 设备状态更新**：本机为同一台 ThinkBook 16+（i5-1240P + **RTX 5060 8GB 独显**）。
+> 8.24 首次 smoke 时按“无 NVIDIA GPU”降级跑 CPU（当时未启用/未识别独显，CUDA 环境未配置），
+> 本页所有数字均为 CPU 跑出，仍有效。P1 起独显 + 云端 GPU 并行，详见 `08_risk_degradation.md` R1 更新。
+
 | 项 | 值 |
 |---|---|
 | 操作系统 | Windows 11 (win32) x64 |
 | CPU | 12th Gen Intel Core i5-1240P |
 | 内存 | ≥ 16 GB |
-| GPU | **无 NVIDIA GPU**（按任务规则降级 ONNX Runtime CPU） |
+| GPU（8.24 smoke 当时） | **未启用 NVIDIA GPU**（按任务规则降级 ONNX Runtime CPU） |
+| GPU（2026-08-28 确认） | NVIDIA RTX 5060 8GB（Blackwell，CUDA 12.8+，PyTorch ≥ 2.7）|
 
 ## 软件
 

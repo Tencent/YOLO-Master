@@ -28,10 +28,12 @@ sha256sum yolo_master_n.pt
 
 ```powershell
 curl.exe -L -o coco8.zip "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco8.zip"
-Expand-Archive -Path coco8.zip -DestinationPath C:\Users\86133\datasets -Force
-# 验证 data.yaml 存在
-Test-Path C:\Users\86133\datasets\coco8\data.yaml
+Expand-Archive -Path coco8.zip -DestinationPath D:\YOLO_Master\YOLO_Master\datasets -Force
+# 官方 zip 不含 data.yaml，用本目录 04_config_files/coco8_data.yaml（已指向本机路径）
+# 验证图像存在
+Test-Path D:\YOLO_Master\YOLO_Master\datasets\coco8\images\val
 # 预期: True
+# 注：8.24 首次 smoke 在原机器解压于 C:\Users\86133\datasets\，2026-08-28 迁移本机后改用上路径
 ```
 
 ## 3. 导出预检（preflight 链路验证）
@@ -62,14 +64,14 @@ yolo predict model=yolo_master_n.onnx source=ultralytics/assets/bus.jpg device=c
 ## 6. PyTorch 精度基线
 
 ```powershell
-yolo val model=yolo_master_n.pt data=C:\Users\86133\datasets\coco8\data.yaml device=cpu imgsz=640
+yolo val model=yolo_master_n.pt data=smoke/a3/04_config_files/coco8_data.yaml device=cpu imgsz=640
 # 关键指标: mAP50-95 ≈ 0.743
 ```
 
 ## 7. ONNX 精度基线
 
 ```powershell
-yolo val model=yolo_master_n.onnx data=C:\Users\86133\datasets\coco8\data.yaml device=cpu imgsz=640
+yolo val model=yolo_master_n.onnx data=smoke/a3/04_config_files/coco8_data.yaml device=cpu imgsz=640
 # 关键指标: mAP50-95 ≈ 0.711
 ```
 
@@ -79,7 +81,7 @@ yolo val model=yolo_master_n.onnx data=C:\Users\86133\datasets\coco8\data.yaml d
 from ultralytics import YOLO
 import json
 
-DATA = r"C:\Users\86133\datasets\coco8\data.yaml"
+DATA = r"D:\YOLO_Master\YOLO_Master\smoke\a3\04_config_files\coco8_data.yaml"
 
 m_pt = YOLO("yolo_master_n.pt")
 r_pt = m_pt.val(data=DATA, device="cpu", imgsz=640, save_json=True, verbose=False, project="smoke/a3/06_result_evidence/_val_pt", name="pt")

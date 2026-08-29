@@ -1,9 +1,10 @@
 # Ultralytics COCO8 (smoke 用本地副本)
 # 来源：https://github.com/ultralytics/assets/releases/download/v0.0.0/coco8.zip
-# 本地路径：C:\Users\86133\datasets\coco8\
+# 本地路径：D:\YOLO_Master\YOLO_Master\datasets\coco8\（2026-08-28 迁移至本机后解压）
 # 包含 4 train + 4 val 图（COCO train2017 前 8 张子集）
+# 历史路径（8.24 首次 smoke 所在机器）：C:\Users\86133\datasets\coco8\
 
-path: C:\Users\86133\datasets\coco8
+path: D:/YOLO_Master/YOLO_Master/datasets/coco8
 train: images/train
 val: images/val
 
