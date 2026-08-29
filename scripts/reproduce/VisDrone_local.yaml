@@ -1,0 +1,18 @@
+# Local VisDrone config (rebuilt): dataset already on disk at D:/datasets/VisDrone
+# Mirrors the built-in VisDrone.yaml class layout; path is absolute so no download is triggered.
+path: D:/datasets/VisDrone
+train: images/train
+val: images/val
+
+# Classes
+names:
+  0: pedestrian
+  1: people
+  2: bicycle
+  3: car
+  4: van
+  5: truck
+  6: tricycle
+  7: awning-tricycle
+  8: bus
+  9: motor
