@@ -44,8 +44,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--num-classes", type=int, default=10)
     p.add_argument("--device", type=str, default="cuda:0")
     p.add_argument("--limit", type=int, default=0, help="0 = all val images")
-    p.add_argument("--conf", type=float, default=0.15)
-    p.add_argument("--small-conf", type=float, default=0.05)
+    # AP evaluation must keep low-confidence candidates. Deployment-oriented
+    # thresholds such as 0.15 can make a weak but valid model report mAP=0.
+    p.add_argument("--conf", type=float, default=0.001)
+    p.add_argument("--small-conf", type=float, default=0.001)
     p.add_argument(
         "--mode",
         choices=["sparse", "combine", "full"],
@@ -175,6 +177,11 @@ def main():
     # Delta vs PyTorch baseline
     if "pytorch" in results:
         base = results["pytorch"]["mAP50-95"]
+        if not np.isfinite(base) or base <= 0.0:
+            raise RuntimeError(
+                "PyTorch baseline mAP50-95 is zero/non-finite; refusing to report a false consistency pass. "
+                "Check output layout, confidence thresholds, labels, and preprocessing."
+            )
         summary = {}
         for kind, r in results.items():
             delta = r["mAP50-95"] - base

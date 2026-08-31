@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "family": "ES-MoE",
+  "experiment": "ONNX Runtime static INT8 PTQ",
+  "status": "PASS",
+  "selected_format": "QOperator",
+  "activation_type": "uint8",
+  "weight_type": "int8",
+  "evaluation": {
+    "dataset": "VisDrone val",
+    "images": 548,
+    "imgsz": 640,
+    "provider": "CPUExecutionProvider",
+    "confidence_threshold": 0.001,
+    "same_preprocessing": true,
+    "same_postprocessing": true
+  },
+  "fp32": {
+    "model_path": "/mnt/workspace/YOLO-Master/examples/exports/best_for_export_dense_fallback_topk_mask.onnx",
+    "mAP50": 0.0586278408515897,
+    "mAP50-95": 0.03305773938118765,
+    "latency_ms": 63.24226516604858,
+    "fps": 15.812210352908847,
+    "size_mb": 11.032571792602539
+  },
+  "int8": {
+    "source_path": "/mnt/workspace/YOLO-Master/examples/exports/mnn_dense_fallback/ort_ptq_to_mnn_runs/20260831_114542/QOperator_U8S8/dense_fallback_conv_int8_ptq.onnx",
+    "artifact_path": "/mnt/workspace/YOLO-Master/examples/artifacts/esmoe_ort_int8_qoperator_u8s8/esmoe_qoperator_u8s8_int8.onnx",
+    "sha256": "c2308774af0121154921ea211c89bc26b2f495c2fbb81d0aeae3aba64f1721f9",
+    "mAP50": 0.05850324988238291,
+    "mAP50-95": 0.03261256074200988,
+    "latency_ms": 67.32881350619515,
+    "fps": 14.852482138393642,
+    "size_mb": 3.374094009399414
+  },
+  "comparison": {
+    "delta_map50-95": -0.00044517863917776374,
+    "delta_percentage_points": -0.044517863917776374,
+    "absolute_delta_percentage_points": 0.044517863917776374,
+    "target_max_absolute_percentage_points": 0.5,
+    "accuracy_pass": true,
+    "latency_change_ms": 4.086548340146564,
+    "latency_change_percent": 6.461736197172807,
+    "latency_speedup": 0.939304613770291,
+    "size_reduction_percent": 69.41697663221389,
+    "latency_benefit": false,
+    "size_benefit": true
+  },
+  "rejected_candidate": {
+    "name": "QDQ_S8S8",
+    "mAP50-95": 0.031631506430858256,
+    "latency_ms": 128.85145406938926,
+    "size_mb": 3.6195974349975586,
+    "reason": "精度下降更大，且 CPU 延迟明显高于 QOperator_U8S8"
+  },
+  "compatibility_failures": {
+    "native_mnn_ptq": "KL 与 EMA 均发生 std::length_error，return code -6",
+    "ort_int8_to_mnn": "MNNConvert 不支持 ONNX::QLinearConv",
+    "interpretation": "MNN 后端兼容性失败，不影响该 ORT INT8 等价量化实验的真实性"
+  },
+  "honest_conclusion": "QOperator U8S8 将模型体积缩小约 69.42%，mAP50-95 下降 0.0445 个百分点；但当前 CPU 上延迟增加约 6.46%，没有推理加速。",
+  "created_at": "2026-08-31 12:17:12"
+}
