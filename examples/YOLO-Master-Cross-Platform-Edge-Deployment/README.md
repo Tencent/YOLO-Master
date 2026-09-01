@@ -2,7 +2,7 @@
 
 <img alt="C++" src="https://img.shields.io/badge/C++-17-blue.svg?style=flat&logo=c%2B%2B"> <img alt="Onnx-runtime" src="https://img.shields.io/badge/OnnxRuntime-717272.svg?logo=Onnx&logoColor=white"> <img alt="NCNN" src="https://img.shields.io/badge/NCNN-Tencent-blue.svg"> <img alt="MNN" src="https://img.shields.io/badge/MNN-Alibaba-orange.svg"> <img alt="TensorRT" src="https://img.shields.io/badge/TensorRT-NVIDIA-76B900.svg"> <img alt="Core ML" src="https://img.shields.io/badge/CoreML-Apple-black.svg"> <img alt="Linux" src="https://img.shields.io/badge/Linux-FCC624.svg?logo=linux&logoColor=black"> <img alt="Windows" src="https://img.shields.io/badge/Windows-0078D6.svg?logo=windows&logoColor=white"> <img alt="Jetson" src="https://img.shields.io/badge/Jetson%20Orin-76B900.svg?logo=nvidia&logoColor=white"> <img alt="macOS" src="https://img.shields.io/badge/macOS-000000.svg?logo=apple&logoColor=white"> <img alt="iOS" src="https://img.shields.io/badge/iOS-000000.svg?logo=apple&logoColor=white"> 
 
-This project provides a cross-platform inference runtime for [YOLO-Master](https://github.com/Tencent/YOLO-Master) object-detection models using [ONNX Runtime](https://onnxruntime.ai/), [NCNN](https://github.com/Tencent/ncnn), [MNN](https://github.com/alibaba/mnn), [TensorRT](https://github.com/nvidia/tensorrt), and [Core ML](https://github.com/apple/coremltools) backends. The supported targets are Linux, Windows 10/11, Jetson, and macOS, with CPU, [NVIDIA CUDA](https://developer.nvidia.com/cuda-toolkit), and [Apple Metal Performance Shaders](https://developer.apple.com/documentation/metalperformanceshaders) execution where available. The runtime can infer the model format and read class names and input size from model metadata.
+This example implements a C++17 inference runtime for [YOLO-Master](https://github.com/Tencent/YOLO-Master) models. The primary command-line path supports [ONNX Runtime](https://onnxruntime.ai/), [NCNN](https://github.com/Tencent/ncnn), and [MNN](https://github.com/alibaba/MNN); [TensorRT](https://github.com/nvidia/tensorrt) is optional where its SDK is available. Model format, class names, and input dimensions can be resolved from model metadata. Platform-specific GUI and Apple Core ML sources are retained for compatibility and provenance, but their release claims are not evidence for the Issue #51 validation reported here.
 
 ## Issue #51 validation bundle
 
@@ -359,7 +359,7 @@ The backend is inferred from the model (`.onnx` → ONNX Runtime, an NCNN direct
 
 See `cpp/run_tests.sh` for the 16-test robustness battery.
 
-## 🤖 Jetson Orin (upstream reference)
+## Jetson Orin (upstream reference)
 
 A prebuilt aarch64 runner for **Jetson Orin** (Nano / NX / AGX) on **JetPack 7** is attached to the [Releases](https://github.com/skywalker-lt/yolo-master-edge/releases) page. It bundles OpenCV and uses JetPack's TensorRT + CUDA; the per-device FP16 engine is built once with the included script.
 
@@ -372,36 +372,32 @@ bash 21_build_trt_runner.sh    # builds the runner and records configure/build l
   --source /path/to/image_or_dir --classes visdrone --out out
 ```
 
-On an Orin Nano 4 GB the FP16 engine runs at **35.7 FPS** (27.8 ms) with **mAP50-95 0.2029 (−0.07 pp vs FP32)**. FP16 is the recommended target for this model because the area-attention path is not quantized, making INT8 both slower and less accurate here. To build from source, the [`jetson/`](jetson/) scripts drive the engine build and packaging; see [`jetson/README.md`](jetson/README.md) and [`jetson/DEPLOYMENT_LOG.md`](jetson/DEPLOYMENT_LOG.md).
+The linked release contains device-specific TensorRT examples. This checkout does
+not include a native Jetson run, an engine digest, or an on-device log; no Jetson
+latency or accuracy number is therefore claimed here. To build from source, the
+[jetson/](jetson/) scripts drive engine construction and packaging; see
+[jetson/README.md](jetson/README.md) and [jetson/DEPLOYMENT_LOG.md](jetson/DEPLOYMENT_LOG.md).
 
-## 📊 Results (upstream reference; not measured in this checkout)
+## Results and release evidence
 
-> These rows are reproduced from an external release and are shown for
-> comparison only. No model, image list, benchmark JSON or raw log for them is
-> included in this branch.
+No full-split accuracy or cross-platform benchmark is claimed by this checkout.
+The following table is the publication schema to use after a real EsMoE-N
+checkpoint, fixed image manifest, and raw logs have been archived. Each numeric
+cell must point to a manifest or machine-readable report; an empty or pending
+cell is preferable to an estimate.
 
-Inference performed on full 548 VisDrone validation images against the PyTorch original (`mAP50-95 = 0.2036`), using identical settings (conf 0.001, NMS IoU 0.7, multi-label).
+| Inference backend | Device and runtime | Image count / list digest | mAP50-95 | Delta vs PyTorch (pp) | End-to-end P50/P95/P99 | FPS | Evidence |
+| :------------------------ | :------- | :------- | :------- | :----------- | :------ | :---- | :------- |
+| PyTorch reference | pending | pending | pending | -- | pending | pending | evidence manifest |
+| ONNX Runtime | pending | pending | pending | pending | pending | pending | evidence manifest |
+| NCNN or MNN | pending | pending | pending | pending | pending | pending | evidence manifest |
+| TensorRT / Core ML (optional) | pending | pending | pending | pending | pending | pending | platform log |
 
-| Inference Backend | Device | mAP50-95 | Δ vs PyTorch | End-to-end Latency | FPS |
-| :------------------------ | :------- | :------- | :----------- | :------ | :---- |
-| ONNX | CPU | 0.2034 | −0.02 pp  | 40 ms | 25.0  |
-| ONNX (CUDA) | H200 SXM | 0.2033 | −0.03 pp | 7.8 ms  | 128   |
-| ONNX (CUDA) | RTX 5070Ti Laptop | 0.2033 | −0.03 pp  | 9.0 ms  | 111   |
-| NCNN | CPU | 0.2034 | −0.02 pp | 80 ms | 12.5  |
-| NCNN (Vulkan) | RTX 5070Ti Laptop | 0.2034 | −0.02 pp  | 20.2 ms | 49.5  |
-| MNN | CPU | 0.2034 | −0.02 pp | 74 ms | 13.5  |
-| MNN (OpenCL) | RTX 5070Ti Laptop | 0.2034 | −0.02 pp  | 19.1 ms | 52.4  |
-| INT8 mixed ¹ | CPU | 0.1952 | −0.84 pp | 137 ms  | 7.2   |
-| TensorRT FP16 | Jetson Orin Nano 4GB | 0.2029 | −0.07 pp | 27.8 ms | 35.7 |
-| Core ML | Apple M4 Max | N/A (no validator bundled) | N/A | 17.4 ms | 57.4  |
-
-CPU latencies are x86 @ 4 threads on one host; mAP is identical across FP32 formats because they are of the same graph. The Jetson row is a native TensorRT FP16 engine, measured on-device.
-
-> ¹ INT8 is *slower* than FP32 on CPU — its throughput payoff needs INT8 tensor cores, not x86 CPUs. The CPU INT8 result is **accuracy evidence** (−0.84 percentage points, within budget); on the actual accelerator, FP16 also wins on Orin because the attention path is not quantized (see the TensorRT row and [`TECHNICAL_REPORT.md`](TECHNICAL_REPORT.md) Section 9).
-
-See [`TECHNICAL_REPORT.md`](TECHNICAL_REPORT.md) for the full methodology, INT8 quantization deep-dive, and numerical parity analysis.
-
+Use [TECHNICAL_REPORT.md](TECHNICAL_REPORT.md) and
+[TECHNICAL_SUMMARY_ZH.md](TECHNICAL_SUMMARY_ZH.md) for the protocol, unit
+definitions, and acceptance levels. Metrics from the separately linked
+skywalker-lt/yolo-master-edge releases are not copied into this table.
 
 ## 🤝 Contributing
 
-Contributions are welcome! If you find any issues or have suggestions for improvements, please feel free to open an issue or submit a pull request on the [project repository](https://github.com/skywalker-lt/yolo-master-edge).
+Contributions are welcome. Please open an issue or submit a pull request on the [YOLO-Master repository](https://github.com/Tencent/YOLO-Master), and include the model digest, image-list digest, command line, environment record and raw logs when reporting a new measurement.
