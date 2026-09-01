@@ -452,6 +452,9 @@ def test_ncnn_graph_endpoint_resolution_is_metadata_first_and_fail_closed():
     assert "per_model_metadata.replace_extension(\".metadata.yaml\")" in source
     assert "metadata input_blob and output_blob must differ" in source
     assert "std::string out_proto_" in header
+    exporter = (EDGE / "scripts" / "export_models.py").read_text(encoding="utf-8")
+    assert "metadata_per_model" in exporter
+    assert "stem-specific file precedence" in exporter
 
 
 def test_cpp_sku_profile_records_multi_label_protocol():

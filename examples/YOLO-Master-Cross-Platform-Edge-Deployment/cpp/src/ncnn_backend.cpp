@@ -25,6 +25,7 @@ namespace {
 // list are intentionally ignored.
 struct GraphBlobs {
     std::set<std::string> all;
+    std::set<std::string> produced;
     std::vector<std::string> inputs;
     std::vector<std::string> tops;
     std::set<std::string> bottoms;
@@ -62,16 +63,21 @@ static GraphBlobs inspect_param_graph(const std::string& path) {
         bool complete = true;
         for (auto& name : bottoms) {
             if (!(row >> name) || name.empty()) { complete = false; break; }
-            graph.all.insert(name);
-            graph.bottoms.insert(name);
         }
         if (!complete) continue;
         for (auto& name : tops) {
             if (!(row >> name) || name.empty()) { complete = false; break; }
-            graph.all.insert(name);
-            graph.tops.push_back(name);
         }
         if (!complete) continue;
+        for (const auto& name : bottoms) {
+            graph.all.insert(name);
+            graph.bottoms.insert(name);
+        }
+        for (const auto& name : tops) {
+            graph.all.insert(name);
+            graph.produced.insert(name);
+            graph.tops.push_back(name);
+        }
         if (type == "Input") {
             graph.inputs.insert(graph.inputs.end(), tops.begin(), tops.end());
         }
@@ -84,6 +90,16 @@ static GraphBlobs inspect_param_graph(const std::string& path) {
         if (seen.insert(name).second && !graph.bottoms.count(name)) unique_tops.push_back(name);
     }
     graph.tops.swap(unique_tops);
+    if (graph.inputs.empty()) {
+        // A few hand-written NCNN graphs omit an explicit Input layer. Their
+        // external inputs are bottom blobs that are never produced by another
+        // layer; infer this only when the set is unambiguous.
+        std::set<std::string> external;
+        for (const auto& name : graph.bottoms) {
+            if (!graph.produced.count(name)) external.insert(name);
+        }
+        graph.inputs.assign(external.begin(), external.end());
+    }
     graph.parsed = header_seen && !graph.all.empty();
     return graph;
 }

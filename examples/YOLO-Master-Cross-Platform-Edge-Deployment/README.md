@@ -158,6 +158,14 @@ The backend is inferred from the model suffix (`.onnx`, `.mnn`, `.engine` or
 any single unambiguous `.param`/`.bin` pair; the conventional
 `model.ncnn.param`/`model.ncnn.bin` names remain supported.
 
+NCNN pnnx exports may use arbitrary blob names. The exporter writes those names
+to both `<param-stem>.metadata.yaml` and the shared `metadata.yaml` (the latter
+keeps older bundles compatible), and the runner validates them against the `.param` graph before
+inference. Without a sidecar, a unique graph endpoint can be inferred; graphs
+with multiple terminal outputs must provide the sidecar so detection and mask
+roles cannot be confused. A declared prototype is required and a missing one
+fails the run rather than silently producing box-only output.
+
 ```bash
 export LD_LIBRARY_PATH=/opt/onnxruntime/lib:/opt/ncnn/lib:${LD_LIBRARY_PATH:-}
 ./build-linux/yolomaster_edge \

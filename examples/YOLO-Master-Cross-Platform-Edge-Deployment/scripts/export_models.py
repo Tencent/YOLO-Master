@@ -559,6 +559,13 @@ def export_ncnn(model, args: argparse.Namespace, out_dir: Path) -> dict:
     metadata = _write_ncnn_metadata(
         destination, model, args.imgsz, input_blob, output_blob, proto_blob
     )
+    # Keep a per-model sidecar alongside the shared legacy filename.  This is
+    # important when several NCNN graphs are unpacked into one release
+    # directory: the C++ runtime gives the stem-specific file precedence and
+    # cannot accidentally apply another graph's blob names.
+    metadata_per_model = destination / f"{param_out.stem}.metadata.yaml"
+    if metadata_per_model.resolve() != metadata.resolve():
+        _copy_file(metadata, metadata_per_model)
     smoke = _ncnn_smoke_check(param_out, bin_out, args.imgsz)
     result = {
         "format": "ncnn",
@@ -566,6 +573,7 @@ def export_ncnn(model, args: argparse.Namespace, out_dir: Path) -> dict:
         "param": str(param_out),
         "bin": str(bin_out),
         "metadata": str(metadata),
+        "metadata_per_model": str(metadata_per_model),
         **_routing_record(router_count, esmoe_count, overlap_count),
         # Retain the detailed legacy keys for consumers of earlier summaries.
         "routing": {"routers_dense": router_count, "esmoe_dense": esmoe_count},
