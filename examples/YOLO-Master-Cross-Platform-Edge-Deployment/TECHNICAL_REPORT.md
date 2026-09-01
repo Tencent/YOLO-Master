@@ -196,8 +196,8 @@ graph checks and NCNN pair status. `--no-simplify` is retained for diagnosis
 only and requires `--allow-unsimplified`.
 
 NCNN conversion may emit names other than `in0` and `out0`. The exporter writes
-the actual input/output/prototype names to a sidecar (`<param-stem>.metadata.yaml`,
-with the shared `metadata.yaml` retained for compatibility). The runtime validates
+the actual input/output/prototype names to both `<param-stem>.metadata.yaml` and
+the shared `metadata.yaml` (the latter retains legacy compatibility). The runtime validates
 each declared name against the parsed `.param` graph before inference. When no
 sidecar is present it resolves a unique graph endpoint, retains the historical
 `in0`/`out0`/`out1` fallback, and fails closed when multiple terminal tensors make
