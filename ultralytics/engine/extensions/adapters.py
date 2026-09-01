@@ -246,7 +246,7 @@ class AdapterRuntimeController:
                 continue
             averaged = ema_modules.get(name)
             if not isinstance(averaged, type(online)):
-                raise ValueError(f"EMA fallback adapter layout differs at '{name}'.")
+                raise TypeError(f"EMA fallback adapter layout differs at '{name}'.")
             online_identity = (online.use_rslora, online.r, online.alpha)
             ema_identity = (averaged.use_rslora, averaged.r, averaged.alpha)
             if ema_identity != online_identity:
@@ -428,18 +428,13 @@ class AdapterRuntimeController:
         return cache
 
     def compute_hierarchical_distillation_loss(self, images, layer_indices):
-        """Compute attention-transfer loss for cached intermediate feature pairs."""
+        """Compute attention-transfer loss from the latest student and teacher forwards."""
         if not layer_indices:
             return torch.tensor(0.0, device=images.device)
         cache = getattr(self.trainer, "_hierarchical_cache", None) or self.init_hierarchical_distill_cache()
         teacher = getattr(self.trainer, "teacher_model", None)
         if cache is None or teacher is None:
             return torch.tensor(0.0, device=images.device)
-        cache["student_features"].clear()
-        cache["teacher_features"].clear()
-        with torch.no_grad():
-            self.model(images)
-            teacher(images)
         losses = []
         for index in layer_indices:
             student_feature = cache["student_features"].get(index)
@@ -465,6 +460,13 @@ class AdapterRuntimeController:
         teacher = getattr(self.trainer, "teacher_model", None)
         if not getattr(args, "lora_few_shot_mode", False) or teacher is None:
             return loss
+        layers = getattr(args, "lora_few_shot_distill_layers", None)
+        hierarchical = bool(getattr(args, "lora_few_shot_hierarchical_distill", False) and layers)
+        if hierarchical:
+            cache = getattr(self.trainer, "_hierarchical_cache", None) or self.init_hierarchical_distill_cache()
+            if cache is not None:
+                cache["student_features"].clear()
+                cache["teacher_features"].clear()
         student_predictions = self.trainer.model(images)
         with torch.no_grad():
             teacher_predictions = teacher(images)
@@ -477,8 +479,7 @@ class AdapterRuntimeController:
             distillation += float(getattr(args, "lora_few_shot_response_distill_weight", 0.3)) * (
                 self.compute_response_distillation_loss(student_predictions, teacher_predictions)
             )
-        layers = getattr(args, "lora_few_shot_distill_layers", None)
-        if getattr(args, "lora_few_shot_hierarchical_distill", False) and layers:
+        if hierarchical:
             distillation += 0.3 * self.compute_hierarchical_distillation_loss(images, layers)
         progress = epoch / max(self.trainer.epochs - 1, 1)
         maximum = float(getattr(args, "lora_few_shot_distill_weight_max", 1.0))

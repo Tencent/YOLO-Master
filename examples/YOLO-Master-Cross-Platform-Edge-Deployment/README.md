@@ -1,443 +1,379 @@
-# YOLO-Master Cross-Platform Edge Runtime
+# YOLO-Master Cross-Platform Edge Inference Runtime
 
-This example provides a C++17 inference runner and an auditable validation
-workflow for YOLO-Master detection models. The runner supports ONNX Runtime,
-NCNN and MNN; a native TensorRT 10 backend is optional on Jetson. The same preprocessing,
-decoding and class-aware NMS are used by every compiled backend.
+<img alt="C++" src="https://img.shields.io/badge/C++-17-blue.svg?style=flat&logo=c%2B%2B"> <img alt="Onnx-runtime" src="https://img.shields.io/badge/OnnxRuntime-717272.svg?logo=Onnx&logoColor=white"> <img alt="NCNN" src="https://img.shields.io/badge/NCNN-Tencent-blue.svg"> <img alt="MNN" src="https://img.shields.io/badge/MNN-Alibaba-orange.svg"> <img alt="TensorRT" src="https://img.shields.io/badge/TensorRT-NVIDIA-76B900.svg"> <img alt="Core ML" src="https://img.shields.io/badge/CoreML-Apple-black.svg"> <img alt="Linux" src="https://img.shields.io/badge/Linux-FCC624.svg?logo=linux&logoColor=black"> <img alt="Windows" src="https://img.shields.io/badge/Windows-0078D6.svg?logo=windows&logoColor=white"> <img alt="Jetson" src="https://img.shields.io/badge/Jetson%20Orin-76B900.svg?logo=nvidia&logoColor=white"> <img alt="macOS" src="https://img.shields.io/badge/macOS-000000.svg?logo=apple&logoColor=white"> <img alt="iOS" src="https://img.shields.io/badge/iOS-000000.svg?logo=apple&logoColor=white"> 
 
-The implementation is intended for Issue #51 (vertical-domain edge inference
-and consistency validation). It does not include a checkpoint, a dataset, or
-generated predictions. Consequently, this repository documents the procedure
-and supplies executable checks; numerical accuracy and latency claims require
-an evidence manifest and the raw artifacts described below.
+This project provides a cross-platform inference runtime for [YOLO-Master](https://github.com/Tencent/YOLO-Master) object-detection models using [ONNX Runtime](https://onnxruntime.ai/), [NCNN](https://github.com/Tencent/ncnn), [MNN](https://github.com/alibaba/mnn), [TensorRT](https://github.com/nvidia/tensorrt), and [Core ML](https://github.com/apple/coremltools) backends. The supported targets are Linux, Windows 10/11, Jetson, and macOS, with CPU, [NVIDIA CUDA](https://developer.nvidia.com/cuda-toolkit), and [Apple Metal Performance Shaders](https://developer.apple.com/documentation/metalperformanceshaders) execution where available. The runtime can infer the model format and read class names and input size from model metadata.
+This project provides a universal inference runtime for [YOLO-Master](https://github.com/Tencent/YOLO-Master) object-detection models, leveraging, [ONNX Runtime](https://onnxruntime.ai/), [NCNN](https://github.com/Tencent/ncnn), [MNN](https://github.com/alibaba/mnn), [TensorRT](https://github.com/nvidia/tensorrt), and [CoreML](https://github.com/apple/coremltools) backends. It runs on almost every platform: Linux, Windows (10/11), Jetson, MacOS, and **iOS (NEW!)**; supports CPU, [CUDA](https://developer.nvidia.com/cuda-toolkit), [MPS](https://developer.apple.com/documentation/metalperformanceshaders), and [ANE (on Apple devices）](https://machinelearning.apple.com). It's capable of auto-detecting the model format, class names, and input size -- designed for real-time, end-to-end edge deployment in some of the most challenging tasks (VisDrone, SKU-110K, AI-TOD-v2, etc.).
 
-## Verification scope
+## Issue #51 validation bundle
 
-The current checkout deliberately separates software verification from a
-model-specific experiment. This makes the status visible before a reviewer
-attempts a reproduction:
+This checkout also contains an evidence-first validation workflow for Issue #51.
+The [Chinese technical summary](TECHNICAL_SUMMARY_ZH.md) and
+[technical report](TECHNICAL_REPORT.md) define the reproducible protocol,
+machine-readable manifests, and platform records. The repository provides the
+runner and validation gates; it does not include private checkpoints, datasets,
+or generated predictions. Therefore, numerical accuracy, latency, INT8, and
+ARM64 claims must be reported only with the corresponding hashes and raw logs.
 
-| Level | Evidence available here | Permitted conclusion |
-| --- | --- | --- |
-| L0 | Contract tests, exporter checks, evaluator and manifest validation | Interfaces and acceptance gates are executable |
-| L1 | Ubuntu 22.04 x86_64 ONNX single-image smoke | The runtime can load and execute a compatible graph |
-| L2 | 500+ fixed validation images and reference metrics | Requires a user-supplied EsMoE-N checkpoint and dataset |
-| L3 | 300+ disjoint calibration images and INT8 metrics | Requires a completed INT8 run |
-| L4 | Native second-platform build and raw benchmark log | Requires the target platform |
+<p align="left">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/skywalker-lt/yolo-master-edge/dev/ios/assets/edge_deployment_architecture_dark.png">
+    <img src="https://raw.githubusercontent.com/skywalker-lt/yolo-master-edge/dev/ios/assets/edge_deployment_architecture_light.png" width="900" alt="Edge Deployment Bundle — Architecture">
+  </picture>
+</p>
 
-The L1 smoke model is YOLOv5s, not EsMoE-N. No mAP, FPS, hardware or
-quantization value from another Issue #51 submission is reused as a result for
-this checkout.
+---
 
-## Contents
+## 📱 Update (27-08-2026): YOLO-Master for iPhone v1.1.0 Beta Build 1
 
-| Path | Purpose |
-| --- | --- |
-| `cpp/` | Full C++17 runner, backend adapters and annotation export |
-| `scripts/export_models.py` | Static ONNX and NCNN export checks |
-| `scripts/eval_map.py` | Ultralytics-compatible mAP50/mAP50-95 evaluator |
-| `scripts/eval_map_standalone.py` | Dependency-light evaluator for offline use |
-| `scripts/mnn_val.py`, `scripts/mnn_parity.py` | MNN predictions and tensor parity |
-| `scripts/prediction_diff.py` | Per-image box matching and discrepancy report |
-| `scripts/quantize_int8.py` | Deterministic, training-only calibration helper |
-| `scripts/evidence_manifest.py` | SHA256-pinned experiment manifest and verifier |
-| `scripts/collect_environment.py` | Dependency-free host, compiler, SDK and runtime metadata collector |
-| `evidence-manifest.schema.json` | Machine-readable evidence contract |
-| `environment.schema.json` | Schema for the host/toolchain record |
-| `jetson/` | Optional native TensorRT build and packaging scripts |
+<img width="4812" height="2291" alt="screnshots-framed" src="https://github.com/user-attachments/assets/e858e07b-eeff-40c2-b11a-dcb4dba44577" />
 
-The sibling [`YOLO-Master-Edge-Deployment`](../YOLO-Master-Edge-Deployment/)
-directory is a dependency-light scaffold. It is useful for checking the
-Python and CMake interfaces, but it does not replace the full runner.
+<br>
+<br>
 
-## Canonical evaluation protocol
+**🍾 Welcome to the 5th platform of YOLO-Master Edge. [Try it now.](https://testflight.apple.com/join/EVExpVHD)**
 
-The following values are the defaults of the explicit profiles. They are
-recorded in the console header and in every JSON result so that an override is
-visible in a review.
+Native iOS SwiftUI app for on-device YOLO-Master detection and segmentation, powered by Apple Core ML and the same YOLOMasterKit inference path as the macOS runtime. Everything runs locally on the Neural Engine, GPU, or CPU. Nothing you capture leaves the iPhone. Requires iPhone on iOS 17 or later. iPhone 13 and later models are recommended. 
 
-| Profile | Input | Confidence | IoU | Max detections | Decode |
-| --- | ---: | ---: | ---: | ---: | --- |
-| `visdrone` | 640 x 640 | 0.001 | 0.70 | 300 | multi-label, letterbox |
-| `sku110k` | 1280 x 1280 | 0.25 | 0.60 | 300 | model-specific |
+### Features
 
-For VisDrone, inputs are resized with centered letterbox padding (value 114),
-converted BGR to RGB, packed as NCHW and normalized by 255.0. The profile also
-selects the canonical ten-class mapping when `--classes auto` is used. If model
-metadata declares a different class count, the runner stops with an actionable
-error instead of silently decoding the tensor with the wrong mapping.
+- **📹 Live** - Real-time camera detection with a dynamic performance visuliaztion (FPS tachometer, per-stage latency measures, and phone's thermal state), multi-cam with automatic lens switching and pinch zoom, tap-to-focus, torch, and a full-resolution shutter that renders the live overlay (boxes and segmentation masks) into the saved photo. Also supports live IoU/conf tuning without pausing the inference. 
 
-These values define the conservative `visdrone` profile implemented by this
-runner. Public Issue #51 reports use more than one input size and threshold
-configuration, so their numerical results are not interchangeable with this
-profile. Record any override in the metric JSON and compare only runs with
-matching protocol metadata.
+- **📸 Photo** - Batch detection over images you pick from your library, up to 100 images at a time. Per-image and batch stats, segmentation masks, live conf/IoU tuning, and export of annotated images back to Photos.
 
-The canonical profile records `small_conf=-1` (disabled) and
-`small_area=1024` in the evidence manifest. If a small-object NMS sweep is
-enabled, both values must be supplied to the manifest and to every evaluator;
-otherwise the comparison is considered a different protocol.
+- **🎛️ Bench** - On-device benchmarking on all devices. A Cold Sweep measures every bundled model across compute units (Neural Engine (ANE), GPU, CPU) with expandable pre/inference/decode stage breakdowns, and a Sustained mode runs a thermal-throttle test with a live latency heatbeat sparkline and a colored state timeline. Pause/resume, a persistent run History vault (with per-run graphs) and CSV export.
 
-For EsMoE checkpoints, also record the routing semantics. The export helper
-uses `dense_fallback` for static ONNX/NCNN graphs; a PyTorch reference run must
-use the same semantics before an accuracy delta is interpreted. Use
-`native_sparse` only when the backend preserves top-k dispatch and the run has
-been independently validated.
+- **⚙️ Settings** - App info and an expandable About card (wihich explains the MoE architecture summary with Paper, Model / App Repo links), Licenses and Acknowledgements (from macOS build), a Privacy and Security summary, a CPU-inference opt-in for Live and Photo modes, erase-all benchmark history, and a Beta importer for your own trained Core ML models (.mlpackage / .mlmodelc / .mlmodel).
 
-## Dependencies
+### Performance
 
-For an Ubuntu 22.04 x86_64 build, install the system tools and development
-headers first:
+All data are measured under Live mode on ANE with `YOLO-Master-v0.1-N` (COCO) for 3 min.
 
-```bash
-sudo apt-get update
-sudo apt-get install -y build-essential cmake pkg-config libopencv-dev python3
+| iPhone Model | SoC | End-to-end FPS | Thermal State after 1 min |
+|---|---|---|---|
+| iPhone 17 Pro Max | A19 Pro | 51 | 🟢 |
+| iPhone Air | A19 Pro | 36 | 🟠 |
+| iPhone 15 Pro Max | A17 Pro | 42 | 🟠 |
+
+### Install (Public Beta)
+
+The app is distributed through TestFlight. Install the TestFlight app on App Store, then open the invite link below to start testing it: 
+
+https://testflight.apple.com/join/EVExpVHD
+
+### Build from source
+
+```zsh
+brew install xcodegen
+cd ios && xcodegen # this generates YOLOMasterIOS.xcodeproj
 ```
 
-Provide SDK roots for the backends that will be compiled:
+Drop your Core ML models into directory `ios/Models/`, set your signing team ID in `ios/project.yml`, open the project, and run. See `ios/README.md` for details.
 
-* ONNX Runtime: an SDK containing `include/onnxruntime_cxx_api.h` and
-  `lib/libonnxruntime.so*`.
-* NCNN: an install tree containing `include/ncnn/net.h` and `lib/libncnn.*`.
-* MNN (optional): an install tree containing `include/MNN/Interpreter.hpp` and
-  `lib/libMNN.*`.
+### Privacy & License (iOS App Update)
 
-The exact SDK versions, compiler, operating system and CPU must be recorded in
-the evidence manifest. CUDA, Vulkan, OpenCL and TensorRT are optional and must
-match the runtime SDK used for the build. The native TensorRT runner uses the
-TensorRT 10 named-I/O API; TensorRT 8 targets should use the ONNX Runtime
-TensorRT execution provider instead.
+The app has no internet connection. No data leaves the device, and we don't collect anything. See PRIVACY.md for detailed terms. 
 
-Capture the host and toolchain record before a build or benchmark with the
-dependency-free collector below. It records values exposed by the current
-machine and marks unavailable optional tools as `available=false`; it does not
-infer GPU or SDK versions.
+The app is licensed under AGPL-3.0, consistent with YOLO-Master and Ultralytics; coremltools is BSD-3-Clause. It is released for research and personal experience only, and any direct commercial use of this app is prohibited. 
 
-```bash
-python3 scripts/collect_environment.py \
-  --repo-root . --backend onnx --execution-provider cpu \
-  --threads 4 --warmup 2 --runs 20 \
-  --onnxruntime-root /opt/onnxruntime --ncnn-root /opt/ncnn \
-  --output artifacts/environment.json
+---
+
+## 🚀 Update (12-08-2026): YOLO-Master Edge v1.1.0 is up!
+
+**One release, every platform: [macOS](https://github.com/skywalker-lt/yolo-master-edge/releases/download/v1.1.0/yolomaster-edge-mac-1.1.0.zip) / Windows [CPU](https://github.com/skywalker-lt/yolo-master-edge/releases/download/v1.1.0/yolomaster-edge-win-x64-1.1.0.zip) + [CUDA](https://github.com/skywalker-lt/yolo-master-edge/releases/download/v1.1.0/yolomaster-edge-win-x64-gpu_cuda12-1.1.0.zip) / Linux [CPU](https://github.com/skywalker-lt/yolo-master-edge/releases/download/v1.1.0/yolomaster-edge-linux-x64-1.1.0.tar.gz) + [CUDA](https://github.com/skywalker-lt/yolo-master-edge/releases/download/v1.1.0/yolomaster-edge-linux-x64-gpu_cuda12-1.1.0.tar.gz) / [Jetson Orin](https://github.com/skywalker-lt/yolo-master-edge/releases/download/v1.1.0/yolomaster-edge-jetson-orin-1.1.0.tar.gz).**
+
+v1.1.0 brings the same feature set to all runners (macOS / Windows GUIs, Linux and Jetson TensorRT CLIs):
+
+- **🔪 Slicing (Sparse SAHI):** sliced inference for small objects on large images, a faithful port of upstream [YOLO-Master](https://github.com/Tencent/YOLO-Master)'s Sparse SAHI Mode plus a traditional dense-tiling variant, with adjustable tile size and per-run statistics.
+- **🍇 Cluster-Weighted NMS:** a new NMS mode that refines each box as the weighted average of its detection cluster; tunable sigma, live everywhere including the webcam.
+- **📤 Annotation export:** turn detections into training data as **YOLO TXT / COCO JSON / Pascal VOC XML** from images, folders, or videos (with frame sampling); segmentation models export real mask polygons. Rendered images and annotated videos export too.
+- **🔎 Zoom & pan on GUI:** cursor-anchored zoom up to 8x on images and paused video in both GUIs.
+- **📦 New: prebuilt Linux x86_64 bundles** (self-contained, glibc 2.35+, all three backends + ffmpeg video) and a **Jetson Orin bundle** with the TensorRT backend now supporting the full feature set.
+
+<br>
+
+<img height="380" alt="Screenshot 2026-08-12 at 5 35 43 PM" src="https://github.com/user-attachments/assets/6cb59d23-76e1-43b4-93f6-4302290a0e8a" /> <img height="380" alt="Screenshot 2026-08-12 at 5 36 12 PM" src="https://github.com/user-attachments/assets/27a60aee-a587-47e1-be93-e404e70b932d" />
+
+<br>
+
+**Full notes: [Release Page](https://github.com/skywalker-lt/yolo-master-edge/releases/tag/v1.1.0).**
+
+---
+
+## ✨ Update (27-07-2026): YOLO-Master Windows 10/11 Runner (**GUI**) on ONNX/ncnn/MNN backends with **GPU Acceleration**
+**Download the [CPU runner](https://github.com/skywalker-lt/yolo-master-edge/releases/download/v1.0.0-windows/YOLO-Master-Windows-1.0.0.zip) / [CUDA runner](https://github.com/skywalker-lt/yolo-master-edge/releases/download/v1.0.0-windows/YOLO-Master-Windows-CUDA-1.0.0.zip).**
+
+Now the Windows C++ edge runner has an improved backend and dedicated GUI. **YOLO-Master Windows Runner GUI** provides a C++ edge inference backend that bundles [ONNX](https://onnxruntime.ai/), [ncnn](https://github.com/Tencent/ncnn), and [MNN](https://github.com/alibaba/MNN) with **GPU acceleration**, together with a [Dear ImGui](https://github.com/ocornut/imgui) frontend. It includes the same default `YOLO-Master-v0.1-seg-N` segmentation model as the macOS runner.
+
+<br>
+
+<img width="400" alt="48 2" src="https://github.com/user-attachments/assets/fa96097b-1014-46c0-8692-2c3656f4f763" />  <img width="400" alt="50 2" src="https://github.com/user-attachments/assets/db1e2194-584e-4898-b2b3-e7370fa325c5" />
+<img width="800" alt="49 2" src="https://github.com/user-attachments/assets/6a438094-b352-4f59-bb55-9e3c600837ad" />
+
+<br>
+
+- **Three Backends in One App** ONNX, ncnn, and MNN all ship in single executable. Inference backends can be switched with a single click.
+- **GPU Acceleration for All Backends** up to **4x speedup** with CUDA-accelerated inference on consumer devices. (please refer to the inference speed comparison table in [Relases](https://github.com/skywalker-lt/yolo-master-edge/releases/tag/v1.0.0-windows)) 
+
+See the [Windows release notes](https://github.com/skywalker-lt/yolo-master-edge/releases/tag/v1.0.0-windows) for build and benchmark details.
+
+---
+
+## 🍎 Update (17-07-2026): YOLO-Master Core ML Runner for macOS (GUI)
+
+**[Download](https://github.com/skywalker-lt/yolo-master-edge/releases/download/v1.0.0-macos/YOLO-Master-CoreML-Runner-1.0.0.zip) and try it now!**
+
+Alongside the Linux and Windows C++ runtimes, this project provides a native macOS runner, **YOLO-Master Core ML Runner**: a [SwiftUI](https://developer.apple.com/xcode/swiftui/) frontend over an Apple [Core ML](https://developer.apple.com/documentation/coreml) backend for on-device [YOLO-Master](https://github.com/Tencent/YOLO-Master) inference. It ships with a default `YOLO-Master-v0.1-seg-N` segmentation model for an immediate smoke test.
+
+<img width="400" alt="Screenshot1" src="https://github.com/user-attachments/assets/d1747b4d-0961-458e-99c5-2a9870b8df96" /> <img width="400" alt="Screenshot2" src="https://github.com/user-attachments/assets/5f71d80a-6238-49bd-a230-95ccd4020d29" /> 
+<img width="400" alt="Screenshot3" src="https://github.com/user-attachments/assets/9cc60636-b795-4326-992c-06239a77db55" /> <img width="400" alt="Screenshot4" src="https://github.com/user-attachments/assets/b5ee48bb-52dc-4ff7-b0bd-f2461b34ad7c" />
+
+- **Detection & Segmentation:** Runs both bounding-box detectors and instance-segmentation models, with anti-aliased mask overlays and a Masks / Boxes / Both toggle.
+- **Images, Video & Live Camera:** Infers single images, whole folders (batch), and MP4 video, plus a low-latency **live webcam** mode with a real-time FPS / ms-per-frame readout.
+- **⭐️ Real-Time Tuning:** Confidence, IoU, box style, labels, and letterbox/stretch preprocessing are adjustable at runtime. The forward pass is cached, so tuning redraws without rerunning inference.
+- **Signed & Notarized:** A **universal** (Apple Silicon + Intel) bundle, **Developer-ID signed and notarized by Apple**; it installs by double-clicking on macOS 14+.
+
+See the [macOS release notes](https://github.com/skywalker-lt/yolo-master-edge/releases/tag/v1.0.0-macos) for build and distribution details.
+
+---
+
+## ✨ Benefits
+
+- **Universal CLI Binary for Linux and Windows:** A single executable integrates **ONNX Runtime**, **NCNN** and **MNN** backends; the backend, class names, and input size are auto-detected from the model — no recompilation or any dataset YAML needed at runtime.
+- **Verified Accuracy:** Reproduces the PyTorch original to **< 0.5%** mAP50-95 across ONNX / NCNN / MNN, and **< 1.0%** under INT8 quantization, on 548 VisDrone validation images.
+- **Deployment-Friendly:** Cross-platform [CMake](https://cmake.org/) build producing **self-contained and relocatable bundles** for Linux x86_64 and Windows 10/11 — installable by unzip, no dependencies on the target.
+- **GUI:** Windows 10/11 and macOS provide GUI runners that integrate the CLI bundle functionality and support GPU acceleration.
+- **GPU Acceleration:** Supports FP32 CPU inference and [NVIDIA CUDA](https://developer.nvidia.com/cuda-toolkit) through the ONNX Runtime CUDA Execution Provider on Linux and Windows; Windows also supports NCNN [Vulkan](https://vulkan.org) and MNN [OpenCL](https://opencl.org), NVIDIA Jetson Orin supports a native TensorRT backend (JetPack 7), and macOS uses [MPS](https://developer.apple.com/documentation/metalperformanceshaders) through Core ML.
+
+## ☕ Note
+
+The exported models embed their class names, input size, and stride as ONNX/NCNN/MNN metadata, so the runtime configures itself from the model file. Post-processing is tuned for the vertical domain — aspect-ratio-preserving letterbox, per-class **multi-label** NMS, and a low default confidence threshold appropriate for VisDrone's small, dense objects.
+
+## 📦 Exporting Models
+
+Pre-built models (trained on VisDrone) are attached to the [Releases](https://github.com/skywalker-lt/yolo-master-edge/releases) page. To export your own trained [YOLO-Master](https://github.com/Tencent/YOLO-Master) checkpoint, use the Ultralytics `export` mode.
+
+### ONNX
+
+```python
+from ultralytics import YOLO
+
+# Load a trained YOLO-Master-EsMoE-N checkpoint
+model = YOLO("EsMoE-N_VisDrone.pt")
+
+# opset=12 for broad compatibility (ORT + NCNN + MNN)
+# simplify=True runs onnxsim; dynamic=False fixes the input shape for C++ deployment
+model.export(format="onnx", opset=12, simplify=True, dynamic=False, imgsz=640)
 ```
 
-The output follows [`environment.schema.json`](environment.schema.json). Keep it
-with the immutable evidence bundle and add it to the manifest with
-`--report environment=artifacts/environment.json`; it complements, rather than
-replaces, the manifest's model, image, prediction and report hashes.
-
-## Build the runner
-
-From this directory, configure only the SDKs that are present. The
-`REQUIRE_*` options are recommended for a release build because they turn a
-missing backend into a configuration error.
+### NCNN (via pnnx) and MNN
 
 ```bash
-cmake -S cpp -B build-linux -DCMAKE_BUILD_TYPE=Release \
-  -DONNXRUNTIME_ROOT=/opt/onnxruntime \
-  -DNCNN_ROOT=/opt/ncnn \
-  -DREQUIRE_ORT=ON -DREQUIRE_NCNN=ON \
-  -DALLOW_NO_BACKENDS=OFF
-cmake --build build-linux -j"$(nproc)"
+# NCNN — Ultralytics uses pnnx under the hood
+yolo export model=EsMoE-N_VisDrone.pt format=ncnn imgsz=640
+
+# MNN — convert the exported ONNX with MNN's converter
+mnnconvert -f ONNX --modelFile esmoe_n_visdrone_sim.onnx --MNNModel esmoe_n_visdrone.mnn --bizCode edge
 ```
 
-Add `-DMNN_ROOT=/opt/mnn -DREQUIRE_MNN=ON` when MNN is part of the comparison.
-For a dependency-light argument/CSV check, omit the SDK roots and set
-`-DALLOW_NO_BACKENDS=ON`. `-DPORTABLE=ON` removes video support and links only
-the OpenCV modules needed for still images.
+For more details on exporting, refer to the [Ultralytics Export documentation](https://docs.ultralytics.com/modes/export/).
 
-The supplied `aarch64-toolchain.cmake` can be used with an external ARM64
-sysroot. A native Jetson TensorRT build is documented in `jetson/README.md`.
-The Windows build uses the same CMake target; pass `-DOpenCV_DIR` and the
-Windows SDK roots from an x64 developer prompt.
+### Core ML
 
-## Run inference
+```zsh
+# detector or segmenter (task auto-detected)
+python coreml_export/export_coreml.py --weights model.pt --imgsz 640 --out model.mlpackage
 
-The backend is inferred from the model suffix (`.onnx`, `.mnn`, `.engine` or
-`.trt`) or from an NCNN directory/`.param` file. NCNN directories may contain
-any single unambiguous `.param`/`.bin` pair; the conventional
-`model.ncnn.param`/`model.ncnn.bin` names remain supported.
+# YOLO-Master default imgsz is 800 for AI-TOD models — pass --imgsz accordingly
+python coreml_export/export_coreml.py --weights yolo-master-v0.1-N_aitodv2.pt --imgsz 800 --out v0.1-N.mlpackage
 
-NCNN pnnx exports may use arbitrary blob names. The exporter writes those names
-to both `<param-stem>.metadata.yaml` and the shared `metadata.yaml` (the latter
-keeps older bundles compatible), and the runner validates them against the `.param` graph before
-inference. Without a sidecar, a unique graph endpoint can be inferred; graphs
-with multiple terminal outputs must provide the sidecar so detection and mask
-roles cannot be confused. A declared prototype is required and a missing one
-fails the run rather than silently producing box-only output.
+# sunsmarterjie/yolov12 checkpoints (split qk+v area-attention) — stock ultralytics + the flag
+python coreml_export/export_coreml.py --weights yolov12x.pt --imgsz 640 --out yolov12x.mlpackage --yolov12-aattn
+
+# a LoRA fine-tune: merge the trained adapters first
+python coreml_export/export_coreml.py --weights base.pt --merge-lora-dir lora_adapter/ --imgsz 640 --out ft.mlpackage
+```
+
+
+## ⚙️ Dependencies
+
+Ensure you have the following dependencies installed (not required if you only want to smoke-test the pre-built bundles):
+
+### Linux & Windows
+
+| Dependency                                                          | Version       | Notes                                                                                                          |
+| :------------------------------------------------------------------ | :------------ | :------------------------------------------------------------------------------------------------------------- |
+| [ONNX Runtime](https://onnxruntime.ai/docs/install/)                | >=1.18        | Download pre-built binaries or build from source. Use the GPU build for the CUDA Execution Provider.           |
+| [NCNN](https://github.com/Tencent/ncnn/releases)                    | recent        | Tencent NCNN; on Windows use the `windows-vs2022` prebuilt.                                                     |
+| [OpenCV](https://opencv.org/releases/)                              | >=4.5.0       | Used for image preprocessing (`core` + `imgproc`).                                                             |
+| C++ Compiler                                                        | C++17 Support | Needed for `<filesystem>`. ([GCC](https://gcc.gnu.org/), [Clang](https://clang.llvm.org/), MSVC 2022/2026)      |
+| [CMake](https://cmake.org/download/)                                | >=3.16        | Cross-platform build system generator.                                                                         |
+| [CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit) (Optional)| 12.x          | Required for GPU acceleration via ONNX Runtime's CUDA Execution Provider (match your ONNX Runtime GPU build).   |
+| [MNN](https://github.com/alibaba/MNN) (Optional)                    | >=3.0         | Only for the third export format / benchmarking.                                                               |
+
+> **Note:** The CUDA Execution Provider is ABI-coupled to a CUDA major version — use the ONNX Runtime GPU build that matches your CUDA Toolkit (e.g. the CUDA-12 build with CUDA 12.x), or you'll hit loader errors.
+
+
+### macOS
+|                                                         | Version       | Notes                                                                                                          |
+| :------------------------------------------------------------------ | :------------ | :------------------------------------------------------------------------------------------------------------- |
+| macOS | Sonoma or newer (14.0+) | SwiftUI API floor (onKeyPress, zero-param onChange)  |
+| [Xcode Command Line Tools](https://developer.apple.com/documentation/xcode/installing-the-command-line-tools/) | Xcode 15+    | Install with xcode-select --install. Provides swift, codesign, ditto. Full Xcode GUI not required for a build.   |
+| [Swift toolchain](https://www.swift.org/swiftly/documentation/swiftly/install-toolchains/) | 5.9+  | swift-tools-version:5.9 in Package.swift; ships with the CLT/Xcode above. Build: swift build -c release --package-path mac. |       
+| Apple SDK frameworks | macOS 14+ SDK (system) | SwiftUI, AppKit, AVFoundation, Core ML, Core Image, Core Video, ImageIO, QuartzCore, etc. |
+
+
+## 🛠️ Build Instructions
+
+### CLI (Linux & Windows)
+
+1.  **Clone the Repository:**
+
+    ```bash
+    git clone https://github.com/skywalker-lt/yolo-master-edge.git
+    cd yolo-master-edge/cpp
+    ```
+
+2.  **Create Build Directory:**
+
+    ```bash
+    mkdir build && cd build
+    ```
+
+3.  **Configure with CMake:**
+    Point CMake at your extracted ONNX Runtime and NCNN SDKs via `ONNXRUNTIME_ROOT` and `NCNN_ROOT`.
+
+    ```bash
+    # Example for Linux (adjust paths as needed)
+    cmake .. -DCMAKE_BUILD_TYPE=Release \
+      -DONNXRUNTIME_ROOT=/path/to/onnxruntime \
+      -DNCNN_ROOT=/path/to/ncnn
+    ```
+
+    ```bat
+    :: Example for Windows, from the "x64 Native Tools Command Prompt"
+    cmake .. -DCMAKE_BUILD_TYPE=Release ^
+      -DOpenCV_DIR=C:/dev/opencv/build/x64/vc16/lib ^
+      -DONNXRUNTIME_ROOT=C:/dev/onnxruntime-win-x64 ^
+      -DNCNN_ROOT=C:/dev/ncnn-windows-vs2022/x64
+    ```
+
+    **CMake Options:**
+    - `-DONNXRUNTIME_ROOT=<path>`: **(Required)** Path to the extracted ONNX Runtime library.
+    - `-DNCNN_ROOT=<path>`: **(Required)** Path to the extracted NCNN library.
+    - `-DCMAKE_BUILD_TYPE=Release`: (Optional) Build with optimizations.
+    - `-DPORTABLE=ON`: (Optional, Linux) Slim build for a small self-contained bundle (image inference only).
+    - If CMake struggles to find OpenCV, set `-DOpenCV_DIR=/path/to/opencv/build`.
+
+4.  **Build the Project:**
+    Use the build tool generated by CMake (Make, Ninja, or Visual Studio).
+
+    ```bash
+    # Using CMake's generic build command (works with Make, Ninja, MSBuild)
+    cmake --build . --config Release
+    ```
+
+5.  **Locate Executable:**
+    The compiled executable (`yolomaster_edge`, or `yolomaster_edge.exe` on Windows) is located in the `build` directory. On Windows the required backend and OpenCV DLLs are auto-copied next to it.
+
+### Windows GUI (with CUDA)
+
+1. **Clone the Repository**
+   ```shell
+   git clone https://github.com/skywalker-lt/yolo-master-edge.git
+   cd yolo-master-edge/gui
+   ```
+   
+2. **Copy and Edit the Paths**
+   ```bat
+   copy sdk-paths.example.cmd sdk-paths.cmd
+   ```
+   Edit `sdk-paths.cmd` with your locations. It is gitignored. Leave a backend blank to skip it.
+   
+4. **Build**
+   ```bat
+   build.cmd            :: configure + build Release
+   build.cmd run        :: build, then launch
+   build.cmd clean      :: wipe build\ first
+   ```
+   Output: `gui\build\Release\yolomaster_gui.exe`
+
+   > If PowerShell blocks `.ps1` scripts, use `.cmd` scripts as they are not subject to execution policy. `build.ps1` is equivalent and takes the same paths as parameters.   
+   
+### macOS
+
+1.  **Clone the Repository:**
+    ```bash
+    git clone https://github.com/skywalker-lt/yolo-master-edge.git
+    cd yolo-master-edge/cpp
+    ```
+
+2.  **Build the App and Run** 
+    ```zsh
+    xcode-select --install
+    swift run -c release --package-path mac YOLOMasterApp
+    ```
+
+## 🚀 Usage (CLI)
+
+Run the executable, pointing it at a model and a source (image, directory, video, or `dataset.yaml`):
 
 ```bash
-export LD_LIBRARY_PATH=/opt/onnxruntime/lib:/opt/ncnn/lib:${LD_LIBRARY_PATH:-}
-./build-linux/yolomaster_edge \
-  --model /data/models/esmoe_n_visdrone.onnx \
-  --source artifacts/visdrone-val.list \
-  --profile visdrone --classes auto \
-  --threads 4 --out artifacts/onnx_rendered \
-  --save-txt artifacts/onnx_txt \
-  --csv artifacts/onnx_timing.csv
+./yolomaster_edge --model ../../models/esmoe_n_visdrone_sim.onnx \
+                  --source path/to/image_or_dir \
+                  --conf 0.25 --out out
 ```
 
-The list in this example is generated in step 2 of the evidence workflow below;
-for an exploratory run it may be replaced with `/data/VisDrone/images/val`.
-
-`--source` accepts a directory, a single image, a dataset YAML, or a UTF-8
-newline-delimited `.txt`/`.list` image list. A list is resolved relative to its own directory
-and preserves line order; blank lines and lines beginning with `#` are ignored.
-For dataset YAML input, the `val` field may name one directory/list/image or
-provide a YAML sequence of those entries; all resolved images are checked for
-unique stems before inference.
-The runner rejects missing files, unsupported extensions and duplicate filename
-stems so that per-image prediction files remain one-to-one with the manifest.
-
-Useful options are:
+The backend is inferred from the model (`.onnx` → ONNX Runtime, an NCNN directory or `.param` → NCNN, `.mnn` → MNN, `.engine`/`.trt` → TensorRT), and class names and input size are read from model metadata. Common options:
 
 ```text
---backend auto|onnx|ncnn|mnn|trt
---device cpu|cuda|vulkan|opencl|trt|coreml
---profile default|visdrone|sku110k
---imgsz N --conf F --iou F --max-det N
---small-conf F --small-area A  (optional area-adaptive floor for small objects)
---multi-label or --single-label
---warmup N --runs N --threads N --csv PATH
---save-txt DIR --out DIR --no-save --quiet
+--backend      auto | onnx | ncnn | mnn | trt (default: auto-detect)
+--device       backend-dependent: cpu, cuda, vulkan, opencl, trt, coreml
+--conf         confidence threshold      (default 0.25; lower for dense scenes)
+--iou          NMS IoU threshold         (default 0.50)
+--multi-label  one detection per class >= conf per anchor (matches Ultralytics val mAP)
+--save-txt     dir to write predictions  ('class conf x1 y1 x2 y2')
+--out          dir for annotated outputs  --no-save / --quiet
 ```
 
-The run header prints the resolved backend, execution provider, class source,
-input size and all post-processing parameters. A non-zero exit status means
-that at least one input or output could not be processed; the summary lists
-the failed paths.
+See `tests/run_tests.sh` for the 16-test robustness battery.
 
-For dense small-object splits, `--small-conf F --small-area A` applies `F`
-(clamped to the global `--conf` value) to boxes whose original-image area is
-below `A` pixels squared. The rule is evaluated before NMS and is implemented
-identically by the C++ runner and `scripts/mnn_val.py`; it is disabled by
-default. Record both values in the metric manifest when using an area-adaptive
-NMS sweep.
+## 🤖 Jetson Orin (Native TensorRT)
 
-## Export models
-
-Use a real YOLO-Master checkpoint and keep its SHA256. The exporter fixes the
-input shape, runs ONNX checking/simplification by default and records whether
-the NCNN pair was loaded successfully.
+A prebuilt aarch64 runner for **Jetson Orin** (Nano / NX / AGX) on **JetPack 7** is attached to the [Releases](https://github.com/skywalker-lt/yolo-master-edge/releases) page. It bundles OpenCV and uses JetPack's TensorRT + CUDA; the per-device FP16 engine is built once with the included script.
 
 ```bash
-python3 scripts/export_models.py \
-  --model /data/checkpoints/best.pt \
-  --formats onnx ncnn --imgsz 640 \
-  --out-dir artifacts/exports
+tar xzf yolomaster_edge-jetson-orin-jp7.tar.gz && cd yolomaster_edge-jetson-orin-jp7
+./build_engine.sh    # builds the FP16 engine for this device (once, ~10-15 min)
+./yolomaster_edge --model models/esmoe_n_fp16.engine --source <img|dir> --classes visdrone --out out
 ```
 
-MNN conversion is intentionally separate because converter output alone is not
-runtime evidence:
+On an Orin Nano 4 GB the FP16 engine runs at **35.7 FPS** (27.8 ms) with **mAP50-95 0.2029 (−0.07 pp vs FP32)**. FP16 is the recommended target for this model because the area-attention path is not quantized, making INT8 both slower and less accurate here. To build from source, the [`jetson/`](jetson/) scripts drive the engine build and packaging; see [`jetson/README.md`](jetson/README.md) and [`jetson/DEPLOYMENT_LOG.md`](jetson/DEPLOYMENT_LOG.md).
 
-```bash
-mnnconvert -f ONNX \
-  --modelFile artifacts/exports/best.onnx \
-  --MNNModel artifacts/exports/best.mnn --bizCode edge
-```
+## 📊 Results
 
-Run `mnn_val.py` and the parity tool after conversion. Do not report an MNN or
-NCNN result from a file-existence check alone.
+Inference performed on full 548 VisDrone validation images against the PyTorch original (`mAP50-95 = 0.2036`), using identical settings (conf 0.001, NMS IoU 0.7, multi-label).
 
-## Evidence-first validation
+| Inference Backend | Device | mAP50-95 | Δ vs PyTorch | End-to-end Latency | FPS |
+| :------------------------ | :------- | :------- | :----------- | :------ | :---- |
+| ONNX | CPU | 0.2034 | −0.02 pp  | 40 ms | 25.0  |
+| ONNX (CUDA) | H200 SXM | 0.2033 | −0.03 pp | 7.8 ms  | 128   |
+| ONNX (CUDA) | RTX 5070Ti Laptop | 0.2033 | −0.03 pp  | 9.0 ms  | 111   |
+| NCNN | CPU | 0.2034 | −0.02 pp | 80 ms | 12.5  |
+| NCNN (Vulkan) | RTX 5070Ti Laptop | 0.2034 | −0.02 pp  | 20.2 ms | 49.5  |
+| MNN | CPU | 0.2034 | −0.02 pp | 74 ms | 13.5  |
+| MNN (OpenCL) | RTX 5070Ti Laptop | 0.2034 | −0.02 pp  | 19.1 ms | 52.4  |
+| INT8 mixed ¹ | CPU | 0.1952 | −0.84 pp | 137 ms  | 7.2   |
+| TensorRT FP16 | Jetson Orin Nano 4GB | 0.2029 | −0.07 pp | 27.8 ms | 35.7 |
+| Core ML | Apple M4 Max | N/A (no validator bundled) | N/A | 17.4 ms | 57.4  |
 
-A reproducible submission records the training provenance, evaluated image set,
-post-processing policy and raw outputs so that an independent reviewer can
-recompute each reported number. The workflow below follows that order and
-treats every metric as a function of the recorded inputs.
+CPU latencies are x86 @ 4 threads on one host; mAP is identical across FP32 formats because they are of the same graph. The Jetson row is a native TensorRT FP16 engine, measured on-device.
 
-1. Record the training provenance before export. At minimum, retain the
-   repository/model revision, dataset release and split, ten-class mapping,
-   epoch count, optimizer and learning-rate schedule, random seed,
-   deterministic-setting, software versions, routing semantics, and the
-   best-checkpoint SHA256.
-   A command skeleton is useful for the archive (replace values with the
-   actual run, rather than copying this example):
+> ¹ INT8 is *slower* than FP32 on CPU — its throughput payoff needs INT8 tensor cores, not x86 CPUs. The CPU INT8 result is **accuracy evidence** (−0.84 percentage points, within budget); on the actual accelerator, FP16 also wins on Orin because the attention path is not quantized (see the TensorRT row and [`TECHNICAL_REPORT.md`](TECHNICAL_REPORT.md) Section 9).
 
-   ```bash
-   yolo train model=<base-or-esmoe-yaml> data=<visdrone.yaml> \
-     epochs=<N> imgsz=640 seed=<SEED> deterministic=True \
-     project=artifacts/train name=esmoe_n_visdrone
-   sha256sum artifacts/train/esmoe_n_visdrone/weights/best.pt
-   ```
+See [`TECHNICAL_REPORT.md`](TECHNICAL_REPORT.md) for the full methodology, INT8 quantization deep-dive, and numerical parity analysis.
 
-   A final `--acceptance` manifest must additionally supply
-   `--training-metadata`, the exact `--command`, and at least one content-hashed
-   `--report` containing metrics or benchmark output. The validator also
-   requires non-empty Python/platform/machine/source-revision fields captured
-   from the execution environment.
 
-2. Materialize one ordered validation list and reuse it for every backend. A
-   standard VisDrone validation split has 548 images; an acceptance run must
-   contain at least 500. The list is part of the evidence, not an implicit
-   directory walk:
+## 🤝 Contributing
 
-   ```bash
-   mkdir -p artifacts
-   LC_ALL=C find /data/VisDrone/images/val -type f \
-     \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.bmp' \) \
-     | LC_ALL=C sort > artifacts/visdrone-val.list
-   test "$(wc -l < artifacts/visdrone-val.list)" -eq 548
-   ```
-
-   Reject duplicate filename stems. If the selected split is not the 548-image
-   release, record the actual count and the list digest in the manifest.
-3. Generate a diagnostic manifest after the input/export paths exist. Add the
-   label, prediction, calibration and report paths when producing the final
-   acceptance candidate:
-
-   ```bash
-   python3 scripts/evidence_manifest.py create \
-     --dataset visdrone --split val \
-      --images artifacts/visdrone-val.list \
-      --image-root /data/VisDrone/images/val \
-      --checkpoint /data/checkpoints/best.pt \
-      --model onnx_fp32=artifacts/exports/best.onnx \
-      --routing-semantics dense_fallback \
-      --output artifacts/onnx-evidence.json
-   ```
-
-4. Generate PyTorch/reference and backend predictions on exactly that list.
-   Keep the command line, runtime versions, raw TXT files and timing CSV. Use a
-   stable artifact naming scheme, for example `pytorch`, `onnx_fp32`,
-   `ncnn_fp32`, `mnn_fp32` and `mnn_int8`; each directory must contain one TXT
-   file per listed image, including an empty file when no detection is emitted.
-   Both mAP evaluators accept the directory or the frozen list via `--images`;
-   the list form preserves the recorded order verbatim.
-5. Evaluate the same files with an explicit absolute percentage-point budget:
-
-   ```bash
-   python3 scripts/eval_map.py \
-     --preds artifacts/onnx_txt \
-      --images artifacts/visdrone-val.list \
-      --image-root /data/VisDrone/images/val \
-      --labels /data/VisDrone/labels/val \
-      --classes visdrone --label-format yolo \
-      --routing-semantics dense_fallback \
-      --min-images 500 --reference-json artifacts/pytorch_map.json \
-      --max-abs-delta-pp 0.5 --json artifacts/onnx_map.json
-   ```
-
-   The evaluator reports both `delta_mAP50-95_pp` (percentage points) and
-   `delta_mAP50-95_pct` (relative percent). It records
-   `image_manifest_sha256` for the ordered relative path list and
-   `image_list_sha256` for ordered relative paths plus each image's SHA256.
-   The latter matches `evidence_manifest.py`, so a same-name replacement
-   cannot pass the reference-metadata gate. The thresholds are gates, not
-   claims about an unmeasured model.
-6. For INT8, use at least 300 training images and pass
-   `--validation-images`; the quantizer checks content hashes and rejects any
-   overlap. Only a subsequent mAP run can mark an INT8 artifact acceptable.
-7. Verify the diagnostic bundle and publish the verification output together
-   with the metrics. For the final acceptance candidate, add
-   `--acceptance` here and when creating the manifest, after every required
-   artifact and provenance field is present:
-
-   ```bash
-   python3 scripts/evidence_manifest.py verify artifacts/onnx-evidence.json \
-       --acceptance \
-       --images-root /data/VisDrone/images/val \
-       --labels-root /data/VisDrone/labels/val \
-       --predictions-root artifacts/onnx_txt \
-       --models-root artifacts/exports \
-       --reports-root artifacts \
-       --checkpoint-root /data/checkpoints
-   ```
-
-   The release record should expose a compact comparison table whose cells are
-   populated only from the archived JSON/CSV files:
-
-   | Backend | Model SHA256 | Images | mAP50-95 | Delta (pp) | E2E P50/P95/P99 (ms) | FPS | Host |
-   | --- | --- | ---: | ---: | ---: | --- | --- |
-   | PyTorch reference | recorded in manifest | 548 | from JSON | -- | from CSV | from CSV | recorded in manifest |
-   | ONNX Runtime | recorded in manifest | 548 | from JSON | from JSON | from CSV | from CSV | recorded in manifest |
-   | NCNN or MNN | recorded in manifest | 548 | from JSON | from JSON | from CSV | from CSV | recorded in manifest |
-
-   Do not fill a cell with a value that cannot be traced to a model hash,
-   image-list digest and raw per-image output.
-
-The machine-readable contract is in
-[`evidence-manifest.schema.json`](evidence-manifest.schema.json); the example
-file is a non-acceptance template. Store the manifest, model hashes, JSON
-metrics, raw predictions and logs together in a Release or another immutable
-artifact store. Do not commit datasets, weights or generated run directories.
-Use repeatable `--report NAME=PATH` options for mAP JSON, timing CSV or
-benchmark sidecar JSON, and parity logs; each report collection is recorded
-with a deterministic file-list SHA256 and can be checked with
-`verify --reports-root`.
-
-## Benchmark protocol
-
-Use the same ordered list, input size, precision, thread count and backend
-provider for every comparison. Warm up before timing and report preprocessing,
-inference, postprocessing and end-to-end mean/P50/P95/P99 plus FPS. Include the
-CPU/GPU model, OS, compiler, SDK versions, warm-up count and repeat count. A
-virtual-machine measurement must be labelled as such and must not be presented
-as an ARM or Jetson result.
-
-`--csv` writes one row per image and a `#summary` row. Add
-`--benchmark-json artifacts/onnx_benchmark.json` to write a machine-readable
-sidecar containing the resolved protocol, execution provider, host OS and
-architecture, compiler, CPU model, logical CPU count, build date and aggregate
-timing statistics. The sidecar is useful for reviewing a run, but it does not
-replace the evidence manifest: model, image and report hashes remain the source
-of truth. When both options are supplied, the JSON records the CSV path as
-`timing_csv`; either option enables the configured warm-up and timed repeats.
-Use `scripts/prediction_diff.py` to localize confidence, coordinate or missing
-box differences before changing thresholds. Pass the same frozen list and
-normalization root used by the mAP evaluator; BOMs, quoted paths and root
-escapes are handled consistently:
-
-```bash
-python3 scripts/prediction_diff.py \
-  --reference artifacts/onnx_txt \
-  --candidate artifacts/ncnn_txt \
-  --images artifacts/visdrone-val.list \
-  --image-root /data/VisDrone/images/val \
-  --json artifacts/onnx-vs-ncnn-diff.json \
-  --csv artifacts/onnx-vs-ncnn-diff.csv \
-  --min-iou 0.90 --max-unmatched 0
-```
-
-The report includes nearest-rank IoU P05/P50/P95/P99 and explicit unmatched,
-confidence and coordinate-delta gates. It is a diagnostic artifact; it does
-not replace the mAP and evidence-manifest acceptance checks.
-
-## Tests
-
-The dependency-light Python contract suite covers profile resolution, strict
-label parsing, evidence manifests, output-shape handling and prediction diff.
-From the repository root:
-
-```bash
-python3 -m pip install -r examples/YOLO-Master-Cross-Platform-Edge-Deployment/requirements-edge.txt
-python3 -m pytest -q tests/test_edge_deployment_utils.py \
-  tests/test_edge_deployment_contract.py \
-  tests/test_issue51_runtime_contract.py
-```
-
-The C++ robustness harness is `cpp/run_tests.sh`. It requires a built runner
-and the relevant SDKs; a dependency-light CMake build only checks the CLI
-contract.
-
-## Scope and limitations
-
-The repository contains implementation and validation infrastructure, not the
-training run behind any public Issue #51 submission. Do not copy another
-author's mAP, FPS, hardware or INT8 values into a result table. A result is
-publishable only when a reviewer can recompute it from the archived manifest,
-model, image list, predictions and logs.
-
-The optional `gui/`, `mac/` and `jetson/` integrations remain available for
-platform-specific work. Their platform measurements must follow the same
-evidence rules; the source tree itself makes no hardware-performance claim.
-
-When the acceptance run is complete, use `TECHNICAL_SUMMARY_ZH.md` as the
-technical basis for the public summary. Every reported number must point to an
-archived JSON, CSV, prediction set and SHA256 manifest.
-
-## Contributing
-
-Please open an issue or pull request in the
-[Tencent/YOLO-Master repository](https://github.com/Tencent/YOLO-Master) with
-the exact protocol and reproducibility artifacts for any reported result.
+Contributions are welcome! If you find any issues or have suggestions for improvements, please feel free to open an issue or submit a pull request on the [project repository](https://github.com/skywalker-lt/yolo-master-edge).

@@ -22,6 +22,43 @@ class _LayeredAdapterModel(nn.Module):
         self.model = nn.ModuleList([_AdapterLayer(), _AdapterLayer()])
 
 
+class _FeatureModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.model = nn.Sequential(nn.Conv2d(3, 4, 3, padding=1), nn.SiLU())
+
+    def forward(self, image):
+        return self.model(image)
+
+
+def _few_shot_args(**overrides):
+    values = {
+        "lora_few_shot_mode": True,
+        "lora_few_shot_adaptive_temperature": False,
+        "lora_few_shot_response_distill": False,
+        "lora_few_shot_hierarchical_distill": False,
+        "lora_few_shot_distill_layers": None,
+        "lora_few_shot_distill_schedule": "constant",
+        "lora_few_shot_distill_weight": 1.0,
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def test_hierarchical_distillation_preserves_student_gradient():
+    student, teacher = _FeatureModel(), _FeatureModel().eval()
+    args = _few_shot_args(lora_few_shot_hierarchical_distill=True, lora_few_shot_distill_layers=[0])
+    controller = AdapterRuntimeController(SimpleNamespace(model=student, teacher_model=teacher, args=args, epochs=2))
+    controller.init_hierarchical_distill_cache()
+    controller.compute_distillation_loss = lambda *_args, **_kwargs: torch.tensor(0.0)
+
+    auxiliary = controller.augment_few_shot_loss(torch.tensor(0.0), torch.randn(2, 3, 12, 12), 0)
+    auxiliary.backward()
+
+    assert float(student.model[0].weight.grad.abs().sum()) > 0
+    assert teacher.model[0].weight.grad is None
+
+
 def test_orthogonal_regularization_is_disabled_by_default():
     assert DEFAULT_CFG_DICT["lora_ortho_weight"] == 0.0
 

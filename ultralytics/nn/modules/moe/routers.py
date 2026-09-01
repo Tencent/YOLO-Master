@@ -214,7 +214,7 @@ class BaseRouter(nn.Module):
         assignment_overflow_mask = None
         fallback_surrogate = None
         capacity = None
-        if self.capacity_factor is not None and training:
+        if training and getattr(self, "capacity_factor", None) is not None:
             if not math.isfinite(float(self.capacity_factor)) or self.capacity_factor <= 0:
                 raise MoERouterError("capacity_factor must be finite and > 0")
             capacity = max(1, math.ceil(self.capacity_factor * B * effective_top_k / self.num_experts))
