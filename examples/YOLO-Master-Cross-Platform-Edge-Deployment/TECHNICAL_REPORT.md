@@ -196,10 +196,15 @@ graph checks and NCNN pair status. `--no-simplify` is retained for diagnosis
 only and requires `--allow-unsimplified`.
 
 NCNN conversion may emit names other than `in0` and `out0`. The exporter writes
-the actual input/output/prototype names to a sidecar `metadata.yaml`; the
-runtime reads those names first and keeps the historical names as a compatibility
-fallback. For a directory input, exactly one matching `.param`/`.bin` pair is
-required unless the conventional `model.ncnn.*` pair is present.
+the actual input/output/prototype names to a sidecar (`<param-stem>.metadata.yaml`,
+with the shared `metadata.yaml` retained for compatibility). The runtime validates
+each declared name against the parsed `.param` graph before inference. When no
+sidecar is present it resolves a unique graph endpoint, retains the historical
+`in0`/`out0`/`out1` fallback, and fails closed when multiple terminal tensors make
+the roles ambiguous. A prototype explicitly declared by metadata is mandatory;
+missing it is an error rather than a silent box-only result. For a directory input,
+exactly one matching `.param`/`.bin` pair is required unless the conventional
+`model.ncnn.*` pair is present.
 
 MNN conversion is intentionally not treated as acceptance evidence. The
 converter output must load in the MNN runtime, produce a finite detection
