@@ -439,6 +439,21 @@ def test_runtime_sources_expose_profile_and_portability_guards():
     assert "multi_label = true" in main and "profile=" in main
 
 
+def test_ncnn_graph_endpoint_resolution_is_metadata_first_and_fail_closed():
+    """NCNN exports must not silently decode an arbitrary terminal tensor."""
+    source = (EDGE / "cpp" / "src" / "ncnn_backend.cpp").read_text(encoding="utf-8")
+    header = (EDGE / "cpp" / "include" / "ncnn_backend.hpp").read_text(encoding="utf-8")
+    assert "inspect_param_graph" in source
+    assert "multiple input blobs; provide metadata.yaml input_blob" in source
+    assert "multiple terminal blobs; provide metadata.yaml output_blob" in source
+    assert "metadata output_blob '" in source
+    assert "proto_required_" in source and "required prototype blob" in source
+    assert "std::filesystem::u8path(path)" in source
+    assert "per_model_metadata.replace_extension(\".metadata.yaml\")" in source
+    assert "metadata input_blob and output_blob must differ" in source
+    assert "std::string out_proto_" in header
+
+
 def test_cpp_sku_profile_records_multi_label_protocol():
     """The SKU-110K profile must match the evaluator's explicit decode metadata."""
     main = (EDGE / "cpp" / "src" / "main.cpp").read_text(encoding="utf-8")
