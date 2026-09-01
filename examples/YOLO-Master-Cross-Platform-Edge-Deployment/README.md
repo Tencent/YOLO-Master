@@ -14,6 +14,8 @@ machine-readable manifests, and platform records. The repository provides the
 runner and validation gates; it does not include private checkpoints, datasets,
 or generated predictions. Therefore, numerical accuracy, latency, INT8, and
 ARM64 claims must be reported only with the corresponding hashes and raw logs.
+The release notes elsewhere in this upstream README describe separate published
+artifacts; they are not measurements produced by this validation checkout.
 
 <p align="left">
   <picture>
