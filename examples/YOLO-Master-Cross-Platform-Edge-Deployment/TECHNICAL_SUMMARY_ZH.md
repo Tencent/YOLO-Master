@@ -207,9 +207,9 @@ python scripts/eval_map.py \
 
 | 后端 | 模型/清单摘要 | 图像数 | mAP50-95 | 相对参考差值（百分点） | 端到端 P50/P95/P99 | FPS | 主机与运行时 |
 |---|---|---:|---:|---:|---|---:|---|
-| PyTorch 基线 | manifest / JSON | 548 | JSON | -- | CSV | CSV | manifest |
-| ONNX Runtime | manifest / JSON | 548 | JSON | JSON | CSV | CSV | manifest |
-| NCNN 或 MNN | manifest / JSON | 548 | JSON | JSON | CSV | CSV | manifest |
+| PyTorch 基线 | manifest / JSON | N（VisDrone 标准划分为 548） | JSON | -- | CSV | CSV | manifest |
+| ONNX Runtime | manifest / JSON | N（VisDrone 标准划分为 548） | JSON | JSON | CSV | CSV | manifest |
+| NCNN 或 MNN | manifest / JSON | N（VisDrone 标准划分为 548） | JSON | JSON | CSV | CSV | manifest |
 
 该表是报告结构模板，不是本分支的实验结果；只有在模型摘要、图像清单
 摘要、逐图预测和原始日志均可核验时，才可填入数值。

@@ -3,7 +3,6 @@
 <img alt="C++" src="https://img.shields.io/badge/C++-17-blue.svg?style=flat&logo=c%2B%2B"> <img alt="Onnx-runtime" src="https://img.shields.io/badge/OnnxRuntime-717272.svg?logo=Onnx&logoColor=white"> <img alt="NCNN" src="https://img.shields.io/badge/NCNN-Tencent-blue.svg"> <img alt="MNN" src="https://img.shields.io/badge/MNN-Alibaba-orange.svg"> <img alt="TensorRT" src="https://img.shields.io/badge/TensorRT-NVIDIA-76B900.svg"> <img alt="Core ML" src="https://img.shields.io/badge/CoreML-Apple-black.svg"> <img alt="Linux" src="https://img.shields.io/badge/Linux-FCC624.svg?logo=linux&logoColor=black"> <img alt="Windows" src="https://img.shields.io/badge/Windows-0078D6.svg?logo=windows&logoColor=white"> <img alt="Jetson" src="https://img.shields.io/badge/Jetson%20Orin-76B900.svg?logo=nvidia&logoColor=white"> <img alt="macOS" src="https://img.shields.io/badge/macOS-000000.svg?logo=apple&logoColor=white"> <img alt="iOS" src="https://img.shields.io/badge/iOS-000000.svg?logo=apple&logoColor=white"> 
 
 This project provides a cross-platform inference runtime for [YOLO-Master](https://github.com/Tencent/YOLO-Master) object-detection models using [ONNX Runtime](https://onnxruntime.ai/), [NCNN](https://github.com/Tencent/ncnn), [MNN](https://github.com/alibaba/mnn), [TensorRT](https://github.com/nvidia/tensorrt), and [Core ML](https://github.com/apple/coremltools) backends. The supported targets are Linux, Windows 10/11, Jetson, and macOS, with CPU, [NVIDIA CUDA](https://developer.nvidia.com/cuda-toolkit), and [Apple Metal Performance Shaders](https://developer.apple.com/documentation/metalperformanceshaders) execution where available. The runtime can infer the model format and read class names and input size from model metadata.
-This project provides a universal inference runtime for [YOLO-Master](https://github.com/Tencent/YOLO-Master) object-detection models, leveraging, [ONNX Runtime](https://onnxruntime.ai/), [NCNN](https://github.com/Tencent/ncnn), [MNN](https://github.com/alibaba/mnn), [TensorRT](https://github.com/nvidia/tensorrt), and [CoreML](https://github.com/apple/coremltools) backends. It runs on almost every platform: Linux, Windows (10/11), Jetson, MacOS, and **iOS (NEW!)**; supports CPU, [CUDA](https://developer.nvidia.com/cuda-toolkit), [MPS](https://developer.apple.com/documentation/metalperformanceshaders), and [ANE (on Apple devices）](https://machinelearning.apple.com). It's capable of auto-detecting the model format, class names, and input size -- designed for real-time, end-to-end edge deployment in some of the most challenging tasks (VisDrone, SKU-110K, AI-TOD-v2, etc.).
 
 ## Issue #51 validation bundle
 
@@ -54,7 +53,7 @@ Native iOS SwiftUI app for on-device YOLO-Master detection and segmentation, pow
 
 - **📸 Photo** - Batch detection over images you pick from your library, up to 100 images at a time. Per-image and batch stats, segmentation masks, live conf/IoU tuning, and export of annotated images back to Photos.
 
-- **🎛️ Bench** - On-device benchmarking on all devices. A Cold Sweep measures every bundled model across compute units (Neural Engine (ANE), GPU, CPU) with expandable pre/inference/decode stage breakdowns, and a Sustained mode runs a thermal-throttle test with a live latency heatbeat sparkline and a colored state timeline. Pause/resume, a persistent run History vault (with per-run graphs) and CSV export.
+- **🎛️ Bench** - On-device benchmarking on all devices. A Cold Sweep measures every bundled model across compute units (Neural Engine (ANE), GPU, CPU) with expandable pre/inference/decode stage breakdowns, and a Sustained mode runs a thermal-throttle test with a live latency heartbeat sparkline and a colored state timeline. Pause/resume, a persistent run History vault (with per-run graphs) and CSV export.
 
 - **⚙️ Settings** - App info and an expandable About card (which explains the MoE architecture summary with Paper, Model / App Repo links), Licenses and Acknowledgements (from macOS build), a Privacy and Security summary, a CPU-inference opt-in for Live and Photo modes, erase-all benchmark history, and a Beta importer for your own trained Core ML models (.mlpackage / .mlmodelc / .mlmodel).
 
@@ -159,7 +158,7 @@ See the [macOS release notes](https://github.com/skywalker-lt/yolo-master-edge/r
 > this checkout; use the manifests and raw logs described above for Issue #51.
 
 - **Universal CLI Binary for Linux and Windows:** A single executable integrates **ONNX Runtime**, **NCNN** and **MNN** backends; the backend, class names, and input size are auto-detected from the model — no recompilation or any dataset YAML needed at runtime.
-- **Verified Accuracy:** Reproduces the PyTorch original to **< 0.5%** mAP50-95 across ONNX / NCNN / MNN, and **< 1.0%** under INT8 quantization, on 548 VisDrone validation images.
+- **Published accuracy reference:** The upstream release reports cross-backend and INT8 measurements; those values are not verified by this checkout.
 - **Deployment-Friendly:** Cross-platform [CMake](https://cmake.org/) build producing **self-contained and relocatable bundles** for Linux x86_64 and Windows 10/11 — installable by unzip, no dependencies on the target.
 - **GUI:** Windows 10/11 and macOS provide GUI runners that integrate the CLI bundle functionality and support GPU acceleration.
 - **GPU Acceleration:** Supports FP32 CPU inference and [NVIDIA CUDA](https://developer.nvidia.com/cuda-toolkit) through the ONNX Runtime CUDA Execution Provider on Linux and Windows; Windows also supports NCNN [Vulkan](https://vulkan.org) and MNN [OpenCL](https://opencl.org), NVIDIA Jetson Orin supports a native TensorRT backend (JetPack 7), and macOS uses [MPS](https://developer.apple.com/documentation/metalperformanceshaders) through Core ML.
@@ -366,7 +365,7 @@ A prebuilt aarch64 runner for **Jetson Orin** (Nano / NX / AGX) on **JetPack 7**
 
 ```bash
 git clone https://github.com/Tencent/YOLO-Master.git YOLO-Master
-cd examples/YOLO-Master-Cross-Platform-Edge-Deployment/jetson
+cd YOLO-Master/examples/YOLO-Master-Cross-Platform-Edge-Deployment/jetson
 bash 21_build_trt_runner.sh    # builds the runner and records configure/build logs
 # Place the experiment's engine and model metadata under jetson/engines/ first.
 ../cpp/build_trt/yolomaster_edge --model engines/esmoe_n_fp16.engine \
