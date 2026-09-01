@@ -37,7 +37,7 @@ logs before they can be reported.
 
 ---
 
-## 📱 Update (27-08-2026): YOLO-Master for iPhone v1.1.0 Beta Build 1
+## 📱 Upstream reference: YOLO-Master for iPhone v1.1.0 Beta Build 1
 
 <img width="4812" height="2291" alt="screnshots-framed" src="https://github.com/user-attachments/assets/e858e07b-eeff-40c2-b11a-dcb4dba44577" />
 
@@ -85,13 +85,15 @@ Drop your Core ML models into directory `ios/Models/`, set your signing team ID 
 
 ### Privacy & License (iOS App Update)
 
-The app has no internet connection. No data leaves the device, and we don't collect anything. See PRIVACY.md for detailed terms. 
+The app has no internet connection. No data leaves the device, and no data is
+collected. Privacy terms belong to the external app release referenced in this
+section and are not part of this checkout.
 
 The app is licensed under AGPL-3.0, consistent with YOLO-Master and Ultralytics; coremltools is BSD-3-Clause. It is released for research and personal experience only, and any direct commercial use of this app is prohibited. 
 
 ---
 
-## 🚀 Update (12-08-2026): YOLO-Master Edge v1.1.0 is up!
+## 🚀 Upstream reference: YOLO-Master Edge v1.1.0
 
 **One release, every platform: [macOS](https://github.com/skywalker-lt/yolo-master-edge/releases/download/v1.1.0/yolomaster-edge-mac-1.1.0.zip) / Windows [CPU](https://github.com/skywalker-lt/yolo-master-edge/releases/download/v1.1.0/yolomaster-edge-win-x64-1.1.0.zip) + [CUDA](https://github.com/skywalker-lt/yolo-master-edge/releases/download/v1.1.0/yolomaster-edge-win-x64-gpu_cuda12-1.1.0.zip) / Linux [CPU](https://github.com/skywalker-lt/yolo-master-edge/releases/download/v1.1.0/yolomaster-edge-linux-x64-1.1.0.tar.gz) + [CUDA](https://github.com/skywalker-lt/yolo-master-edge/releases/download/v1.1.0/yolomaster-edge-linux-x64-gpu_cuda12-1.1.0.tar.gz) / [Jetson Orin](https://github.com/skywalker-lt/yolo-master-edge/releases/download/v1.1.0/yolomaster-edge-jetson-orin-1.1.0.tar.gz).**
 
@@ -113,7 +115,7 @@ v1.1.0 brings the same feature set to all runners (macOS / Windows GUIs, Linux a
 
 ---
 
-## ✨ Update (27-07-2026): YOLO-Master Windows 10/11 Runner (**GUI**) on ONNX/ncnn/MNN backends with **GPU Acceleration**
+## ✨ Upstream reference: YOLO-Master Windows 10/11 Runner (**GUI**) on ONNX/ncnn/MNN backends
 **Download the [CPU runner](https://github.com/skywalker-lt/yolo-master-edge/releases/download/v1.0.0-windows/YOLO-Master-Windows-1.0.0.zip) / [CUDA runner](https://github.com/skywalker-lt/yolo-master-edge/releases/download/v1.0.0-windows/YOLO-Master-Windows-CUDA-1.0.0.zip).**
 
 Now the Windows C++ edge runner has an improved backend and dedicated GUI. **YOLO-Master Windows Runner GUI** provides a C++ edge inference backend that bundles [ONNX](https://onnxruntime.ai/), [ncnn](https://github.com/Tencent/ncnn), and [MNN](https://github.com/alibaba/MNN) with **GPU acceleration**, together with a [Dear ImGui](https://github.com/ocornut/imgui) frontend. It includes the same default `YOLO-Master-v0.1-seg-N` segmentation model as the macOS runner.
@@ -132,7 +134,7 @@ See the [Windows release notes](https://github.com/skywalker-lt/yolo-master-edge
 
 ---
 
-## 🍎 Update (17-07-2026): YOLO-Master Core ML Runner for macOS (GUI)
+## 🍎 Upstream reference: YOLO-Master Core ML Runner for macOS (GUI)
 
 **[Download](https://github.com/skywalker-lt/yolo-master-edge/releases/download/v1.0.0-macos/YOLO-Master-CoreML-Runner-1.0.0.zip) and try it now!**
 
@@ -150,7 +152,11 @@ See the [macOS release notes](https://github.com/skywalker-lt/yolo-master-edge/r
 
 ---
 
-## ✨ Benefits
+## ✨ Benefits (upstream reference)
+
+> The following capability and metric statements summarize a separately
+> published project. They are retained as provenance and are not evidence for
+> this checkout; use the manifests and raw logs described above for Issue #51.
 
 - **Universal CLI Binary for Linux and Windows:** A single executable integrates **ONNX Runtime**, **NCNN** and **MNN** backends; the backend, class names, and input size are auto-detected from the model — no recompilation or any dataset YAML needed at runtime.
 - **Verified Accuracy:** Reproduces the PyTorch original to **< 0.5%** mAP50-95 across ONNX / NCNN / MNN, and **< 1.0%** under INT8 quantization, on 548 VisDrone validation images.
@@ -243,8 +249,8 @@ Ensure you have the following dependencies installed (not required if you only w
 1.  **Clone the Repository:**
 
     ```bash
-    git clone https://github.com/skywalker-lt/yolo-master-edge.git
-    cd yolo-master-edge/cpp
+    git clone https://github.com/Tencent/YOLO-Master.git YOLO-Master
+    cd YOLO-Master/examples/YOLO-Master-Cross-Platform-Edge-Deployment/cpp
     ```
 
 2.  **Create Build Directory:**
@@ -293,8 +299,8 @@ Ensure you have the following dependencies installed (not required if you only w
 
 1. **Clone the Repository**
    ```shell
-   git clone https://github.com/skywalker-lt/yolo-master-edge.git
-   cd yolo-master-edge/gui
+   git clone https://github.com/Tencent/YOLO-Master.git YOLO-Master
+   cd YOLO-Master/examples/YOLO-Master-Cross-Platform-Edge-Deployment/gui
    ```
    
 2. **Copy and Edit the Paths**
@@ -317,8 +323,8 @@ Ensure you have the following dependencies installed (not required if you only w
 
 1.  **Clone the Repository:**
     ```bash
-    git clone https://github.com/skywalker-lt/yolo-master-edge.git
-    cd yolo-master-edge/cpp
+    git clone https://github.com/Tencent/YOLO-Master.git YOLO-Master
+    cd YOLO-Master/examples/YOLO-Master-Cross-Platform-Edge-Deployment
     ```
 
 2.  **Build the App and Run** 
@@ -329,10 +335,13 @@ Ensure you have the following dependencies installed (not required if you only w
 
 ## 🚀 Usage (CLI)
 
-Run the executable, pointing it at a model and a source (image, directory, video, or `dataset.yaml`):
+Run the executable, pointing it at a user-supplied model and a source (image,
+directory, video, or `dataset.yaml`). Models and datasets are intentionally not
+bundled with this source checkout; record their SHA256 values in an evidence
+manifest before reporting accuracy or latency:
 
 ```bash
-./yolomaster_edge --model ../../models/esmoe_n_visdrone_sim.onnx \
+./yolomaster_edge --model /path/to/model.onnx \
                   --source path/to/image_or_dir \
                   --conf 0.25 --out out
 ```
@@ -351,19 +360,26 @@ The backend is inferred from the model (`.onnx` → ONNX Runtime, an NCNN direct
 
 See `cpp/run_tests.sh` for the 16-test robustness battery.
 
-## 🤖 Jetson Orin (Native TensorRT)
+## 🤖 Jetson Orin (upstream reference)
 
 A prebuilt aarch64 runner for **Jetson Orin** (Nano / NX / AGX) on **JetPack 7** is attached to the [Releases](https://github.com/skywalker-lt/yolo-master-edge/releases) page. It bundles OpenCV and uses JetPack's TensorRT + CUDA; the per-device FP16 engine is built once with the included script.
 
 ```bash
-tar xzf yolomaster_edge-jetson-orin-jp7.tar.gz && cd yolomaster_edge-jetson-orin-jp7
-./build_engine.sh    # builds the FP16 engine for this device (once, ~10-15 min)
-./yolomaster_edge --model models/esmoe_n_fp16.engine --source <img|dir> --classes visdrone --out out
+git clone https://github.com/Tencent/YOLO-Master.git YOLO-Master
+cd examples/YOLO-Master-Cross-Platform-Edge-Deployment/jetson
+bash 21_build_trt_runner.sh    # builds the runner and records configure/build logs
+# Place the experiment's engine and model metadata under jetson/engines/ first.
+../cpp/build_trt/yolomaster_edge --model engines/esmoe_n_fp16.engine \
+  --source /path/to/image_or_dir --classes visdrone --out out
 ```
 
 On an Orin Nano 4 GB the FP16 engine runs at **35.7 FPS** (27.8 ms) with **mAP50-95 0.2029 (−0.07 pp vs FP32)**. FP16 is the recommended target for this model because the area-attention path is not quantized, making INT8 both slower and less accurate here. To build from source, the [`jetson/`](jetson/) scripts drive the engine build and packaging; see [`jetson/README.md`](jetson/README.md) and [`jetson/DEPLOYMENT_LOG.md`](jetson/DEPLOYMENT_LOG.md).
 
-## 📊 Results
+## 📊 Results (upstream reference; not measured in this checkout)
+
+> These rows are reproduced from an external release and are shown for
+> comparison only. No model, image list, benchmark JSON or raw log for them is
+> included in this branch.
 
 Inference performed on full 548 VisDrone validation images against the PyTorch original (`mAP50-95 = 0.2036`), using identical settings (conf 0.001, NMS IoU 0.7, multi-label).
 
