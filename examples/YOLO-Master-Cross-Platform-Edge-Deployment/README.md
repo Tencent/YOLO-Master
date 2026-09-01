@@ -50,13 +50,13 @@ Native iOS SwiftUI app for on-device YOLO-Master detection and segmentation, pow
 
 ### Features
 
-- **📹 Live** - Real-time camera detection with a dynamic performance visuliaztion (FPS tachometer, per-stage latency measures, and phone's thermal state), multi-cam with automatic lens switching and pinch zoom, tap-to-focus, torch, and a full-resolution shutter that renders the live overlay (boxes and segmentation masks) into the saved photo. Also supports live IoU/conf tuning without pausing the inference. 
+- **📹 Live** - Real-time camera detection with a dynamic performance visualization (FPS tachometer, per-stage latency measures, and phone's thermal state), multi-cam with automatic lens switching and pinch zoom, tap-to-focus, torch, and a full-resolution shutter that renders the live overlay (boxes and segmentation masks) into the saved photo. Also supports live IoU/conf tuning without pausing the inference. 
 
 - **📸 Photo** - Batch detection over images you pick from your library, up to 100 images at a time. Per-image and batch stats, segmentation masks, live conf/IoU tuning, and export of annotated images back to Photos.
 
 - **🎛️ Bench** - On-device benchmarking on all devices. A Cold Sweep measures every bundled model across compute units (Neural Engine (ANE), GPU, CPU) with expandable pre/inference/decode stage breakdowns, and a Sustained mode runs a thermal-throttle test with a live latency heatbeat sparkline and a colored state timeline. Pause/resume, a persistent run History vault (with per-run graphs) and CSV export.
 
-- **⚙️ Settings** - App info and an expandable About card (wihich explains the MoE architecture summary with Paper, Model / App Repo links), Licenses and Acknowledgements (from macOS build), a Privacy and Security summary, a CPU-inference opt-in for Live and Photo modes, erase-all benchmark history, and a Beta importer for your own trained Core ML models (.mlpackage / .mlmodelc / .mlmodel).
+- **⚙️ Settings** - App info and an expandable About card (which explains the MoE architecture summary with Paper, Model / App Repo links), Licenses and Acknowledgements (from macOS build), a Privacy and Security summary, a CPU-inference opt-in for Live and Photo modes, erase-all benchmark history, and a Beta importer for your own trained Core ML models (.mlpackage / .mlmodelc / .mlmodel).
 
 ### Performance
 
@@ -126,7 +126,7 @@ Now the Windows C++ edge runner has an improved backend and dedicated GUI. **YOL
 <br>
 
 - **Three Backends in One App** ONNX, ncnn, and MNN all ship in single executable. Inference backends can be switched with a single click.
-- **GPU Acceleration for All Backends** up to **4x speedup** with CUDA-accelerated inference on consumer devices. (please refer to the inference speed comparison table in [Relases](https://github.com/skywalker-lt/yolo-master-edge/releases/tag/v1.0.0-windows)) 
+- **GPU Acceleration for All Backends** up to **4x speedup** with CUDA-accelerated inference on consumer devices. (please refer to the inference speed comparison table in [Releases](https://github.com/skywalker-lt/yolo-master-edge/releases/tag/v1.0.0-windows)) 
 
 See the [Windows release notes](https://github.com/skywalker-lt/yolo-master-edge/releases/tag/v1.0.0-windows) for build and benchmark details.
 
@@ -349,7 +349,7 @@ The backend is inferred from the model (`.onnx` → ONNX Runtime, an NCNN direct
 --out          dir for annotated outputs  --no-save / --quiet
 ```
 
-See `tests/run_tests.sh` for the 16-test robustness battery.
+See `cpp/run_tests.sh` for the 16-test robustness battery.
 
 ## 🤖 Jetson Orin (Native TensorRT)
 
