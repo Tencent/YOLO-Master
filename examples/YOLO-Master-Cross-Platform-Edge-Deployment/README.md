@@ -7,7 +7,7 @@ This project provides a universal inference runtime for [YOLO-Master](https://gi
 
 ## Issue #51 validation bundle
 
-This checkout also contains an evidence-first validation workflow for Issue #51.
+This checkout also contains an auditable validation workflow for Issue #51.
 The [Chinese technical summary](TECHNICAL_SUMMARY_ZH.md) and
 [technical report](TECHNICAL_REPORT.md) define the reproducible protocol,
 machine-readable manifests, and platform records. The repository provides the
@@ -15,7 +15,18 @@ runner and validation gates; it does not include private checkpoints, datasets,
 or generated predictions. Therefore, numerical accuracy, latency, INT8, and
 ARM64 claims must be reported only with the corresponding hashes and raw logs.
 The release notes elsewhere in this upstream README describe separate published
-artifacts; they are not measurements produced by this validation checkout.
+artifacts; they are not measurements produced by this validation checkout. The
+sections marked **upstream reference** are retained for provenance only; their
+models, datasets, hardware and measurements are not part of this branch.
+
+### Verification status of this checkout
+
+The repository currently provides the runner, validation scripts, schemas and
+contract tests. A Ubuntu 22.04 x86_64 smoke run has exercised a YOLOv5s ONNX
+model on one image. The EsMoE-N checkpoint, the VisDrone/SKU-110K data splits,
+full mAP comparison, INT8 calibration run and native ARM64 measurements are
+not bundled; those claims require the corresponding model/data hashes and raw
+logs before they can be reported.
 
 <p align="left">
   <picture>
