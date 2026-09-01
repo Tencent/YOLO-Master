@@ -1,4 +1,4 @@
-# Stage2 武器横评状态（C1，2026-08-28 更新）
+# Stage2 武器横评状态（C1，2026-09-01 更新）
 
 ## 配置
 - 4 武器：EsMoE-P2-N / v0.1-P2-N / UoMoE-N / UoMoE-P2-N
@@ -7,13 +7,22 @@
   amp=False, --no-sparse-eval(dense eval 修正 ES-MoE sparse 塌陷), val=True
 - 公平性：与 Stage1 baseline (v0.1-N=0.1959 / EsMoE-N=0.19052) 严格同预算
 
-## 进度（2026-08-28 14:10 续跑）
-| 武器 | 状态 | 当前 |
+## 进度（全部完成于 2026-08-29）
+| 武器 | 状态 | 结果（mAP50 / mAP50-95） |
 |---|---|---|
-| EsMoE-P2-N | ✅ 完成 50/50 | 见 results.csv |
-| v0.1-P2-N | 🔄 续跑 19→50（resume from epoch 20）| 进行中 |
-| UoMoE-N | ⏳ 待跑 | 0/50 |
-| UoMoE-P2-N | ⏳ 待跑 | 0/50 |
+| EsMoE-P2-N | ✅ 完成 50/50 | 0.20773 / 0.11405 |
+| v0.1-P2-N | ✅ 完成 50/50 | 0.20160 / 0.11081 |
+| UoMoE-N | ✅ 完成 50/50 | 0.19626 / 0.10570 |
+| UoMoE-P2-N | ✅ 完成 50/50 | 0.20503 / 0.11337 |
+
+## 配套实验（同配置，已完成）
+- 三 seed 稳健性（EsMoE-P2-N）：seed42=0.20773 / seed0=0.19990 / seed1=0.19673（mAP50）
+- 基线对照（c1_onoff，50 epoch）：v0.1-N=0.19590 / EsMoE-N=0.19041（mAP50）
+- 与 Stage1 5-epoch smoke（mAP50≈0.05）形成完整训练曲线，验证从零训练收敛趋势
+
+## COCO APs 评估口径
+- 已与导师确认口径正确：small = 实例面积 < 1024，maxDets = 500（标准 COCO 定义）
+- EsMoE-P2-N 已生成 `aps_result.json`；其余武器 APs 评估为后续补充项（不影响主结论）
 
 ## 防杀软文件锁补丁（关键）
 火绒 HipsDaemon 实时扫描会锁住训练输出文件导致 PermissionError 崩溃。已对
