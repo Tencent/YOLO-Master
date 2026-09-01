@@ -235,9 +235,11 @@ x86_64 上完成过 YOLOv5s ONNX 单图 smoke（6 个检测框，端到端约
 
 1. EsMoE 的稀疏路由可能包含导出不友好的动态控制流。NCNN 导出脚本使用
    dense routing，并在转换后执行实际的 param/bin 加载 smoke。
-2. NCNN 的输入和输出 blob 名称不是 ABI 固定值。导出器现在将实际名称写入
-   `metadata.yaml`，C++ 运行时优先读取 sidecar，旧的 `in0/out0/out1`
-   仅作为兼容回退。
+2. NCNN 的输入和输出 blob 名称不是 ABI 固定值。导出器将实际名称同时写入
+   `<param-stem>.metadata.yaml` 与兼容用的 `metadata.yaml`；C++ 运行时优先
+   使用同名 sidecar，并在加载前校验其名称确实存在于 `.param` 图中。没有
+   sidecar 时仅推断唯一端点；多输入或多终端图必须显式提供元数据，显式声明
+   的 prototype 缺失则直接失败，旧的 `in0/out0/out1` 只保留为兼容回退。
 3. ONNX Runtime 输出在进入共享 decoder 前必须满足 FP32、rank-3、正维度
    的检测张量约束；同时兼容 `[1,features,anchors]` 和
    `[1,anchors,features]` 两种常见布局。
