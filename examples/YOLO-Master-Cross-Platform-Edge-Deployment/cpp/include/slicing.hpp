@@ -54,7 +54,12 @@ struct SliceOutput {
     bool capped = false;                 // max_tiles truncation hit
     bool cancelled = false;              // the cancel token fired mid-run
     bool model_is_seg = false;           // the GLOBAL pass produced a proto (even if dropped)
-    double infer_ms = 0;                 // SUM of all model-only forwards (global + tiles)
+    // Per-stage sums across the global pass and every executed tile.  Keeping
+    // all three stages here prevents a sliced benchmark from accidentally
+    // reporting the last tile's pre/post time as the whole image's timing.
+    double pre_ms = 0;
+    double infer_ms = 0;
+    double post_ms = 0;
 };
 
 // Global forward + (dense: all tiles | sparse: mask-selected tiles) -> merged pre-NMS pool.
@@ -67,7 +72,8 @@ struct SliceOutput {
 //   be.candidates    = the merged pool
 //   be.cand_lb       = the GLOBAL pass letterbox; be.cand_orig_w/h = full image dims
 //   be.proto/_c/_h/_w = the global proto when keep_global_masks on a seg model, else cleared
-//   be.infer_ms      = the summed forwards ("model-only = sum of forwards")
+//   be.pre_ms/infer_ms/post_ms = the corresponding sums across all forwards
+//   ("model-only" inference time is the sum of the individual forwards)
 // `cancel` (optional) is polled between tile forwards; on cancel returns cancelled=true with
 // the pool accumulated so far.
 SliceOutput sliced_candidates(Backend& be, const cv::Mat& bgr, const Config& cfg,

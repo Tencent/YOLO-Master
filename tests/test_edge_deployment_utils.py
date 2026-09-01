@@ -15,10 +15,13 @@ spec.loader.exec_module(edge_utils)
 
 
 def test_letterbox_profile_keeps_aspect_ratio():
-    ratio, new_unpad, pad = edge_utils.letterbox_shape((540, 960), edge_utils.get_profile("visdrone").image_size)
+    profile = edge_utils.get_profile("visdrone")
+    assert profile.image_size == (640, 640)
+    assert profile.max_det == 300 and profile.multi_label is True
+    ratio, new_unpad, pad = edge_utils.letterbox_shape((540, 960), profile.image_size)
     assert ratio > 0
     assert new_unpad[0] <= 960
-    assert new_unpad[1] <= 544
+    assert new_unpad[1] <= 640
     assert pad[0] >= 0 and pad[1] >= 0
 
 

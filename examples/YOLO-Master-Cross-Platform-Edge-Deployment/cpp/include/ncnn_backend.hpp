@@ -14,6 +14,8 @@ public:
 private:
     ncnn::Net net_;
     int threads_;
+    // Defaults preserve compatibility with older pnnx exports.  New exports
+    // write these names to metadata.yaml and override them at construction.
     std::string in_blob_ = "in0";
     std::string out_blob_ = "out0";
     std::string out_proto_ = "out1";   // segmentation proto (absent on detection models)

@@ -60,7 +60,7 @@ python examples/YOLO-Master-Cross-Platform-Edge-Deployment/scripts/mnn_parity.py
   --mnn artifacts/exports/model.mnn \
   --onnx artifacts/exports/model.onnx \
   --images /data/VisDrone/images/val \
-  --n 100 \
+  --limit 100 \
   --tolerance 0.1 \
   --json artifacts/mnn_parity.json \
   --debug-dir artifacts/mnn_parity_debug
@@ -70,6 +70,33 @@ The parity tool normalizes the two common feature/anchor layouts, rejects
 shape mismatches and non-finite values, and returns a non-zero status when the
 maximum absolute error exceeds the declared tolerance. The debug directory is
 intended to retain the first input and tensor mismatch for diagnosis.
+The example uses 100 images as a diagnostic subset; it is not a substitute for
+the full validation image list or the 500-image accuracy gate below.
+
+## Per-image prediction diagnosis
+
+When an accuracy gate fails, retain the decoded predictions from both backends
+and compare them without rerunning inference:
+
+```bash
+python examples/YOLO-Master-Cross-Platform-Edge-Deployment/scripts/prediction_diff.py \
+  --reference artifacts/onnx_txt \
+  --candidate artifacts/ncnn_txt \
+  --images /data/VisDrone/images/val \
+  --iou 0.50 --min-iou 0.90 --top-k 20 \
+  --json artifacts/onnx_ncnn_prediction_diff.json \
+  --csv artifacts/onnx_ncnn_prediction_diff.csv \
+  --debug-dir artifacts/onnx_ncnn_prediction_diff_images
+```
+
+The report matches same-class boxes by IoU and lists, for every image, the
+detection-count delta, unmatched boxes, matched IoU, confidence deltas, and
+maximum coordinate delta. It also records nearest-rank IoU P05/P50/P95/P99 in
+both the per-image rows and the aggregate summary. `--min-iou` (also accepted
+as `--min-match-iou`), `--max-unmatched`, `--max-box-delta`, and
+`--max-conf-delta` are optional diagnostic gates; they do not replace the mAP
+acceptance gate. The script uses only the standard library unless
+`--debug-dir` is requested (Pillow then provides the overlays).
 
 ## Accuracy gate
 
@@ -83,10 +110,11 @@ python examples/YOLO-Master-Cross-Platform-Edge-Deployment/scripts/eval_map.py \
   --preds artifacts/onnx_txt \
   --images /data/VisDrone/images/val \
   --labels /data/VisDrone/labels/val \
-  --classes visdrone \
+  --classes visdrone --label-format yolo \
+  --imgsz 640 --conf 0.001 --iou 0.70 --max-det 300 --multi-label \
   --min-images 500 \
   --reference-json artifacts/pytorch_map.json \
-  --max-abs-delta-pct 0.5 \
+  --max-abs-delta-pp 0.5 \
   --json artifacts/onnx_map.json
 ```
 
@@ -94,15 +122,26 @@ The evaluator accepts normalized YOLO labels and native VisDrone rows. Native
 rows are intended for diagnostics: `score=0` and task-external categories are
 excluded, but ignored-region matching is not inferred. For an acceptance run,
 convert annotations with the official `visdrone2yolo` procedure first. Outside
-`--smoke`, the evaluator requires one label and one prediction file per image
-and enforces the 500-image floor. A relative mAP50-95 gate is evaluated only
-when a positive PyTorch reference JSON is supplied. The recommended budgets are
-below 0.5% for non-quantized exports and below 1.0% for INT8; these are decision
-thresholds, not results claimed by this repository.
+`--smoke`, the evaluator requires one label and one prediction file per image,
+rejects extra stems and enforces the non-negotiable 500-image floor.
+`--max-abs-delta-pp` applies an absolute percentage-point gate (the Issue #51
+convention); `--max-abs-delta-pct` remains available for a relative percentage
+gate. They are mutually exclusive. The relative gate requires a positive
+PyTorch reference mAP; the absolute gate records the reference/protocol
+metadata used for the comparison. Every result JSON records both
+`delta_mAP50-95_pp` and `delta_mAP50-95_pct` to make the units explicit. The
+recommended budgets are below 0.5 pp for non-quantized exports and below 1.0
+pp for INT8; these are decision thresholds, not results claimed by this
+repository.
 
 ## INT8 calibration
 
 Calibration must use training images only and must be disjoint from validation.
+Pass `--validation-images` to the quantizer when both splits are available; it
+compares content hashes and aborts on overlap. The quantizer's JSON is
+intentionally marked `acceptance_ready: false`; a separate evidence manifest
+may claim INT8 acceptance only after the prediction directory passes the 1.0
+percentage-point mAP gate.
 The quantizer enforces a minimum of 300 images, uses the same letterbox/RGB/NCHW
 preprocessing as the C++ runner, writes a deterministic calibration manifest,
 and records its SHA-256 digest:
@@ -111,6 +150,7 @@ and records its SHA-256 digest:
 python examples/YOLO-Master-Cross-Platform-Edge-Deployment/scripts/quantize_int8.py \
   --fp32 artifacts/exports/model.onnx \
   --train /data/VisDrone/images/train \
+  --validation-images /data/VisDrone/images/val \
   --n-calib 300 \
   --format QOperator \
   --out artifacts/exports/model_int8.onnx

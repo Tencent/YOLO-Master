@@ -1,6 +1,10 @@
-// MNN backend for YOLO-Master-EsMoE-N (Alibaba MNN; CPU now, CUDA optional later).
+// MNN backend for YOLO-Master-EsMoE-N (Alibaba MNN; CPU plus optional
+// OpenCL/Vulkan/CUDA forwards, depending on the SDK build).
 // Mirrors the ncnn/ORT backends: model loads in the ctor, infer() reuses the shared
-// letterbox + decode. Output is channel-major [1, 4+nc, anchors] (same contract as ORT/ncnn).
+// letterbox + decode. Outputs are normalized to the channel-major
+// [1, features, anchors] contract shared by ORT and NCNN.
+// The runner requires float32 model input/output tensors; MNN quantized graphs
+// remain usable when their public input/output tensors stay float32.
 #pragma once
 #include "yolomaster.hpp"
 #include <MNN/Interpreter.hpp>
@@ -11,7 +15,7 @@ namespace yolomaster {
 
 class MnnBackend : public Backend {
 public:
-    // forward: "cpu" (default) | "cuda" (requires an MNN built with CUDA)
+    // forward: "cpu" (default), "opencl", "vulkan", or "cuda" (build-dependent)
     MnnBackend(const std::string& model_path, int threads = 4, const std::string& forward = "cpu");
     ~MnnBackend() override;
     std::vector<Detection> infer(const cv::Mat& bgr, const Config& cfg) override;

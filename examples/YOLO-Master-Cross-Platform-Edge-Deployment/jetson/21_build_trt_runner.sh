@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Build the C++ runner WITH the TensorRT backend -> real GPU inference from a .engine.
-# TRT/CUDA come from JetPack (no SDK download). The engine is the GPU path, so ORT/ncnn are off.
+# Build the C++ runner WITH the TensorRT 10 backend -> real GPU inference from a .engine.
+# TRT/CUDA come from the target JetPack (no SDK download). The native source uses
+# TensorRT's named-I/O API; TensorRT 8 targets should use 22_build_ort_trt.sh.
 #
 # v1.1.0: builds against a LEAN local OpenCV (core/imgproc/imgcodecs/videoio, ffmpeg on,
 # GStreamer/GUI off) so video sources + video label export work without dragging the
 # JetPack OpenCV's GStreamer closure into the bundle. Built once into
 # third_party/opencv-lean (~30 min on an Orin Nano), cached afterward.
-set -e
+set -euo pipefail
 cd "$(dirname "$0")"
 ROOT="$(cd .. && pwd)"
 
@@ -29,11 +30,21 @@ fi
 cd "$ROOT/cpp"
 rm -rf build_trt && mkdir build_trt && cd build_trt
 
-cmake .. -DCMAKE_BUILD_TYPE=Release -DOpenCV_DIR="$OCV/lib/cmake/opencv4" \
-         -DUSE_ORT=OFF -DUSE_NCNN=OFF -DUSE_MNN=OFF -DUSE_TRT=ON 2>&1 | grep -iE "backend:|Found OpenCV|error" || true
-make -j"$(nproc)" 2>&1 | grep -iE "error|Built target" | tail -2
+# JetPack installs TensorRT/CUDA in the standard system locations.  For a
+# container, cross-build, or unpacked SDK, callers may provide explicit roots;
+# keep the arguments conditional so the target's normal discovery still works.
+CMAKE_ARGS=(
+  -DCMAKE_BUILD_TYPE=Release
+  -DOpenCV_DIR="$OCV/lib/cmake/opencv4"
+  -DUSE_ORT=OFF -DUSE_NCNN=OFF -DUSE_MNN=OFF -DUSE_TRT=ON
+)
+if [ -n "${TENSORRT_ROOT:-}" ]; then CMAKE_ARGS+=("-DTENSORRT_ROOT=$TENSORRT_ROOT"); fi
+if [ -n "${CUDA_ROOT:-}" ]; then CMAKE_ARGS+=("-DCUDA_ROOT=$CUDA_ROOT"); fi
+cmake .. "${CMAKE_ARGS[@]}" 2>&1 | tee configure.log
+cmake --build . --parallel "$(nproc)" 2>&1 | tee build.log
 
 BIN="$ROOT/cpp/build_trt/yolomaster_edge"
+[ -x "$BIN" ] || { echo "build completed without an executable: $BIN" >&2; exit 1; }
 ENG="$ROOT/jetson/engines/esmoe_n_fp16.engine"
 echo
 echo "built: $BIN"

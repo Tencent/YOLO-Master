@@ -27,7 +27,30 @@ DEFAULT_EXCLUDE = ("/model.25/", "/attn/", "routing")
 def _image_paths(directory: Path) -> list[Path]:
     if not directory.is_dir():
         return []
-    return sorted(p for p in directory.rglob("*") if p.is_file() and p.suffix.lower() in IMAGE_EXTS)
+    return sorted(
+        (p for p in directory.rglob("*") if p.is_file() and p.suffix.lower() in IMAGE_EXTS),
+        key=lambda p: p.as_posix().casefold(),
+    )
+
+
+def _validate_unique_stems(paths: Iterable[Path], label: str) -> None:
+    """Reject ambiguous image names before writing an ordered manifest."""
+    seen: dict[str, Path] = {}
+    for path in paths:
+        stem = path.stem.casefold()
+        if stem in seen:
+            raise ValueError(
+                f"{label} image stems are not unique: {stem} ({seen[stem]} and {path})"
+            )
+        seen[stem] = path
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def manifest_name(path: Path, root: Path) -> str:
@@ -56,6 +79,7 @@ def select_calibration_images(directory: Path, count: int) -> list[Path]:
     images = _image_paths(directory)
     if len(images) < count:
         raise ValueError(f"calibration set contains {len(images)} images, but {count} were requested")
+    _validate_unique_stems(images, "calibration")
     indices = [(i * len(images)) // count for i in range(count)]
     return [images[i] for i in indices]
 
@@ -104,6 +128,13 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fp32", type=Path, default=Path("models/esmoe_n_visdrone_sim.onnx"))
     parser.add_argument("--train", type=Path, default=Path("/data/datasets/VisDrone/images/train"))
+    parser.add_argument(
+        "--validation-images", type=Path, default=None,
+        help=(
+            "optional validation image directory used to prove calibration/validation "
+            "disjointness by SHA256; required for an acceptance-ready manifest"
+        ),
+    )
     parser.add_argument("--out", type=Path, default=Path("models/esmoe_n_visdrone_int8.onnx"))
     parser.add_argument("--imgsz", type=int, default=640)
     parser.add_argument("--n-calib", type=int, default=500)
@@ -144,6 +175,11 @@ def main() -> int:
         raise FileNotFoundError(f"FP32 ONNX model not found: {args.fp32}")
     if args.imgsz <= 0:
         raise ValueError("--imgsz must be positive")
+    if args.out.resolve() == args.fp32.resolve():
+        raise ValueError("--out must differ from --fp32; in-place quantization would destroy the source model")
+    prep_path = args.fp32.with_name(args.fp32.stem + ".prep.onnx")
+    if args.out.resolve() == prep_path.resolve():
+        raise ValueError("--out must not use the temporary .prep.onnx path")
 
     # Heavy dependencies are imported only after argument/path validation so
     # ``--help`` and path errors remain useful on an edge-only host.
@@ -172,6 +208,18 @@ def main() -> int:
             self._iter = iter(self.images)
 
     images = select_calibration_images(args.train, args.n_calib)
+    validation_images = _image_paths(args.validation_images) if args.validation_images else []
+    if args.validation_images is not None and len(validation_images) == 0:
+        raise ValueError("--validation-images does not contain any supported images")
+    _validate_unique_stems(validation_images, "validation")
+    calibration_hashes = {_sha256(path) for path in images}
+    validation_hashes = {_sha256(path) for path in validation_images}
+    overlap = calibration_hashes.intersection(validation_hashes)
+    if overlap:
+        raise ValueError(
+            "calibration and validation sets overlap by SHA256; use training images only "
+            "(overlap count={})".format(len(overlap))
+        )
     using_default_exclude = args.exclude is None and not args.no_default_exclude
     exclude = list(DEFAULT_EXCLUDE) if using_default_exclude else list(args.exclude or [])
     print(
@@ -184,13 +232,20 @@ def main() -> int:
         raise ValueError("FP32 ONNX graph has no input")
     input_name = source.graph.input[0].name
     input_dims = source.graph.input[0].type.tensor_type.shape.dim
+    if len(input_dims) != 4:
+        raise ValueError("FP32 ONNX input must be rank-4 NCHW for the shared calibration preprocessing")
+    channel_dim = input_dims[1]
+    if channel_dim.dim_value and channel_dim.dim_value != 3:
+        raise ValueError(
+            f"FP32 ONNX input channel dimension must be 3, got {channel_dim.dim_value}"
+        )
     if len(input_dims) == 4 and input_dims[2].dim_value and input_dims[3].dim_value:
         model_h, model_w = input_dims[2].dim_value, input_dims[3].dim_value
         if model_h != args.imgsz or model_w != args.imgsz:
             raise ValueError(
                 f"--imgsz={args.imgsz} does not match static ONNX input [{model_h}, {model_w}]"
             )
-    prep = args.fp32.with_name(args.fp32.stem + ".prep.onnx")
+    prep = prep_path
     try:
         quant_pre_process(str(args.fp32), str(prep), skip_symbolic_shape=True)
     except TypeError:
@@ -268,6 +323,18 @@ def main() -> int:
         "fp32": str(args.fp32),
         "output": str(args.out),
         "calibration_images": len(images),
+        "calibration_image_list_sha256": hashlib.sha256(
+            "\n".join(manifest_names).encode("utf-8")
+        ).hexdigest(),
+        "validation_images": len(validation_images),
+        "calibration_validation_disjoint": bool(validation_images) and not overlap,
+        "validation_image_list_sha256": (
+            hashlib.sha256(
+                "\n".join(manifest_name(path, args.validation_images) for path in validation_images).encode("utf-8")
+            ).hexdigest()
+            if validation_images
+            else None
+        ),
         "calibration_manifest": str(manifest_path),
         "calibration_manifest_sha256": manifest_sha256,
         "format": args.format,
@@ -278,6 +345,16 @@ def main() -> int:
         "imgsz": args.imgsz,
         "opset": next((op.version for op in quantized.opset_import if op.domain in ("", "ai.onnx")), None),
         "size_mb": {"fp32": round(fp32_mb, 3), "int8": round(int8_mb, 3)},
+        # Quantization is not an accuracy claim until eval_map.py has consumed
+        # the generated predictions.  Keep this false even when all structural
+        # checks pass, and point callers to the next gate explicitly.
+        "acceptance_ready": False,
+        "accuracy_gate_required": True,
+        "accuracy_gate_command": (
+            "python scripts/eval_map.py --preds <int8_txt> --images <val_images> "
+            "--labels <yolo_labels> --reference-json <pytorch_json> "
+            "--max-abs-delta-pp 1.0"
+        ),
     }
     summary_path = args.out.with_suffix(args.out.suffix + ".json")
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")

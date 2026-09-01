@@ -19,13 +19,19 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 
 EXAMPLE_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = EXAMPLE_ROOT.parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+
+
+# These labels are consumed by the evidence manifest and metric evaluators.
+# Keeping the vocabulary here avoids silently treating a dense export as a
+# numerically equivalent sparse-eager baseline.
+ROUTING_SEMANTICS = ("native_sparse", "dense_fallback", "dense_native", "not_applicable")
 
 
 def parse_args() -> argparse.Namespace:
@@ -80,6 +86,87 @@ def _restore_metadata(source, target) -> None:
         entry.key, entry.value = key, value
 
 
+def _force_ncnn_dense(model):
+    """Force export-safe dense routing and return the reversible state.
+
+    EsMoE implementations have used both ``DynamicRoutingLayer.use_top_k`` and
+    ``ES_MOE.use_sparse_inference`` across YOLO-Master revisions.  Detect both
+    forms, and also retain a conservative attribute-based fallback so a renamed
+    implementation cannot silently produce an unrecorded sparse graph.
+    """
+    state = []
+    router_count = esmoe_count = 0
+    try:
+        from ultralytics.nn.modules.moe.routers import DynamicRoutingLayer
+    except ImportError:
+        DynamicRoutingLayer = None
+    try:
+        import ultralytics.nn.modules.moe.modules as moe_modules
+        esmoe_cls = getattr(moe_modules, "ES_MOE", None)
+    except ImportError:
+        esmoe_cls = None
+    modules = getattr(getattr(model, "model", None), "modules", None)
+    if not callable(modules):
+        return state, router_count, esmoe_count
+    for module in modules():
+        is_router = DynamicRoutingLayer is not None and isinstance(module, DynamicRoutingLayer)
+        is_esmoe = esmoe_cls is not None and isinstance(module, esmoe_cls)
+        # Attribute checks cover compatible forks without weakening the explicit
+        # class checks above.  Do not mutate an unrelated module unless it has
+        # a routing-specific name and flag.
+        class_name = type(module).__name__.lower()
+        has_router_flag = hasattr(module, "use_top_k") and (
+            is_router or "routing" in class_name or "router" in class_name
+        )
+        has_esmoe_flag = hasattr(module, "use_sparse_inference") and (
+            is_esmoe or "moe" in class_name or "mixture" in class_name
+        )
+        if has_router_flag:
+            state.append((module, "use_top_k", module.use_top_k))
+            module.use_top_k = False
+            router_count += 1
+        if has_esmoe_flag:
+            state.append((module, "use_sparse_inference", module.use_sparse_inference))
+            module.use_sparse_inference = False
+            esmoe_count += 1
+    return state, router_count, esmoe_count
+
+
+def _routing_overlap(state) -> int:
+    """Count modules represented by both compatibility routing flags."""
+    flags = {}
+    for module, attribute, _ in state:
+        flags.setdefault(id(module), set()).add(attribute)
+    return sum(
+        "use_top_k" in attributes and "use_sparse_inference" in attributes
+        for attributes in flags.values()
+    )
+
+
+def _routing_record(router_count: int, esmoe_count: int, overlap_count: int = 0) -> dict:
+    """Return a stable routing provenance record for an export result.
+
+    ``router_count`` and ``esmoe_count`` count compatibility flags.  A single
+    module can expose both flags, so ``overlap_count`` removes that duplicate
+    from the union-based ``total`` while retaining the detailed counts.
+    """
+    router_count = int(router_count)
+    esmoe_count = int(esmoe_count)
+    overlap_count = int(overlap_count)
+    if min(router_count, esmoe_count, overlap_count) < 0 or overlap_count > min(router_count, esmoe_count):
+        raise ValueError("invalid routing layer counts")
+    layer_count = router_count + esmoe_count - overlap_count
+    return {
+        "routing_semantics": "dense_fallback" if layer_count else "not_applicable",
+        "routing_layers": {
+            "dynamic_router": router_count,
+            "esmoe": esmoe_count,
+            "overlap": overlap_count,
+            "total": layer_count,
+        },
+    }
+
+
 def _check_static_input(graph, imgsz: int) -> None:
     if not graph.graph.input:
         raise RuntimeError("ONNX graph has no input tensor")
@@ -94,14 +181,23 @@ def _check_static_input(graph, imgsz: int) -> None:
 def export_onnx(model, args: argparse.Namespace, out_dir: Path) -> dict:
     import onnx
 
-    exported_value = model.export(
-        format="onnx",
-        imgsz=args.imgsz,
-        opset=args.opset,
-        simplify=args.simplify,
-        dynamic=False,
-        half=args.half,
-    )
+    # Use the same explicit dense fallback for ONNX that is required by pnnx.
+    # Restoring the flags in ``finally`` leaves the caller's model unchanged
+    # for a subsequent reference evaluation or a different export format.
+    routing_state, router_count, esmoe_count = _force_ncnn_dense(model)
+    overlap_count = _routing_overlap(routing_state)
+    try:
+        exported_value = model.export(
+            format="onnx",
+            imgsz=args.imgsz,
+            opset=args.opset,
+            simplify=args.simplify,
+            dynamic=False,
+            half=args.half,
+        )
+    finally:
+        for module, attribute, value in reversed(routing_state):
+            setattr(module, attribute, value)
     if not exported_value:
         raise RuntimeError("ONNX exporter returned no path")
     exported = Path(exported_value)
@@ -129,6 +225,7 @@ def export_onnx(model, args: argparse.Namespace, out_dir: Path) -> dict:
         "simplified": False,
         "acceptance_ready": False,
     }
+    result.update(_routing_record(router_count, esmoe_count, overlap_count))
     if not args.simplify:
         if not args.allow_unsimplified:
             raise RuntimeError(
@@ -219,7 +316,14 @@ def _ncnn_pair_fingerprint(directory: Path) -> Optional[Tuple[Tuple[int, int, st
     return fingerprint(param), fingerprint(binary)
 
 
-def _write_ncnn_metadata(out_dir: Path, model, imgsz: int) -> Path:
+def _write_ncnn_metadata(
+    out_dir: Path,
+    model,
+    imgsz: int,
+    input_blob: Optional[str] = None,
+    output_blob: Optional[str] = None,
+    proto_blob: Optional[str] = None,
+) -> Path:
     names = (
         getattr(model, "names", None)
         or getattr(getattr(model, "model", None), "names", None)
@@ -241,38 +345,17 @@ def _write_ncnn_metadata(out_dir: Path, model, imgsz: int) -> Path:
     metadata = out_dir / "metadata.yaml"
     with metadata.open("w", encoding="utf-8") as handle:
         handle.write(f"imgsz: [{imgsz}, {imgsz}]\n")
+        if input_blob:
+            handle.write(f"input_blob: {json.dumps(input_blob)}\n")
+        if output_blob:
+            handle.write(f"output_blob: {json.dumps(output_blob)}\n")
+        if proto_blob:
+            handle.write(f"proto_blob: {json.dumps(proto_blob)}\n")
         handle.write("names:\n")
         for index, name in items:
             # JSON quoting is valid YAML and preserves names containing ':'.
             handle.write(f"  {index}: {json.dumps(str(name), ensure_ascii=False)}\n")
     return metadata
-
-
-def _force_ncnn_dense(model):
-    """Set NCNN-safe routing and return (module, attribute, old_value) state."""
-    state = []
-    router_count = esmoe_count = 0
-    try:
-        from ultralytics.nn.modules.moe.routers import DynamicRoutingLayer
-    except ImportError:
-        DynamicRoutingLayer = None
-    try:
-        import ultralytics.nn.modules.moe.modules as moe_modules
-        esmoe_cls = getattr(moe_modules, "ES_MOE", None)
-    except ImportError:
-        esmoe_cls = None
-    for module in model.model.modules():
-        if DynamicRoutingLayer is not None and isinstance(module, DynamicRoutingLayer):
-            if hasattr(module, "use_top_k"):
-                state.append((module, "use_top_k", module.use_top_k))
-                module.use_top_k = False
-                router_count += 1
-        if esmoe_cls is not None and isinstance(module, esmoe_cls):
-            if hasattr(module, "use_sparse_inference"):
-                state.append((module, "use_sparse_inference", module.use_sparse_inference))
-                module.use_sparse_inference = False
-                esmoe_count += 1
-    return state, router_count, esmoe_count
 
 
 def _param_io_names(param: Path) -> Tuple[Optional[str], Optional[str]]:
@@ -301,7 +384,36 @@ def _param_io_names(param: Path) -> Tuple[Optional[str], Optional[str]]:
     return (inputs[0] if inputs else None), output
 
 
+def _param_output_names(param: Path) -> List[str]:
+    """Return terminal NCNN blobs in graph order.
+
+    pnnx commonly names detection/prototype outputs ``out0``/``out1``, but
+    those names are not part of the NCNN ABI.  Persisting the actual terminal
+    names in the sidecar lets the C++ runtime consume renamed graphs as well.
+    """
+    tops: List[str] = []
+    bottoms = set()
+    for line in param.read_text(encoding="utf-8", errors="ignore").splitlines():
+        fields = line.split()
+        if len(fields) < 4 or fields[0].startswith("#"):
+            continue
+        try:
+            bottom_count, top_count = int(fields[2]), int(fields[3])
+        except ValueError:
+            continue
+        start = 4
+        bottoms.update(fields[start : start + bottom_count])
+        tops.extend(fields[start + bottom_count : start + bottom_count + top_count])
+    # Preserve first appearance while removing duplicate intermediate tops.
+    return list(dict.fromkeys(name for name in tops if name not in bottoms))
+
+
 def _ncnn_code(value) -> int:
+    # The reference ncnn wheel returns integer status codes, while a few
+    # bindings expose the same success/failure result as a boolean.  In both
+    # conventions success must normalize to zero for the checks below.
+    if isinstance(value, bool):
+        return 0 if value else 1
     return int(value) if isinstance(value, numbers.Integral) else 0
 
 
@@ -384,6 +496,7 @@ def export_ncnn(model, args: argparse.Namespace, out_dir: Path) -> dict:
     expected_dir = args.model.with_name(args.model.stem + "_ncnn_model")
     before_pair = _ncnn_pair_fingerprint(expected_dir)
     state, router_count, esmoe_count = _force_ncnn_dense(model)
+    overlap_count = _routing_overlap(state)
     exported_value = None
     note = None
     export_error = None
@@ -440,7 +553,12 @@ def export_ncnn(model, args: argparse.Namespace, out_dir: Path) -> dict:
     destination.mkdir(parents=True, exist_ok=True)
     param_out = _copy_file(param, destination / param.name)
     bin_out = _copy_file(binary, destination / binary.name)
-    metadata = _write_ncnn_metadata(destination, model, args.imgsz)
+    input_blob, output_blob = _param_io_names(param_out)
+    terminal_outputs = _param_output_names(param_out)
+    proto_blob = next((name for name in terminal_outputs if name != output_blob), None)
+    metadata = _write_ncnn_metadata(
+        destination, model, args.imgsz, input_blob, output_blob, proto_blob
+    )
     smoke = _ncnn_smoke_check(param_out, bin_out, args.imgsz)
     result = {
         "format": "ncnn",
@@ -448,6 +566,8 @@ def export_ncnn(model, args: argparse.Namespace, out_dir: Path) -> dict:
         "param": str(param_out),
         "bin": str(bin_out),
         "metadata": str(metadata),
+        **_routing_record(router_count, esmoe_count, overlap_count),
+        # Retain the detailed legacy keys for consumers of earlier summaries.
         "routing": {"routers_dense": router_count, "esmoe_dense": esmoe_count},
         "checked": True,
         "acceptance_ready": True,
@@ -463,6 +583,7 @@ def export_mnn(
     args: argparse.Namespace,
     out_dir: Path,
     onnx_path: Optional[Path],
+    onnx_result: Optional[dict] = None,
 ) -> dict:
     del model  # MNN conversion intentionally consumes the canonical ONNX graph.
     if onnx_path is None:
@@ -481,6 +602,11 @@ def export_mnn(
         raise RuntimeError(
             f"mnnconvert failed ({completed.returncode}): {completed.stderr[-1000:]}"
         )
+    routing = {}
+    if isinstance(onnx_result, dict):
+        for key in ("routing_semantics", "routing_layers"):
+            if key in onnx_result:
+                routing[key] = onnx_result[key]
     return {
         "format": "mnn",
         "path": str(destination),
@@ -493,6 +619,7 @@ def export_mnn(
         "acceptance_ready": False,
         "parity_required": True,
         "parity_command": "python scripts/mnn_parity.py --mnn <file> --onnx <file> --images <dir>",
+        **routing,
     }
 
 
@@ -515,6 +642,7 @@ def main() -> int:
     model = YOLO(str(args.model))
     results, errors = [], []
     onnx_path: Optional[Path] = None
+    onnx_result: Optional[dict] = None
     # A user may provide formats in any order; dependencies are still emitted
     # deterministically and MNN always sees the canonical ONNX artifact.
     ordered_formats = [fmt for fmt in ("onnx", "ncnn", "mnn") if fmt in args.formats]
@@ -523,10 +651,11 @@ def main() -> int:
             if fmt == "onnx":
                 result = export_onnx(model, args, args.out_dir)
                 onnx_path = Path(result["path"])
+                onnx_result = result
             elif fmt == "ncnn":
                 result = export_ncnn(model, args, args.out_dir)
             else:
-                result = export_mnn(model, args, args.out_dir, onnx_path)
+                result = export_mnn(model, args, args.out_dir, onnx_path, onnx_result)
             results.append(result)
             print(f"[OK] {fmt}")
         except Exception as exc:

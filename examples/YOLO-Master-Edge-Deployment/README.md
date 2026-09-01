@@ -14,20 +14,26 @@ checkpoint or dataset and does not bundle model weights or runtime SDKs.
 - `CMakeLists.txt` builds the dependency-light benchmark scaffold.
 - `cpp/` contains the scaffold benchmark and optional backend adapters.
 
-The end-to-end C++ runner for ONNX Runtime, NCNN, MNN, and TensorRT is
+The end-to-end C++ runner for ONNX Runtime, NCNN, MNN, and native TensorRT 10 is
 maintained in
 [`../YOLO-Master-Cross-Platform-Edge-Deployment/`](../YOLO-Master-Cross-Platform-Edge-Deployment/).
 Its export and validation scripts are described in that directory and in
 [`VALIDATION.md`](VALIDATION.md).
+Targets that ship TensorRT 8 should use the runner's ONNX Runtime TensorRT
+execution-provider route rather than the native TensorRT backend.
 
 ## Reference profiles
 
 The Python utilities expose two explicit profiles:
 
 - `visdrone`: aspect-ratio-preserving input preparation, `conf=0.001`, and
-  `iou=0.70`, matching the small-object evaluation protocol.
-- `sku110k`: high-resolution shelf-image preparation, `conf=0.25`, and
-  `iou=0.60`.
+  `iou=0.70`, `max_det=300`, and multi-label decoding at `640x640`, matching
+  the small-object evaluation protocol used by the production runner.
+- `sku110k`: high-resolution shelf-image preparation at `1280x1280`,
+  `conf=0.25`, `iou=0.60`, `max_det=300`, and multi-label decoding. This is
+  the same static-input protocol used by the production runner and evaluators.
+  A rectangular deployment must be requested with an explicit `--imgsz`
+  override and reported as a separate protocol.
 
 These values are defaults rather than hidden global state. Experiments should
 record any command-line overrides with the resulting metrics.
@@ -40,7 +46,7 @@ For the lightweight wrapper:
 python export_edge_models.py \
   --model runs/train/weights/best.pt \
   --formats onnx ncnn \
-  --imgsz 960 \
+  --profile visdrone \
   --half
 ```
 
@@ -90,13 +96,35 @@ For a real backend, configure the corresponding SDK in the CMake invocation.
 The cross-platform runner's CMake options and platform-specific toolchains are
 documented in its README.
 
+The benchmark accepts either a directory or a fixed, newline-delimited image
+list. Relative list entries are resolved against the list file, blank/comment
+lines are ignored, and duplicate filename stems are rejected so prediction
+artifacts cannot overwrite one another:
+
+```bash
+./build/edge-scaffold/yolo_master_edge_benchmark \
+  --backend onnx --model artifacts/model.onnx \
+  --images artifacts/visdrone_val.txt --profile visdrone \
+  --min-images 500 --warmup 10 --runs 3 \
+  --output artifacts/onnx_benchmark.csv --json artifacts/onnx_benchmark.json
+```
+
+The JSON sidecar records the resolved profile, image count, warm-up/repeat
+counts, thread count, host/compiler information, and mean/P50/P95/P99/FPS for
+preprocess, inference, postprocess, and end-to-end latency. It is metadata for
+the benchmark and does not replace the SHA256 evidence manifest.
+
 ## Benchmark output
 
 Per-image CSV output uses the following columns:
 
 ```text
-image,preprocess_ms,inference_ms,postprocess_ms,total_ms,detections
+image,preprocess_ms,inference_ms,postprocess_ms,total_ms,detections,run
 ```
+
+The current runner appends a `run` column when repeated measurements are
+requested. For acceptance measurements, retain the CSV together with the JSON
+sidecar and evidence manifest; do not average values copied from console output.
 
 `preprocess_ms` includes image loading, letterbox, color conversion, and tensor
 packing. `inference_ms` is runtime execution, `postprocess_ms` is decoding and
@@ -109,10 +137,14 @@ both the scaffold's `latency_ms` column and the runner's `total_ms` column.
 1. Record the checkpoint revision, class mapping, input size, and export opset.
 2. Export ONNX and at least one mobile format (NCNN or MNN).
 3. Validate graph structure, preprocessing, and conversion artifacts.
-4. Evaluate all formats on the same ordered validation image list.
-5. Enforce the image-count and accuracy gates in [`VALIDATION.md`](VALIDATION.md).
-6. Report latency with platform, runtime version, precision, and thread count.
+4. Generate a SHA256-pinned evidence manifest with
+   `../YOLO-Master-Cross-Platform-Edge-Deployment/scripts/evidence_manifest.py`.
+5. Evaluate all formats on the same ordered validation image list.
+6. Enforce the image-count and accuracy gates in [`VALIDATION.md`](VALIDATION.md).
+7. Report latency with platform, runtime version, precision, and thread count.
 
-Quantitative results are meaningful only when the image manifest, model
-artifact, command line, and software versions are retained. This example does
-not claim a result in the absence of those artifacts.
+For VisDrone, use the C++ runner's `--profile visdrone` and the evaluator's
+`--max-abs-delta-pp 0.5` (FP32) or `1.0` (INT8). Quantitative results are
+meaningful only when the image manifest, model artifact, command line and
+software versions are retained. A smoke run or a reference table without those
+artifacts is not an acceptance result.

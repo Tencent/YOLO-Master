@@ -1,5 +1,8 @@
 // Windows platform layer: Win32 window + D3D11 device/swapchain + Dear ImGui bootstrap.
 // Injects texture-upload + file-dialog services into the portable App (app.cpp).
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include "imgui.h"
 #include "imgui_impl_win32.h"
 #include "imgui_impl_dx11.h"

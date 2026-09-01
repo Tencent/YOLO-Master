@@ -13,7 +13,7 @@ for path in (EXAMPLE_ROOT, REPO_ROOT):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
-from edge_utils import add_profile_args
+from edge_utils import add_profile_args, resolve_profile_options
 
 
 def parse_args() -> argparse.Namespace:
@@ -23,7 +23,12 @@ def parse_args() -> argparse.Namespace:
         "--formats", nargs="+", default=["onnx", "ncnn"], choices=("onnx", "ncnn", "mnn"),
         help="export formats; MNN conversion requires ONNX",
     )
-    parser.add_argument("--imgsz", type=int, default=960)
+    parser.add_argument(
+        "--imgsz",
+        type=int,
+        default=None,
+        help="square export size; defaults to the selected profile (VisDrone: 640)",
+    )
     parser.add_argument("--opset", type=int, default=12)
     parser.add_argument("--half", action="store_true")
     parser.add_argument("--int8", action="store_true")
@@ -45,17 +50,25 @@ def main() -> int:
     args = parse_args()
     if not args.model.is_file():
         raise FileNotFoundError(f"checkpoint not found: {args.model}")
-    if args.imgsz <= 0 or args.opset < 7:
-        raise ValueError("imgsz must be positive and opset must be at least 7")
+    if (args.imgsz is not None and args.imgsz <= 0) or args.opset < 7:
+        raise ValueError("imgsz must be positive when supplied and opset must be at least 7")
     if "mnn" in args.formats and "onnx" not in args.formats:
         raise ValueError("MNN conversion requires ONNX in --formats")
     from ultralytics import YOLO
+
+    protocol = resolve_profile_options(args.profile, imgsz=args.imgsz, conf=args.conf, iou=args.iou)
+    # Ultralytics accepts either a scalar or a two-element sequence.  Preserve
+    # an explicitly rectangular override instead of silently changing the
+    # caller's protocol; the built-in profiles are square for parity.
+    export_imgsz = protocol["imgsz"]
+    if isinstance(export_imgsz, tuple):
+        export_imgsz = list(export_imgsz)
 
     model = YOLO(str(args.model))
     for fmt in args.formats:
         export_args = {
             "format": fmt,
-            "imgsz": args.imgsz,
+            "imgsz": export_imgsz,
         }
         if fmt == "onnx":
             export_args.update({"half": args.half, "int8": args.int8})
@@ -64,8 +77,9 @@ def main() -> int:
         print(f"[export] {args.model} -> {fmt} with {export_args}")
         model.export(**export_args)
     print(
-        f"[profile] {args.profile.name}: conf={args.conf if args.conf is not None else args.profile.conf_threshold}, "
-        f"iou={args.iou if args.iou is not None else args.profile.iou_threshold}"
+        f"[profile] {args.profile.name}: imgsz={export_imgsz}, "
+        f"conf={protocol['conf']}, iou={protocol['iou']}, "
+        f"max_det={protocol['max_det']}, multi_label={str(protocol['multi_label']).lower()}"
     )
     return 0
 
