@@ -25,15 +25,22 @@ def main():
         model = OptimizedMOE(8, 8, num_experts=2, top_k=2)
         ddp = DDP(model, find_unused_parameters=True, broadcast_buffers=False)
         optimizer = torch.optim.SGD(ddp.parameters(), lr=0.05)
+        # A constant image is a degenerate normalization case: BatchNorm and
+        # the experts' GroupNorm can legitimately remove the entire signal.
+        # Keep the fixture deterministic, but include spatial/channel variation
+        # so this gate measures real routed gradients on every backend.
+        pattern = torch.linspace(-1.0, 1.0, steps=4 * 8 * 2 * 2, dtype=torch.float32).reshape(4, 8, 2, 2)
+        pattern = (pattern - pattern.mean()) / pattern.std()
         for step in range(2):
             optimizer.zero_grad(set_to_none=True)
-            inputs = torch.full((4, 8, 2, 2), 1.0 + rank + step * 0.25)
+            inputs = pattern + 0.25 * rank + 0.1 * step
             loss = ddp(inputs).square().mean()
             loss.backward()
-            grads = [p.grad for p in ddp.module.parameters() if p.requires_grad and p.grad is not None]
-            assert grads, "routed module produced no gradients"
-            assert all(torch.isfinite(grad).all() for grad in grads), "non-finite routed gradient"
-            assert sum(float(grad.abs().sum()) for grad in grads) > 0.0, "all routed gradients are zero"
+            routed_params = [p for p in ddp.module.experts.parameters() if p.requires_grad]
+            routed_grads = [p.grad for p in routed_params if p.grad is not None]
+            assert len(routed_grads) == len(routed_params), "routed experts produced incomplete gradients"
+            assert all(torch.isfinite(grad).all() for grad in routed_grads), "non-finite routed gradient"
+            assert sum(float(grad.abs().sum()) for grad in routed_grads) > 0.0, "all routed gradients are zero"
             optimizer.step()
             flat = torch.cat([p.detach().reshape(-1) for p in ddp.module.parameters()])
             gathered = [torch.empty_like(flat) for _ in range(world)]
