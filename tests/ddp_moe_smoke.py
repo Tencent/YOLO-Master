@@ -8,6 +8,8 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 from ultralytics.nn.modules.moe.modules import OptimizedMOE
+from ultralytics.utils import WINDOWS
+from ultralytics.utils.torchrun import disable_libuv_rendezvous
 
 
 def main():
@@ -15,6 +17,8 @@ def main():
     world = int(os.environ["WORLD_SIZE"])
     assert world == 2, f"P0 gate requires exactly two ranks, got {world}"
     torch.set_num_threads(1)
+    if WINDOWS:
+        disable_libuv_rendezvous()
     dist.init_process_group("gloo", timeout=timedelta(seconds=60))
     try:
         torch.manual_seed(1234)
