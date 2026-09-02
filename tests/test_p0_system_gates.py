@@ -1,13 +1,16 @@
 """Executable P0 gates for distributed, adapter, and export lifecycles."""
 
 import io
+import os
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 import torch
 import torch.nn as nn
 
+from ultralytics.utils import MACOS
 from ultralytics.nn.modules.moa import MoABlock
 from ultralytics.nn.modules.moe.modules import OptimizedMOE
 from ultralytics.nn.modules.mot import MoTBlock
@@ -83,6 +86,9 @@ def _tiny_multitask_batch():
 
 
 def test_cpu_gloo_two_rank_routed_continuous_training():
+    if MACOS and os.environ.get("PYTEST_XDIST_WORKER"):
+        pytest.skip("Nested torchrun under macOS xdist is unreliable; run this gate serially")
+
     command = [
         *ddp_launch_prefix(),
         "--master_addr=127.0.0.1",
