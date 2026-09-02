@@ -122,6 +122,8 @@ def test_cpu_gloo_two_rank_telemetry_artifact_gate(tmp_path):
     env = {
         **ddp_launch_env(),
         "OMP_NUM_THREADS": "1",
+        # Windows CPU wheels may omit libuv; force the portable TCPStore path.
+        "USE_LIBUV": "0",
         "PYTHONPATH": os.pathsep.join(filter(None, (str(ROOT), os.environ.get("PYTHONPATH")))),
         "TELEMETRY_SMOKE_DIR": str(tmp_path),
     }

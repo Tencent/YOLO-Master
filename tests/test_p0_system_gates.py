@@ -90,7 +90,12 @@ def test_cpu_gloo_two_rank_routed_continuous_training():
         "--nproc_per_node=2",
         str(ROOT / "tests/ddp_moe_smoke.py"),
     ]
-    env = {**ddp_launch_env(), "OMP_NUM_THREADS": "1"}
+    env = {
+        **ddp_launch_env(),
+        "OMP_NUM_THREADS": "1",
+        # Windows CPU wheels may omit libuv; force the portable TCPStore path.
+        "USE_LIBUV": "0",
+    }
     completed = subprocess.run(command, cwd=ROOT, env=env, text=True, capture_output=True, timeout=90)
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert "P0 routed DDP gate passed" in completed.stdout
