@@ -28,6 +28,7 @@ def test_disable_libuv_rendezvous_patches_env_store(monkeypatch):
     elastic = types.ModuleType("torch.distributed.elastic.rendezvous")
     elastic.static_tcp_rendezvous = static
     rendezvous = types.ModuleType("torch.distributed.rendezvous")
+    rendezvous.TCPStore = lambda *args, **kwargs: (args, kwargs)
     rendezvous._create_c10d_store = create_store
     for name, module in {
         "torch.distributed.elastic.rendezvous": elastic,
@@ -40,6 +41,8 @@ def test_disable_libuv_rendezvous_patches_env_store(monkeypatch):
     rendezvous._create_c10d_store("127.0.0.1", 12345, 0, 2, None, True)
 
     assert sys.modules["torch.distributed.rendezvous"] is rendezvous
+    _, tcp_kwargs = rendezvous.TCPStore("127.0.0.1", 12345)
+    assert tcp_kwargs["use_libuv"] is False
     assert calls[0][0][-1] is False
     assert calls[0][1] == {}
     assert os.environ["USE_LIBUV"] == "0"

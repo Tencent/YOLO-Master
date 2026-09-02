@@ -6,7 +6,13 @@ from functools import partial
 
 def disable_static_tcpstore_libuv(rendezvous_module) -> None:
     """Force the legacy TCPStore backend when the Windows torch wheel omits libuv."""
-    rendezvous_module.TCPStore = partial(rendezvous_module.TCPStore, use_libuv=False)
+    tcp_store = rendezvous_module.TCPStore
+    if getattr(tcp_store, "_ultralytics_libuv_disabled", False):
+        return
+
+    patched_tcp_store = partial(tcp_store, use_libuv=False)
+    patched_tcp_store._ultralytics_libuv_disabled = True
+    rendezvous_module.TCPStore = patched_tcp_store
 
 
 def disable_libuv_rendezvous() -> None:
@@ -22,6 +28,12 @@ def disable_libuv_rendezvous() -> None:
     import importlib
 
     rendezvous = importlib.import_module("torch.distributed.rendezvous")
+
+    # ``_create_c10d_store`` may select the agent-store branch, where the
+    # module-level TCPStore reference is called without an explicit flag.
+    # Patch that reference as well as the static rendezvous implementation.
+    disable_static_tcpstore_libuv(rendezvous)
+
     create_store = getattr(rendezvous, "_create_c10d_store", None)
     if create_store is None or getattr(create_store, "_ultralytics_libuv_disabled", False):
         return
