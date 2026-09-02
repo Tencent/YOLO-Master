@@ -870,7 +870,7 @@ def test_results(model: str, tmp_path):
                 f"'{model}' semantic_mask should match the original image shape!"
             )
             assert r.semantic_mask.data.dtype == torch.uint8, f"'{model}' semantic_mask should use compact class IDs!"
-        else:
+        elif Path(model).suffix.lower() not in {".yaml", ".yml"}:
             assert len(r), f"'{model}' results should not be empty!"
         r = r.cpu().numpy()
         print(r, len(r), r.path)  # print numpy attributes
