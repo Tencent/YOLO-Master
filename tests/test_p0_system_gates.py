@@ -93,8 +93,6 @@ def test_cpu_gloo_two_rank_routed_continuous_training():
     env = {
         **ddp_launch_env(),
         "OMP_NUM_THREADS": "1",
-        # Windows CPU wheels may omit libuv; force the portable TCPStore path.
-        "USE_LIBUV": "0",
     }
     completed = subprocess.run(command, cwd=ROOT, env=env, text=True, capture_output=True, timeout=180)
     assert completed.returncode == 0, completed.stdout + completed.stderr
