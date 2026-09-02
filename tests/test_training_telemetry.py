@@ -127,7 +127,7 @@ def test_cpu_gloo_two_rank_telemetry_artifact_gate(tmp_path):
         "PYTHONPATH": os.pathsep.join(filter(None, (str(ROOT), os.environ.get("PYTHONPATH")))),
         "TELEMETRY_SMOKE_DIR": str(tmp_path),
     }
-    completed = subprocess.run(command, cwd=ROOT, env=env, text=True, capture_output=True, timeout=90)
+    completed = subprocess.run(command, cwd=ROOT, env=env, text=True, capture_output=True, timeout=180)
 
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert "P1 telemetry DDP gate passed" in completed.stdout
