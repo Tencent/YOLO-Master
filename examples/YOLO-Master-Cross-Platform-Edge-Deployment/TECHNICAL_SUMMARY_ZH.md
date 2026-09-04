@@ -30,8 +30,7 @@
 
 这里的 L0/L1/L2--L4 与第 3 节定义一致。表中“工具可运行”只表示接口、
 输入校验和错误门禁已经实现；只有同时归档模型、图像清单、预测、日志及
-SHA256 后，才可将相应项目升级为正式验收结果。Issue #51 公开提交中的
-mAP、FPS、硬件和训练轮数属于各自作者的实验，不作为本提交的测量值。
+SHA256 后，才可将相应项目升级为正式验收结果。
 
 该实现覆盖 ONNX Runtime、NCNN 与 MNN 的 C++17 推理路径，并将导出检查、
 预处理/后处理、精度评估、INT8 校准和证据归档纳入同一协议。现有契约测试
@@ -59,7 +58,7 @@ Issue #51 的验收对象是垂直场景下的模型部署闭环，至少应覆�
 
 ### 1.1 训练与数据来源记录
 
-获奖案例的可复核性还依赖训练来源，而不仅是导出文件。正式提交应记录
+实验结果的可复核性依赖训练来源，而不仅是导出文件。正式提交应记录
 基础模型或代码提交号、微调数据集版本及划分、类别映射、训练 epoch、
 随机种子、最佳 checkpoint 路径和 SHA256，以及导出所用的 Ultralytics、
 PyTorch、ONNX Runtime 和转换工具版本。若这些信息缺失，mAP 数字即使能够
@@ -248,30 +247,13 @@ x86_64 上完成过 YOLOv5s ONNX 单图 smoke（6 个检测框，端到端约
 5. INT8 脚本只负责生成量化模型和校准清单；只有把生成的预测交给
    `eval_map.py` 并通过百分点门禁，才能在报告中写“INT8 验收通过”。
 
-## 5. 与公开获奖案例的对照
+## 5. 发布结构与审核材料
 
-根据 [Issue #51](https://github.com/Tencent/YOLO-Master/issues/51) 中公开的
-获奖案例，完整的技术提交通常同时给出训练 epoch 与数据划分、548 张验证
-图的逐图预测、ONNX/NCNN/MNN 的一致性、固定线程 benchmark、两个平台的
-构建记录，以及 Release 中的模型和 SHA256。上述结构是本分支采用的协议
-来源，但公开案例中的 mAP、延迟、ARM 或 INT8 数值属于各自作者的实验，
-不能直接移植到本仓库。
+正式发布按“结论、方法、证据、限制”四部分组织。每一个数值都必须能够
+回溯到模型摘要、图像清单摘要、逐图预测和原始日志；缺少任一项时，该字段
+应标记为“待复现”，不能用估计值或其他运行的结果填充。
 
-下表列出本次对照所参考的公开记录及其对应实现。表内只说明方法来源，
-不将这些项目的实验数值计入本分支结果。
-
-| 公开记录 | 方法特征 | 本分支对应实现 |
-|---|---|---|
-| [Peki-Y/VisDrone_edge_deployment](https://github.com/Peki-Y/VisDrone_edge_deployment) | 548 张 VisDrone 验证图、固定线程、公平 NMS sweep | `visdrone` profile、有序清单摘要、显式 NMS 参数 |
-| [guan-mingyu266/yolo-master-esmoe-visdrone-edge](https://github.com/guan-mingyu266/yolo-master-esmoe-visdrone-edge) | ONNX/MNN/NCNN 比较、INT8 限制说明、跨平台构建 | 后端转换检查、校准集 hash 隔离、平台字段 |
-| [CressBoy/yolo-master-visdrone-edge](https://github.com/CressBoy/yolo-master-visdrone-edge) | 训练来源、Release 产物、Windows/Linux 原生运行 | provenance 字段、SHA256 manifest、原生构建清单 |
-| Issue #51 公开讨论 | 逐图预测与可追溯精度/延迟声明 | `prediction_diff.py`、mAP 百分点门禁、CSV/JSON 计时 |
-
-公开案例的共同提交结构可以归纳为“结果先行、证据随后”：先给出数据集与
-训练配置，再给出各后端在同一图像集合上的指标，最后列出平台、计时口径和
-可下载产物。下表将这一结构映射到本分支，便于评审快速判断当前结论的边界。
-
-| 评审字段 | 完成态应提供 | 本分支当前状态 | 升级条件 |
+| 评审字段 | 正式结果应提供 | 本分支当前状态 | 升级条件 |
 |---|---|---|---|
 | 训练与数据 | checkpoint、epoch、数据版本、划分和类别映射 | 工具支持记录，文件尚未提供 | 归档 provenance JSON 与 checkpoint SHA256 |
 | 导出产物 | ONNX checker/opset、NCNN/MNN 文件及哈希 | 导出与结构检查已实现 | 对真实 EsMoE-N 运行并保存 `export_summary.json` |
@@ -304,5 +286,5 @@ x86_64 上完成过 YOLOv5s ONNX 单图 smoke（6 个检测框，端到端约
 5. 仅在百分点门禁通过后更新结果表，并将模型、预测和清单发布到 Release。
 
 完成以上步骤后，`TECHNICAL_SUMMARY_ZH.md` 可以作为 Discussion 技术总结
-的主体；在此之前应将结果表标记为“待目标机器复现”，不要引用其他作者的
-实验数字作为本项目结论。
+的主体；在此之前应将结果表标记为“待目标机器复现”，并保留对应的原始日志
+与文件摘要。

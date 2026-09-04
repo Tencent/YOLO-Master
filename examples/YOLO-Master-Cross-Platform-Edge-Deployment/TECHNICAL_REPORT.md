@@ -18,9 +18,8 @@ measurement.
 
 ## Contribution and verification status
 
-The table below is the short reviewer-facing record. It follows the structure
-of the public Issue #51 submissions while keeping implementation evidence
-separate from measurements that require a user-supplied checkpoint and data.
+The table below is the short reviewer-facing record. It separates implementation
+evidence from measurements that require a user-supplied checkpoint and data.
 
 | Contribution | Reproducible artifact | Status in this checkout |
 | --- | --- | --- |
@@ -32,8 +31,8 @@ separate from measurements that require a user-supplied checkpoint and data.
 | EsMoE-N acceptance result | VisDrone/SKU-110K full split, mAP, INT8 and a second native platform | Pending checkpoint/data/logs |
 
 The smoke run is a functional check of the runtime and is not an EsMoE-N
-accuracy claim. Values reported by other Issue #51 contributors are cited only
-as protocol references; they are not copied into this report.
+accuracy claim. No result is promoted to an acceptance claim until its model,
+image set, predictions and raw logs are available for independent verification.
 
 ## 1. Evaluation objective
 
@@ -53,9 +52,10 @@ Optional INT8 evaluation adds a training-only calibration list of at least 300
 images. The calibration and validation sets are checked for content overlap,
 not merely for different filenames.
 
-These requirements reflect the common structure of the public Issue #51
-submissions. Their reported metrics and hardware numbers are not copied into
-this repository.
+These requirements make the evaluation record independent of a particular
+machine, exporter ordering or directory traversal. The same protocol is used
+for every backend and platform so that a reported difference has a traceable
+cause.
 
 ### 1.1 Training provenance and image-manifest control
 
@@ -359,23 +359,27 @@ EsMoE-N checkpoint, dataset split and target-platform logs are supplied.
 This boundary is important: a reproducible procedure is useful only when its
 limitations are stated as precisely as its successes.
 
-## 11. Relation to public Issue #51 submissions
+## 11. Publication record
 
-The following public records were used as protocol references. They illustrate
-the evidence expected from a completed submission; none of their numerical
-results are attributed to this checkout.
+The public submission should contain a compact result table followed by links to
+the machine-readable evidence. Use one row per backend and keep the protocol
+identical across rows:
 
-| Public record | Reported protocol feature | Corresponding provision here |
-| --- | --- | --- |
-| [Peki-Y/VisDrone_edge_deployment](https://github.com/Peki-Y/VisDrone_edge_deployment) | 548-image VisDrone validation, fixed four-thread comparison and an explicit NMS sweep | `visdrone` profile, ordered-list digest and recorded NMS parameters |
-| [guan-mingyu266/yolo-master-esmoe-visdrone-edge](https://github.com/guan-mingyu266/yolo-master-esmoe-visdrone-edge) | ONNX/MNN/NCNN comparison, INT8 caveats and cross-platform build record | backend-specific conversion checks, calibration disjointness and platform manifest |
-| [CressBoy/yolo-master-visdrone-edge](https://github.com/CressBoy/yolo-master-visdrone-edge) | Training provenance, release artifacts and independent Windows/Linux runs | provenance fields, SHA256 evidence manifest and native-build checklist |
-| Issue #51 public discussion | Per-image outputs and explicit accuracy/latency acceptance claims | `prediction_diff.py`, mAP percentage-point gates and timing CSV/JSON |
+| Backend | Model/checkpoint SHA256 | Image-list SHA256 | Images | mAP50-95 | Delta (pp) | P50/P95/P99 (ms) | FPS | Platform |
+| --- | --- | --- | ---: | ---: | ---: | --- | ---: | --- |
+| PyTorch reference | evidence manifest | evidence manifest | N | metric JSON | -- | timing CSV | timing CSV | environment JSON |
+| ONNX Runtime | evidence manifest | evidence manifest | N | metric JSON | metric JSON | timing CSV | timing CSV | environment JSON |
+| NCNN or MNN | evidence manifest | evidence manifest | N | metric JSON | metric JSON | timing CSV | timing CSV | environment JSON |
 
-This comparison is intentionally methodological. A completed experiment should
-replace the pending cells in the status tables with its own checkpoint digest,
-image-list digest, metric JSON and raw timing log.
+The accompanying text should state the dataset release and split, checkpoint
+provenance, preprocessing and NMS parameters, runtime versions, thread policy,
+warm-up/repeat counts, and the exact commands used. A platform is listed as
+validated only when both compilation and an inference run were executed on that
+platform. Cross-compilation, CI compilation, or a virtual-machine smoke test
+must be labelled accordingly and must not be presented as native device
+evidence.
 
-For the short public-facing version of a completed experiment, use
-`TECHNICAL_SUMMARY_ZH.md` as the technical basis. Keep unmeasured fields
-explicit and link every reported value to its archived evidence.
+For a short discussion post, use `TECHNICAL_SUMMARY_ZH.md` as the narrative and
+attach the evidence manifest, metric JSON, timing CSV/JSON, prediction archive,
+environment snapshot and model/export summaries. Keep all unavailable fields
+explicitly marked as pending until the corresponding files can be verified.
