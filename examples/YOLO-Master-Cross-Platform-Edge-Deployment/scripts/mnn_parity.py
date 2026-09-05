@@ -18,6 +18,7 @@ from pathlib import Path
 
 # Keep the parity image list identical to the portable C++ runner's stb decoder.
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp"}
+LIST_EXTS = {".txt", ".list"}
 
 
 def status_failed(code) -> bool:
@@ -42,16 +43,51 @@ def tensor_to_numpy(tensor, shape):
     return np.asarray(values, dtype=np.float32).reshape(tuple(shape))
 
 
-def image_list(directory: Path, limit: int) -> list[Path]:
-    if directory.is_file():
-        paths = [directory] if directory.suffix.lower() in IMAGE_EXTS else []
+def image_list(source: Path, limit: int) -> list[Path]:
+    """Resolve a directory, image, or ordered UTF-8 image list."""
+    source = source.expanduser()
+    if not source.exists():
+        raise FileNotFoundError(f"validation source not found: {source}")
+    if source.is_file() and source.suffix.lower() in IMAGE_EXTS:
+        paths = [source.resolve()]
+    elif source.is_file() and source.suffix.lower() in LIST_EXTS:
+        base = source.resolve().parent
+        paths = []
+        with source.open("r", encoding="utf-8-sig") as handle:
+            for line_number, raw in enumerate(handle, 1):
+                value = raw.strip()
+                if not value or value.startswith("#"):
+                    continue
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+                    value = value[1:-1].strip()
+                path = Path(value).expanduser()
+                if not path.is_absolute():
+                    path = base / path
+                path = path.resolve()
+                if not path.is_file():
+                    raise FileNotFoundError(
+                        f"image list line {line_number} does not name a file: {path}"
+                    )
+                if path.suffix.lower() not in IMAGE_EXTS:
+                    raise ValueError(
+                        f"unsupported image extension at list line {line_number}: {path}"
+                    )
+                paths.append(path)
+    elif source.is_dir():
+        paths = sorted(
+            (path.resolve() for path in source.rglob("*")
+             if path.is_file() and path.suffix.lower() in IMAGE_EXTS),
+            # Keep directory discovery identical to mnn_val.py and the
+            # publication-grade evaluators.
+            key=lambda path: (path.as_posix().casefold(), path.as_posix()),
+        )
     else:
-        paths = sorted(p for p in directory.rglob("*") if p.is_file() and p.suffix.lower() in IMAGE_EXTS)
+        raise ValueError(f"unsupported validation source: {source}")
     if limit > 0:
         paths = paths[:limit]
     if not paths:
-        raise RuntimeError(f"no validation images found under {directory}")
-    stems = [path.stem for path in paths]
+        raise RuntimeError(f"no validation images found under {source}")
+    stems = [path.stem.casefold() for path in paths]
     if len(stems) != len(set(stems)):
         raise RuntimeError("validation image stems are not unique; flatten/rename the split before parity checking")
     return paths
@@ -203,7 +239,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mnn", type=Path, default=Path("models/esmoe_n_visdrone.mnn"))
     parser.add_argument("--onnx", type=Path, default=Path("models/esmoe_n_visdrone_sim.onnx"))
     parser.add_argument("--images", type=Path, default=Path("/data/datasets/VisDrone/images/val"))
-    parser.add_argument("--n", type=int, default=100)
+    parser.add_argument(
+        "--limit", "--n", dest="n", type=int, default=100,
+        help="number of ordered images to compare (default: 100; --n is kept as a compatibility alias)",
+    )
     parser.add_argument("--imgsz", type=int, default=640)
     parser.add_argument("--threads", type=int, default=4)
     parser.add_argument("--nc", type=int, default=10)

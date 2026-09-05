@@ -12,6 +12,8 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 
 from ultralytics.engine.telemetry import TrainingTelemetry
 from ultralytics.nn.modules.mot import MoTBlock
+from ultralytics.utils import WINDOWS
+from ultralytics.utils.torchrun import disable_libuv_rendezvous
 
 
 def main():
@@ -20,6 +22,8 @@ def main():
     out_dir = Path(os.environ["TELEMETRY_SMOKE_DIR"])
     assert world == 2, f"telemetry gate requires exactly two ranks, got {world}"
     torch.set_num_threads(1)
+    if WINDOWS:
+        disable_libuv_rendezvous()
     dist.init_process_group("gloo", timeout=timedelta(seconds=60))
     try:
         torch.manual_seed(9000 + rank)

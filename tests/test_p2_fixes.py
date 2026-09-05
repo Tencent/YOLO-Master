@@ -173,7 +173,9 @@ def test_mot_torchscript_trace():
     Note: MoTBlock.forward returns (out, aux_loss) tuple. Tracing should
     capture the full forward path.
     """
-    block = MoTBlock(32, num_heads=4, top_k=2, window_size=4, n_points=2).eval()
+    # Exercise the legacy dense tracing contract used by the reference below;
+    # the default masked export path is covered by test_export_roundtrip.py.
+    block = MoTBlock(32, num_heads=4, top_k=2, window_size=4, n_points=2, export_masked=False).eval()
     x = torch.randn(1, 32, 8, 8)
 
     with torch.no_grad():

@@ -4,9 +4,14 @@
 #   usage: package_linux.sh [cpu|gpu] [version]
 #          package_linux.sh cpu 1.1.0   -> dist/yolomaster-edge-linux-x64-1.1.0.tar.gz
 #          package_linux.sh gpu 1.1.0   -> dist/yolomaster-edge-linux-x64-gpu_cuda12-1.1.0.tar.gz
+#   optional SDK overrides:
+#          NCNN_ROOT=/opt/ncnn MNN_ROOT=/opt/mnn package_linux.sh cpu 1.1.0
 #
-# Both bundles carry all three backends (ONNX Runtime / ncnn / MNN) and full video
-# support. OpenCV comes from a LEAN source build (core/imgproc/imgcodecs/videoio,
+# Bundles carry ONNX Runtime plus every optional backend available in the staging
+# tree (ncnn and/or MNN) and full video support. Issue #51 requires at least one
+# of ncnn or MNN; the script selects that set automatically instead of requiring
+# an SDK the caller did not install. OpenCV comes from a LEAN source build
+# (core/imgproc/imgcodecs/videoio,
 # ffmpeg on, GStreamer/GDAL/GUI off) that this script builds once into
 # third_party/opencv-lean - the stock Ubuntu OpenCV would drag ~237 shared libraries
 # (GStreamer/GDAL/MySQL/X11) into the closure. The ffmpeg codec stack is bundled from
@@ -32,17 +37,66 @@ case "$VARIANT" in cpu|gpu) ;; *) echo "usage: package_linux.sh [cpu|gpu] [versi
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 if [ "$VARIANT" = gpu ]; then
   NAME="yolomaster-edge-linux-x64-gpu_cuda12-$VERSION"
-  ORT_ROOT="$ROOT/third_party/onnxruntime-linux-x64-gpu-1.20.1"
+  DEFAULT_ORT_ROOT="$ROOT/third_party/onnxruntime-linux-x64-gpu-1.20.1"
 else
   NAME="yolomaster-edge-linux-x64-$VERSION"
-  ORT_ROOT="$ROOT/third_party/onnxruntime-linux-x64-1.18.1"
+  DEFAULT_ORT_ROOT="$ROOT/third_party/onnxruntime-linux-x64-1.18.1"
 fi
+ORT_ROOT="${ORT_ROOT:-$DEFAULT_ORT_ROOT}"
 DIST="$ROOT/dist/$NAME"
 BUILD="$ROOT/cpp/build_pkg-$VARIANT"
 OCV="$ROOT/third_party/opencv-lean"
+NCNN_ROOT="${NCNN_ROOT:-$ROOT/third_party/ncnn}"
+MNN_ROOT="${MNN_ROOT:-$ROOT/third_party/mnn-src}"
 
-command -v patchelf >/dev/null 2>&1 || { echo "== installing patchelf =="; apt-get install -y patchelf || sudo apt-get install -y patchelf; }
+command -v patchelf >/dev/null 2>&1 || {
+  echo "ERROR: patchelf is required to create a relocatable bundle." >&2
+  echo "       Install it with the host package manager, then rerun this script." >&2
+  exit 1
+}
 [ -d "$ORT_ROOT/lib" ] || { echo "ERROR: ONNX Runtime not found at $ORT_ROOT"; exit 1; }
+
+# Resolve optional secondary backends before configuring CMake.  A release is
+# valid with either NCNN or MNN (the Issue #51 requirement); if both are staged,
+# both are included.  Header-only trees are not sufficient because CMake needs a
+# linkable library as well. Accept both installed SDKs and the uninstalled layouts
+# produced by upstream CMake builds (NCNN build/src/, MNN build/{,Release,Debug}/).
+# Keep this probe in sync with cpp/CMakeLists.txt so discovery cannot pass while
+# configuration subsequently fails.
+find_backend_library() {
+  local root="$1" name="$2"
+  find "$root" -maxdepth 4 \( -type f -o -type l \) \
+    \( -name "lib${name}.a" -o -name "lib${name}.so" -o -name "lib${name}.so.*" \) \
+    -print -quit 2>/dev/null || true
+}
+NCNN_LIB_PATH="$(find_backend_library "$NCNN_ROOT" ncnn)"
+NCNN_AVAILABLE=0
+if [ -f "$NCNN_ROOT/include/ncnn/net.h" ] && [ -n "$NCNN_LIB_PATH" ]; then
+  NCNN_AVAILABLE=1
+fi
+MNN_LIB_PATH="$(find_backend_library "$MNN_ROOT" MNN)"
+MNN_AVAILABLE=0
+if [ -f "$MNN_ROOT/include/MNN/Interpreter.hpp" ] && [ -n "$MNN_LIB_PATH" ]; then
+  MNN_AVAILABLE=1
+fi
+if [ "$NCNN_AVAILABLE" -eq 0 ] && [ "$MNN_AVAILABLE" -eq 0 ]; then
+  echo "ERROR: neither NCNN nor MNN SDK is available; stage one backend and rerun." >&2
+  echo "       NCNN_ROOT=$NCNN_ROOT" >&2
+  echo "       MNN_ROOT=$MNN_ROOT" >&2
+  exit 1
+fi
+if [ "$NCNN_AVAILABLE" -eq 0 ]; then
+  echo "  [warn] NCNN SDK unavailable; packaging MNN only"
+fi
+if [ "$MNN_AVAILABLE" -eq 0 ]; then
+  echo "  [warn] MNN SDK unavailable; packaging NCNN only"
+fi
+if [ "$NCNN_AVAILABLE" -eq 1 ]; then
+  echo "  [ok] NCNN library: $NCNN_LIB_PATH"
+fi
+if [ "$MNN_AVAILABLE" -eq 1 ]; then
+  echo "  [ok] MNN library: $MNN_LIB_PATH"
+fi
 
 # ---- 0/6: lean OpenCV (built once, cached) ---------------------------------------
 if [ ! -f "$OCV/lib/cmake/opencv4/OpenCVConfig.cmake" ]; then
@@ -63,8 +117,20 @@ fi
 # ---- 1/6: clean release build -----------------------------------------------------
 echo "== 1/6  clean $VARIANT release build (ORT: $(basename "$ORT_ROOT")) =="
 rm -rf "$BUILD"
+BACKEND_ARGS=(-DREQUIRE_ORT=ON -DALLOW_NO_BACKENDS=OFF)
+if [ "$NCNN_AVAILABLE" -eq 1 ]; then
+  BACKEND_ARGS+=( -DNCNN_ROOT="$NCNN_ROOT" -DREQUIRE_NCNN=ON )
+else
+  BACKEND_ARGS+=( -DUSE_NCNN=OFF -DREQUIRE_NCNN=OFF )
+fi
+if [ "$MNN_AVAILABLE" -eq 1 ]; then
+  BACKEND_ARGS+=( -DMNN_ROOT="$MNN_ROOT" -DREQUIRE_MNN=ON )
+else
+  BACKEND_ARGS+=( -DUSE_MNN=OFF -DREQUIRE_MNN=OFF )
+fi
 cmake -S "$ROOT/cpp" -B "$BUILD" -DCMAKE_BUILD_TYPE=Release \
-  -DONNXRUNTIME_ROOT="$ORT_ROOT" -DOpenCV_DIR="$OCV/lib/cmake/opencv4"
+  -DONNXRUNTIME_ROOT="$ORT_ROOT" "${BACKEND_ARGS[@]}" \
+  -DOpenCV_DIR="$OCV/lib/cmake/opencv4"
 cmake --build "$BUILD" -j"$(nproc)"
 
 # ---- 2/6: stage binary + .so closure ----------------------------------------------
@@ -74,11 +140,24 @@ cp "$BUILD/yolomaster_edge" "$DIST/yolomaster_edge"
 
 # glibc / dynamic-loader core: MUST come from the target system, never bundle.
 EXCLUDE='libc\.so|libm\.so|libdl\.so|librt\.so|libpthread\.so|ld-linux|libresolv\.so|linux-vdso'
-ldd "$DIST/yolomaster_edge" | awk '{print $3}' | grep -E '^/' | sort -u | while read -r so; do
-  base="$(basename "$so")"
-  echo "$base" | grep -qE "$EXCLUDE" && continue
-  cp -L "$so" "$DIST/lib/$base"
-done
+# Walk the complete ELF dependency closure. A single ldd pass misses libraries
+# needed by a backend or by a codec library several levels below the executable.
+declare -A SEEN_LIBS=()
+copy_closure() {
+  local object="$1" so base dep
+  [ -f "$object" ] || return 0
+  while read -r so; do
+    [ -n "$so" ] || continue
+    base="$(basename "$so")"
+    echo "$base" | grep -qE "$EXCLUDE" && continue
+    if [ -z "${SEEN_LIBS[$base]+x}" ]; then
+      SEEN_LIBS[$base]=1
+      cp -L "$so" "$DIST/lib/$base"
+      copy_closure "$so"
+    fi
+  done < <(ldd "$object" 2>/dev/null | awk '/=> \/|^[[:space:]]*\// {for (i=1;i<=NF;i++) if ($i ~ /^\//) {print $i; break}}' | sort -u)
+}
+copy_closure "$DIST/yolomaster_edge"
 
 # ---- 3/6: GPU extras (dlopened provider + the CUDA/cuDNN runtime it hard-links) ----
 if [ "$VARIANT" = gpu ]; then
@@ -123,6 +202,11 @@ if [ "$VARIANT" = gpu ]; then
     echo "       set CUDA_LIB_DIRS=\"/path/one /path/two\" and re-run."
     exit 1
   fi
+  # Resolve dependencies introduced by the provider itself (and by CUDA/cuDNN
+  # libraries found above), not only those visible from the main executable.
+  # Otherwise a missing transitive .so can make ORT silently fall back to CPU.
+  copy_closure "$DIST/lib/libonnxruntime_providers_cuda.so"
+  copy_closure "$DIST/lib/libonnxruntime_providers_shared.so"
 fi
 
 # ---- 4/6: rpaths + models + README ------------------------------------------------
@@ -130,10 +214,15 @@ echo "== 4/6  rpaths, models, README =="
 patchelf --set-rpath '$ORIGIN/lib' "$DIST/yolomaster_edge"
 for l in "$DIST"/lib/*.so*; do patchelf --set-rpath '$ORIGIN' "$l" 2>/dev/null || true; done
 
-for m in v0.1-seg-n.onnx v0.1-seg-n.mnn v0.1-seg-n.metadata.yaml; do
+for m in v0.1-seg-n.onnx v0.1-seg-n.metadata.yaml; do
   cp "$ROOT/models/$m" "$DIST/models/" 2>/dev/null || echo "  [warn] model missing: $m"
 done
-cp -r "$ROOT/models/v0.1-seg-n_ncnn" "$DIST/models/" 2>/dev/null || echo "  [warn] model missing: v0.1-seg-n_ncnn"
+if [ "$MNN_AVAILABLE" -eq 1 ]; then
+  cp "$ROOT/models/v0.1-seg-n.mnn" "$DIST/models/" 2>/dev/null || echo "  [warn] model missing: v0.1-seg-n.mnn"
+fi
+if [ "$NCNN_AVAILABLE" -eq 1 ]; then
+  cp -r "$ROOT/models/v0.1-seg-n_ncnn" "$DIST/models/" 2>/dev/null || echo "  [warn] model missing: v0.1-seg-n_ncnn"
+fi
 [ -f "$DIST/models/v0.1-seg-n.onnx" ] || { echo "ERROR: default model v0.1-seg-n.onnx missing - the README quick start would not work"; exit 1; }
 
 GPU_NOTE=""
@@ -147,13 +236,14 @@ right choice when you do not need ONNX-on-GPU."
 cat > "$DIST/README.txt" <<EOF
 YOLO-Master edge runner $VERSION -- portable Linux x86_64 bundle.
 Self-contained: runs on any glibc>=2.35 (Ubuntu 22.04+) x86_64, no install needed.
-Backends: ONNX Runtime / ncnn (GPU via Vulkan when a driver is present) / MNN.
-Detection and segmentation; image, folder, dataset.yaml and video sources (ffmpeg).
+Backends: ONNX Runtime$([ "$NCNN_AVAILABLE" -eq 1 ] && printf ' / ncnn (GPU via Vulkan when a driver is present)')$([ "$MNN_AVAILABLE" -eq 1 ] && printf ' / MNN').
+Detection and segmentation; image, folder, newline-delimited .txt list,
+dataset.yaml and video sources (ffmpeg).
 $GPU_NOTE
 Quick start:
   ./yolomaster_edge -m models/v0.1-seg-n.onnx -s <image|dir|video> --out out
-  ./yolomaster_edge -m models/v0.1-seg-n_ncnn -s <image|dir|video> --out out
-  ./yolomaster_edge -m models/v0.1-seg-n.mnn  -s <image|dir|video> --out out
+$(if [ "$NCNN_AVAILABLE" -eq 1 ]; then printf '  ./yolomaster_edge -m models/v0.1-seg-n_ncnn -s <image|dir|video> --out out\n'; fi)
+$(if [ "$MNN_AVAILABLE" -eq 1 ]; then printf '  ./yolomaster_edge -m models/v0.1-seg-n.mnn  -s <image|dir|video> --out out\n'; fi)
 
 New in 1.1.0:
   --slicing off|dense|sparse   sliced inference (Sparse SAHI) for small objects
@@ -164,7 +254,7 @@ New in 1.1.0:
   --label-format yolo|coco|voc --sampling all|1s|N (video frame sampling)
 
 All flags: ./yolomaster_edge --help
-License: AGPL-3.0. (c) 2026 Thomas Li. https://github.com/skywalker-lt/yolo-master-edge
+License: AGPL-3.0. See the repository LICENSE file.
 EOF
 
 # ---- 5/6: self-test the staged bundle ----------------------------------------------
@@ -177,7 +267,11 @@ if ldd "$TESTDIR/b/yolomaster_edge" | grep -q "not found"; then
 fi
 TEST_IMG="$(ls "$ROOT"/visdrone50/images/val/*.jpg 2>/dev/null | head -1 || true)"
 if [ -n "$TEST_IMG" ]; then
-  for mdl in models/v0.1-seg-n.onnx models/v0.1-seg-n_ncnn models/v0.1-seg-n.mnn; do
+  MODELS=(models/v0.1-seg-n.onnx)
+  [ "$NCNN_AVAILABLE" -eq 1 ] && MODELS+=(models/v0.1-seg-n_ncnn)
+  [ "$MNN_AVAILABLE" -eq 1 ] && MODELS+=(models/v0.1-seg-n.mnn)
+  for mdl in "${MODELS[@]}"; do
+    [ -e "$TESTDIR/b/$mdl" ] || { echo "  [warn] model missing, skipping: $mdl"; continue; }
     run_clean -m "$TESTDIR/b/$mdl" -s "$TEST_IMG" --no-save --quiet >/dev/null \
       && echo "  [ok] inference: $mdl" \
       || { echo "SELF-TEST FAILED: $mdl"; exit 1; }
@@ -193,7 +287,7 @@ if [ "$VARIANT" = gpu ]; then
   echo "  [ok] CUDA provider closure resolves"
   if command -v nvidia-smi >/dev/null 2>&1 && [ -n "$TEST_IMG" ]; then
     OUT="$(run_clean -m "$TESTDIR/b/models/v0.1-seg-n.onnx" -s "$TEST_IMG" -d cuda --no-save --quiet 2>&1 || true)"
-    echo "$OUT" | grep -q "ep=cuda" && echo "  [ok] --device cuda runs on the GPU" \
+    echo "$OUT" | grep -qiE "ep=(cuda|tensorrt)" && echo "  [ok] --device cuda runs on the GPU" \
       || { echo "SELF-TEST FAILED: --device cuda fell back:"; echo "$OUT" | head -5; exit 1; }
   else
     echo "  [warn] no GPU on this host - --device cuda validation deferred"

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run MNN over a validation directory and dump C++-compatible predictions."""
+"""Run MNN over a fixed validation set and dump C++-compatible predictions."""
 
 from __future__ import annotations
 
@@ -10,6 +10,60 @@ from pathlib import Path
 
 # Keep the validation list identical to the portable C++ runner's stb decoder.
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp"}
+LIST_EXTS = {".txt", ".list"}
+
+
+def image_list(source: Path, limit: int) -> list[Path]:
+    """Resolve a directory, image, or ordered UTF-8 image list."""
+    source = source.expanduser()
+    if not source.exists():
+        raise FileNotFoundError(f"validation source not found: {source}")
+    if source.is_file() and source.suffix.lower() in IMAGE_EXTS:
+        paths = [source.resolve()]
+    elif source.is_file() and source.suffix.lower() in LIST_EXTS:
+        base = source.resolve().parent
+        paths = []
+        with source.open("r", encoding="utf-8-sig") as handle:
+            for line_number, raw in enumerate(handle, 1):
+                value = raw.strip()
+                if not value or value.startswith("#"):
+                    continue
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+                    value = value[1:-1].strip()
+                path = Path(value).expanduser()
+                if not path.is_absolute():
+                    path = base / path
+                path = path.resolve()
+                if not path.is_file():
+                    raise FileNotFoundError(
+                        f"image list line {line_number} does not name a file: {path}"
+                    )
+                if path.suffix.lower() not in IMAGE_EXTS:
+                    raise ValueError(
+                        f"unsupported image extension at list line {line_number}: {path}"
+                    )
+                paths.append(path)
+    elif source.is_dir():
+        paths = sorted(
+            (path.resolve() for path in source.rglob("*")
+             if path.is_file() and path.suffix.lower() in IMAGE_EXTS),
+            # Match the case-folded, separator-normalized order used by the
+            # C++ runner, evaluator, and evidence manifest.  The original
+            # spelling is a deterministic tie-break for case-sensitive hosts.
+            key=lambda path: (path.as_posix().casefold(), path.as_posix()),
+        )
+    else:
+        raise ValueError(f"unsupported validation source: {source}")
+    if limit > 0:
+        paths = paths[:limit]
+    if not paths:
+        raise RuntimeError(f"no validation images found under {source}")
+    stems = [path.stem.casefold() for path in paths]
+    if len(stems) != len(set(stems)):
+        raise RuntimeError(
+            "validation image stems are not unique; flatten/rename the split before dumping predictions"
+        )
+    return paths
 
 
 def status_failed(code) -> bool:
@@ -90,7 +144,10 @@ def nms(boxes, scores, iou_thr: float, max_keep: int = 300):
         return []
     x1, y1, x2, y2 = boxes.T
     areas = np.maximum(0, x2 - x1) * np.maximum(0, y2 - y1)
-    order = np.argsort(scores)[::-1]
+    # Stable score-descending order with an explicit original-index tie-break;
+    # default quicksort ordering can vary between NumPy builds and change NMS
+    # survivors when quantized outputs contain equal scores.
+    order = np.lexsort((np.arange(scores.size, dtype=np.int64), -scores))
     keep = []
     while order.size:
         current = int(order[0])
@@ -109,7 +166,7 @@ def nms(boxes, scores, iou_thr: float, max_keep: int = 300):
     return keep
 
 
-def class_nms_offset(width: int, height: int) -> float:
+def class_nms_offset(width: int, height: int, boxes=None) -> float:
     """Return the class-stratification offset used by the C++ decoder.
 
     Boxes are shifted before a single greedy NMS pass. The inverse letterbox
@@ -118,7 +175,19 @@ def class_nms_offset(width: int, height: int) -> float:
     """
     if width <= 0 or height <= 0:
         raise ValueError("image dimensions must be positive")
-    return 2.0 * max(width, height) + 8192.0
+    # Match the C++ runner: derive the separation from the actual unclipped
+    # candidates so a finite out-of-frame prediction cannot make classes
+    # overlap after stratification.  Keep the historical frame-based value
+    # when no candidate array is supplied for compatibility with callers.
+    extent = float(max(width, height))
+    if boxes is not None:
+        import numpy as np
+        values = np.asarray(boxes, dtype=np.float64)
+        if values.size:
+            if values.ndim != 2 or values.shape[1] != 4 or not np.isfinite(values).all():
+                raise ValueError("boxes must be a finite Nx4 array")
+            extent = max(extent, float(np.max(np.abs(values))))
+    return 2.0 * extent + 1.0 if boxes is not None else 2.0 * extent + 8192.0
 
 
 def get_session_output(interpreter, session):
@@ -192,20 +261,7 @@ def main() -> int:
         raise ValueError("conf/iou/small-conf/small-area must be finite")
     if not 0 <= args.conf <= 1 or not 0 <= args.iou <= 1 or not -1 <= args.small_conf <= 1 or args.small_area < 0:
         raise ValueError("conf/iou must be in [0,1], small-conf in [-1,1], and small-area non-negative")
-    if args.images.is_file():
-        image_paths = [args.images] if args.images.suffix.lower() in IMAGE_EXTS else []
-    else:
-        image_paths = sorted(
-            path for path in args.images.rglob("*")
-            if path.is_file() and path.suffix.lower() in IMAGE_EXTS
-        )
-    if args.limit > 0:
-        image_paths = image_paths[: args.limit]
-    if not image_paths:
-        raise RuntimeError(f"no validation images found under {args.images}")
-    stems = [path.stem for path in image_paths]
-    if len(stems) != len(set(stems)):
-        raise RuntimeError("validation image stems are not unique; flatten/rename the split before dumping predictions")
+    image_paths = image_list(args.images, args.limit)
 
     import MNN
     import numpy as np
@@ -318,9 +374,9 @@ def main() -> int:
             if scores.size > 30000:
                 # Match Ultralytics' max_nms guard before the quadratic
                 # suppression loop, keeping every parallel array aligned.
-                order = np.argsort(scores)[::-1][:30000]
+                order = np.lexsort((np.arange(scores.size, dtype=np.int64), -scores))[:30000]
                 class_ids, scores, xyxy = class_ids[order], scores[order], xyxy[order]
-            shifted = xyxy + class_ids[:, None] * class_nms_offset(width, height)
+            shifted = xyxy + class_ids[:, None] * class_nms_offset(width, height, xyxy)
             keep = nms(shifted, scores, args.iou, args.max_det)
         else:
             keep, scores, xyxy = [], np.empty(0), np.empty((0, 4))

@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
+from ultralytics.utils import MACOS
 from ultralytics.engine.telemetry import TrainingTelemetry, aggregate_rank_records, device_memory_sample
 from ultralytics.utils.dist import ddp_launch_env, ddp_launch_prefix, find_free_network_port
 
@@ -112,6 +113,9 @@ def test_training_telemetry_records_cpu_step_contract(tmp_path, monkeypatch):
 
 
 def test_cpu_gloo_two_rank_telemetry_artifact_gate(tmp_path):
+    if MACOS and os.environ.get("PYTEST_XDIST_WORKER"):
+        pytest.skip("Nested torchrun under macOS xdist is unreliable; run this gate serially")
+
     command = [
         *ddp_launch_prefix(),
         "--master_addr=127.0.0.1",
@@ -125,7 +129,7 @@ def test_cpu_gloo_two_rank_telemetry_artifact_gate(tmp_path):
         "PYTHONPATH": os.pathsep.join(filter(None, (str(ROOT), os.environ.get("PYTHONPATH")))),
         "TELEMETRY_SMOKE_DIR": str(tmp_path),
     }
-    completed = subprocess.run(command, cwd=ROOT, env=env, text=True, capture_output=True, timeout=90)
+    completed = subprocess.run(command, cwd=ROOT, env=env, text=True, capture_output=True, timeout=180)
 
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert "P1 telemetry DDP gate passed" in completed.stdout

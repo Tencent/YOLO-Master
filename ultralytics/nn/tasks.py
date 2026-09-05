@@ -2283,6 +2283,15 @@ def yaml_model_load(path):
         (dict): Model dictionary.
     """
     path = Path(path)
+    # Test matrices may pass a cached absolute path for a repository YAML
+    # (for example ``~/.ultralytics/weights/yolo26-master-mt-n.yaml``).
+    # Resolve that basename against the source tree before applying the
+    # scale-unification rule below; YAML configs are repository assets, not
+    # downloadable model weights.
+    if path.is_absolute() and not path.exists():
+        local_path = check_yaml(path.name, hard=False)
+        if local_path:
+            path = Path(local_path)
     if path.stem in (f"yolov{d}{x}6" for x in "nsmlx" for d in (5, 8)):
         new_stem = re.sub(r"(\d+)([nslmx])6(.+)?$", r"\1\2-p6\3", path.stem)
         LOGGER.warning(f"Ultralytics YOLO P6 models now use -p6 suffix. Renaming {path.stem} to {new_stem}.")

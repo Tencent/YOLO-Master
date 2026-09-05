@@ -39,6 +39,17 @@ def test_profiles_are_explicit_and_case_insensitive():
         assert 0.0 < profile.conf_threshold < 1.0
         assert 0.0 < profile.iou_threshold < 1.0
         assert profile.keep_aspect_ratio is True
+        assert profile.max_det == 300
+    vis = edge_utils.get_profile("visdrone")
+    assert vis.image_size == (640, 640)
+    assert vis.conf_threshold == pytest.approx(0.001)
+    assert vis.iou_threshold == pytest.approx(0.70)
+    assert vis.multi_label is True
+    sku = edge_utils.get_profile("sku110k")
+    assert sku.image_size == (1280, 1280)
+    assert sku.conf_threshold == pytest.approx(0.25)
+    assert sku.iou_threshold == pytest.approx(0.60)
+    assert sku.multi_label is True
 
 
 def test_unknown_profile_error_lists_supported_profiles():
@@ -135,6 +146,48 @@ def test_profile_arg_parser_applies_explicit_threshold_overrides():
     assert args.profile.name == "sku110k"
     assert args.conf == pytest.approx(0.31)
     assert args.iou == pytest.approx(0.71)
+
+
+def test_profile_resolution_produces_canonical_visdrone_protocol():
+    profile = edge_utils.get_profile("visdrone")
+    resolved = edge_utils.resolve_profile_options(profile)
+    assert resolved == {
+        "imgsz": (640, 640),
+        "conf": pytest.approx(0.001),
+        "iou": pytest.approx(0.70),
+        "max_det": 300,
+        "multi_label": True,
+        "letterbox": True,
+    }
+    overridden = edge_utils.resolve_profile_options(
+        profile, imgsz=512, conf=0.2, iou=0.5, max_det=50, multi_label=False
+    )
+    assert overridden == {
+        "imgsz": 512,
+        "conf": pytest.approx(0.2),
+        "iou": pytest.approx(0.5),
+        "max_det": 50,
+        "multi_label": False,
+        "letterbox": True,
+    }
+    with pytest.raises(ValueError, match="finite"):
+        edge_utils.resolve_profile_options(profile, conf=float("nan"))
+
+
+def test_cpp_benchmark_declares_canonical_profile_and_evidence_sidecar():
+    source = (EDGE_DIR / "cpp" / "edge_benchmark.cpp").read_text(encoding="utf-8")
+    assert 'args.profile == "visdrone" ? 640 : 1280' in source
+    assert 'args.profile == "visdrone" ? 0.001f : 0.25f' in source
+    assert 'args.profile == "visdrone" ? 0.70f : 0.60f' in source
+    assert 'args.profile == "sku110k"' in source
+    assert 'args.profile == "visdrone" || args.profile == "sku110k"' in source
+    assert "--multi-label" in source and "--single-label" in source
+    assert "--max-det" in source and "--min-images" in source
+    assert "write_json(args.json_output" in source
+    assert "validate_unique_stems" in source
+    assert "static_cast<unsigned char>(line[0]) == 0xef" in source
+    assert "line.front() == line.back()" in source
+    assert "line.front() == '\"' || line.front() == '\\''" in source
 
 
 @pytest.mark.skipif(shutil.which("cmake") is None, reason="cmake is required for the C++ smoke test")

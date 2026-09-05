@@ -349,7 +349,9 @@ class MoTBlock(nn.Module):
         route_mask.scatter_(1, route_ids, True)
         token_mask_sparsity = 1.0 - float(route_mask.float().mean())
         experts_per_sample = route_mask.reshape(B, self.NUM_EXPERTS, -1).any(dim=2).sum(dim=1)
-        batch_expert_union = int(route_mask.any(dim=(0, 2, 3)).sum())
+        # Torch 1.8 does not accept a tuple for ``Tensor.any(dim=...)``.
+        # Flatten batch and spatial axes while retaining one expert axis.
+        batch_expert_union = int(route_mask.permute(1, 0, 2, 3).reshape(self.NUM_EXPERTS, -1).any(dim=1).sum())
         if use_sparse:
             expert_calls = 0
             for e_idx, expert in enumerate(self.experts):

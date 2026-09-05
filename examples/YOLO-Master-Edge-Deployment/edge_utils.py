@@ -20,13 +20,21 @@ class EdgeProfile:
     conf_threshold: float
     iou_threshold: float
     keep_aspect_ratio: bool = True
+    max_det: int = 300
+    multi_label: bool = False
 
 
 PROFILES = {
-    # Match the production runner's Issue #51 validation defaults for dense
-    # small-object scenes; callers can override thresholds explicitly.
-    "visdrone": EdgeProfile("visdrone", (960, 544), 0.001, 0.70),
-    "sku110k": EdgeProfile("sku110k", (1280, 768), 0.25, 0.60),
+    # The acceptance recipe is deliberately identical to the production
+    # runner: square 640 input, aspect-preserving letterbox, low confidence
+    # floor, class-aware NMS at IoU 0.70, and Ultralytics-style multi-label
+    # decoding.  Callers can override values explicitly, but the resolved
+    # values must be recorded with the resulting metrics.
+    "visdrone": EdgeProfile("visdrone", (640, 640), 0.001, 0.70, True, 300, True),
+    # Keep SKU-110K identical to the full runner and both evaluators.  A square
+    # static input is required for cross-backend parity; callers that need a
+    # rectangular deployment must make that protocol override explicit.
+    "sku110k": EdgeProfile("sku110k", (1280, 1280), 0.25, 0.60, True, 300, True),
 }
 
 
@@ -170,3 +178,48 @@ def add_profile_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--profile", type=profile_arg, default=get_profile("visdrone"), help="Vertical profile")
     parser.add_argument("--conf", type=float, default=None, help="Override profile confidence threshold")
     parser.add_argument("--iou", type=float, default=None, help="Override profile NMS IoU threshold")
+
+
+def resolve_profile_options(
+    profile: EdgeProfile,
+    *,
+    imgsz: int | tuple[int, int] | None = None,
+    conf: float | None = None,
+    iou: float | None = None,
+    max_det: int | None = None,
+    multi_label: bool | None = None,
+) -> dict[str, object]:
+    """Resolve optional overrides into one serialisable protocol dictionary.
+
+    Keeping this resolution in the dependency-light module prevents exporters,
+    benchmark wrappers, and validation scripts from silently drifting apart.
+    ``imgsz`` may be a scalar (square input) or an explicit ``(height,width)``.
+    """
+    if imgsz is None:
+        image_size: int | tuple[int, int] = profile.image_size
+    elif isinstance(imgsz, tuple):
+        if len(imgsz) != 2 or any(int(value) <= 0 for value in imgsz):
+            raise ValueError("imgsz tuple must contain two positive dimensions")
+        image_size = (int(imgsz[0]), int(imgsz[1]))
+    else:
+        image_size = int(imgsz)
+        if image_size <= 0:
+            raise ValueError("imgsz must be positive")
+    resolved_conf = profile.conf_threshold if conf is None else float(conf)
+    resolved_iou = profile.iou_threshold if iou is None else float(iou)
+    resolved_max_det = profile.max_det if max_det is None else int(max_det)
+    resolved_multi = profile.multi_label if multi_label is None else bool(multi_label)
+    if not math.isfinite(resolved_conf) or not 0.0 <= resolved_conf <= 1.0:
+        raise ValueError("conf must be finite and in [0,1]")
+    if not math.isfinite(resolved_iou) or not 0.0 <= resolved_iou <= 1.0:
+        raise ValueError("iou must be finite and in [0,1]")
+    if resolved_max_det <= 0:
+        raise ValueError("max_det must be positive")
+    return {
+        "imgsz": image_size,
+        "conf": resolved_conf,
+        "iou": resolved_iou,
+        "max_det": resolved_max_det,
+        "multi_label": resolved_multi,
+        "letterbox": bool(profile.keep_aspect_ratio),
+    }
