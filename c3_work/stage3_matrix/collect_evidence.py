@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""stage3 collect_evidence: 扫描 runs/<id>/summary.json + training.log,
-产出 evidence_summary.json(细) 与 evidence_summary.csv(四维扁平行)。
-
+"""stage3 collect_evidence v2:
+  - mAP 取 results.csv 的 **best**(max over epochs 的 val mAP), 而非末行
+    (末行在后期过拟合/崩溃的单元严重低估; seed2024 单元即有 last=0.023 vs best=0.210)
+  - GPU 峰值显存从 training.log 进度行解析(GpuMem 列 '<x>G'), 替代进程退出后的 gpu_after 采样
 用法: python collect_evidence.py [--runs-root <dir>]
 """
 import argparse
@@ -14,22 +15,42 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 
-def peak_gpu_mem(training_log: Path) -> int | None:
-    """training.log 里 Ultralytics 的进度行 'GPU_mem <MiB>' 峰值(如有)。"""
-    if not training_log.exists():
+def best_metrics(results_csv: Path):
+    """返回 (best_ep, best_mAP50, best_mAP50_95); results.csv 每行为一个 epoch。"""
+    if not results_csv.exists():
         return None
-    peak = 0
     try:
-        for line in training_log.open(encoding="utf-8", errors="replace"):
-            m = re.search(r"([\d.]+)G\s*([\d.]+)G|([\d]+)MiB", line)
-            # 保守:只识别显存专用模式避免误判(不同版本格式不同,缺失即 None)
-            m2 = re.search(r"GPU_mem[:=]?\s*([\d.]+)([GM]i?B)?", line)
-            if m2:
-                v = float(m2.group(1))
-                peak = max(peak, v)
+        rows = list(csv.DictReader(results_csv.open()))
     except Exception:  # noqa: BLE001
         return None
-    return peak
+    if not rows:
+        return None
+    best = None
+    for r in rows:
+        try:
+            m50 = float(r["metrics/mAP50(B)"])
+            m95 = float(r["metrics/mAP50-95(B)"])
+        except (KeyError, ValueError):
+            continue
+        if best is None or m50 > best[1]:
+            best = (int(float(r["epoch"])), m50, m95)
+    return best
+
+
+def peak_gpu_gb(training_log: Path):
+    """training.log 进度行 GpuMem 列峰值: 格式 '  1/100      3.14G  ...'(loss 不带 G)。"""
+    if not training_log.exists():
+        return None
+    peak = 0.0
+    pat = re.compile(r"(\d+\.\d+)G")
+    try:
+        for line in training_log.open(encoding="utf-8", errors="replace"):
+            m = pat.search(line)
+            if m:
+                peak = max(peak, float(m.group(1)))
+    except Exception:  # noqa: BLE001
+        return None
+    return round(peak, 2) if peak else None
 
 
 def collect_one(run_dir: Path, unit) -> dict:
@@ -41,19 +62,19 @@ def collect_one(run_dir: Path, unit) -> dict:
     res = s.get("resolved_config", {})
     row = {
         "id": s.get("name"),
-        "status": "done" if s.get("exit_code") == 0 else "failed",
-        "exit_code": s.get("exit_code"),
-        "strategy": strat,
         "dataset": unit.get("dataset"),
         "seed": unit.get("seed"),
+        "strategy": strat,
+        "status": "done" if s.get("exit_code") == 0 else "failed",
+        "exit_code": s.get("exit_code"),
         "elapsed_sec": s.get("elapsed_sec"),
-        # 显存: gpu_before/after 为训练进程存在时采样(近似占用), 优于无
-        "gpu_mem_after_mb": (s.get("gpu_after") or {}).get("gpu_mem_used_mb"),
-        # 精度
-        "mAP50": s.get("last_epoch_metrics", {}).get("metrics/mAP50(B)"),
-        "mAP50_95": s.get("last_epoch_metrics", {}).get("metrics/mAP50-95(B)"),
-        "epochs_done": s.get("last_epoch_metrics", {}).get("epoch"),
-        # planner/resolved
+    }
+    bm = best_metrics(run_dir / "train" / strat / "results.csv")
+    if bm:
+        row["best_epoch"], row["mAP50_best"], row["mAP50_95_best"] = bm
+    pg = peak_gpu_gb(run_dir / "training.log")
+    row["peak_gpu_gb"] = pg
+    row.update({
         "planner_enabled": res.get("lora_planner_enabled"),
         "planner_backend": res.get("lora_planner_backend"),
         "strict": res.get("lora_vpeft_strict"),
@@ -61,15 +82,12 @@ def collect_one(run_dir: Path, unit) -> dict:
         "lora_r": res.get("lora_r"),
         "freeze": res.get("freeze"),
         "exclude_modules": res.get("lora_exclude_modules"),
-    }
-    # vpeft 决策行(日志 [V-PEFT] 尾部若干行,截断)
+    })
     log = run_dir / "training.log"
     if log.exists():
         vp = [ln.strip() for ln in log.open(encoding="utf-8", errors="replace") if "[V-PEFT]" in ln]
         row["vpeft_decision_lines"] = vp[-6:]
-        n_acc = sum(1 for ln in vp if "Accept" in ln or "accept" in ln)
-        n_ref = sum(1 for ln in vp if "Refuse" in ln)
-        row["vpeft_accept_count"], row["vpeft_refuse_count"] = n_acc, n_ref
+        row["vpeft_n_decision_lines"] = len(vp)
     else:
         row["vpeft_decision_lines"] = None
     return row
@@ -89,18 +107,16 @@ def main():
             rows.append(collect_one(run_dir, u))
     out = SCRIPT_DIR / "evidence_summary.json"
     out.write_text(json.dumps(rows, indent=2, ensure_ascii=False))
-    # csv 扁平
-    csv_path = SCRIPT_DIR / "evidence_summary.csv"
-    keys = ["id", "status", "strategy", "dataset", "seed", "exit_code", "elapsed_sec",
-            "gpu_mem_after_mb", "mAP50", "mAP50_95", "epochs_done", "planner_enabled",
-            "planner_backend", "strict", "adapter_budget", "lora_r", "freeze"]
-    with csv_path.open("w", newline="") as f:
+    keys = ["id", "dataset", "seed", "strategy", "status", "exit_code", "elapsed_sec",
+            "best_epoch", "mAP50_best", "mAP50_95_best", "peak_gpu_gb",
+            "planner_enabled", "planner_backend", "strict", "adapter_budget", "lora_r", "freeze"]
+    with (SCRIPT_DIR / "evidence_summary.csv").open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=keys, extrasaction="ignore")
         w.writeheader()
         for r in rows:
             w.writerow(r)
     n_done = sum(1 for r in rows if r.get("status") == "done")
-    print(f"[collect_evidence] {len(rows)} runs, done={n_done} -> {out} / {csv_path}")
+    print(f"[collect_evidence] {len(rows)} runs, done={n_done} -> evidence_summary.json/csv")
 
 
 if __name__ == "__main__":
