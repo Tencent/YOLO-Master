@@ -55,3 +55,28 @@
 - 2026-09-07 11:30 调度器首发 4 单元(cards 2-5)+ pilot 收尾腾卡续发；`neu_vpeft_s824` 因与 pilot 并发首建 labels.cache 失败(BF-02)，改 `neu_vpeft_s824b` 重跑，失败产物保留作证据
 - pilot(3ep) `[V-PEFT] ACCEPT: selected 81 targets with ranks=[8]`；显存峰值 ~4.1G（vpeft）< full_sft 4.54G
 - 实测 ~35s/epoch(100ep≈1h/单元),5 卡并行 18 单元约 4h 完成
+
+## 主 18 单元结果（best 口径 = results.csv 各 epoch val mAP 最大值; 显存=日志进度行 GpuMem 峰值）
+
+| dataset | strategy | mAP50 × 3 seed (824/2024/777) | 显存峰值 | 时长 |
+|---|---|---|---|---|
+| NEU | full_sft | 0.752 / 0.780 / 0.768 | 5.31G | ~3.3k s |
+| NEU | vpeft | 0.691 / 0.369⚠ / 0.746 | 4.15G | ~3.1k s |
+| NEU | frozen_backbone | 0.685 / 0.210⚠ / 0.659 | 3.74G | ~2.7k s |
+| PCB | full_sft | 0.989 / 0.989 / 0.990 | 5.28G | ~2.8k s |
+| PCB | vpeft | 0.864 / 0.819 / 0.961 | 4.11G | ~2.7k s |
+| PCB | frozen_backbone | 0.639⚠ / 0.891 / 0.907 | 3.70G | ~2.9k s |
+
+⚠=收敛异常 outlier(见 `outlier_notes`/stage4): NEU+vpeft_s2024 停滞(曲线 0.2-0.3 平台), NEU+frozen_s2024 全程卡死<0.06,
+   PCB+frozen_s824 剧烈震荡(0.03~0.5, best@ep9)。已安排 `run_supplement.py` 补跑验证确定性(见下)。
+
+**关键数字(可训参数, 从 best.pt 实测)**:
+- 全参 `YOLO-master-n`: **2,813,626**
+- vpeft 真实 LoRA adapter: **116,736** (~1/24 全参; 96 个 lora_A/B 权重)
+- vpeft 有效可训 = adapter + 类别重初始化解冻的 head ~348,514 → ~465k(~17% 全参; head 解冻为检测头类别数差异所致,两数据均 6 类)
+- 显存分层(全量 640): full 5.31G > vpeft 4.15G > frozen 3.74G —— P1"受限预算内存优势"的量级基础
+
+## 补充单元(run_supplement.py,待 GPU 空闲自动启动)
+
+- `neu_vpeft_s2025` / `neu_frozen_s2025`: 新 seed 2025 检验 NEU 上 vpeft/frozen 崩坏是确定性还是 seed 偶发
+- `pcb_frozen_s824b`: 同 seed 824 重跑 PCB frozen,验证 0.03~0.5 震荡可复现(确定性)
