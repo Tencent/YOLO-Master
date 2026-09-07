@@ -76,7 +76,12 @@
 - vpeft 有效可训 = adapter + 类别重初始化解冻的 head ~348,514 → ~465k(~17% 全参; head 解冻为检测头类别数差异所致,两数据均 6 类)
 - 显存分层(全量 640): full 5.31G > vpeft 4.15G > frozen 3.74G —— P1"受限预算内存优势"的量级基础
 
-## 补充单元(run_supplement.py,待 GPU 空闲自动启动)
+## 补充单元(run_supplement.py) — 已完成 ✅
 
-- `neu_vpeft_s2025` / `neu_frozen_s2025`: 新 seed 2025 检验 NEU 上 vpeft/frozen 崩坏是确定性还是 seed 偶发
-- `pcb_frozen_s824b`: 同 seed 824 重跑 PCB frozen,验证 0.03~0.5 震荡可复现(确定性)
+| 单元 | 策略 | seed | best mAP50@ep | 结论 |
+|---|---|---|---|---|
+| neu_vpeft_s2025 | vpeft | 2025 | 0.644@82 | **正常收敛 → s2024 停滞(0.369)为 seed 偶发** |
+| neu_frozen_s2025 | frozen | 2025 | 0.739@80 | **正常收敛 → s2024 卡死(0.210)为 seed 偶发** |
+| pcb_frozen_s824b | frozen | 824(重跑) | 0.639@9 | **与 s824 逐一致(同 best@ep9) → 震荡为确定性动力学, 非噪声** |
+
+判定意义见 stage4_analysis/README(稳定性/确定性验证)。

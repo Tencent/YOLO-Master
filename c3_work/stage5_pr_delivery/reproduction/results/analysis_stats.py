@@ -49,7 +49,7 @@ def main():
         if d.name in {"neu_vpeft_s2025", "neu_frozen_s2025", "pcb_frozen_s824b"}:
             s = json.loads((d / "summary.json").read_text())
             strat = s["strategy"]
-            seed = int(d.name.rsplit("_s", 1)[1].rstrip("b"))
+            seed = d.name.rsplit("_s", 1)[1]  # '2025' / '824b'(重跑标记与正式824区分)
             unit = {
                 "id": d.name, "dataset": d.name[:3], "seed": seed, "strategy": strat,
                 "mAP50_best": best_of(d / "train" / strat / "results.csv"),
@@ -68,7 +68,7 @@ def main():
             g = group.get((ds, st), [])
             if not g:
                 continue
-            vals = sorted((r["seed"], r.get("mAP50_best")) for r in g)
+            vals = sorted((str(r["seed"]), r.get("mAP50_best")) for r in g)
             vs = [v for _, v in vals]
             m, sd = mean(vs), (math.sqrt(sum((v - mean(vs)) ** 2 for v in vs) / (len(vs) - 1)) if len(vs) > 1 else 0)
             c = ci95(vs)
