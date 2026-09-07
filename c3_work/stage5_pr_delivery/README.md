@@ -9,8 +9,8 @@
 | PR-1 env+data | stage1(环境重建/数据下载/转换/划分/许可与 SHA) | 已提交 commit, 待 push |
 | PR-2 server smoke | stage2(服务器化 runner/paths.env/planner solver notes/A800 冒烟 evidence) | 已提交 commit, 待 push |
 | PR-3 matrix | stage3(matrix/queue_runner/collect_evidence/18 单元结果) | 已提交 commit, 待 push |
-| PR-4 analysis | stage4(统计四维同表/planner 审计) | 待补充单元定稿后提交 |
-| PR-5 report | stage5(复现包/结项报告/汇报 pptx) | 草稿中 |
+| PR-4 analysis | stage4(统计四维同表/planner 审计/p2 素材) | 定稿 commit, 待 push |
+| PR-5 report | stage5(复现包/结项报告/汇报 pptx) | report_final 定稿 + reproduction 已组装; pptx 待做 |
 
 > push 由本人手动执行(仓库 credentials 当前不可自动用)。本地 commit 均已留好。
 
