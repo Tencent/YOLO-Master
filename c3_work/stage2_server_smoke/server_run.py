@@ -92,6 +92,8 @@ def main():
     ap.add_argument("--device", default="0")
     ap.add_argument("--seed", type=int, default=824)
     ap.add_argument("--amp", default=False)
+    ap.add_argument("--lora-budget", type=int, default=None,
+                    help="覆盖 vpeft 的 lora_adapter_budget(仅 vpeft 生效;默认取策略内置值)")
     ap.add_argument("--runs-root", default=str(SCRIPT_DIR / "runs"))
     args = ap.parse_args()
 
@@ -101,7 +103,9 @@ def main():
         raise SystemExit(f"[拒绝覆盖] 运行目录已存在: {run_dir}\n请使用新的 --name")
     run_dir.mkdir(parents=True)
 
-    cfg = STRATEGIES[args.strategy]
+    cfg = dict(STRATEGIES[args.strategy])
+    if args.lora_budget is not None and args.strategy == "vpeft":
+        cfg["lora_adapter_budget"] = args.lora_budget
     cmd = [
         YOLO_EXE, "detect", "train",
         "model=" + args.model,
