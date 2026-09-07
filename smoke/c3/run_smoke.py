@@ -31,6 +31,9 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SMOKE_DIR = REPO_ROOT / "smoke" / "c3"
+# 修复:裸 `yolo` 依赖 PATH,在共享服务器上可能命中 base conda 的旧版
+# ultralytics(或他人项目),导致 lora_* 参数不可识别。改用本解释器同 env 的 yolo。
+YOLO_EXE = str(Path(sys.executable).resolve().parent / "yolo")
 
 STRATEGIES = {
     "vpeft": {
@@ -98,7 +101,7 @@ def main():
 
     cfg = STRATEGIES[args.strategy]
     cmd = [
-        "yolo", "detect", "train",
+        YOLO_EXE, "detect", "train",
         "model=" + args.model,
         "data=" + args.data,
         f"epochs={args.epochs}", f"batch={args.batch}", f"imgsz={args.imgsz}",
