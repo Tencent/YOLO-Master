@@ -1,0 +1,10 @@
+# C3 工作区忽略规则：大产物/运行产物不入库（只提交脚本+文档+结构化 evidence）
+runs/
+logs/
+*.pt
+*.pth
+*.onnx
+__pycache__/
+*.pyc
+.DS_Store
+*.log
