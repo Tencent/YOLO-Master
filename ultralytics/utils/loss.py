@@ -345,6 +345,19 @@ class KeypointLoss(nn.Module):
 class v8DetectionLoss:
     """Criterion class for computing training losses for YOLOv8 object detection."""
 
+    _COVERAGE_STAT_NAMES = (
+        "coverage_gt_base0",
+        "coverage_gt_base1",
+        "coverage_gt_base2",
+        "coverage_gt_base3plus",
+        "coverage_gt_ordinary",
+        "coverage_gt_elongated",
+        "coverage_triggered_gt",
+        "coverage_supplement_candidates",
+        "coverage_supplement_topk",
+        "coverage_supplement_conflict",
+        "coverage_supplement_final",
+    )
     _ASSIGNMENT_STAT_NAMES = (
         "gt_total",
         "pos_total",
@@ -358,7 +371,7 @@ class v8DetectionLoss:
         "zero_small",
         "zero_medium",
         "zero_large",
-    )
+    ) + _COVERAGE_STAT_NAMES
 
     def __init__(
         self, model: torch.nn.Module, tal_topk: int = 10, tal_topk2: int | None = None
@@ -381,8 +394,10 @@ class v8DetectionLoss:
         tal_candidate_expand_full_epochs = int(getattr(h, "tal_candidate_expand_full_epochs", 60))
         tal_candidate_expand_decay_epochs = int(getattr(h, "tal_candidate_expand_decay_epochs", 60))
         tal_candidate_expand_coverage_triggered = bool(getattr(h, "tal_candidate_expand_coverage_triggered", False))
+        tal_candidate_expand_coverage_tiered = bool(getattr(h, "tal_candidate_expand_coverage_tiered", False))
         tal_candidate_expand_coverage_min = int(getattr(h, "tal_candidate_expand_coverage_min", 3))
         tal_candidate_expand_coverage_target = float(getattr(h, "tal_candidate_expand_coverage_target", 20.0))
+        tal_candidate_expand_coverage_long_side = float(getattr(h, "tal_candidate_expand_coverage_long_side", 32.0))
 
         m = model.model[-1]  # Detect() module
         self.bce = nn.BCEWithLogitsLoss(reduction="none")
@@ -427,8 +442,11 @@ class v8DetectionLoss:
             candidate_expand_full_epochs=tal_candidate_expand_full_epochs,
             candidate_expand_decay_epochs=tal_candidate_expand_decay_epochs,
             candidate_expand_coverage_triggered=tal_candidate_expand_coverage_triggered,
+            candidate_expand_coverage_tiered=tal_candidate_expand_coverage_tiered,
             candidate_expand_coverage_min=tal_candidate_expand_coverage_min,
             candidate_expand_coverage_target=tal_candidate_expand_coverage_target,
+            candidate_expand_coverage_long_side=tal_candidate_expand_coverage_long_side,
+            collect_coverage_stats=self.assignment_stats_enabled,
         )
         self.bbox_loss = BboxLoss(m.reg_max).to(device)
         self.proj = torch.arange(m.reg_max, dtype=torch.float, device=device)
@@ -460,6 +478,7 @@ class v8DetectionLoss:
         positives_per_gt.scatter_add_(1, target_gt_idx.long(), fg_mask.long())
         zero_gt = valid_gt & positives_per_gt.eq(0)
         bins = (small, medium, large)
+        coverage_stats = self.assigner.coverage_stats()
         values = (
             valid_gt.sum(),
             fg_mask.sum(),
@@ -467,6 +486,10 @@ class v8DetectionLoss:
             *(mask.sum() for mask in bins),
             *((positives_per_gt * mask).sum() for mask in bins),
             *((zero_gt & mask).sum() for mask in bins),
+            *(
+                coverage_stats.get(name, areas.new_zeros((), dtype=torch.long))
+                for name in self._COVERAGE_STAT_NAMES
+            ),
         )
         self._assignment_stats += torch.stack(values).to(self._assignment_stats)
 

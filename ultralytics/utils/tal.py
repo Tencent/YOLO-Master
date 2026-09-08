@@ -49,8 +49,11 @@ class TaskAlignedAssigner(nn.Module):
         candidate_expand_full_epochs: int = 60,
         candidate_expand_decay_epochs: int = 60,
         candidate_expand_coverage_triggered: bool = False,
+        candidate_expand_coverage_tiered: bool = False,
         candidate_expand_coverage_min: int = 3,
         candidate_expand_coverage_target: float = 20.0,
+        candidate_expand_coverage_long_side: float = 32.0,
+        collect_coverage_stats: bool = False,
     ):
         """Initialize a TaskAlignedAssigner object with customizable hyperparameters.
 
@@ -78,8 +81,13 @@ class TaskAlignedAssigner(nn.Module):
             candidate_expand_decay_epochs (int, optional): Number of epochs over which expansion strength reaches 0.
             candidate_expand_coverage_triggered (bool, optional): Expand only short-side [8, 16) GTs whose
                 baseline candidate count is below ``candidate_expand_coverage_min``.
+            candidate_expand_coverage_tiered (bool, optional): Use the C2 deficit-tiered budget: empty ordinary GTs
+                target ``candidate_expand_coverage_min`` candidates, non-empty ordinary GTs target one fewer, and
+                elongated GTs target the full minimum.
             candidate_expand_coverage_min (int, optional): Minimum candidate count targeted by coverage-triggered mode.
             candidate_expand_coverage_target (float, optional): Per-side target used by coverage-triggered expansion.
+            candidate_expand_coverage_long_side (float, optional): Minimum long side for full-budget C2 expansion.
+            collect_coverage_stats (bool, optional): Retain detached per-batch coverage counters for diagnostics.
         """
         super().__init__()
         self.topk = topk
@@ -102,9 +110,14 @@ class TaskAlignedAssigner(nn.Module):
         self.candidate_expand_full_epochs = candidate_expand_full_epochs
         self.candidate_expand_decay_epochs = candidate_expand_decay_epochs
         self.candidate_expand_coverage_triggered = candidate_expand_coverage_triggered
+        self.candidate_expand_coverage_tiered = candidate_expand_coverage_tiered
         self.candidate_expand_coverage_min = candidate_expand_coverage_min
         self.candidate_expand_coverage_target = candidate_expand_coverage_target
+        self.candidate_expand_coverage_long_side = candidate_expand_coverage_long_side
+        self.collect_coverage_stats = collect_coverage_stats
         self.candidate_expand_strength = 1.0
+        self._coverage_stats = {}
+        self._coverage_added_mask = None
         if self.dynamic_topk_small and not 0.0 <= self.dynamic_topk_lambda <= 1.0:
             raise ValueError("dynamic_topk_lambda must be within [0, 1]")
         if self.dynamic_topk_min < 0:
@@ -121,9 +134,13 @@ class TaskAlignedAssigner(nn.Module):
             raise ValueError("candidate_expand_decay_epochs must be >= 0")
         if self.candidate_expand_coverage_min < 1:
             raise ValueError("candidate_expand_coverage_min must be >= 1")
+        if self.candidate_expand_coverage_triggered and self.candidate_expand_coverage_tiered:
+            raise ValueError("coverage-triggered C1 and coverage-tiered C2 modes are mutually exclusive")
         self._validate_candidate_expand_target(
             "candidate_expand_coverage_target", self.candidate_expand_coverage_target, 16.0
         )
+        if self.candidate_expand_coverage_long_side < 16.0:
+            raise ValueError("candidate_expand_coverage_long_side must be >= 16")
         if self.candidate_expand_linear_decay and self.candidate_expand_decay_epochs < 1:
             raise ValueError("candidate_expand_decay_epochs must be >= 1 when linear decay is enabled")
         self._stride_tensor = None
@@ -145,6 +162,10 @@ class TaskAlignedAssigner(nn.Module):
             strength = max(1.0 - decay_step / self.candidate_expand_decay_epochs, 0.0)
         self.candidate_expand_strength = strength
         return strength
+
+    def coverage_stats(self) -> dict[str, torch.Tensor]:
+        """Return detached coverage counters from the most recent assignment batch."""
+        return {name: value.detach().clone() for name, value in self._coverage_stats.items()}
 
     @torch.no_grad()
     def forward(self, pd_scores, pd_bboxes, anc_points, gt_labels, gt_bboxes, mask_gt, stride_tensor=None):
@@ -219,6 +240,10 @@ class TaskAlignedAssigner(nn.Module):
         target_gt_idx, fg_mask, mask_pos = self.select_highest_overlaps(
             mask_pos, overlaps, self.n_max_boxes, align_metric
         )
+        if self.collect_coverage_stats and self._coverage_added_mask is not None:
+            self._coverage_stats["coverage_supplement_final"] = (
+                mask_pos.bool() & self._coverage_added_mask
+            ).sum()
 
         # Assigned target
         target_labels, target_bboxes, target_scores = self.get_targets(gt_labels, gt_bboxes, target_gt_idx, fg_mask)
@@ -261,6 +286,13 @@ class TaskAlignedAssigner(nn.Module):
         )
         # Merge all mask to a final mask, (b, max_num_obj, h*w)
         mask_pos = mask_topk * mask_in_gts * mask_gt
+        if self.collect_coverage_stats and self._coverage_added_mask is not None:
+            added_selected = mask_pos.bool() & self._coverage_added_mask
+            multi_gt_anchor = mask_pos.sum(-2) > 1
+            self._coverage_stats["coverage_supplement_topk"] = added_selected.sum()
+            self._coverage_stats["coverage_supplement_conflict"] = (
+                added_selected & multi_gt_anchor.unsqueeze(-2)
+            ).sum()
 
         return mask_pos, align_metric, overlaps
 
@@ -457,11 +489,35 @@ class TaskAlignedAssigner(nn.Module):
 
         mask = centers_in_boxes(baseline_boxes)  # (b, n_boxes, h*w)
 
-        if self.candidate_expand_coverage_triggered:
-            valid_gt = mask_gt.squeeze(-1).bool()
-            base_count = mask.sum(-1)
-            short_side_8_16 = (original_wh >= 8.0) & (original_wh < 16.0)
-            eligible = valid_gt & short_side_8_16.any(-1) & (base_count < self.candidate_expand_coverage_min)
+        valid_gt = mask_gt.squeeze(-1).bool()
+        base_count = mask.sum(-1)
+        short_side_8_16 = (original_wh >= 8.0) & (original_wh < 16.0)
+        coverage_group = valid_gt & short_side_8_16.any(-1)
+        elongated = original_wh.max(-1).values >= self.candidate_expand_coverage_long_side
+        self._coverage_added_mask = torch.zeros_like(mask, dtype=torch.bool)
+        if self.collect_coverage_stats:
+            zero = base_count.new_zeros(())
+            self._coverage_stats = {
+                "coverage_gt_base0": (coverage_group & base_count.eq(0)).sum(),
+                "coverage_gt_base1": (coverage_group & base_count.eq(1)).sum(),
+                "coverage_gt_base2": (coverage_group & base_count.eq(2)).sum(),
+                "coverage_gt_base3plus": (coverage_group & base_count.ge(3)).sum(),
+                "coverage_gt_ordinary": (coverage_group & ~elongated).sum(),
+                "coverage_gt_elongated": (coverage_group & elongated).sum(),
+                "coverage_triggered_gt": zero.clone(),
+                "coverage_supplement_candidates": zero.clone(),
+                "coverage_supplement_topk": zero.clone(),
+                "coverage_supplement_conflict": zero.clone(),
+                "coverage_supplement_final": zero.clone(),
+            }
+
+        if self.candidate_expand_coverage_triggered or self.candidate_expand_coverage_tiered:
+            desired_count = torch.full_like(base_count, self.candidate_expand_coverage_min)
+            if self.candidate_expand_coverage_tiered:
+                ordinary_target = max(self.candidate_expand_coverage_min - 1, 1)
+                desired_count = torch.where(elongated, desired_count, ordinary_target)
+                desired_count = torch.where(base_count == 0, self.candidate_expand_coverage_min, desired_count)
+            eligible = valid_gt & short_side_8_16.any(-1) & (base_count < desired_count)
             if eligible.any():
                 coverage_wh = expanded_wh.clone()
                 coverage_target = original_wh + self.candidate_expand_strength * (
@@ -476,9 +532,9 @@ class TaskAlignedAssigner(nn.Module):
                 expanded_mask = centers_in_boxes(coverage_boxes)
                 ring_mask = expanded_mask & ~mask
 
-                # Add only the nearest ring anchors needed to reach the minimum. This keeps the
+                # Add only the nearest ring anchors needed to reach the desired count. This keeps the
                 # baseline/core candidates and prevents a broad expansion from flooding TopK with noise.
-                need = (self.candidate_expand_coverage_min - base_count).clamp_min(0)
+                need = (desired_count - base_count).clamp_min(0)
                 max_need = min(self.candidate_expand_coverage_min, ring_mask.shape[-1])
                 ring_distance = ((xy_centers.view(1, 1, -1, 2) - gt_bboxes[..., None, :2]) ** 2).sum(-1)
                 ring_distance = ring_distance.masked_fill(~ring_mask, float("inf"))
@@ -487,6 +543,10 @@ class TaskAlignedAssigner(nn.Module):
                 take = (ranks < need.unsqueeze(-1)) & torch.isfinite(nearest_distance) & eligible.unsqueeze(-1)
                 ring_selected = torch.zeros_like(mask)
                 ring_selected.scatter_(-1, nearest_idx, take.to(mask.dtype))
+                self._coverage_added_mask = ring_selected.bool()
+                if self.collect_coverage_stats:
+                    self._coverage_stats["coverage_triggered_gt"] = eligible.sum()
+                    self._coverage_stats["coverage_supplement_candidates"] = ring_selected.sum()
                 mask = torch.where(eligible.unsqueeze(-1), mask | ring_selected, mask)
 
         if self._stride_tensor is not None and len(self.stride) > 0 and self.stride[0] < 8:

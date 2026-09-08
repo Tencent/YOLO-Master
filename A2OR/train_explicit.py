@@ -5,6 +5,7 @@ Examples:
     python A2OR/train_explicit.py --name baseline_explicit
     python A2OR/train_explicit.py --dynamic-topk --name dtk_explicit --lambda 0.8 --k-min 3 --k-max 10
     python A2OR/train_explicit.py --dynamic-topk --candidate-expand --name dtk_axis_explicit --expand-8-16 24
+    python A2OR/train_explicit.py --coverage-tiered --name c2_tiered_explicit
     python A2OR/train_explicit.py --candidate-expand --name axis_decay_explicit --expand-8-16 24 \
         --expand-linear-decay --expand-full-epochs 60 --expand-decay-epochs 60
     python A2OR/train_explicit.py --print-config
@@ -41,7 +42,8 @@ PERSISTED_FIELDS = {
     "translate", "scale", "shear", "perspective", "flipud", "fliplr", "bgr", "mosaic", "mixup", "cutmix",
     "tal_topk", "tal_alpha", "tal_beta", "lambda_value", "k_min", "k_max", "small_area", "medium_area",
     "expand_0_8", "expand_8_16", "expand_linear_decay", "expand_full_epochs", "expand_decay_epochs",
-    "coverage_triggered", "coverage_min_candidates", "coverage_expand_target",
+    "coverage_triggered", "coverage_tiered", "coverage_min_candidates", "coverage_expand_target",
+    "coverage_long_side",
     "assignment_stats", "pretrained", "dynamic_topk", "candidate_expand",
 }
 PERSISTED_FLAG_ALIASES = {"lambda_value": "--lambda"}
@@ -68,7 +70,8 @@ Experiment switches:
   --dynamic-topk       Enable Dynamic TopK for small GTs.
   --candidate-expand   Enable per-side candidate expansion.
   --coverage-triggered  Enable C1 coverage-triggered expansion for scarce short-side [8,16) GTs.
-  Neither switch is enabled by default, which is the baseline configuration.
+  --coverage-tiered     Enable C2 deficit-tiered expansion with a larger budget for elongated GTs.
+  None of these switches is enabled by default, which is the baseline configuration.
 
 Legacy --mode values (still accepted): baseline, dtk, axis, dtk-axis, set.
 Prefer the independent switches above for new experiments.
@@ -203,12 +206,20 @@ def parse_args() -> argparse.Namespace:
         help="C1: expand short-side [8,16) GTs only when baseline candidate count is below the minimum.",
     )
     parser.add_argument(
+        "--coverage-tiered", action=argparse.BooleanOptionalAction, default=False,
+        help="C2: vary the expansion budget by candidate deficit and whether the GT is elongated.",
+    )
+    parser.add_argument(
         "--coverage-min-candidates", type=int, default=3,
-        help="C1 target candidate count; core candidates are preserved.",
+        help="Full C1/C2 target candidate count; core candidates are preserved.",
     )
     parser.add_argument(
         "--coverage-expand-target", type=float, default=20.0,
-        help="C1 per-side expansion target for eligible [8,16) sides.",
+        help="C1/C2 per-side expansion target for eligible [8,16) sides.",
+    )
+    parser.add_argument(
+        "--coverage-long-side", type=float, default=32.0,
+        help="C2 long-side threshold for giving an eligible GT the full candidate budget.",
     )
     parser.add_argument("--assignment-stats", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--pretrained", action=argparse.BooleanOptionalAction, default=False)
@@ -244,9 +255,13 @@ def parse_args() -> argparse.Namespace:
         parser.error("--coverage-min-candidates must be >= 1")
     if args.coverage_expand_target < 16.0:
         parser.error("--coverage-expand-target must be >= 16")
-    if args.coverage_triggered and (args.dynamic_topk or args.candidate_expand):
+    if args.coverage_long_side < 16.0:
+        parser.error("--coverage-long-side must be >= 16")
+    if args.coverage_triggered and args.coverage_tiered:
+        parser.error("--coverage-triggered C1 and --coverage-tiered C2 are mutually exclusive")
+    if (args.coverage_triggered or args.coverage_tiered) and (args.dynamic_topk or args.candidate_expand):
         parser.error(
-            "--coverage-triggered is an independent C1 mode; do not combine it with Dynamic TopK or axis expansion"
+            "coverage-triggered modes are independent; do not combine them with Dynamic TopK or axis expansion"
         )
     return args
 
@@ -348,6 +363,8 @@ def make_config(args: argparse.Namespace) -> tuple[dict, Path, Path, Path, Path 
     variant = (
         "c1-coverage"
         if args.coverage_triggered
+        else "c2-tiered"
+        if args.coverage_tiered
         else "dtk-axis"
         if dynamic and axis
         else "dtk"
@@ -396,8 +413,10 @@ def make_config(args: argparse.Namespace) -> tuple[dict, Path, Path, Path, Path 
         "tal_candidate_expand_full_epochs": args.expand_full_epochs if axis else 0,
         "tal_candidate_expand_decay_epochs": args.expand_decay_epochs if axis else 0,
         "tal_candidate_expand_coverage_triggered": args.coverage_triggered,
+        "tal_candidate_expand_coverage_tiered": args.coverage_tiered,
         "tal_candidate_expand_coverage_min": args.coverage_min_candidates,
         "tal_candidate_expand_coverage_target": args.coverage_expand_target,
+        "tal_candidate_expand_coverage_long_side": args.coverage_long_side,
         "save": True, "save_period": args.save_period, "plots": True,
         "project": str(project), "name": name, "exist_ok": False,
         "pretrained": args.pretrained, "resume": str(resume) if resume else False,
