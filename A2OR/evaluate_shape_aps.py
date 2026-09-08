@@ -163,14 +163,22 @@ def coco_aps(dataset: dict, predictions: list[dict], max_det: int) -> dict[str, 
     if not dataset["annotations"]:
         return {"APs": None, "AP50s": None, "ARs": None, "AP": None}
     coco_gt = COCO(dataset, print_function=lambda *_: None)
-    coco_dt = coco_gt.loadRes(predictions)
+    # A shape subset contains only images with at least one selected GT.  The
+    # result loader requires every prediction image_id to belong to that set.
+    image_ids = set(coco_gt.getImgIds())
+    subset_predictions = [prediction for prediction in predictions if prediction["image_id"] in image_ids]
+    coco_dt = coco_gt.loadRes(subset_predictions)
     evaluator = COCOeval_faster(coco_gt, coco_dt, iouType="bbox", print_function=lambda *_: None)
     evaluator.params.imgIds = sorted(coco_gt.getImgIds())
     evaluator.params.maxDets = [1, 10, max_det]
-    evaluator.params.areaRng = [[0, SMALL_MAX_AREA]]
-    evaluator.params.areaRngLbl = ["small"]
+    # Keep the four standard COCO labels because faster_coco_eval.summarize()
+    # expects all/ small/ medium/ large to exist.  The selected GT itself is
+    # already restricted to small objects, so AP_small is the desired value.
+    evaluator.params.areaRng = [[0, 1e10], [0, SMALL_MAX_AREA], [SMALL_MAX_AREA, 96 * 96], [96 * 96, 1e10]]
+    evaluator.params.areaRngLbl = ["all", "small", "medium", "large"]
     evaluator.evaluate()
     evaluator.accumulate()
+    evaluator.summarize()
     values = {key: float(value) for key, value in evaluator.stats_as_dict.items()}
     return {"APs": values.get("AP_small", values.get("AP_all")),
             "AP50s": values.get("AP50_small", values.get("AP_50", values.get("AP50"))),
