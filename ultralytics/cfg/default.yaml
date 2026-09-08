@@ -169,6 +169,9 @@ tal_candidate_expand_8_16: -1.0 # (float) per-side candidate-box target for orig
 tal_candidate_expand_linear_decay: False # (bool) keep full expansion first, then linearly restore original sides
 tal_candidate_expand_full_epochs: 0 # (int) fully expanded epochs before contraction; used when linear decay is enabled
 tal_candidate_expand_decay_epochs: 0 # (int) contraction epochs; 0 disables the schedule
+tal_candidate_expand_coverage_triggered: False # (bool) expand short-side [8,16) GTs only when baseline candidates are scarce
+tal_candidate_expand_coverage_min: 3 # (int) target candidate count for coverage-triggered expansion
+tal_candidate_expand_coverage_target: 20.0 # (float) per-side target for coverage-triggered [8,16) expansion
 tal_topk: 10 # (int) top-k for TAL positive sample selection per GT
 tal_alpha: 0.5 # (float) TAL alignment metric exponent for classification score
 tal_beta: 6.0 # (float) TAL alignment metric exponent for IoU

@@ -277,6 +277,7 @@ CFG_FLOAT_KEYS = frozenset(
         "assignment_medium_area",
         "tal_candidate_expand_0_8",
         "tal_candidate_expand_8_16",
+        "tal_candidate_expand_coverage_target",
         "dis",
         "foundation_cosine_weight",
         "foundation_foreground_weight",
@@ -369,6 +370,7 @@ MIXTURE_INT_KEYS = frozenset(
         "tal_dynamic_topk_max",
         "tal_candidate_expand_full_epochs",
         "tal_candidate_expand_decay_epochs",
+        "tal_candidate_expand_coverage_min",
     }
 )
 CFG_INT_KEYS = frozenset(
@@ -483,6 +485,7 @@ CFG_BOOL_KEYS = frozenset(
         "tal_dynamic_topk_small",
         "tal_dynamic_topk_cap",
         "tal_candidate_expand_linear_decay",
+        "tal_candidate_expand_coverage_triggered",
         "foundation_cache_teacher_features",
         "foundation_enabled",
         "foundation_foreground_weighting",

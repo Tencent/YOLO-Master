@@ -380,6 +380,9 @@ class v8DetectionLoss:
         tal_candidate_expand_linear_decay = bool(getattr(h, "tal_candidate_expand_linear_decay", False))
         tal_candidate_expand_full_epochs = int(getattr(h, "tal_candidate_expand_full_epochs", 60))
         tal_candidate_expand_decay_epochs = int(getattr(h, "tal_candidate_expand_decay_epochs", 60))
+        tal_candidate_expand_coverage_triggered = bool(getattr(h, "tal_candidate_expand_coverage_triggered", False))
+        tal_candidate_expand_coverage_min = int(getattr(h, "tal_candidate_expand_coverage_min", 3))
+        tal_candidate_expand_coverage_target = float(getattr(h, "tal_candidate_expand_coverage_target", 20.0))
 
         m = model.model[-1]  # Detect() module
         self.bce = nn.BCEWithLogitsLoss(reduction="none")
@@ -423,6 +426,9 @@ class v8DetectionLoss:
             candidate_expand_linear_decay=tal_candidate_expand_linear_decay,
             candidate_expand_full_epochs=tal_candidate_expand_full_epochs,
             candidate_expand_decay_epochs=tal_candidate_expand_decay_epochs,
+            candidate_expand_coverage_triggered=tal_candidate_expand_coverage_triggered,
+            candidate_expand_coverage_min=tal_candidate_expand_coverage_min,
+            candidate_expand_coverage_target=tal_candidate_expand_coverage_target,
         )
         self.bbox_loss = BboxLoss(m.reg_max).to(device)
         self.proj = torch.arange(m.reg_max, dtype=torch.float, device=device)

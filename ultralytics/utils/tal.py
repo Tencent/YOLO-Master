@@ -48,6 +48,9 @@ class TaskAlignedAssigner(nn.Module):
         candidate_expand_linear_decay: bool = False,
         candidate_expand_full_epochs: int = 60,
         candidate_expand_decay_epochs: int = 60,
+        candidate_expand_coverage_triggered: bool = False,
+        candidate_expand_coverage_min: int = 3,
+        candidate_expand_coverage_target: float = 20.0,
     ):
         """Initialize a TaskAlignedAssigner object with customizable hyperparameters.
 
@@ -73,6 +76,10 @@ class TaskAlignedAssigner(nn.Module):
                 original candidate box.
             candidate_expand_full_epochs (int, optional): Number of fully expanded epochs before contraction.
             candidate_expand_decay_epochs (int, optional): Number of epochs over which expansion strength reaches 0.
+            candidate_expand_coverage_triggered (bool, optional): Expand only short-side [8, 16) GTs whose
+                baseline candidate count is below ``candidate_expand_coverage_min``.
+            candidate_expand_coverage_min (int, optional): Minimum candidate count targeted by coverage-triggered mode.
+            candidate_expand_coverage_target (float, optional): Per-side target used by coverage-triggered expansion.
         """
         super().__init__()
         self.topk = topk
@@ -94,6 +101,9 @@ class TaskAlignedAssigner(nn.Module):
         self.candidate_expand_linear_decay = candidate_expand_linear_decay
         self.candidate_expand_full_epochs = candidate_expand_full_epochs
         self.candidate_expand_decay_epochs = candidate_expand_decay_epochs
+        self.candidate_expand_coverage_triggered = candidate_expand_coverage_triggered
+        self.candidate_expand_coverage_min = candidate_expand_coverage_min
+        self.candidate_expand_coverage_target = candidate_expand_coverage_target
         self.candidate_expand_strength = 1.0
         if self.dynamic_topk_small and not 0.0 <= self.dynamic_topk_lambda <= 1.0:
             raise ValueError("dynamic_topk_lambda must be within [0, 1]")
@@ -109,6 +119,11 @@ class TaskAlignedAssigner(nn.Module):
             raise ValueError("candidate_expand_full_epochs must be >= 0")
         if self.candidate_expand_decay_epochs < 0:
             raise ValueError("candidate_expand_decay_epochs must be >= 0")
+        if self.candidate_expand_coverage_min < 1:
+            raise ValueError("candidate_expand_coverage_min must be >= 1")
+        self._validate_candidate_expand_target(
+            "candidate_expand_coverage_target", self.candidate_expand_coverage_target, 16.0
+        )
         if self.candidate_expand_linear_decay and self.candidate_expand_decay_epochs < 1:
             raise ValueError("candidate_expand_decay_epochs must be >= 1 when linear decay is enabled")
         self._stride_tensor = None
@@ -434,10 +449,45 @@ class TaskAlignedAssigner(nn.Module):
             )
 
         gt_bboxes_xywh[..., 2:] = expanded_wh
-        gt_bboxes = xywh2xyxy(gt_bboxes_xywh)
+        baseline_boxes = xywh2xyxy(gt_bboxes_xywh)
 
-        lt, rb = gt_bboxes.unsqueeze(2).chunk(2, 3)  # (b, n_boxes, 1, 2) left-top, right-bottom
-        mask = ((xy_centers - lt > eps) & (rb - xy_centers > eps)).all(3)  # (b, n_boxes, h*w)
+        def centers_in_boxes(boxes):
+            lt, rb = boxes.unsqueeze(2).chunk(2, 3)  # (b, n_boxes, 1, 2) left-top, right-bottom
+            return ((xy_centers - lt > eps) & (rb - xy_centers > eps)).all(3)
+
+        mask = centers_in_boxes(baseline_boxes)  # (b, n_boxes, h*w)
+
+        if self.candidate_expand_coverage_triggered:
+            valid_gt = mask_gt.squeeze(-1).bool()
+            base_count = mask.sum(-1)
+            short_side_8_16 = (original_wh >= 8.0) & (original_wh < 16.0)
+            eligible = valid_gt & short_side_8_16.any(-1) & (base_count < self.candidate_expand_coverage_min)
+            if eligible.any():
+                coverage_wh = expanded_wh.clone()
+                coverage_target = original_wh + self.candidate_expand_strength * (
+                    self.candidate_expand_coverage_target - original_wh
+                )
+                coverage_wh = torch.where(
+                    eligible.unsqueeze(-1) & short_side_8_16,
+                    coverage_target,
+                    coverage_wh,
+                )
+                coverage_boxes = xywh2xyxy(torch.cat((gt_bboxes_xywh[..., :2], coverage_wh), dim=-1))
+                expanded_mask = centers_in_boxes(coverage_boxes)
+                ring_mask = expanded_mask & ~mask
+
+                # Add only the nearest ring anchors needed to reach the minimum. This keeps the
+                # baseline/core candidates and prevents a broad expansion from flooding TopK with noise.
+                need = (self.candidate_expand_coverage_min - base_count).clamp_min(0)
+                max_need = min(self.candidate_expand_coverage_min, ring_mask.shape[-1])
+                ring_distance = ((xy_centers.view(1, 1, -1, 2) - gt_bboxes[..., None, :2]) ** 2).sum(-1)
+                ring_distance = ring_distance.masked_fill(~ring_mask, float("inf"))
+                nearest_distance, nearest_idx = torch.topk(ring_distance, max_need, dim=-1, largest=False)
+                ranks = torch.arange(max_need, device=xy_centers.device).view(1, 1, -1)
+                take = (ranks < need.unsqueeze(-1)) & torch.isfinite(nearest_distance) & eligible.unsqueeze(-1)
+                ring_selected = torch.zeros_like(mask)
+                ring_selected.scatter_(-1, nearest_idx, take.to(mask.dtype))
+                mask = torch.where(eligible.unsqueeze(-1), mask | ring_selected, mask)
 
         if self._stride_tensor is not None and len(self.stride) > 0 and self.stride[0] < 8:
             p2_mask = (self._stride_tensor == self.stride[0]).squeeze(-1)  # (h*w,)

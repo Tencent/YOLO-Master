@@ -41,6 +41,7 @@ PERSISTED_FIELDS = {
     "translate", "scale", "shear", "perspective", "flipud", "fliplr", "bgr", "mosaic", "mixup", "cutmix",
     "tal_topk", "tal_alpha", "tal_beta", "lambda_value", "k_min", "k_max", "small_area", "medium_area",
     "expand_0_8", "expand_8_16", "expand_linear_decay", "expand_full_epochs", "expand_decay_epochs",
+    "coverage_triggered", "coverage_min_candidates", "coverage_expand_target",
     "assignment_stats", "pretrained", "dynamic_topk", "candidate_expand",
 }
 PERSISTED_FLAG_ALIASES = {"lambda_value": "--lambda"}
@@ -66,6 +67,7 @@ HELP_EPILOG = """
 Experiment switches:
   --dynamic-topk       Enable Dynamic TopK for small GTs.
   --candidate-expand   Enable per-side candidate expansion.
+  --coverage-triggered  Enable C1 coverage-triggered expansion for scarce short-side [8,16) GTs.
   Neither switch is enabled by default, which is the baseline configuration.
 
 Legacy --mode values (still accepted): baseline, dtk, axis, dtk-axis, set.
@@ -196,6 +198,18 @@ def parse_args() -> argparse.Namespace:
         "--expand-decay-epochs", type=int, default=60,
         help="Number of epochs over which expansion strength reaches zero (60 means epoch 120 ends at zero).",
     )
+    parser.add_argument(
+        "--coverage-triggered", action=argparse.BooleanOptionalAction, default=False,
+        help="C1: expand short-side [8,16) GTs only when baseline candidate count is below the minimum.",
+    )
+    parser.add_argument(
+        "--coverage-min-candidates", type=int, default=3,
+        help="C1 target candidate count; core candidates are preserved.",
+    )
+    parser.add_argument(
+        "--coverage-expand-target", type=float, default=20.0,
+        help="C1 per-side expansion target for eligible [8,16) sides.",
+    )
     parser.add_argument("--assignment-stats", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--pretrained", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--resume", default=None, help="Checkpoint path belonging to the selected run directory.")
@@ -226,6 +240,14 @@ def parse_args() -> argparse.Namespace:
         parser.error("--expand-full-epochs and --expand-decay-epochs must be >= 0")
     if args.expand_linear_decay and args.expand_decay_epochs < 1:
         parser.error("--expand-decay-epochs must be >= 1 when --expand-linear-decay is enabled")
+    if args.coverage_min_candidates < 1:
+        parser.error("--coverage-min-candidates must be >= 1")
+    if args.coverage_expand_target < 16.0:
+        parser.error("--coverage-expand-target must be >= 16")
+    if args.coverage_triggered and (args.dynamic_topk or args.candidate_expand):
+        parser.error(
+            "--coverage-triggered is an independent C1 mode; do not combine it with Dynamic TopK or axis expansion"
+        )
     return args
 
 
@@ -323,7 +345,17 @@ def make_config(args: argparse.Namespace) -> tuple[dict, Path, Path, Path, Path 
     resume = _path(args.resume, must_exist=True) if args.resume else None
     dynamic = args.dynamic_topk
     axis = args.candidate_expand
-    variant = "dtk-axis" if dynamic and axis else "dtk" if dynamic else "axis" if axis else "baseline"
+    variant = (
+        "c1-coverage"
+        if args.coverage_triggered
+        else "dtk-axis"
+        if dynamic and axis
+        else "dtk"
+        if dynamic
+        else "axis"
+        if axis
+        else "baseline"
+    )
     default_name = f"{variant}_explicit_{args.epochs}e_b{args.batch}"
     # A resume checkpoint already identifies its run directory.  Use it when
     # --name is omitted so a resume does not accidentally target a new run.
@@ -363,6 +395,9 @@ def make_config(args: argparse.Namespace) -> tuple[dict, Path, Path, Path, Path 
         "tal_candidate_expand_linear_decay": args.expand_linear_decay if axis else False,
         "tal_candidate_expand_full_epochs": args.expand_full_epochs if axis else 0,
         "tal_candidate_expand_decay_epochs": args.expand_decay_epochs if axis else 0,
+        "tal_candidate_expand_coverage_triggered": args.coverage_triggered,
+        "tal_candidate_expand_coverage_min": args.coverage_min_candidates,
+        "tal_candidate_expand_coverage_target": args.coverage_expand_target,
         "save": True, "save_period": args.save_period, "plots": True,
         "project": str(project), "name": name, "exist_ok": False,
         "pretrained": args.pretrained, "resume": str(resume) if resume else False,
