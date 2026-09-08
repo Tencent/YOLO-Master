@@ -151,10 +151,26 @@ def remap_predictions(path: Path, filename_to_id: dict[str, int]) -> list[dict]:
 
 
 def subset_coco(dataset: dict, annotations: Iterable[dict]) -> dict:
+    """Build a shape subset while ignoring other GT objects in the same images.
+
+    COCOeval does not honor a custom ``ignore`` field in this faster backend;
+    ``iscrowd=1`` is its supported ignore-region mechanism.  Keeping other GT
+    objects as ignored regions prevents their valid predictions from becoming
+    false positives for the selected shape.
+    """
     selected = list(annotations)
+    selected_ids = {ann["id"] for ann in selected}
     image_ids = sorted({ann["image_id"] for ann in selected})
+    subset_annotations = []
+    for ann in dataset["annotations"]:
+        if ann["image_id"] not in image_ids:
+            continue
+        copied = dict(ann)
+        copied["bbox"] = list(ann["bbox"])
+        copied["iscrowd"] = 0 if ann["id"] in selected_ids else 1
+        subset_annotations.append(copied)
     return {"info": dataset["info"], "images": [im for im in dataset["images"] if im["id"] in image_ids],
-            "annotations": selected, "categories": dataset["categories"]}
+            "annotations": subset_annotations, "categories": dataset["categories"]}
 
 
 def coco_aps(dataset: dict, predictions: list[dict], max_det: int) -> dict[str, float | None]:
@@ -280,12 +296,12 @@ def main() -> None:
         writer = csv.DictWriter(handle, fieldnames=["shape", "gt_boxes", "APs", "APs_points", "AP50s", "ARs", "hit_rate@0.5", "hit_rate@0.5_points"])
         writer.writeheader()
         writer.writerows({key: result[key] for key in writer.fieldnames} for result in results)
-    print("\nshape                                  GT       APs     AP50s       ARs   hit@0.5")
+    print("\nshape                                  GT    APs(pt)  AP50s(pt)  ARs(pt)  hit@0.5(%)")
     for result in sorted(results, key=lambda item: (item["APs"] is None, item["APs"] or 0)):
-        print(f"{result['shape']:<38} {result['gt_boxes']:>4} {result['APs'] if result['APs'] is not None else float('nan'):>9.4f}"
-              f" {result['AP50s'] if result['AP50s'] is not None else float('nan'):>9.4f}"
-              f" {result['ARs'] if result['ARs'] is not None else float('nan'):>9.4f}"
-              f" {result['hit_rate@0.5'] if result['hit_rate@0.5'] is not None else float('nan'):>9.4f}")
+        print(f"{result['shape']:<38} {result['gt_boxes']:>4} {result['APs_points'] if result['APs_points'] is not None else float('nan'):>9.4f}"
+              f" {result['AP50s_points'] if result['AP50s_points'] is not None else float('nan'):>10.4f}"
+              f" {result['ARs_points'] if result['ARs_points'] is not None else float('nan'):>9.4f}"
+              f" {result['hit_rate@0.5_points'] if result['hit_rate@0.5_points'] is not None else float('nan'):>11.4f}")
     print(f"\nSaved JSON: {args.output.resolve()}")
     print(f"Saved CSV:  {csv_path.resolve()}")
 
