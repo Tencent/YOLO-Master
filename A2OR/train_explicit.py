@@ -85,9 +85,9 @@ Use --print-config to audit the complete effective request without creating a ru
 
 
 def _path(value: str, *, must_exist: bool = False) -> Path:
-    """Resolve a path relative to the repository root."""
+    """Resolve a user-supplied path relative to the current working directory."""
     path = Path(value).expanduser()
-    path = path if path.is_absolute() else ROOT / path
+    path = path if path.is_absolute() else Path.cwd() / path
     path = path.resolve()
     if must_exist and not path.exists():
         raise FileNotFoundError(path)
@@ -320,13 +320,15 @@ def make_config(args: argparse.Namespace) -> tuple[dict, Path, Path, Path, Path 
     data = _path(args.data, must_exist=True)
     data, data_root, dataset = resolve_data_yaml(data, args.data_root, args.dataset)
     project = _path(args.project)
+    resume = _path(args.resume, must_exist=True) if args.resume else None
     dynamic = args.dynamic_topk
     axis = args.candidate_expand
     variant = "dtk-axis" if dynamic and axis else "dtk" if dynamic else "axis" if axis else "baseline"
     default_name = f"{variant}_explicit_{args.epochs}e_b{args.batch}"
-    name = args.name or default_name
+    # A resume checkpoint already identifies its run directory.  Use it when
+    # --name is omitted so a resume does not accidentally target a new run.
+    name = args.name or (resume.parent.parent.name if resume else default_name)
     run_dir = project / name
-    resume = _path(args.resume, must_exist=True) if args.resume else None
     if resume:
         if resume.suffix.lower() != ".pt" or resume.parent.parent.resolve() != run_dir.resolve():
             raise ValueError("--resume must be a .pt checkpoint under project/name/weights")
