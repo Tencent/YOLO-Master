@@ -62,3 +62,28 @@ runs/baseline_gpu6g_retry/
 
 如需正式实验，应从同一初始权重重新开始，并在启动前固定实际 batch。若硬件只能支持 batch=4，则所有对照组都应使用干净、统一的 batch=4 协议，并将其称为“受限显存协议基线”。
 
+## 小目标分辨率瓶颈探针
+
+`probe_resolution_bottleneck.py` 使用同一个冻结 checkpoint，在相同的完整验证集上分别以 `imgsz=800` 和
+`imgsz=1280` 评估。它复用 `compare_aps.py` 的原图面积分箱，同时报告官方 COCO `maxDets=100` 和
+VisDrone 密集场景补充口径 `maxDets=300`。这是一项诊断，不是新的训练结果或结构消融。
+
+```bash
+python A2OR/probe_resolution_bottleneck.py \
+  --checkpoint A2OR/runs/baseline_matched_vd100pct_s0_120e_b16_adamw_w8/weights/best.pt \
+  --data A2OR/.runtime_data/visdrone_full_0764528ce5ce.yaml \
+  --images /infinite/datasets/yqy/VisDrone/images/val \
+  --labels /infinite/datasets/yqy/VisDrone/labels/val \
+  --imgsz 800 1280 \
+  --reference-imgsz 800 \
+  --batch 4 \
+  --device 0 \
+  --workers 8 \
+  --max-det 300 \
+  --aps-gate 0.5 \
+  --output A2OR/runs/baseline_resolution_probe.json
+```
+
+先在命令末尾添加 `--print-config` 可只检查参数和路径。若 `1280` 验证显存不足，应降低评估 batch；评估
+batch 不改变指标定义。添加 `--sparse-sahi` 会运行可选的集成 Sparse SAHI 探针，其结果会单独标记为
+推理流程变化，不与普通 `imgsz` 结果混为同一协议。
