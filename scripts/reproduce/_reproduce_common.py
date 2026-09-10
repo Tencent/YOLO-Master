@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import argparse
 import csv
-import platform
+import os
 import time
 import traceback
 from dataclasses import dataclass
@@ -384,6 +384,22 @@ def train_one(args: argparse.Namespace, dataset: DatasetSpec, spec: ModelSpec, p
     return {"model": spec.name, "status": "resumed" if resume else "ok", "duration_s": f"{time.time() - start:.1f}"}
 
 
+def default_workers() -> int:
+    """Default data-loader worker count, scaled to the machine.
+
+    Half the visible cores, capped at 16, floored at 1. The cap keeps large servers
+    from spawning more loaders than the input pipeline can use; the halving leaves
+    cores for the training process itself, which does collation and augmentation that
+    the workers hand back. ``build_dataloader`` clamps this again per CUDA device.
+
+    Deliberately independent of the host OS: worker cost tracks core count and memory,
+    not platform, and a hard-coded per-OS value goes stale as machines change. If a
+    specific box stalls on multiprocessing, pass ``--workers 0`` to load inline -- at
+    the cost of the GPU waiting on augmentation instead of overlapping it.
+    """
+    return max(1, min(16, (os.cpu_count() or 1) // 2))
+
+
 def build_parser(dataset: DatasetSpec, models=MODELS) -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description=f"Reproduce YOLO-Master {', '.join(m.name for m in models)} baselines on {dataset.name}.",
@@ -396,8 +412,9 @@ def build_parser(dataset: DatasetSpec, models=MODELS) -> argparse.ArgumentParser
     p.add_argument(
         "--workers",
         type=int,
-        default=0 if platform.system() == "Windows" else 16,
-        help="Data-loader workers (defaults to 0 on Windows to avoid multiprocessing I/O deadlocks).",
+        default=default_workers(),
+        help="Data-loader workers. 0 loads batches on the training process (safe, but the GPU "
+             "waits on augmentation); pass 0 explicitly if you hit a multiprocessing stall.",
     )
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--patience", type=int, default=0, help="0 disables early stopping.")
