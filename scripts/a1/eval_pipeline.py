@@ -65,6 +65,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--iou", type=float, default=0.7, help="NMS IoU 阈值")
     ap.add_argument("--max-det", type=int, default=300, help="单图最大检测数")
     ap.add_argument("--max-imgs", type=int, default=None, help="延迟评测用图上限(固定 seed 抽样;CPU 全量很慢)")
+    ap.add_argument("--img-list", default=None, help="固定评测图清单文件(每行一个文件名;提供时优先于 --max-imgs 抽样)")
     ap.add_argument("--seed", type=int, default=0, help="抽样 seed")
     ap.add_argument("--split", default="val", help="数据 YAML 中的 split 键")
     ap.add_argument("--no-val", action="store_true", help="跳过精度评测")
@@ -265,6 +266,8 @@ def eval_one_model(
         "seed": args.seed,
         "split": args.split,
         "n_imgs": len(images),
+        # 评测图清单显式落盘:多格对比必须同一清单,跨次运行 seed 同即可复现
+        "eval_images": [p.name for p in images],
         "end2end": None,
     }
     # 1. 精度(未 fuse 状态,与训练内 val 同形态)
@@ -359,7 +362,14 @@ def main() -> None:
     args = parse_args()
     device = parse_device(args.device)
     images, label_dir = resolve_images(args.data, args.split)
-    images = sample_images(images, args.max_imgs, args.seed)
+    if args.img_list:
+        # 固定清单模式:多格/多次评测共享同一批图(清单由清单生成流程固定 seed 产出)
+        imgs_dir = images[0].parent if images else Path()
+        wanted = set(Path(args.img_list).read_text().splitlines())
+        images = [imgs_dir / n for n in sorted(wanted) if (imgs_dir / n).exists()]
+        print(f"使用固定清单: {len(images)} 张(来自 {args.img_list})")
+    else:
+        images = sample_images(images, args.max_imgs, args.seed)
     if not images:
         sys.exit(f"split={args.split} 下无图片,请检查数据集 YAML")
     print(f"评测图数: {len(images)} | device={device} | rounds={args.rounds} | batch={args.batch}")
