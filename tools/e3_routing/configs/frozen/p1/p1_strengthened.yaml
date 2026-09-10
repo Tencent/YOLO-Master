@@ -1,0 +1,43 @@
+run_id: p1s-20260901-cpu-fullstep-v1
+
+runtime_root: ../YOLO-Master-main-07d3303
+p0_repo_root: ../YOLO-Master-E3-P0
+official_runtime_ref: 07d330325b5a26b75aabfc75389f9bcbc0d40245
+official_runtime_tree: e4a900338bd6679d5ad9f8673e466b250ba2c711
+
+device: cpu
+seed: 0
+dataset: coco8.yaml
+dataset_split: val
+sample_batches:
+  - [0, 1]
+  - [2, 3]
+image_size: 64
+batch_size: 2
+warmup_pairs: 6
+bootstrap_resamples: 10000
+target_slowdown_percent: 10.0
+loss_match_rtol: 0.000001
+loss_match_atol: 0.000001
+gradient_match_rtol: 0.00001
+gradient_match_atol: 0.00001
+gradient_clip_norm: 10.0
+writer_flush_each_step: true
+
+optimizer:
+  name: SGD
+  learning_rate: 0.001
+  momentum: 0.9
+  weight_decay: 0.0005
+  router_lr_scale: 0.5
+
+profiles:
+  moe:
+    model_config: ultralytics/cfg/models/26/yolo26-master-n.yaml
+    measured_pairs: 30
+  mot:
+    model_config: ultralytics/cfg/models/26/yolo26-master-mot-n.yaml
+    measured_pairs: 48
+  latent:
+    model_config: ultralytics/cfg/models/26/yolo26-master-latent-n.yaml
+    measured_pairs: 30

@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Ricky-7-Yan/YOLO-Master-E3-P0/schemas/routing-event.schema.json",
+  "title": "YOLO-Master E3 unified routing event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "sequence", "captured_at", "family", "module", "routing", "aux_loss", "runtime", "provenance", "source_snapshot"],
+  "properties": {
+    "schema_version": {"const": "e3.routing/v1.0.0"},
+    "run_id": {"type": "string", "minLength": 1},
+    "sequence": {"type": "integer", "minimum": 0},
+    "captured_at": {"type": "string"},
+    "family": {"enum": ["moe", "mot", "latent"]},
+    "module": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type", "python_module"],
+      "properties": {
+        "name": {"type": "string"},
+        "type": {"type": "string"},
+        "python_module": {"type": "string"}
+      }
+    },
+    "routing": {
+      "type": "object",
+      "required": ["num_experts", "top_k", "granularity", "expert_load", "expert_load_sum", "entropy_nats", "entropy_normalized", "load_gini", "dominant_expert_share", "mixing_weights"],
+      "properties": {
+        "num_experts": {"type": "integer", "minimum": 1},
+        "top_k": {"type": "integer", "minimum": 1},
+        "granularity": {"type": "string"},
+        "expert_load": {"type": "array", "minItems": 1, "items": {"type": "number", "minimum": 0}},
+        "expert_load_sum": {"type": "number", "minimum": 0.999999, "maximum": 1.000001},
+        "entropy_nats": {"type": "number", "minimum": 0},
+        "entropy_normalized": {"type": "number", "minimum": 0, "maximum": 1.000001},
+        "load_gini": {"type": "number", "minimum": 0, "maximum": 1},
+        "dominant_expert_share": {"type": "number", "minimum": 0, "maximum": 1},
+        "mixing_weights": {"$ref": "#/$defs/observedField"}
+      }
+    },
+    "aux_loss": {
+      "allOf": [{"$ref": "#/$defs/observedField"}],
+      "properties": {
+        "finite": {"type": ["boolean", "null"]},
+        "mode": {"const": "eval_observation"}
+      },
+      "required": ["finite", "mode"]
+    },
+    "runtime": {"type": "object"},
+    "provenance": {"type": "object"},
+    "source_snapshot": {"type": "object"}
+  },
+  "$defs": {
+    "observedField": {
+      "type": "object",
+      "required": ["state", "source", "value"],
+      "properties": {
+        "state": {"enum": ["observed", "derived", "unavailable"]},
+        "source": {"type": ["string", "null"]},
+        "value": {}
+      }
+    }
+  }
+}

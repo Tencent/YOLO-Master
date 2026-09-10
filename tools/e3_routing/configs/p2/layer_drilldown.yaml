@@ -1,0 +1,16 @@
+run_id: p2d-20260905-layer16-attribution-v2
+require_committed_source: true
+
+parent_run_dir: artifacts/p2/p2a-20260905-cpu-appearance-v2
+expected_parent_run_id: p2a-20260905-cpu-appearance-v2
+expected_parent_manifest_sha256: 7df8fbaf1d10d61d268559ff688cc81a67ab5c3e428b8deb45f1ea2904dd5d21
+
+family: moa
+target_module: model.16.m.0.router
+candidate_transformations:
+  - brightness_090
+  - brightness_110
+  - contrast_090
+  - contrast_110
+  - gaussian_blur_075
+margin_bin_count: 10

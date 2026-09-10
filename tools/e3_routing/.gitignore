@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+artifacts/
+results/**/*.json
+docs/p0/
+docs/p1/
+docs/p2/
+configs/p2/*-codeload-compat.yaml

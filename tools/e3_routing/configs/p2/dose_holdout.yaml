@@ -1,0 +1,24 @@
+run_id: p2h-20260907-dose-holdout-v1
+require_committed_source: true
+parent_run_dir: artifacts/p2/p2q-20260906-dose-response-v1
+expected_parent_run_id: p2q-20260906-dose-response-v1
+expected_parent_manifest_sha256: c1917ad0d254b01d33ce9883c33d7d085c3147633915c2cab6213dde95ecaafe
+expected_image_count: 32
+expected_seeds: [0, 1, 2]
+bootstrap_draws: 10000
+bootstrap_seed: 20260907
+max_evidence_bytes: 8388608
+
+families:
+  - name: brightness
+    low_transform: brightness_095
+    middle_transform: brightness_090
+    high_transform: brightness_080
+  - name: contrast
+    low_transform: contrast_095
+    middle_transform: contrast_090
+    high_transform: contrast_080
+  - name: gaussian_blur
+    low_transform: gaussian_blur_025
+    middle_transform: gaussian_blur_075
+    high_transform: gaussian_blur_150
