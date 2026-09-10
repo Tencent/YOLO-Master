@@ -334,8 +334,10 @@ def train_one(args: argparse.Namespace, dataset: DatasetSpec, spec: ModelSpec, p
     dense_eval = spec.uses_esmoe and not args.sparse_eval
     if last_pt.exists() and done is not None:
         print(f"[resume] {run_name}: {last_pt} epoch={done} -> {args.epochs}", flush=True)
+        # Use Ultralytics native resume mechanism: pass last.pt as model and resume=True
+        # This lets the framework handle scaler/optimizer state properly
         model = YOLO(str(last_pt))
-        resume = True
+        resume = str(last_pt)  # Pass the checkpoint path to let framework handle native resume
     else:
         print(
             f"[train] {run_name}: cfg={spec.cfg} data={dataset.data} "
