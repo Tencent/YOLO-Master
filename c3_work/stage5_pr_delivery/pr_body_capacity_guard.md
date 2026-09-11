@@ -69,10 +69,18 @@ python -m pytest tests/test_vpeft_capacity_guard.py tests/test_vpeft.py tests/te
 
 ## 改动范围
 
-两个 commit，只动源码和测试 —— 不含实验脚手架、数据或报告：
+两个 commit，8 个文件（+350 / −10），只动源码和测试 —— 不含实验脚手架、数据或报告：
 
-1. `fix(vpeft): align solver rank projection with plan capacity validation` —— `ultralytics/vpeft/constraints.py`（`C_cap` + 注册表/别名注册）、`ultralytics/vpeft/placement_plan.py`（一次报全的错误信息）、`ultralytics/utils/lora/api.py`（第二遍容量校验 + 审计字段 + 日志）、`tests/test_vpeft_capacity_guard.py`、`tests/test_vpeft.py`。
-2. `fix(lora): freeze layers left out of an explicit target list` —— `ultralytics/utils/lora/api.py`。`_replace_conv_with_manual_lora` 只冻结了自己包裹的层，被 `target_modules`、depthwise/`only_3x3` 过滤或 head 类名字跳过的层仍在训练（也没进 `save_adapters`）。官方 P0 门禁用例 `test_planner_adapter_full_lifecycle` 覆盖的就是这条路径；在 commit 2 之前它只是"看起来通过"，因为 plan 校验失败把整个运行降级到了 legacy planner。
+1. `fix(vpeft): align solver rank projection with plan capacity validation`（6 文件，+299 / −10）
+   - `ultralytics/vpeft/constraints.py`：新增 `RankCapacityConstraint`（`C_cap`：仅当 `rank <= min(in, out)` 时可行）并注册进硬约束集合。
+   - `ultralytics/vpeft/__init__.py`：导出该约束。
+   - `ultralytics/vpeft/placement_plan.py`：严格校验改为一次报出全部违规目标及其容量。
+   - `ultralytics/utils/lora/api.py`：`apply_lora` 里的第二遍容量校验 + `capacity_excluded` 审计字段 + `[V-PEFT]` 日志。
+   - `tests/test_vpeft_capacity_guard.py`（新增，8 个用例）、`tests/test_vpeft.py`（硬约束列表断言补 `C_cap`）。
+2. `fix(lora): freeze layers left out of an explicit target list`（2 文件，+51）
+   - `ultralytics/utils/lora/fallback.py`：新增 `_freeze_unadapted_module`，在五条跳过路径上冻结该层 —— rank 与 groups 不匹配、depthwise 被禁、head 类名字、`only_3x3` 过滤、`target_modules` 不匹配。`_replace_conv_with_manual_lora` 原先只冻结自己包裹的层，这些被跳过的层仍在训练（因为是非 adapter 参数，也不会进 `save_adapters`）。
+   - `tests/test_lora_fallback_effective_config.py`：补两个用例（显式 `target_modules` 之外的层被冻结；depthwise 与 head 类层被冻结）。
+   - 官方 P0 门禁用例 `test_planner_adapter_full_lifecycle` 覆盖的就是这条路径；在 commit 2 之前它只是"看起来通过"，因为 plan 校验失败把整个运行降级到了 legacy planner。
 
 ## 实验（背景信息，不作为本 PR 的验收依据）
 
