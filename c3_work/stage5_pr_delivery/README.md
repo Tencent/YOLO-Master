@@ -12,7 +12,8 @@
 | PR-3 matrix | stage3(matrix/queue_runner/collect_evidence/18 单元结果) | 已 push(同上) |
 | PR-4 analysis | stage4(统计四维同表/planner 审计/p2 素材) | 已 push(同上) |
 | PR-5 report | stage5(复现包/结项报告/汇报 pptx) | 已 push + report_final 定稿 + pptx 已重生成(末页含链接区) |
-| PR-6 上游源码 | `fix/vpeft-capacity-guard`: C_cap 容量硬约束 + capacity_excluded 审计 + 未适配层冻结 + 单测 | 已 push(tip `daed306`)；PR **#279** 已存在但标题是分支名派生的 `Fix/vpeft capacity guard`、正文为空 → 需按 `pr_body_capacity_guard.md` 重填 |
+| PR-6 上游源码 | `fix/vpeft-capacity-guard`: C_cap 容量硬约束 + capacity_excluded 审计 + 未适配层冻结 + 单测 | 已 push(tip `daed306`)；PR **#279** 当前 `closed`、标题为分支名派生、正文为空 → 重开后按 `pr_body_capacity_guard.md` 填 |
+| **整体 PR** | `c3-vpeft-smoke` 全部交付物(stage1-5, 14 commit) → base `Tencent:main` | 分支已 push；正文 `pr_body_c3_overall.md` 已就绪, 待网页发起 |
 
 > PR-6 说明:仓库同门 PR 的写法是「`[犀牛鸟-Xx]：` 前缀标题 + `Summary` / `Problem` / `Validation` / `Limitations` 分节正文」
 > （已合并的源码修复参照 #240 `fix(lora): ...`、#267 `fix(mixture): ...`；带前缀的软件修复参照 #253 `[犀牛鸟-A2]：Fix ...`）。
@@ -55,6 +56,20 @@ reproduction/
 - [ ] 重填 PR #279 的标题与正文(见下方「PR-6 提交方式」), 然后点 `Reopen pull request`
 - [x] PPT 用 Google Drive 链接交付: PR 描述末尾新增 `## PPT` 一节, 只放该链接(仓库 `c3_work/stage5_pr_delivery/` 保留同源副本, 未重新导出)
 - [ ] (可选) pptx 末页②仍是占位符 `<<EVIDENCE_LINK_PLACEHOLDER>>`, 若要重出可填同一 Drive 链接
+
+## 整体交付 PR（`c3-vpeft-smoke` → `Tencent:main`）
+
+正文：`pr_body_c3_overall.md`（中文，覆盖 stage1-5 全部交付 + 上游修复概述，末尾带 `## PPT`）。
+标题建议：
+
+```text
+[犀牛鸟-C3]：V-PEFT 小样本工业缺陷检测结项交付（环境/数据 · 冒烟 · 18+3 单元对照 · 统计分析 · 结项报告）
+```
+
+发起方式（网页）：`Tencent/YOLO-Master` → New pull request → base `main` ← compare `lycyhrc:YOLO-Master:c3-vpeft-smoke`。
+
+> 两个正文文件的用途：`pr_body_c3_overall.md` = 整体交付 PR（本课题全部工作）；
+> `pr_body_capacity_guard.md` = 只讲源码修复的上游 PR #279（2 commit，8 文件）。
 
 ## PR-6 提交方式（只剩网页操作）
 
