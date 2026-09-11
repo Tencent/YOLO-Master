@@ -64,7 +64,7 @@ reproduction/
 标题建议：
 
 ```text
-[犀牛鸟-C3]：V-PEFT 小样本工业缺陷检测结项交付（环境/数据 · 冒烟 · 18+3 单元对照 · 统计分析 · 结项报告）
+[犀牛鸟-C3]：V-PEFT 小样本工业缺陷检测结项交付
 ```
 
 发起方式（网页）：`Tencent/YOLO-Master` → New pull request → base `main` ← compare `lycyhrc:YOLO-Master:c3-vpeft-smoke`。
