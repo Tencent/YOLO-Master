@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import torch
 import torch.nn.functional as F
+from torch import nn
 
 from ultralytics.nn.modules._numeric import disabled_autocast
 
@@ -302,4 +303,103 @@ def hybrid_kd_loss(
     return loss
 
 
-__all__ = ["cosine_kd_loss", "foreground_token_weights", "hybrid_kd_loss", "relational_kd_loss"]
+class RouterKDLoss(nn.Module):
+    """F11 路由蒸馏损失:将学生 Router 软目标对齐到教师 q_teacher。
+
+    支持两种散度(默认 JS,06 文档设计):
+      - "js":  JS 散度(对称,稳定,冒烟脚本使用)
+      - "kl":  带温度缩放的标准 KL 蒸馏(对齐官方 routing_kd_loss)
+    实现标签平滑 + 温度软化,并保证教师目标 detach(不反传教师)。
+    """
+
+    def __init__(self, temperature: float = 1.0, smoothing: float = 0.0, kind: str = "js") -> None:
+        """初始化 RouterKDLoss。
+
+        Args:
+            temperature: 蒸馏温度 τ(软化学生分布)
+            smoothing:   ε-uniform 标签平滑系数
+            kind:        "js" 或 "kl"
+        """
+        super().__init__()
+        if not isinstance(temperature, (int, float)) or isinstance(temperature, bool) or float(temperature) <= 0:
+            raise ValueError(f"temperature must be a finite positive number, got {temperature!r}.")
+        if not isinstance(smoothing, (int, float)) or isinstance(smoothing, bool) or not 0.0 <= float(smoothing) <= 1.0:
+            raise ValueError(f"smoothing must be in [0, 1], got {smoothing!r}.")
+        if kind not in {"js", "kl"}:
+            raise ValueError(f"kind must be 'js' or 'kl', got {kind!r}.")
+        self.temperature = float(temperature)
+        self.smoothing = float(smoothing)
+        self.kind = kind
+
+    def forward(self, student_logits: torch.Tensor, q_teacher: torch.Tensor) -> torch.Tensor:
+        """计算路由蒸馏损失。
+
+        Args:
+            student_logits: 学生 Router logits [B, N, E] 或 [N, E]
+            q_teacher:      教师软目标分布或 logits [B, N, E] 或 [N, E]
+
+        Returns:
+            (torch.Tensor): 标量损失,仅对 student_logits 有梯度。
+        """
+        # 形状校验: 归一化为 [N, E]
+        student = student_logits.float()
+        teacher = q_teacher.detach().float()
+        if student.ndim == 3:
+            student = student.reshape(-1, student.shape[-1])
+        if teacher.ndim == 3:
+            teacher = teacher.reshape(-1, teacher.shape[-1])
+        if student.ndim != 2 or teacher.ndim != 2 or student.shape != teacher.shape:
+            raise ValueError(
+                "student_logits and q_teacher must share shape [B, N, E] or [N, E], "
+                f"got {tuple(student_logits.shape)} and {tuple(q_teacher.shape)}."
+            )
+        if student.shape[0] == 0 or student.shape[1] == 0:
+            raise ValueError("routing tensors must not be empty.")
+
+        # 教师目标: 已是概率分布(行和≈1 且 ∈[0,1])则直接用,否则视为 logits 做 softmax
+        # (兼容 gen_q_teacher.py 输出的分布与官方 routing_kd_loss 的 logits 输入)
+        teacher_sum = teacher.sum(dim=-1)
+        is_distribution = bool(
+            torch.isfinite(teacher).all()
+            and float((teacher >= 0.0).all())
+            and float((teacher <= 1.0 + 1e-6).all())
+            and float((teacher_sum - 1.0).abs().max() < 1e-3)
+        )
+        if not is_distribution:
+            teacher = F.softmax(teacher / self.temperature, dim=-1)
+        teacher = teacher.clamp_min(1e-9)
+
+        # ε-uniform 标签平滑(默认 0.0 = 关闭)
+        if self.smoothing > 0.0:
+            num_experts = student.shape[-1]
+            teacher = (1.0 - self.smoothing) * teacher + self.smoothing / num_experts
+            teacher = teacher / teacher.sum(dim=-1, keepdim=True)
+
+        if self.kind == "js":
+            # 标准 JS 散度: 0.5*KL(p||m) + 0.5*KL(q||m), m = (p+q)/2 ∈ [0, log2]
+            student_probs = F.softmax(student / self.temperature, dim=-1).clamp_min(1e-9)
+            mixture = 0.5 * (student_probs + teacher)
+            kl_psm = (student_probs * (student_probs / mixture).log()).sum(dim=-1).mean()
+            kl_qsm = (teacher * (teacher / mixture).log()).sum(dim=-1).mean()
+            loss = 0.5 * (kl_psm + kl_qsm)
+        else:
+            # KL 蒸馏(对齐官方 routing_kd_loss): T² 缩放保持梯度量级
+            loss = F.kl_div(
+                F.log_softmax(student / self.temperature, dim=-1),
+                teacher,
+                reduction="batchmean",
+            )
+            loss = loss * (self.temperature * self.temperature)
+
+        if not torch.isfinite(loss):
+            raise ValueError("Router KD loss is NaN or Inf.")
+        return loss.reshape(())
+
+
+__all__ = [
+    "RouterKDLoss",
+    "cosine_kd_loss",
+    "foreground_token_weights",
+    "hybrid_kd_loss",
+    "relational_kd_loss",
+]

@@ -23,7 +23,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--local-dir",
         type=Path,
-        default=Path("/jpfs/huangyidan3/datasets/VisDrone-HF"),
+        default=Path("G:/Codes/OpenSource/Rhino-bird/DATASETS/VisDrone-HF"),
         help="Directory where the dataset snapshot will be stored.",
     )
     parser.add_argument("--endpoint", default=os.getenv("HF_ENDPOINT", "https://hf-mirror.com"))
