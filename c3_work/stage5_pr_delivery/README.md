@@ -7,7 +7,7 @@
 
 | PR | 内容 | 状态 |
 |---|---|---|
-| PR-1 env+data | stage1(环境重建/数据下载/转换/划分/许可与 SHA) | 已 push 到 fork `c3-vpeft-smoke`(tip `bdf3f7c`) |
+| PR-1 env+data | stage1(环境重建/数据下载/转换/划分/许可与 SHA) | 已 push 到 fork `c3-vpeft-smoke`(tip 见 fork 最新提交) |
 | PR-2 server smoke | stage2(服务器化 runner/paths.env/planner solver notes/A800 冒烟 evidence) | 已 push(同上) |
 | PR-3 matrix | stage3(matrix/queue_runner/collect_evidence/18 单元结果) | 已 push(同上) |
 | PR-4 analysis | stage4(统计四维同表/planner 审计/p2 素材) | 已 push(同上) |
@@ -52,7 +52,8 @@ reproduction/
 - [x] reproduction/ 组装完整(收集各 stage 小文件)
 - [x] 结项报告 report_final.md(结论/证据表/局限/复现)
 - [x] 汇报 pptx(三策略对照 + planner 决策 + 证据链 + 末页链接区)
-- [x] 两个分支已 push fork: `c3-vpeft-smoke`(证据包, tip `bdf3f7c`)、`fix/vpeft-capacity-guard`(源码修复, tip `daed306`)
+- [x] 两个分支已 push fork: `c3-vpeft-smoke`(证据包, tip 见 fork 最新提交)、`fix/vpeft-capacity-guard`(源码修复, tip `daed306`)
+- [x] commit 信息风格对齐上游: `c3-vpeft-smoke` 15 条已统一为 Conventional Commits(`feat(c3): …` / `docs(c3): …`), 与 `origin/main` 一致
 - [ ] 重填 PR #279 的标题与正文(见下方「PR-6 提交方式」), 然后点 `Reopen pull request`
 - [x] PPT 用 Google Drive 链接交付: PR 描述末尾新增 `## PPT` 一节, 只放该链接(仓库 `c3_work/stage5_pr_delivery/` 保留同源副本, 未重新导出)
 - [ ] (可选) pptx 末页②仍是占位符 `<<EVIDENCE_LINK_PLACEHOLDER>>`, 若要重出可填同一 Drive 链接

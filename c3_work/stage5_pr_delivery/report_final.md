@@ -63,5 +63,5 @@ DeepPCB frozen 的 0.769 含 seed824 确定性震荡(0.639, best@ep9, 重跑复�
   → PR-4 stage4 统计与审计 → PR-5 stage5 复现包/本报告。
 - **独立源码 PR（对齐官方 main）**：分支 `fix/vpeft-capacity-guard`（基线 `af961b9`，2 commit）= `C_cap` 容量硬约束 +
   未适配层冻结对齐；文案见 `stage5_pr_delivery/pr_body_capacity_guard.md`，PR 链接见 PPT 末页①。
-- 本地 commit 已全部推送至 fork `lycyhrc/YOLO-Master`：`c3-vpeft-smoke`（证据包，tip `bdf3f7c`）与 `fix/vpeft-capacity-guard`（源码修复，tip `daed306`）；
+- 本地 commit 已全部推送至 fork `lycyhrc/YOLO-Master`：`c3-vpeft-smoke`（证据包，15 条提交已统一为 Conventional Commits 风格，tip 见 fork 最新提交）与 `fix/vpeft-capacity-guard`（源码修复，tip `daed306`）；
   后者已开上游 PR #279，其标题/正文待按同门风格（`[犀牛鸟-C3]：` + Summary/Problem/Validation/Limitations）重填。
