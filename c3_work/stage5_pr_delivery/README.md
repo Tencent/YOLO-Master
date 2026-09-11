@@ -63,11 +63,12 @@ reproduction/
 - [x] 结项报告 report_final.md(结论/证据表/局限/复现)
 - [x] 汇报 pptx(三策略对照 + planner 决策 + 证据链 + 末页链接区)
 - [x] `fix/vpeft-capacity-guard` 已在 fork 上(源码修复, tip `daed306`)
-- [ ] **#279 改造为整体交付 PR**：fork 上删掉旧的 `c3-vpeft-smoke`，把 `fix/vpeft-capacity-guard` 改名为 `c3-vpeft-smoke`（#279 的 head 自动跟随），再把本地产出分支 force push 上去
-- [ ] `c3-vpeft-smoke` 需 force push 回 fork: 本地历史重写为 20 条 Conventional Commits, 与 fork 上 11 条旧格式提交分叉 → 用 `--force-with-lease=refs/heads/c3-vpeft-smoke:<改名后分支当前 tip=`daed306`>`
-- [ ] 源码修复另开新 PR：把本地 `fix/vpeft-capacity-guard` 推到 fork 同名新分支（改名后该名字已空闲），base `Tencent:main`
+- [x] **#279 改造为整体交付 PR**：fork 上删掉旧的 `c3-vpeft-smoke`，把 `fix/vpeft-capacity-guard` 改名成 `c3-vpeft-smoke`（#279 head 自动跟随）—— 2026-09-11 完成
+- [x] `c3-vpeft-smoke` 已 force push 回 fork（本地 20 条 Conventional Commits 覆盖旧 11 条历史）：fork tip = `e41e147`
+- [x] 源码修复分支已推回 fork 同名分支 `fix/vpeft-capacity-guard`（tip `daed306`），base `Tencent:main`
 - [x] commit 信息风格对齐上游: `c3-vpeft-smoke` 已统一为 Conventional Commits(`feat(c3): …` / `docs(c3): …`), 与 `origin/main` 一致
 - [ ] 重填 #279 的标题与正文（整体交付），然后点 `Reopen pull request`
+- [ ] 源码修复 PR（新建）：base `Tencent:main` ← `fix/vpeft-capacity-guard`
 - [x] PPT 用 Google Drive 链接交付: PR 描述末尾新增 `## PPT` 一节, 只放该链接(仓库 `c3_work/stage5_pr_delivery/` 保留同源副本, 未重新导出)
 - [ ] (可选) 交付的 pptx 末页①写的是「上游修复 PR #279」，改号后与网页不一致；若要重出 deck 可运行 `gen_slides.py`（文案已同步）
 
