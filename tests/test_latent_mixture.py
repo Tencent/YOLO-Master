@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 import pytest
 import torch
-import torch.nn as nn
+from torch import nn
 
 from ultralytics.nn.mixture_loss import build_composite_criterion
 from ultralytics.nn.modules import LatentMixture, LatentRouter, MultiScaleLatentMixture
@@ -12,9 +12,10 @@ from ultralytics.nn.modules.routing_protocol import (
     clear_aux_records,
     collect_aux_loss,
     iter_aux_records,
+    reset_routing_runtime_state,
 )
 from ultralytics.nn.tasks import DetectionModel
-
+from ultralytics.utils.torch_utils import ModelEMA
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -190,6 +191,17 @@ def test_yolo26_latent_yaml_builds_and_runs():
     with torch.no_grad():
         output = model(torch.zeros(1, 3, 64, 64))
     assert output is not None
+
+
+def test_yolo26_latent_runtime_reset_allows_ema_deepcopy():
+    model = DetectionModel(
+        ROOT / "ultralytics/cfg/models/26/yolo26-master-latent-n.yaml", ch=3, nc=80, verbose=False
+    ).train()
+
+    reset_routing_runtime_state(model)
+    ema = ModelEMA(model)
+
+    assert isinstance(ema.ema, DetectionModel)
 
 
 def test_latent_detection_model_load_skips_non_tensor_extra_state():

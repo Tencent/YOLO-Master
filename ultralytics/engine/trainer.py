@@ -569,9 +569,11 @@ class BaseTrainer:
             self.loss_names = (*self.loss_names, "mixture_aux_loss")
         if self.args.distill_model is not None and "dis_loss" not in self.loss_names:
             self.loss_names += ("dis_loss",)
-        if foundation_active:
-            if "foundation" not in self.loss_names:
-                self.loss_names += ("foundation",)
+        if foundation_active and "foundation" not in self.loss_names:
+            self.loss_names += ("foundation",)
+        # Model construction may run routed forwards to infer strides. Clear graph-connected
+        # diagnostics before EMA deepcopy while preserving all parameters and persistent buffers.
+        self._reset_non_checkpoint_moe_runtime_state()
         self.ema = ModelEMA(self.model)
         self.set_class_weights()  # compute class weights after dataloader is ready
         if RANK in {-1, 0}:
@@ -979,7 +981,7 @@ class BaseTrainer:
 
         try:
             return pl.read_csv(self.csv, infer_schema_length=None).to_dict(as_series=False)
-        except Exception:
+        except Exception:  # noqa: BLE001
             return {}
 
     def _model_train(self):
@@ -1341,11 +1343,9 @@ class BaseTrainer:
 
     def set_class_weights(self):
         """Compute and set class weights for handling class imbalance. Override in subclasses."""
-        pass
 
     def build_targets(self, preds, targets):
         """Build target tensors for training YOLO model."""
-        pass
 
     def progress_string(self):
         """Return a string describing training progress."""
@@ -1354,11 +1354,9 @@ class BaseTrainer:
     # TODO: may need to put these following functions into callback
     def plot_training_samples(self, batch, ni):
         """Plot training samples during YOLO training."""
-        pass
 
     def plot_training_labels(self):
         """Plot training labels for YOLO model."""
-        pass
 
     def save_metrics(self, metrics):
         """Save training metrics to a CSV file."""
@@ -1508,6 +1506,7 @@ class BaseTrainer:
                 online_mixture_ema.copy_(
                     checkpoint_mixture_ema.to(device=online_mixture_ema.device, dtype=online_mixture_ema.dtype)
                 )
+            self._reset_non_checkpoint_moe_runtime_state()
             self.ema = ModelEMA(self.model)  # validation with EMA creates inference tensors that can't be updated
             ema_target = unwrap_model(self.ema.ema)
             if getattr(ema_target, "lora_enabled", False):
@@ -1530,7 +1529,7 @@ class BaseTrainer:
             return
         source_model = ckpt.get("ema") or ckpt.get("model")
         if not isinstance(source_model, nn.Module):
-            raise RuntimeError("Resume checkpoint has active adapters but no EMA/model state to restore.")
+            raise RuntimeError("Resume checkpoint has active adapters but no EMA/model state to restore.")  # noqa: TRY004
         target = unwrap_model(self.model)
         source_state = source_model.float().state_dict()
         if any(bool(getattr(module, "molora_enabled", False)) for module in target.modules()):
@@ -1705,11 +1704,11 @@ class BaseTrainer:
         optimizers = {"Adam", "Adamax", "AdamW", "NAdam", "RAdam", "RMSProp", "SGD", "MuSGD", "auto"}
         name = {x.lower(): x for x in optimizers}.get(str(name).lower(), str(name))
         if name in {"Adam", "Adamax", "AdamW", "NAdam", "RAdam"}:
-            optim_args = dict(lr=lr, betas=(momentum, 0.999), weight_decay=0.0)
+            optim_args = {"lr": lr, "betas": (momentum, 0.999), "weight_decay": 0.0}
         elif name == "RMSProp":
-            optim_args = dict(lr=lr, momentum=momentum)
+            optim_args = {"lr": lr, "momentum": momentum}
         elif name == "SGD" or name == "MuSGD":
-            optim_args = dict(lr=lr, momentum=momentum, nesterov=True)
+            optim_args = {"lr": lr, "momentum": momentum, "nesterov": True}
         else:
             raise NotImplementedError(
                 f"Optimizer '{name}' not found in list of available optimizers {optimizers}. "
@@ -1877,7 +1876,7 @@ class MultiTrainer:
                             metrics = metrics.results_dict
                     self.metrics[run_name] = metrics or (torch_load(ckpt)["train_metrics"] if ckpt.exists() else None)
                     self.trainers.append(SimpleNamespace(save_dir=save_dir, best=best, last=last))
-                except Exception as e:  # one bad dataset should not abort the whole sweep
+                except Exception as e:  # noqa: BLE001  # one bad dataset should not abort the whole sweep
                     LOGGER.error(f"MultiTrainer: fine-tuning on {data} failed, skipping: {e}")
                     self.metrics[run_name] = None
         finally:

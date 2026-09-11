@@ -7,7 +7,7 @@ import math
 import os
 import pickle
 from copy import deepcopy
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import torch
@@ -71,8 +71,8 @@ class TrainingRecoveryController:
             if not isinstance(tensor, torch.Tensor) or not (tensor.is_floating_point() or tensor.is_complex()):
                 continue
             tensors_by_device.setdefault(tensor.device, []).append(tensor)
-        for tensors in tensors_by_device.values():
-            if not cls._tensors_are_finite_on_device(tensors):
+        for device_tensors in tensors_by_device.values():
+            if not cls._tensors_are_finite_on_device(device_tensors):
                 return False
         return True
 
@@ -202,7 +202,7 @@ class TrainingRecoveryController:
     @staticmethod
     def reset_runtime(model=None) -> None:
         """Clear per-process routed state omitted from checkpoints."""
-        from ultralytics.nn.modules.moe._common import MOE_LOSS_REGISTRY, _MOE_LOSS_REGISTRY_LOCK
+        from ultralytics.nn.modules.moe._common import _MOE_LOSS_REGISTRY_LOCK, MOE_LOSS_REGISTRY
         from ultralytics.nn.modules.routing_protocol import reset_routing_runtime_state
 
         with _MOE_LOSS_REGISTRY_LOCK:
@@ -219,6 +219,9 @@ class TrainingRecoveryController:
             adapter_controller.sync_ema_treatment()
         buffer = io.BytesIO()
         source_model = unwrap_model(trainer.model)
+        # Routed training modules may retain graph-connected logits/probabilities for
+        # auxiliary losses. They are runtime-only and must not enter checkpoint deepcopy.
+        self.reset_runtime(source_model)
         model = deepcopy(source_model) if include_online_model else None
         ema = deepcopy(unwrap_model(trainer.ema.ema)) if getattr(trainer, "ema", None) else None
         if ema is not None:
@@ -229,7 +232,7 @@ class TrainingRecoveryController:
             runtime_buffers = {
                 name: value.detach().clone()
                 for name, value in snapshot.named_buffers()
-                if name.endswith("temperature") or name.endswith("_sparse_train_step")
+                if name.endswith(("temperature", "_sparse_train_step"))
             }
             snapshot.half()
             for name, value in runtime_buffers.items():
@@ -262,7 +265,7 @@ class TrainingRecoveryController:
                 "train_args": vars(trainer.args),
                 "train_metrics": {**getattr(trainer, "metrics", {}), "fitness": trainer.fitness},
                 "train_results": trainer.read_results_csv(),
-                "date": datetime.now().isoformat(),
+                "date": datetime.now(timezone.utc).isoformat(),
                 "version": __version__,
                 "git": {"root": str(GIT.root), "branch": GIT.branch, "commit": GIT.commit, "origin": GIT.origin},
                 "license": "AGPL-3.0 (https://ultralytics.com/license)",
@@ -314,7 +317,7 @@ class TrainingRecoveryController:
                 ):
                     if not self.state_is_finite(model(smoke_input)):
                         return False, f"forward smoke sample {index} produced non-finite output"
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             return False, f"forward smoke failed: {type(exc).__name__}: {exc}"
         return True, ""
 
