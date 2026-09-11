@@ -27,6 +27,6 @@
 - [x] NEU-DET 转换 + few-shot 划分完成，`split_report.json` 就绪
 - [x] DeepPCB 转换 + few-shot 划分完成（类不均衡已记录）
 - [x] `datasets/manifest.md` 留档（来源/许可/统计/可复现说明）
-- [ ] conda env(python3.11) 创建完成，`yolo version` 输出 8.4.x（安装中，看 `env_setup.log`）
-- [ ] `torch.cuda.is_available()=True`，可见 8×A800
-- [ ] git commit + push 到 `fork/c3-vpeft-smoke`
+- [x] conda env(python3.11) 创建完成，`yolo version` 输出 8.4.101（`env_setup.log` 末尾 `ENV_SETUP_DONE`）
+- [x] `torch.cuda.is_available()=True`，可见 8×A800（`torch 2.6.0+cu124 | cuda_avail True | ndev 8`）
+- [x] git commit 到 `c3-vpeft-smoke`（阶段 1 提交已入库）

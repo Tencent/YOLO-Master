@@ -28,6 +28,7 @@ def main():
     cp(S1 / "README.md", REP / "data_and_env_from_stage1.md")
     cp(S1 / "prepare_neu_det.py", REP / "datasets" / "prepare_neu_det.py")
     cp(S1 / "prepare_deeppcb.py", REP / "datasets" / "prepare_deeppcb.py")
+    cp(S1 / "datasets" / "manifest.md", REP / "datasets" / "manifest.md")
     cp(S1 / "env_setup.sh", REP / "configs" / "env_setup.sh")
     cp(S3 / "matrix.json", REP / "results" / "matrix.json")
     cp(S3 / "collect_evidence.py", REP / "results" / "collect_evidence.py")
@@ -66,11 +67,11 @@ def main():
     rep_readme.write_text(
         "# reproduction 复现包\n\n"
         "由 `../assemble_reproduction.py` 生成(stage1-4 可复现小文件收集, 大产物 runs/权重不入库)。\n"
-        "- `data_and_env_from_stage1.md`: 数据集来源/许可/SHA 记录 + 环境重建\n"
-        "- `datasets/`: 数据转换脚本\n"
+        "- `data_and_env_from_stage1.md`: 环境重建与数据集准备流程(stage1 README)\n"
+        "- `datasets/`: 数据转换脚本 + `manifest.md`(来源/许可/统计/SHA 留档位置)\n"
         "- `configs/`: env 模板 + 三策略训练命令样例 + 环境脚本\n"
         "- `results/`: matrix + evidence + 四维对照表 + planner 审计\n"
-        "- 已知局限见 stage4/README(seed 稳定性/许可/planner cap<8)\n"
+        "- `limitations.md`: 已知局限/许可风险/seed 稳定性(手写, 不随脚本覆盖)\n"
     )
     print("== reproduction/ 组装完成 ==")
 

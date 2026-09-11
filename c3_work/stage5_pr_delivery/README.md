@@ -13,7 +13,7 @@
 | PR-4 analysis | stage4(统计四维同表/planner 审计/p2 素材) | 已 push(同上) |
 | PR-5 report | stage5(复现包/结项报告/汇报 pptx) | 已 push + report_final 定稿 + pptx 已重生成(末页含链接区) |
 | PR-6 上游源码 | `fix/vpeft-capacity-guard`: C_cap 容量硬约束 + capacity_excluded 审计 + 未适配层冻结 + 单测 | 已 push(tip `daed306`)；PR **#279** 当前 `closed`、标题为分支名派生、正文为空 → 重开后按 `pr_body_capacity_guard.md` 填 |
-| **整体 PR** | `c3-vpeft-smoke` 全部交付物(stage1-5, 14 commit) → base `Tencent:main` | 分支已 push；正文 `pr_body_c3_overall.md` 已就绪, 待网页发起 |
+| **整体 PR** | `c3-vpeft-smoke` 全部交付物(stage1-5) → base `Tencent:main` | 本地历史已重写(18 commit, Conventional Commits)，需 `--force-with-lease` 推回 fork；正文 `pr_body_c3_overall.md` 已就绪, 待网页发起 |
 
 > PR-6 说明:仓库同门 PR 的写法是「`[犀牛鸟-Xx]：` 前缀标题 + `Summary` / `Problem` / `Validation` / `Limitations` 分节正文」
 > （已合并的源码修复参照 #240 `fix(lora): ...`、#267 `fix(mixture): ...`；带前缀的软件修复参照 #253 `[犀牛鸟-A2]：Fix ...`）。
@@ -23,16 +23,22 @@
 
 ```
 reproduction/
-├── env.txt              # conda env export(yolo_master)
-├── data_manifest.json   # 两数据集来源/sha256/划分(来自 stage1)
+├── data_and_env_from_stage1.md   # stage1 README：环境重建 + 数据集准备流程
+├── datasets/
+│   ├── manifest.md               # 数据来源/许可/统计/SHA 留档位置（权威说明）
+│   ├── prepare_neu_det.py
+│   └── prepare_deeppcb.py
 ├── configs/
-│   ├── paths.env        # 服务器化路径模板(替换为部署路径)
-│   └── budget_*.sh      # 三策略启动命令(同预算 epochs100 batch8 imgsz640 amp=false)
+│   ├── paths.env                 # 服务器化路径模板(替换为部署路径)
+│   ├── env_setup.sh              # conda env 重建脚本
+│   └── train_commands_example.sh # 三策略启动命令(同预算 epochs100 batch8 imgsz640 amp=false)
 ├── results/
-│   ├── comparison_tables.md   # stage4 输出
-│   ├── evidence_summary.csv   # stage3 输出
-│   └── planner_audit_summary.md
-└── limitations.md       # 已知局限/许可风险/seed 稳定性观察
+│   ├── comparison_tables.md      # stage4 输出
+│   ├── planner_audit_summary.md  # stage4 输出
+│   ├── analysis_stats.py / collect_evidence.py
+│   ├── matrix.json               # stage3 输出
+│   └── evidence_summary.csv/json # stage3 输出
+└── limitations.md                # 已知局限/许可风险/seed 稳定性观察
 ```
 
 ## 已知局限（提前记录，见 limitations.md）
@@ -52,8 +58,9 @@ reproduction/
 - [x] reproduction/ 组装完整(收集各 stage 小文件)
 - [x] 结项报告 report_final.md(结论/证据表/局限/复现)
 - [x] 汇报 pptx(三策略对照 + planner 决策 + 证据链 + 末页链接区)
-- [x] 两个分支已 push fork: `c3-vpeft-smoke`(证据包, tip 见 fork 最新提交)、`fix/vpeft-capacity-guard`(源码修复, tip `daed306`)
-- [x] commit 信息风格对齐上游: `c3-vpeft-smoke` 15 条已统一为 Conventional Commits(`feat(c3): …` / `docs(c3): …`), 与 `origin/main` 一致
+- [x] `fix/vpeft-capacity-guard` 已在 fork 上(源码修复, tip `daed306`)
+- [ ] `c3-vpeft-smoke` 需 force push 回 fork: 本地历史重写为 18 条 Conventional Commits, 与 fork 上 11 条旧格式提交分叉 → 用 `--force-with-lease=refs/heads/c3-vpeft-smoke:<fork tip>`
+- [x] commit 信息风格对齐上游: `c3-vpeft-smoke` 已统一为 Conventional Commits(`feat(c3): …` / `docs(c3): …`), 与 `origin/main` 一致
 - [ ] 重填 PR #279 的标题与正文(见下方「PR-6 提交方式」), 然后点 `Reopen pull request`
 - [x] PPT 用 Google Drive 链接交付: PR 描述末尾新增 `## PPT` 一节, 只放该链接(仓库 `c3_work/stage5_pr_delivery/` 保留同源副本, 未重新导出)
 - [ ] (可选) pptx 末页②仍是占位符 `<<EVIDENCE_LINK_PLACEHOLDER>>`, 若要重出可填同一 Drive 链接
@@ -80,7 +87,7 @@ reproduction/
 [犀牛鸟-C3]：修复 V-PEFT 容量约束 —— 窄于最小候选 rank 的层不再被选为适配目标
 ```
 
-正文：把 `pr_body_capacity_guard.md` 里 `## Summary` 之后的全部内容粘进描述框（文件开头那段 HTML 注释是本地说明，不要一起粘）。
+正文：把 `pr_body_capacity_guard.md` 里 `## 概述` 之后的全部内容粘进描述框（文件开头那段 HTML 注释是本地说明，不要一起粘）。
 
 PPT（正文末尾 `## PPT` 一节只放此链接）：
 
