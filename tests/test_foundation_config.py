@@ -70,8 +70,8 @@ def test_siglip2_foundation_teacher_is_valid():
     assert args.foundation_teacher == "siglip2"
 
 
-def test_enabled_without_teacher_is_rejected():
-    with pytest.raises(ValueError, match="requires 'foundation_teacher'"):
+def test_enabled_without_teacher_or_cache_is_rejected():
+    with pytest.raises(ValueError, match="requires 'foundation_cache_dir'"):
         get_cfg(overrides={"foundation_enabled": True})
 
 

@@ -21,7 +21,7 @@ class TinyStudent(nn.Module):
         head.f, head.i = [1, 2, 3], 4
         self.model.append(head)
         self.yaml = {"channels": 3}
-        self.stride = torch.tensor([32])
+        self.stride = torch.tensor([8, 16, 32])
         self.nc = 2
         self.names = {0: "zero", 1: "one"}
         self.args = SimpleNamespace(imgsz=64)
@@ -59,17 +59,17 @@ class DummyTeacher(nn.Module):
 
 
 def config(**overrides):
-    values = dict(
-        foundation_enabled=True,
-        foundation_loss_weight=1.0,
-        foundation_target_levels=["p4"],
-        foundation_multiscale=False,
-        foundation_align_dim=4,
-        foundation_loss="hybrid",
-        foundation_relation_mode="sampled",
-        foundation_relation_samples=2,
-        imgsz=64,
-    )
+    values = {
+        "foundation_enabled": True,
+        "foundation_loss_weight": 1.0,
+        "foundation_target_levels": ["p4"],
+        "foundation_multiscale": False,
+        "foundation_align_dim": 4,
+        "foundation_loss": "hybrid",
+        "foundation_relation_mode": "sampled",
+        "foundation_relation_samples": 2,
+        "imgsz": 64,
+    }
     values.update(overrides)
     return SimpleNamespace(**values)
 
@@ -91,7 +91,7 @@ def test_cache_only_training_without_online_teacher(tmp_path):
     assert wrapper.cache_dir == cache
     wrapper.train()
     batch = {"img": torch.rand(2, 3, 64, 64), "im_file": ["/data/a.jpg", "/data/b.jpg"]}
-    total, items = wrapper(batch)
+    total, _items = wrapper(batch)
     assert total.shape == (2,)
     assert total[-1].item() > 0
     total.sum().backward()
@@ -178,9 +178,7 @@ def make_cache_with_response(tmp_path, keys=("a", "b"), channels=10, prompts=("z
             "boxes": torch.rand(len(prompts), 1, 5, 4, generator=generator),
             "logits": torch.randn(len(prompts), 1, 5, generator=generator),
             # First prompt gets high scores on the first two queries; second prompt stays below threshold.
-            "scores": torch.tensor(
-                [[[0.9, 0.8, 0.1, 0.0, 0.0]] * len(prompts)]
-            ).transpose(1, 2)
+            "scores": torch.tensor([[[0.9, 0.8, 0.1, 0.0, 0.0]] * len(prompts)]).transpose(1, 2)
             if False
             else _response_scores(len(prompts), queries=5, index=index),
             "prompts": prompts,
@@ -199,7 +197,7 @@ def _response_scores(prompts, queries, index):
     return scores
 
 
-def test_response_kd_builds_pseudo_batch_from_cached_responses(tmp_path):
+def test_response_kd_uses_cached_responses_without_tal_pseudo_batch(tmp_path):
     cache = make_cache_with_response(tmp_path)
     student = RecordingStudent()
     wrapper = FoundationDistillationModel(
@@ -214,7 +212,7 @@ def test_response_kd_builds_pseudo_batch_from_cached_responses(tmp_path):
     )
     wrapper.train()
     batch = {"img": torch.rand(2, 3, 64, 64), "im_file": ["/x/a.jpg", "/x/b.jpg"]}
-    total, items = wrapper(batch)
+    total, _items = wrapper(batch)
     assert total[-1].item() > 0
     total.sum().backward()
     assert student.model[0].weight.grad is not None
@@ -222,12 +220,7 @@ def test_response_kd_builds_pseudo_batch_from_cached_responses(tmp_path):
     metrics = wrapper.foundation_metrics()
     assert metrics["foundation_response_enabled"] == 1.0
     assert metrics["foundation_response_boxes"] == 4.0  # 2 high-score queries × 2 images
-    pseudo_calls = [call for call in student.loss_calls if call["bboxes"].shape[0] > 0]
-    assert len(pseudo_calls) == 1
-    pseudo = pseudo_calls[0]
-    assert pseudo["bboxes"].shape == (4, 4)
-    assert pseudo["cls"].reshape(-1).unique().tolist() == [0.0]  # prompt "zero" → class id 0
-    assert pseudo["batch_idx"].unique().tolist() == [0.0, 1.0]
+    assert student.loss_calls == []  # response KD bypasses TAL rather than constructing a pseudo batch
 
 
 def test_response_kd_rejects_prompt_mismatch(tmp_path):
@@ -289,7 +282,7 @@ def test_response_kd_threshold_filters_all_boxes_returns_zero_loss(tmp_path):
         ),
     )
     wrapper.train()
-    total, _ = wrapper({"img": torch.rand(2, 3, 64, 64), "im_file": ["/x/a.jpg", "/x/b.jpg"]})
+    _total, _ = wrapper({"img": torch.rand(2, 3, 64, 64), "im_file": ["/x/a.jpg", "/x/b.jpg"]})
     assert wrapper.foundation_metrics()["foundation_response_boxes"] == 0.0
     pseudo_calls = [call for call in student.loss_calls if call["bboxes"].shape[0] > 0]
     assert pseudo_calls == []
