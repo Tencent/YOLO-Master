@@ -27,9 +27,9 @@ DeepPCB frozen 的 0.769 含 seed824 确定性震荡(0.639, best@ep9, 重跑复�
 - V-PEFT planner 全 **ACCEPT**：6/6 单元决策一致(81 targets, rank=8)，base rank 不升；
   同类 mismatch 检测头(80→6 类)重初始化解冻 ~348,514 参数；LoRA 实际 96 个 lora_A/B=116,736 参数(4.15%)。
 - 冻结策略 `freeze=11`：冻结顶层 0-10 子模块(32.2%)，可训 67.8%。
-- 已知缺陷 cap<8 层(0.conv/routing_network.2/dfl.conv)在本轮实验中经 `lora_exclude_modules` 规避；该缺陷已完成源码修复并提交上游候选 PR
+- 已知缺陷 cap<8 层(0.conv/routing_network.2/dfl.conv)在本轮实验中经 `lora_exclude_modules` 规避；该缺陷已完成源码修复并推送 fork、开上游候选 PR
   (分支 `fix/vpeft-capacity-guard`，基于官方 `af961b9`，2 commit：C_cap 容量硬约束 + `capacity_excluded` 审计、未适配层冻结对齐；
-  PR 链接见 `stage5_pr_delivery/C3_结项汇报_初稿.pptx` 末页占位①)，**消融数字未用修复后代码重跑**。
+  PR #279 ← 链接见 `stage5_pr_delivery/C3_结项汇报_初稿.pptx` 末页①)，**消融数字未用修复后代码重跑**。
 
 ## 3. 测试证据（证据链四维，含稳定性验证）
 
@@ -48,7 +48,7 @@ DeepPCB frozen 的 0.769 含 seed824 确定性震荡(0.639, best@ep9, 重跑复�
    说明 frozen 在该 (seed,配置) 下训练不稳。**结论限定在报告 seed 池，不推总偶发概率**。
 2. **数据许可**：NEU-DET 镜像无显式 LICENSE；DeepPCB 许可见 stage1 README（SHA-256 留档）。
 3. **planner cap<8 缺陷**：param-cap<8 层原先在 plan 校验阶段抛 ValueError 并使 V-PEFT 静默降级 legacy（strict 下报错），
-   本轮用 `lora_exclude_modules` 规避；已提修复 PR（`C_cap` 容量硬约束 + `capacity_excluded` 审计，分支 `fix/vpeft-capacity-guard`），
+   本轮用 `lora_exclude_modules` 规避；修复分支已推送 fork 并开 PR #279（`C_cap` 容量硬约束 + `capacity_excluded` 审计，分支 `fix/vpeft-capacity-guard`），
    但**未用修复后代码重跑消融**。
 4. **规模局限**：EsMoE-N 仅 2.8M，LoRA 相对全量的参数量优势被小模型基数压缩；3 策略时长无差异(数据管线瓶颈)。
 
@@ -62,5 +62,6 @@ DeepPCB frozen 的 0.769 含 seed824 确定性震荡(0.639, best@ep9, 重跑复�
 - PR-1 stage1 env+data → PR-2 stage2 server runner+smoke → PR-3 stage3 matrix 18 单元
   → PR-4 stage4 统计与审计 → PR-5 stage5 复现包/本报告。
 - **独立源码 PR（对齐官方 main）**：分支 `fix/vpeft-capacity-guard`（基线 `af961b9`，2 commit）= `C_cap` 容量硬约束 +
-  未适配层冻结对齐；文案见 `stage5_pr_delivery/pr_body_capacity_guard.md`，链接占位见 PPT 末页①。
-- 全部本地 commit 已就绪；push 至 fork `lycyhrc/YOLO-Master` 的 `c3-vpeft-smoke`（证据包）与 `fix/vpeft-capacity-guard`（源码修复）由本人执行。
+  未适配层冻结对齐；文案见 `stage5_pr_delivery/pr_body_capacity_guard.md`，PR 链接见 PPT 末页①。
+- 本地 commit 已全部推送至 fork `lycyhrc/YOLO-Master`：`c3-vpeft-smoke`（证据包，tip `bdf3f7c`）与 `fix/vpeft-capacity-guard`（源码修复，tip `daed306`）；
+  后者已开上游 PR #279，其标题/正文待按同门风格（`[犀牛鸟-C3]：` + Summary/Problem/Validation/Limitations）重填。

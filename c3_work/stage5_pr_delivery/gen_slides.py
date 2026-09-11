@@ -394,7 +394,7 @@ blocks = [
     ("ACCEPT 的语义", "状态与 predicted Δ 进入 audit; vpeft 接受后 legacy planner 显式跳过(ao/dco/mip 被接管)——日志 [V-PEFT] selected … ranks= 行可 grep", STEEL),
     ("类别 mismatch(80→6)", "检测头重初始化并解冻 → vpeft 有效可训 465,250(16.5%), 报告不混同 adapter 口径", INK),
     ("strict=True 不降级", "任何异常直接 raise(失败即报错), 证据链干净; 未静默 fallback", GREEN),
-    ("缺陷已修 cap<8", "0.conv/routing_network.2/dfl.conv 容量 < 最小候选 rank(4): 原先求解器放行 → plan 校验抛错 → V-PEFT 静默降级 legacy; 已提修复 PR(C_cap 硬约束 + capacity_excluded 审计), 本报告数据仍是 exclude 规避口径未重跑 → 链接见末页①", GREEN),
+    ("缺陷已修 cap<8", "0.conv/routing_network.2/dfl.conv 容量 < 最小候选 rank(4): 原先求解器放行 → plan 校验抛错 → V-PEFT 静默降级 legacy; 修复分支已推 fork 并开上游 PR #279(C_cap 硬约束 + capacity_excluded 审计), 本报告数据仍是 exclude 规避口径未重跑 → 链接见末页①", GREEN),
     ("LOVO / ΔmAP 口径", "回归护栏系数与 REFUSE 阈值(−0.05)在源码; 实测 Δ 与 predicted_delta 对应关系记入 stage4/p2 笔记", SLATE),
 ]
 yy = 2.12
@@ -456,7 +456,7 @@ ev = [
     ["Planner 审计", "stage4_analysis/planner_audit_summary.md", "ACCEPT 分布 / 护栏 / ΔmAP 口径"],
     ["许可 / SHA / 环境", "stage1_env_data/README.md", "NEU-DET/DeepPCB 来源与哈希留档"],
     ["复现一键组装", "stage5_pr_delivery/reproduction/", "命令样例 · paths.env · 数据转换脚本 · 统计表"],
-    ["缺陷修复(PR)", "分支 fix/vpeft-capacity-guard", "C_cap 容量硬约束 + capacity_excluded 审计 + 未适配层冻结(2 commit · 链接见末页①)"],
+    ["缺陷修复(PR)", "分支 fix/vpeft-capacity-guard + PR #279", "C_cap 容量硬约束 + capacity_excluded 审计 + 未适配层冻结(2 commit · 链接见末页①)"],
 ]
 tx, tw = 0.55, 7.7
 colw = [2.1, 3.1, 2.5]
@@ -545,10 +545,10 @@ for name, statline, desc, c in sums:
     text(s, xx + 0.25, 3.5, 3.4, 0.4, [P(statline, 11.5, c, True)])
     text(s, xx + 0.25, 3.95, 3.45, 0.8, [P(desc, 10.5, RGBColor(0xAF, 0xC2, 0xD2))])
     xx += 4.05
-text(s, 0.7, 5.02, 6.9, 0.32, [P("待办 / 下一步", 12.5, RGBColor(0xAF, 0xC2, 0xD2))])
+text(s, 0.7, 5.02, 6.9, 0.32, [P("交付状态 / 下一步", 12.5, RGBColor(0xAF, 0xC2, 0xD2))])
 todo = [
-    ("① 修复分支已备", "fix/vpeft-capacity-guard(2 commit) → 待 push 并开 PR"),
-    ("② 证据包", "push 本地 commit → fork lycyhrc/YOLO-Master:c3-vpeft-smoke"),
+    ("① 修复分支已 push", "fix/vpeft-capacity-guard(2 commit); PR #279 待重填标题/正文"),
+    ("② 证据包已 push", "fork lycyhrc/YOLO-Master:c3-vpeft-smoke(本地 commit 全部同步)"),
     ("③ 可选扩展", "k=5/10/50/100 档位曲线(数据就绪), GPU 低峰补跑"),
 ]
 yy = 5.40
@@ -556,10 +556,10 @@ for t, d in todo:
     text(s, 0.7, yy, 7.0, 0.46, [[("▸ ", 11.5, CYAN, True), (t + "  ", 11.5, WHT, True), (d, 10.5, RGBColor(0xAF, 0xC2, 0xD2))]])
     yy += 0.48
 rect(s, 7.95, 4.90, 4.68, 1.90, fill=DARK2, line=AMBER, lw=1.25, rounded=True)
-text(s, 8.15, 5.04, 4.3, 0.3, [P("交付链接（占位 · 上传后替换）", 11, AMBER, True)])
-text(s, 8.15, 5.46, 4.3, 0.3, [[("① 修复 PR  ", 9.5, WHT, True), ("<<PR_LINK_PLACEHOLDER>>", 9.5, CYAN, True)]])
-text(s, 8.15, 5.82, 4.3, 0.3, [[("② 证据附件  ", 9.5, WHT, True), ("<<EVIDENCE_LINK_PLACEHOLDER>>", 9.5, CYAN, True)]])
-text(s, 8.15, 6.28, 4.3, 0.4, [P("把 <<...>> 换成实际链接即可（正文“末页①”指本占位）", 8.5, RGBColor(0x8F, 0xA3, 0xB5))])
+text(s, 8.15, 5.02, 4.3, 0.3, [P("交付链接（② 待填 · 上传后替换）", 11, AMBER, True)])
+text(s, 8.15, 5.38, 4.3, 0.32, [[("① 上游修复 PR #279  ", 9.5, WHT, True), ("已发起", 9.5, CYAN, True)]])
+text(s, 8.15, 5.74, 4.3, 0.4, [P("Tencent/YOLO-Master/pull/279", 8.5, CYAN, True)])
+text(s, 8.15, 6.24, 4.3, 0.32, [[("② 证据附件  ", 9.5, WHT, True), ("<<EVIDENCE_LINK_PLACEHOLDER>>", 9.5, CYAN, True)]])
 text(s, 0.7, 6.92, 9.0, 0.25, [P("数字来源: stage3_matrix/runs(21 单元) · stage4_analysis(2026-09-07 定稿) · stage5 交付 2026-09-11", 10, RGBColor(0x8F, 0xA3, 0xB5))])
 
 OUT = "C3_结项汇报_初稿.pptx"

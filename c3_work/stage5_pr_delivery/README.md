@@ -7,15 +7,16 @@
 
 | PR | 内容 | 状态 |
 |---|---|---|
-| PR-1 env+data | stage1(环境重建/数据下载/转换/划分/许可与 SHA) | 已提交 commit, 待 push |
-| PR-2 server smoke | stage2(服务器化 runner/paths.env/planner solver notes/A800 冒烟 evidence) | 已提交 commit, 待 push |
-| PR-3 matrix | stage3(matrix/queue_runner/collect_evidence/18 单元结果) | 已提交 commit, 待 push |
-| PR-4 analysis | stage4(统计四维同表/planner 审计/p2 素材) | 定稿 commit, 待 push |
-| PR-5 report | stage5(复现包/结项报告/汇报 pptx) | report_final 定稿 + pptx 已重生成(末页含链接占位) + reproduction 已组装 |
-| PR-6 上游源码 | `fix/vpeft-capacity-guard`: C_cap 容量硬约束 + capacity_excluded 审计 + 未适配层冻结 + 单测 | 2 commit 已提交, 待 push 并发起上游 PR |
+| PR-1 env+data | stage1(环境重建/数据下载/转换/划分/许可与 SHA) | 已 push 到 fork `c3-vpeft-smoke`(tip `bdf3f7c`) |
+| PR-2 server smoke | stage2(服务器化 runner/paths.env/planner solver notes/A800 冒烟 evidence) | 已 push(同上) |
+| PR-3 matrix | stage3(matrix/queue_runner/collect_evidence/18 单元结果) | 已 push(同上) |
+| PR-4 analysis | stage4(统计四维同表/planner 审计/p2 素材) | 已 push(同上) |
+| PR-5 report | stage5(复现包/结项报告/汇报 pptx) | 已 push + report_final 定稿 + pptx 已重生成(末页含链接区) |
+| PR-6 上游源码 | `fix/vpeft-capacity-guard`: C_cap 容量硬约束 + capacity_excluded 审计 + 未适配层冻结 + 单测 | 已 push(tip `daed306`)；PR **#279** 已存在但标题是分支名派生的 `Fix/vpeft capacity guard`、正文为空 → 需按 `pr_body_capacity_guard.md` 重填 |
 
-> push 由本人手动执行(仓库 credentials 当前不可自动用)。本地 commit 均已留好。
-> PR-6 文案：`pr_body_capacity_guard.md`；链接占位见 pptx 末页①。
+> PR-6 说明:仓库同门 PR 的写法是「`[犀牛鸟-Xx]：` 前缀标题 + `Summary` / `Problem` / `Validation` / `Limitations` 分节正文」
+> （已合并的源码修复参照 #240 `fix(lora): ...`、#267 `fix(mixture): ...`；带前缀的软件修复参照 #253 `[犀牛鸟-A2]：Fix ...`）。
+> 本目录的 `pr_body_capacity_guard.md` 已按该风格重写，标题与正文可直接粘贴。
 
 ## 复现包结构 `reproduction/`
 
@@ -46,18 +47,26 @@ reproduction/
 
 ## 收尾检查单
 
-- [x] stage4 定稿(含补充单元) ｜ push 待本人执行
+- [x] stage4 定稿(含补充单元)
 - [x] reproduction/ 组装完整(收集各 stage 小文件)
 - [x] 结项报告 report_final.md(结论/证据表/局限/复现)
-- [x] 汇报 pptx(三策略对照 + planner 决策 + 证据链 + 末页 <<...>> 链接占位)
-- [ ] 逐个 PR 四节说明 + PR-6 源码修复分支 push fork(本人执行, 见下方命令)
-- [ ] 用实际链接替换 pptx 末页 <<PR_LINK_PLACEHOLDER>> / <<EVIDENCE_LINK_PLACEHOLDER>>
+- [x] 汇报 pptx(三策略对照 + planner 决策 + 证据链 + 末页链接区)
+- [x] 两个分支已 push fork: `c3-vpeft-smoke`(证据包, tip `bdf3f7c`)、`fix/vpeft-capacity-guard`(源码修复, tip `daed306`)
+- [ ] 重填 PR #279 的标题与正文(见下方「PR-6 提交方式」), 然后点 `Reopen pull request`
+- [ ] 上传证据包后, 用实际链接替换 pptx 末页 <<EVIDENCE_LINK_PLACEHOLDER>>
 
-## 待本人执行的两条 push
+## PR-6 提交方式（只剩网页操作）
 
-```bash
-cd research/TX_yolo/YOLO-Master
-git push -u fork c3-vpeft-smoke                      # 证据包(PR-1~PR-5)
-git push -u fork fix/vpeft-capacity-guard            # 上游源码修复(PR-6)
-# 发起 PR: https://github.com/Tencent/YOLO-Master/compare/main...lycyhrc:YOLO-Master:fix/vpeft-capacity-guard?expand=1
+标题（替换 GitHub 上由分支名派生的 `Fix/vpeft capacity guard`）：
+
+```text
+[犀牛鸟-C3]：Fix V-PEFT capacity guard for layers narrower than the smallest candidate rank
 ```
+
+正文：把 `pr_body_capacity_guard.md` 里 `## Summary` 之后的全部内容粘进描述框（文件开头那段 HTML 注释是本地说明，不要一起粘）。
+
+然后在本 PR 页面点 `Reopen pull request`（分支还在，直接重开即可）：
+
+https://github.com/Tencent/YOLO-Master/pull/279
+
+> 若选择新建 PR 而不是重开，pptx 末页①的链接要同步换成新编号。
