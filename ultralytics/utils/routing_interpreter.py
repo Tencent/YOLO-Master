@@ -1,4 +1,4 @@
-"""Cross-family routing interpretation for MoE, MoA, MoT, and MoLoRA."""
+"""Cross-family routing interpretation for MoE, MoA, MoT, Latent, and MoLoRA."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 from ultralytics.nn.modules.moe.protocol import is_routed_module
 
@@ -276,6 +276,73 @@ class RoutingInterpreter:
             )
         return reports
 
+    def routing_snapshot_records(
+        self,
+        *,
+        heatmaps: Mapping[str, RoutingHeatmap] | None = None,
+        step: int | None = None,
+        mode: str = "eval",
+    ) -> list[dict[str, Any]]:
+        """Build versioned JSON-safe records from one routing observation.
+
+        Args:
+            heatmaps: Optional captures from :meth:`capture_routing`. Passing
+                captures limits records to layers observed in that forward.
+            step: Optional training or evaluation step associated with the
+                observation.
+            mode: Producer-defined execution mode, such as ``"train"`` or
+                ``"eval"``.
+
+        Returns:
+            One ``yolo_master.routing_snapshot.v1`` record per routed layer.
+        """
+        summaries = {summary.layer_name: summary for summary in self.collect_layer_summaries(heatmaps=heatmaps)}
+        collapse = self.detect_routing_collapse(heatmaps=heatmaps)
+        modules = self._routed_modules(leaf_only=False)
+        records = []
+        for name, summary in summaries.items():
+            module = modules.get(name)
+            source = getattr(module, "last_routing_snapshot", {}) if module is not None else {}
+            source = source if isinstance(source, dict) else {}
+            heatmap = heatmaps.get(name) if heatmaps is not None else None
+            report = collapse[name]
+            probability_shape = list(heatmap.probabilities.shape) if heatmap is not None else None
+            visualization_type = heatmap.to_dict()["visualization_type"] if heatmap is not None else "unavailable"
+            records.append(
+                {
+                    "schema_version": "yolo_master.routing_snapshot.v1",
+                    "family": self._routing_family(name, module, source),
+                    "layer_name": name,
+                    "module_type": summary.module_type,
+                    "context": {"step": step, "mode": str(mode)},
+                    "routing": {
+                        "num_experts": summary.num_experts,
+                        "top_k": summary.top_k,
+                        "expert_usage": list(summary.expert_usage),
+                        "mean_router_probs": (
+                            list(summary.mean_router_probs) if summary.mean_router_probs is not None else None
+                        ),
+                        "probability_shape": probability_shape,
+                        "visualization_type": visualization_type,
+                        "spatial_available": bool(probability_shape and len(probability_shape) > 2),
+                    },
+                    "metrics": {
+                        "normalized_entropy": report.normalized_entropy,
+                        "normalized_gini": report.normalized_gini,
+                        "dominant_expert": report.dominant_expert,
+                        "dominant_share": report.dominant_share,
+                        "dead_experts": list(report.dead_experts),
+                        "collapsed": report.collapsed,
+                    },
+                    "aux_loss": {
+                        "available": "aux_loss" in source
+                        or isinstance(getattr(module, "aux_loss", None), torch.Tensor),
+                        "value": summary.aux_loss,
+                    },
+                }
+            )
+        return records
+
     def capture_routing(
         self,
         batch: Any,
@@ -299,7 +366,7 @@ class RoutingInterpreter:
             def capture_hook(_router, _inputs, output, *, current_name=name, current_module=module):
                 probabilities = self._router_probabilities(output, int(getattr(current_module, "num_experts", 0)))
                 if probabilities is None:
-                    return None
+                    return
                 probabilities = probabilities.detach().float().cpu()
                 captured[current_name] = RoutingHeatmap(
                     layer_name=current_name,
@@ -307,7 +374,7 @@ class RoutingInterpreter:
                     probabilities=probabilities,
                     assignments=probabilities.argmax(dim=1),
                 )
-                return None
+                return
 
             handles.append(router.register_forward_hook(capture_hook))
 
@@ -379,7 +446,7 @@ class RoutingInterpreter:
             def _capture_hook(_router, _inputs, output, *, current_name=name, current_module=module):
                 probabilities = self._router_probabilities(output, int(getattr(current_module, "num_experts", 0)))
                 if probabilities is None:
-                    return None
+                    return
                 probabilities = probabilities.detach().float().cpu()
                 captured[current_name] = RoutingHeatmap(
                     layer_name=current_name,
@@ -387,7 +454,7 @@ class RoutingInterpreter:
                     probabilities=probabilities,
                     assignments=probabilities.argmax(dim=1),
                 )
-                return None
+                return
 
             handles.append(router.register_forward_hook(_capture_hook))
 
@@ -405,7 +472,6 @@ class RoutingInterpreter:
                             if rms.shape[0] == 1:
                                 rms = rms[0]
                             slot_list[expert_idx] = rms
-                            return None
 
                         return _hook_fn
 
@@ -428,10 +494,10 @@ class RoutingInterpreter:
             raise RuntimeError(f"router for layer {layer_name!r} did not produce a supported probability tensor")
 
         expert_maps: dict[str, ExpertFeatureMap] = {}
-        for layer_name, storage in captured_features.items():
-            module_type = type(modules[layer_name]).__name__
-            expert_maps[layer_name] = ExpertFeatureMap(
-                layer_name=layer_name,
+        for captured_layer_name, storage in captured_features.items():
+            module_type = type(modules[captured_layer_name]).__name__
+            expert_maps[captured_layer_name] = ExpertFeatureMap(
+                layer_name=captured_layer_name,
                 module_type=module_type,
                 expert_maps=tuple(storage),
             )
@@ -623,7 +689,7 @@ class RoutingInterpreter:
                         "num_samples": 0,
                         "usage_sum": torch.zeros(num_experts, dtype=torch.float64),
                         "dominant": torch.zeros(num_experts, dtype=torch.long),
-                        "feature_sum": [dict() for _ in range(num_experts)],
+                        "feature_sum": [{} for _ in range(num_experts)],
                         "feature_weight": torch.zeros(num_experts, dtype=torch.float64),
                     },
                 )
@@ -776,23 +842,23 @@ class RoutingInterpreter:
 
         # --- build SparseTopKStats ---
         sparse_topk: dict[str, SparseTopKStats] = {}
-        for name in accumulator_hit:
+        for name, hit_counts in accumulator_hit.items():
             denom = max(sample_counts[name], 1)
             sparse_topk[name] = SparseTopKStats(
                 layer_name=name,
                 module_type=module_types[name],
-                num_experts=int(accumulator_hit[name].shape[0]),
+                num_experts=int(hit_counts.shape[0]),
                 top_k=top_k_registry[name],
                 num_samples=sample_counts[name],
-                expert_hit_counts=tuple(accumulator_hit[name].tolist()),
-                expert_hit_percentages=tuple((accumulator_hit[name].float() / denom * 100.0).tolist()),
+                expert_hit_counts=tuple(hit_counts.tolist()),
+                expert_hit_percentages=tuple((hit_counts.float() / denom * 100.0).tolist()),
                 co_occurrence_matrix=tuple(tuple(int(v) for v in row) for row in accumulator_cooc[name]),
             )
 
         # --- build RouterDifferentiationMetrics ---
         diff_metrics: dict[str, RouterDifferentiationMetrics] = {}
-        for name in kl_lists:
-            kl_t = torch.tensor(kl_lists[name])
+        for name, layer_kl_values in kl_lists.items():
+            kl_t = torch.tensor(layer_kl_values)
             ws_t = torch.tensor(spread_lists[name])
             diff_metrics[name] = RouterDifferentiationMetrics(
                 layer_name=name,
@@ -891,6 +957,24 @@ class RoutingInterpreter:
                 child is not module and self._is_interpretable_routed_module(child) for child in module.modules()
             )
         }
+
+    def _routing_family(self, layer_name: str, module: nn.Module | None, snapshot: Mapping[str, Any]) -> str:
+        """Return the canonical family declared by a router or its nearest parent."""
+        declared = snapshot.get("family") or getattr(module, "_routing_aux_kind", None)
+        if declared:
+            return str(declared).lower()
+        modules = dict(self.model.named_modules())
+        names = [layer_name]
+        if layer_name != "<root>":
+            parts = layer_name.split(".")
+            names.extend(".".join(parts[:index]) for index in range(len(parts) - 1, 0, -1))
+        for name in names:
+            candidate = module if name == layer_name else modules.get(name)
+            candidate_type = type(candidate).__name__.lower() if candidate is not None else ""
+            for family in ("molora", "latent", "moa", "mot", "moe"):
+                if family in candidate_type:
+                    return family
+        return "unknown"
 
     @classmethod
     def _is_interpretable_routed_module(cls, module: nn.Module) -> bool:
@@ -1425,3 +1509,4 @@ __all__ = [
     "RoutingLayerSummary",
     "SparseTopKStats",
 ]
+

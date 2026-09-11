@@ -10,6 +10,9 @@ Two modes are supported:
   dataset-level sparse top‑k hit statistics, router differentiation metrics
   (KL divergence, weight spread), and collapse reports.  Results are written as
   ``dataset_routing_report.json``.
+
+Single-image mode also writes versioned cross-family records to
+``routing_snapshot.jsonl`` for downstream dashboards and experiment tooling.
 """
 
 from __future__ import annotations
@@ -150,6 +153,7 @@ def _run_single_image(
     )
     summaries = interpreter.collect_layer_summaries(heatmaps=heatmaps)
     collapse = interpreter.detect_routing_collapse(heatmaps=heatmaps)
+    snapshot_records = interpreter.routing_snapshot_records(heatmaps=heatmaps, mode="eval")
     causal = (
         interpreter.routing_causal_analysis(
             batch, args.layer, args.expert,
@@ -160,7 +164,9 @@ def _run_single_image(
 
     args.output.mkdir(parents=True, exist_ok=True)
     report_path = args.output / "routing_report.json"
+    snapshot_path = args.output / "routing_snapshot.jsonl"
     payload = {
+        "schema_version": "yolo_master.routing_report.v1",
         "model": str(args.model),
         "image": str(args.image),
         "layer": args.layer,
@@ -176,9 +182,13 @@ def _run_single_image(
         "summaries": [s.to_dict() for s in summaries],
         "collapse": {n: r.to_dict() for n, r in collapse.items()},
         "causal": causal,
+        "routing_snapshot": str(snapshot_path),
     }
     report_path.write_text(
         json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8",
+    )
+    snapshot_path.write_text(
+        "".join(json.dumps(record, ensure_ascii=True) + "\n" for record in snapshot_records), encoding="utf-8"
     )
     print(f"Routing report: {report_path}")
     print(f"Heatmaps: {len(heatmaps)}")
@@ -299,3 +309,4 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
