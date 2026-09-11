@@ -398,6 +398,50 @@ def _vpeft_model_fingerprint(model: nn.Module) -> str:
     return _model_fingerprint(model)
 
 
+def _split_capacity_targets(
+    solver: Any,
+    graph: Any,
+    constraints: Any,
+    variant: str,
+    decision: Any,
+) -> tuple[tuple[Any, ...], List[Dict[str, Any]]]:
+    """Split solver output into injectable targets and capacity-excluded layers.
+
+    ``RankCapacityConstraint`` (``C_cap``) already keeps narrow layers out of the
+    solver projection, but a placement plan is a serialized artifact: the
+    selected targets are re-checked here so a plan can never carry a rank above
+    its layer capacity. Layers dropped for capacity reasons are reported
+    explicitly, which lets callers see *which* modules were skipped instead of
+    inferring it from a shorter target list.
+    """
+    from ultralytics.vpeft import PlacementTarget, RankCapacityConstraint
+
+    guard = RankCapacityConstraint()
+    rank_floor = min([int(rank) for rank in getattr(solver, "rank_set", []) if int(rank) > 0] or [1])
+    # Hard constraints other than the capacity guard: a node violating one of
+    # them was excluded for an unrelated (and already reported) reason.
+    other_hard = [c for c in constraints._hard_constraints if not isinstance(c, RankCapacityConstraint)]
+    targets: List[Any] = []
+    excluded: List[Dict[str, Any]] = []
+    for index, name in enumerate(graph.get_module_names()):
+        node_info = constraints._node_info_from_graph(graph, index)
+        capacity = guard.capacity(node_info)
+        rank = int(decision.ranks[index].item()) if decision.placement[index] > 0.5 else 0
+        if rank > 0:
+            if guard.is_feasible(node_info, variant, rank):
+                targets.append(PlacementTarget(name, variant, rank))
+            else:
+                excluded.append({"name": name, "rank": rank, "capacity": capacity})
+            continue
+        # Not placed: report it only when layer capacity is the blocking reason.
+        if guard.is_feasible(node_info, variant, rank_floor):
+            continue
+        if not all(constraint.is_feasible(node_info, variant, rank_floor) for constraint in other_hard):
+            continue
+        excluded.append({"name": name, "rank": rank_floor, "capacity": capacity})
+    return tuple(targets), excluded
+
+
 def _build_vpeft_placement_plan(model: nn.Module, config: "LoRAConfig") -> Any:
     """Compile a V-PEFT graph into the stable PlacementPlan contract."""
     from ultralytics.vpeft import (
@@ -407,7 +451,6 @@ def _build_vpeft_placement_plan(model: nn.Module, config: "LoRAConfig") -> Any:
         DifferentiableOptimizationSolver,
         MIPRelaxationSolver,
         PlacementPlan,
-        PlacementTarget,
     )
 
     graph = ComputationGraphBuilder().build(model)
@@ -430,12 +473,16 @@ def _build_vpeft_placement_plan(model: nn.Module, config: "LoRAConfig") -> Any:
     }.get(solver_name)
     if solver_cls is None:
         raise ValueError(f"unsupported lora_planner_solver={solver_name!r}")
-    decision = solver_cls().solve(graph, budget, variant, constraints)
-    targets = tuple(
-        PlacementTarget(name, variant, int(decision.ranks[index].item()))
-        for index, name in enumerate(graph.get_module_names())
-        if decision.placement[index] > 0.5 and int(decision.ranks[index].item()) > 0
-    )
+    solver = solver_cls()
+    decision = solver.solve(graph, budget, variant, constraints)
+    targets, capacity_excluded = _split_capacity_targets(solver, graph, constraints, variant, decision)
+    if capacity_excluded:
+        preview = ", ".join(
+            f"{item['name']}(rank={item['rank']}>capacity={item['capacity']})" for item in capacity_excluded[:5]
+        )
+        LOGGER.info(
+            f"[V-PEFT] capacity-excluded: {len(capacity_excluded)} layer(s) below the requested rank: {preview}"
+        )
     status = "REFUSE" if decision.status == "REFUSE" or not targets else decision.status
     reason = decision.reason or ("solver returned no feasible targets" if not targets else None)
     return PlacementPlan(
@@ -457,6 +504,7 @@ def _build_vpeft_placement_plan(model: nn.Module, config: "LoRAConfig") -> Any:
             "reason": decision.reason,
             "graph_nodes": graph.n_nodes,
             "solver_diagnostics": dict(decision.metadata or {}),
+            "capacity_excluded": capacity_excluded,
         },
     )
 

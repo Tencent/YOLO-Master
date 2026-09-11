@@ -101,7 +101,16 @@ def test_vpeft_registry_uses_canonical_soft_constraint_names():
     from ultralytics.vpeft import ComputationGraph, ConstraintRegistry, ModuleNode
 
     registry = ConstraintRegistry.default({"soft_constraints": ["budget", "deploy"]})
-    assert registry.hard_constraint_names() == ["C_op", "C_sem", "C_budget", "C_deploy", "C_compat", "C_moe", "C_div"]
+    assert registry.hard_constraint_names() == [
+        "C_op",
+        "C_sem",
+        "C_budget",
+        "C_deploy",
+        "C_compat",
+        "C_moe",
+        "C_div",
+        "C_cap",
+    ]
     assert registry.soft_constraint_names() == ["C_budget", "C_deploy"]
     graph = ComputationGraph(modules=[ModuleNode("backbone.fc", "Linear", 8, 8)])
     values = registry.evaluate_soft(graph, torch.tensor([1.0]), torch.tensor([4]), ["lora"])

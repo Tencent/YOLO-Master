@@ -27,6 +27,7 @@ __all__ = [
     "VariantModuleCompatibilityConstraint",
     "MoEConsistencyConstraint",
     "DivisibilityConstraint",
+    "RankCapacityConstraint",
     "CandidateTargetConstraint",
     "ConstraintRegistry",
 ]
@@ -591,6 +592,58 @@ class DivisibilityConstraint(Constraint):
 
 
 # ---------------------------------------------------------------------------
+# 8. RankCapacityConstraint (C_cap)
+# ---------------------------------------------------------------------------
+
+
+class RankCapacityConstraint(Constraint):
+    """Hard constraint: rank must not exceed the layer capacity min(in, out).
+
+    A rank-``r`` adapter factorises a weight of shape ``(out, in)`` into two
+    low-rank factors, so ``r`` can never be larger than ``min(in, out)``. Narrow
+    layers such as ``*.routing.routing_network.*`` or ``*.dfl.conv`` have a
+    capacity below the smallest candidate rank; without this constraint they are
+    projected as feasible targets and the resulting plan only fails later in
+    ``PlacementPlan.validate_model``.
+
+    Capacity semantics intentionally mirror ``PlacementPlan.validate_model`` so
+    that solver projection and plan validation agree. Nodes without channel
+    metadata (``0``) are treated as feasible, and operators that cannot host an
+    adapter at all are left to ``C_op``, to avoid muting other constraints.
+    """
+
+    _CAPACITY_OPS: Tuple[str, ...] = ("Linear", "Conv2d", "GroupConv2d", "DepthwiseConv2d")
+
+    def __init__(self, weight: float = 1.0):
+        super().__init__("C_cap", weight)
+
+    @staticmethod
+    def capacity(node_info: NodeInfo) -> int:
+        """Return ``min(in_channels, out_channels)``, or ``0`` when unknown."""
+        in_channels = int(node_info.in_channels or 0)
+        out_channels = int(node_info.out_channels or 0)
+        if in_channels <= 0 or out_channels <= 0:
+            return 0
+        return min(in_channels, out_channels)
+
+    def is_feasible(self, node_info: NodeInfo, variant: str, rank: int) -> bool:
+        if node_info.operator_type not in self._CAPACITY_OPS:
+            return True
+        capacity = self.capacity(node_info)
+        if capacity <= 0:
+            return True
+        return int(rank) <= capacity
+
+    def penalty(self, node_info: NodeInfo, variant: str, rank: int) -> float:
+        capacity = self.capacity(node_info)
+        rank = int(rank)
+        if capacity <= 0 or rank <= capacity:
+            return 0.0
+        # Normalised overflow: 0 < penalty <= 1
+        return float(rank - capacity) / float(rank)
+
+
+# ---------------------------------------------------------------------------
 # ConstraintRegistry — orchestrates all constraints
 # ---------------------------------------------------------------------------
 
@@ -685,6 +738,7 @@ class ConstraintRegistry:
             "C_compat": VariantModuleCompatibilityConstraint(),
             "C_moe": MoEConsistencyConstraint(),
             "C_div": DivisibilityConstraint(),
+            "C_cap": RankCapacityConstraint(),
         }
 
     def _register(self, c: Constraint, as_hard: bool = True) -> None:
@@ -733,9 +787,10 @@ class ConstraintRegistry:
             VariantModuleCompatibilityConstraint(block_size=cfg.get("block_size", None)),
             MoEConsistencyConstraint(epsilon=cfg.get("moe_epsilon", 4)),
             DivisibilityConstraint(),
+            RankCapacityConstraint(),
         ]
         by_name = {constraint.name: constraint for constraint in all_constraints}
-        default_hard = ["C_op", "C_sem", "C_budget", "C_deploy", "C_compat", "C_moe", "C_div"]
+        default_hard = ["C_op", "C_sem", "C_budget", "C_deploy", "C_compat", "C_moe", "C_div", "C_cap"]
         default_soft = ["C_budget", "C_deploy"]
         hard_names = [cls.normalize_name(name) for name in cfg.get("hard_constraints", default_hard)]
         soft_names = [cls.normalize_name(name) for name in cfg.get("soft_constraints", default_soft)]
@@ -768,6 +823,7 @@ class ConstraintRegistry:
             "compat": "C_compat",
             "moe": "C_moe",
             "div": "C_div",
+            "cap": "C_cap",
         }
 
         def resolve_names(names):

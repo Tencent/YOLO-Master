@@ -90,6 +90,12 @@ class PlacementPlan:
         V-PEFT plans are serialized artifacts. Checking the binding fingerprint
         and every target before adapter injection prevents silently applying a
         stale plan to a structurally similar but incompatible model.
+
+        Capacity violations (a rank above ``min(in_channels, out_channels)``) are
+        collected across all targets and reported together, so a hand-written or
+        externally produced plan can be repaired in one pass. Plans produced by
+        the V-PEFT planner already exclude such layers; the offending names are
+        recorded in ``metadata["capacity_excluded"]``.
         """
         if not isinstance(model, nn.Module):
             raise TypeError(f"model must be an nn.Module, got {type(model)!r}")
@@ -98,6 +104,7 @@ class PlacementPlan:
             raise ValueError("PlacementPlan model fingerprint mismatch; rebuild the plan for the current model")
         if require_targets and not self.targets:
             raise ValueError("PlacementPlan contains no adapter targets")
+        capacity_violations: list[str] = []
         for target in self.targets:
             try:
                 module = model.get_submodule(target.name)
@@ -115,7 +122,14 @@ class PlacementPlan:
                 int(module.out_channels if isinstance(module, nn.Conv2d) else module.out_features),
             )
             if rank > capacity:
-                raise ValueError(f"PlacementPlan rank {rank} for {target.name!r} exceeds layer capacity {capacity}")
+                capacity_violations.append(f"{target.name!r} (rank={rank} > capacity={capacity})")
+        if capacity_violations:
+            raise ValueError(
+                "PlacementPlan rank exceeds layer capacity for "
+                + "; ".join(capacity_violations)
+                + ". Narrow layers are excluded by the V-PEFT planner and listed in metadata['capacity_excluded'];"
+                " remove these targets or lower their rank."
+            )
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> "PlacementPlan":
