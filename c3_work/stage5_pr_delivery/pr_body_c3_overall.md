@@ -113,6 +113,14 @@ python c3_work/stage4_analysis/analysis_stats.py
 
 路径和预算参数以 `stage5_pr_delivery/reproduction/configs/paths.env`、`train_commands_example.sh` 为准；`runs/`、数据集和 `*.cache` 已在 `c3_work/.gitignore` 里排除。
 
+## 目标达成情况（P0 / P1 / P2）
+
+按课题的任务分级（P0 保底 / P1 预期 / P2 理想）对照：
+
+- P0 达成：NEU-DET 和 DeepPCB 上都跑通了 V-PEFT（各 3 个 seed，共 6 个单元，另有 3 个补跑单元），planner 决策与护栏日志都留档，见 `stage3_matrix/matrix_status.json`、`stage4_analysis/planner_audit_summary.md` 和各单元 `training.log` 里的 `[V-PEFT]` 行。
+- P1 达成：三种策略严格同预算（epochs=100 / batch 8 / imgsz 640 / amp 关闭，同一 seed 池），PEFT 的参数效率数量级优势成立——vpeft 只训练 116,736 个参数，是全量微调的 4.15%（约 1/24）。显存低 1.15G、训练时长三者相当，这两项不是数量级。
+- P2 达成，走的是"发现并修复 planner 真实 bug"这一支：定位并修复了容量约束缺失导致 V-PEFT 静默降级 legacy planner 的缺陷（源码修复 + 8 个单测），放在独立 PR #279。小样本曲线没有画：k5/10/50/100 的划分已备好（任务书要求的是 10/50/100/500 张，仓库里备的是 30/60/300/600 张），本轮矩阵跑的是两个数据集的全量划分。
+
 ## 已知问题
 
 1. seed 稳定性：NEU 上 vpeft 和 frozen 各有一个 seed（2024）收敛异常，换 seed 补跑正常，属于偶发；DeepPCB frozen 在 seed 824 的震荡同 seed 重跑能复现，说明那个配置下训练本身不稳。这些只在报告用的 seed 池里观察到，不能推总体概率。

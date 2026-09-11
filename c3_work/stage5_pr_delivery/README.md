@@ -60,7 +60,7 @@ reproduction/
 
 ## 整体交付 PR（`c3-vpeft-smoke` → `Tencent:main`）
 
-正文：`pr_body_c3_overall.md`（中文，覆盖 stage1-5 全部交付 + 上游修复概述，末尾带 `## PPT`）。
+正文：`pr_body_c3_overall.md`（中文，覆盖 stage1-5 全部交付 + 上游修复概述 + P0/P1/P2 达成情况，末尾带 `## PPT`）。
 标题建议：
 
 ```text
