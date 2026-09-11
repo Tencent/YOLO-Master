@@ -121,4 +121,6 @@ print(w.lora_placement_plan['metadata']['capacity_excluded'])  # 0/3 excluded by
 "
 ```
 
-Evidence package (C3 delivery, external): <<EVIDENCE_LINK_PLACEHOLDER>>
+## PPT
+
+https://drive.google.com/file/d/1dg8tZyI11xJR1JrCCKBWqbC4_kFgmsVp/view?usp=sharing

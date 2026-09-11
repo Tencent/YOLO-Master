@@ -53,7 +53,8 @@ reproduction/
 - [x] 汇报 pptx(三策略对照 + planner 决策 + 证据链 + 末页链接区)
 - [x] 两个分支已 push fork: `c3-vpeft-smoke`(证据包, tip `bdf3f7c`)、`fix/vpeft-capacity-guard`(源码修复, tip `daed306`)
 - [ ] 重填 PR #279 的标题与正文(见下方「PR-6 提交方式」), 然后点 `Reopen pull request`
-- [ ] 上传证据包后, 用实际链接替换 pptx 末页 <<EVIDENCE_LINK_PLACEHOLDER>>
+- [x] PPT 用 Google Drive 链接交付: PR 描述末尾新增 `## PPT` 一节, 只放该链接(仓库 `c3_work/stage5_pr_delivery/` 保留同源副本, 未重新导出)
+- [ ] (可选) pptx 末页②仍是占位符 `<<EVIDENCE_LINK_PLACEHOLDER>>`, 若要重出可填同一 Drive 链接
 
 ## PR-6 提交方式（只剩网页操作）
 
@@ -64,6 +65,12 @@ reproduction/
 ```
 
 正文：把 `pr_body_capacity_guard.md` 里 `## Summary` 之后的全部内容粘进描述框（文件开头那段 HTML 注释是本地说明，不要一起粘）。
+
+PPT（正文末尾 `## PPT` 一节只放此链接）：
+
+```text
+https://drive.google.com/file/d/1dg8tZyI11xJR1JrCCKBWqbC4_kFgmsVp/view?usp=sharing
+```
 
 然后在本 PR 页面点 `Reopen pull request`（分支还在，直接重开即可）：
 
