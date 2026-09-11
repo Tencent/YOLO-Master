@@ -36,9 +36,9 @@ NAMES = {
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--root", type=Path, default=Path("/jpfs/huangyidan3/datasets/VisDrone"))
-    parser.add_argument("--download-dir", type=Path, default=Path("/jpfs/huangyidan3/datasets/downloads/VisDrone"))
-    parser.add_argument("--yaml-out", type=Path, default=Path("/jpfs/huangyidan3/datasets/VisDrone.yaml"))
+    parser.add_argument("--root", type=Path, default=Path("G:/Codes/OpenSource/Rhino-bird/DATASETS/VisDrone"))
+    parser.add_argument("--download-dir", type=Path, default=Path("G:/Codes/OpenSource/Rhino-bird/DATASETS/downloads/VisDrone"))
+    parser.add_argument("--yaml-out", type=Path, default=Path("G:/Codes/OpenSource/Rhino-bird/DATASETS/VisDrone.yaml"))
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--retries", type=int, default=5)
     parser.add_argument(
@@ -169,6 +169,10 @@ def main() -> int:
     args = parse_args()
     if args.overwrite and args.root.exists():
         shutil.rmtree(args.root)
+    # 如果 args.root 存在但是文件（同名文件冲突），先删文件
+    if args.root.exists() and not args.root.is_dir():
+        print(f"[F11] {args.root} 是文件而非目录,先删除")
+        args.root.unlink()
     args.root.mkdir(parents=True, exist_ok=True)
 
     for split, url in URLS.items():

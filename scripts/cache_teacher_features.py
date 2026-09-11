@@ -57,6 +57,12 @@ def load_dino_teacher(model_name: str, device: str) -> "torch.nn.Module":
     """加载冻结的 DINO教师模型（torch.hub，无需联网下载时使用本地权重）。"""
     import torch
 
+    # 把字符串 '0' / 'cuda:0' / 'cpu' 解析成 torch.device
+    if isinstance(device, str):
+        if device.isdigit():
+            device = f"cuda:{device}"
+        device = torch.device(device)
+
     print(f"[F11] 加载 DINO 教师: {model_name} @ {device}")
     try:
         # 尝试 torch.hub 在线加载
@@ -85,6 +91,14 @@ def extract_features(
     import torch
     from PIL import Image
     from torchvision import transforms
+
+    # 把字符串 device 解析成 torch.device（避免 .to('0') 报错）
+    if isinstance(device, str):
+        if device.isdigit():
+            device = f"cuda:{device}"
+        device = torch.device(device)
+
+    teacher.eval()
 
     # DINO 标准预处理
     transform = transforms.Compose([
@@ -129,25 +143,51 @@ def collect_image_paths(data_yaml: Path, max_num: int) -> list:
     """从 YOLO 数据集 yaml 收集图片路径。"""
     import yaml
 
-    if not data_yaml.exists():
-        # coco8.yaml fallback：使用 ultralytics 内置数据集
+    # 优先从 data_yaml 找图片路径
+    candidates: list = []
+    if data_yaml.exists():
+        with data_yaml.open(encoding="utf-8") as f:
+            data_info = yaml.safe_load(f)
+        # 处理 coco8.yaml 的 path 字段(可能是相对或绝对)
+        ds_path = data_info.get("path", "")
+        if ds_path and not Path(ds_path).is_absolute():
+            ds_path = ROOT / ds_path
+        # 用 ultralytics 内置 check_det_dataset 解析 train/val 图片路径
         from ultralytics.data.utils import check_det_dataset
         try:
             data_info = check_det_dataset(str(data_yaml))
-            img_root = Path(data_info.get("path", "."))
-        except Exception:
-            img_root = ROOT
-    else:
-        with data_yaml.open() as f:
-            data_info = yaml.safe_load(f)
-        img_root = ROOT
+            # check_det_dataset 返回的 path 是已解析的绝对路径
+            base = Path(data_info.get("path", ds_path))
+            for split in ("train", "val", "test"):
+                # 数据集 yaml 里通常用绝对路径 images/train2017 等
+                if split in data_info:
+                    split_dir = Path(data_info[split])
+                    if split_dir.exists():
+                        candidates.extend(split_dir.rglob("*.jpg"))
+                        candidates.extend(split_dir.rglob("*.png"))
+        except Exception as exc:
+            print(f"[F11][WARN] check_det_dataset 失败: {exc}")
 
-    # coco8.yaml 默认指向 ultralytics/assets/coco8/images
-    candidates = list((ROOT / "ultralytics" / "assets" / "coco8" / "images").glob("*.jpg"))
+    # coco8.yaml fallback：使用 ultralytics 内置数据集
     if not candidates:
-        candidates = list(ROOT.rglob("*.jpg"))[:max_num * 2]
+        candidates = list((ROOT / "ultralytics" / "assets" / "coco8" / "images").glob("*.jpg"))
+        if not candidates:
+            candidates = list((ROOT / "ultralytics" / "assets" / "coco8" / "images").glob("*.png"))
+
+    # 最终 fallback：只扫 ultralytics/assets(避免扫到 runs/*.jpg 这些训练可视化图)
+    if not candidates:
+        candidates = list((ROOT / "ultralytics" / "assets").rglob("*.jpg"))[:max_num * 2]
+        candidates.extend(list((ROOT / "ultralytics" / "assets").rglob("*.png"))[:max_num * 2])
+
     print(f"[F11] 收集到 {len(candidates)} 张候选图片（最多用 {max_num}）")
-    return candidates[:max_num]
+    # 去重(可能 .jpg 和 .png 列表合并后有重复)
+    seen = set()
+    unique = []
+    for p in candidates:
+        if p not in seen:
+            seen.add(p)
+            unique.append(p)
+    return unique[:max_num]
 
 
 def main() -> None:
@@ -206,7 +246,7 @@ def main() -> None:
     with meta_path.open("w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
 
-    print(f"[F11] ✅ 缓存完成: {len(manifest_rows)} 张")
+    print(f"[F11] [OK] 缓存完成: {len(manifest_rows)} 张")
     print(f"[F11] manifest: {manifest_path}")
     print(f"[F11] meta: {meta_path}")
 

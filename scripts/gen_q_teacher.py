@@ -38,9 +38,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cache", default="runs/f11_teacher_cache", help="教师特征缓存目录")
     parser.add_argument("--model", default="ultralytics/cfg/models/master/v0_8/det/yolo-master-n.yaml", help="学生模型 yaml")
     parser.add_argument("--device", default="cpu", help="计算设备（冒烟建议 cpu）")
-    parser.add_argument("--temperature", type=float, default=1.0, help="softmax 温度")
-    parser.add_argument("--smoothing_eps", type=float, default=0.1, help="uniform 平滑系数")
-    parser.add_argument("--confidence_mask", action="store_true", default=True, help="低置信 patch 掩码")
+    parser.add_argument("--temperature", type=float, default=0.5, help="softmax 温度(默认 0.5,熵校验验证 H_norm=0.51 合法;0.1 过尖/1.0 过均匀)")
+    parser.add_argument("--smoothing_eps", type=float, default=0.01, help="uniform 平滑系数(默认 0.01,原 0.1 过大推高熵)")
+    parser.add_argument("--confidence_mask", action=argparse.BooleanOptionalAction, default=True, help="低置信 patch 掩码(默认开启, --no-confidence_mask 关闭)")
     parser.add_argument("--out", default="runs/f11_q_teacher_check", help="输出目录")
     parser.add_argument("--n_experts", type=int, default=4, help="专家数量")
     parser.add_argument("--expert_dim", type=int, default=768, help="专家特征维度")
@@ -195,8 +195,11 @@ def main() -> None:
     )  # [E, D]
 
     # 3. 计算 q_teacher
-    q_raw = normalize_consistency_dim(teacher_feats, expert_protos)
-    q = compute_consistency(teacher_feats, expert_protos, args.temperature)
+    # 维度对齐: teacher 与 expert 维度不一致时截断(修复: 原代码对齐结果未使用导致 matmul 形状错误)
+    teacher_feats_aligned = normalize_consistency_dim(teacher_feats, expert_protos)
+    if teacher_feats_aligned.shape[-1] != expert_protos.shape[-1]:
+        expert_protos = expert_protos[:, : teacher_feats_aligned.shape[-1]]
+    q = compute_consistency(teacher_feats_aligned, expert_protos, args.temperature)
 
     # 4. 平滑 + 掩码
     q_final = apply_smoothing_and_mask(q, args.smoothing_eps, args.confidence_mask)

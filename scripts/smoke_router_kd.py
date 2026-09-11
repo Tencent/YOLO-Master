@@ -93,13 +93,18 @@ def build_tiny_router(experts: int, in_dim: int = 256, device: str = "cuda:0"):
 
 
 def js_divergence(p: "torch.Tensor", q: "torch.Tensor", eps: float = 1e-9) -> "torch.Tensor":
-    """JS 散度：KL(p||m)/2 + KL(q||m)/2，其中 m = (p+q)/2。"""
+    """JS 散度：KL(p||m)/2 + KL(q||m)/2，其中 m = (p+q)/2。
+
+    注意：PyTorch F.kl_div(input, target) 计算的是 KL(target || input)，
+    即 sum(target * (log(target) - input))。因此要计算 KL(p || m)，需要
+    调用 F.kl_div(m.log(), p)，其中 input=m.log(), target=p。
+    """
     import torch
     import torch.nn.functional as F
 
     m = 0.5 * (p + q).clamp_min(eps)
-    return 0.5 * F.kl_div(p.clamp_min(eps).log(), m, reduction="batchmean") + 0.5 * F.kl_div(
-        q.clamp_min(eps).log(), m, reduction="batchmean"
+    return 0.5 * F.kl_div(m.log(), p.clamp_min(eps), reduction="batchmean") + 0.5 * F.kl_div(
+        m.log(), q.clamp_min(eps), reduction="batchmean"
     )
 
 
@@ -109,7 +114,7 @@ def load_q_teacher(path: Path) -> "torch.Tensor":
 
     if not path.exists():
         print(f"[F11][WARN] q_teacher 不存在 {path}，生成随机软目标作为 fallback")
-        return torch.softmax(torch.randn(2, 4, 4), dim=-1)
+        return torch.softmax(torch.randn(4, 4), dim=-1)  # [N=4, E=4]
 
     data = torch.load(str(path), map_location="cpu", weights_only=False)
     return data["q_teacher"]  # [N, E]
@@ -152,6 +157,11 @@ def main() -> None:
 
     # 4. 加载 q_teacher 软目标（如有）
     q_teacher_full = load_q_teacher(Path(args.q_teacher_path).resolve()).to(device)
+    # 防御性 reshape: 总是转成 2 维 [N, E]
+    if q_teacher_full.dim() == 3:
+        q_teacher_full = q_teacher_full.reshape(-1, q_teacher_full.shape[-1])
+    elif q_teacher_full.dim() == 1:
+        q_teacher_full = q_teacher_full.unsqueeze(0)
     # 修正: 取前 experts 维
     if q_teacher_full.shape[-1] > args.experts:
         q_teacher = q_teacher_full[:, :args.experts]

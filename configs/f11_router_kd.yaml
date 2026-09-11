@@ -1,0 +1,17 @@
+# F11 T4 三方同预算对照 · C 组 Router KD(F11 核心)
+# 通过官方 FoundationDistillationModel 包装 + FoundationTeacherRouter:
+# 教师路由 logits → routing_kd_loss 蒸馏到学生 Router。
+# 注:DINOv3 是 gated repo,本地无条件访问,改用 SigLIP2。
+model: ultralytics/cfg/models/master/v0_8/det/yolo-master-n.yaml
+label: C-router-kd
+description: Router KD(路由软目标蒸馏, F11 核心)
+foundation:
+  enabled: true
+  teacher: siglip2
+  model: google/siglip2-base-patch16-512
+  backend: transformers
+  loss_weight: 0.0
+  router_distill: true
+  router_loss_weight: 0.5
+  # 路由 KD 温度 τ(gen_q_teacher.py 熵校验确定 0.5 合法;框架默认 1.0 教师目标近均匀)
+  router_temperature: 0.5

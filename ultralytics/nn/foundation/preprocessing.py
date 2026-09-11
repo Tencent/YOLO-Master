@@ -10,6 +10,9 @@ import torch.nn.functional as F
 
 DINOV3_IMAGE_MEAN = (0.485, 0.456, 0.406)
 DINOV3_IMAGE_STD = (0.229, 0.224, 0.225)
+# DINOv2 使用与 DINOv3 相同的 ImageNet 默认归一化(HF convert_dinov2_to_hf.py 采用 IMAGENET_DEFAULT_*)
+DINOV2_IMAGE_MEAN = DINOV3_IMAGE_MEAN
+DINOV2_IMAGE_STD = DINOV3_IMAGE_STD
 
 
 def prepare_image_tensor(
