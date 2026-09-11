@@ -1,29 +1,29 @@
 <!--
-PR 标题（GitHub 上填这一行，对齐 #253 的 [犀牛鸟-Ax] 风格）：
-[犀牛鸟-C3]：Fix V-PEFT capacity guard for layers narrower than the smallest candidate rank
+PR 标题（GitHub 上填这一行，对齐 #253 的 [犀牛鸟-Ax] 前缀风格，正文用中文）：
+[犀牛鸟-C3]：修复 V-PEFT 容量约束 —— 窄于最小候选 rank 的层不再被选为适配目标
 分支：lycyhrc/YOLO-Master:fix/vpeft-capacity-guard（base: Tencent:main，2 commits，tip daed306）
-下面的内容从 "## Summary" 开始整段粘贴到 PR 描述框。
+下面的内容从 "## 概述" 开始整段粘贴到 PR 描述框。
 -->
 
-## Summary
+## 概述
 
-- Add the missing `C_cap` hard constraint (`RankCapacityConstraint`: a rank is feasible only when `rank <= min(in, out)`) so the solver no longer projects narrow layers as adapter targets.
-- Re-check the selected targets while the placement plan is built: skipped layers are recorded in `metadata["capacity_excluded"]` and logged as a greppable `[V-PEFT] capacity-excluded: ...` line.
-- `PlacementPlan.validate_model` keeps its strict check but now reports every violating target with its capacity in one pass.
-- Freeze the layers that stay unadapted when an explicit target list or a profiling filter leaves them out, so the manual backend matches the PEFT backend (adapters are the only trainable weights).
+- 补上缺失的 `C_cap` 硬约束（`RankCapacityConstraint`：仅当 `rank <= min(in, out)` 时该 rank 可行），求解器不再把窄层投影成适配目标。
+- 生成放置计划时二次校验已选目标：被跳过的层记录进 `metadata["capacity_excluded"]`，并打一行可 grep 的日志 `[V-PEFT] capacity-excluded: ...`。
+- `PlacementPlan.validate_model` 保持严格校验，但改为一次报出所有违规目标及其容量。
+- 显式目标列表或 profiling 过滤把某些层排除在外时，冻结这些未适配层，使 manual 后端与 PEFT 后端一致（可训练权重只有 adapter）。
 
-This is a bug fix only: it adds no configuration option, changes no default (`rank_min` stays `4`) and leaves the legacy planner untouched.
+本 PR 只修 bug：不新增配置项、不改默认值（`rank_min` 仍为 `4`），legacy planner 行为不变。
 
-## Problem
+## 问题背景
 
-None of the seven hard constraints (`C_op` / `C_sem` / `C_budget` / `C_deploy` / `C_compat` / `C_moe` / `C_div`) models layer capacity, while `PlacementPlan.validate_model` computes `min(in, out)` and rejects any rank above it. The projection stage and the validation stage therefore disagree:
+七个硬约束（`C_op` / `C_sem` / `C_budget` / `C_deploy` / `C_compat` / `C_moe` / `C_div`）都没有建模层容量，而 `PlacementPlan.validate_model` 会算 `min(in, out)` 并拒绝大于它的 rank，于是投影阶段和校验阶段互相矛盾：
 
-- projection: `routing.routing_network.2` (capacity 3), `25.dfl.conv`, `0.conv` are feasible and get selected;
-- validation: `apply_lora` raises `ValueError` on exactly those targets.
+- 投影阶段认为 `routing.routing_network.2`（容量 3）、`25.dfl.conv`、`0.conv` 可行并选中；
+- 校验阶段 `apply_lora` 恰好对这些目标抛 `ValueError`。
 
-With `lora_planner_backend=vpeft` the exception is swallowed by `except (ValueError, TypeError)` and the run silently falls back to the legacy planner (`vpeft_strict=True` fails instead), so V-PEFT was not actually in effect. The workaround is a manual `lora_exclude_modules` list, which matches by substring (`0.conv` also matches `10.conv`).
+`lora_planner_backend=vpeft` 时该异常被 `except (ValueError, TypeError)` 吞掉，静默回退到 legacy planner（`vpeft_strict=True` 则直接失败），也就是 V-PEFT 实际没生效。规避办法是手写 `lora_exclude_modules` 清单，而它按子串匹配（`0.conv` 会连 `10.conv` 一起匹配）。
 
-Reproduction before the fix:
+修复前的复现：
 
 ```bash
 python -c "
@@ -36,24 +36,24 @@ apply_lora(m, LoRAConfig(r=2, alpha=4, backend='fallback', planner_backend='vpef
 "
 ```
 
-Audit output after the fix (EsMoE-N shaped narrow-layer model):
+修复后的审计输出（EsMoE-N 形状的窄层模型）：
 
 ```
 [V-PEFT] capacity-excluded: 2 layer(s) below the requested rank: 0(rank=4>capacity=3), 3(rank=4>capacity=3)
 plan: ACCEPT targets=['1', '2'] capacity_excluded=[{'name': '0', 'rank': 4, 'capacity': 3}, ...]
 ```
 
-## Behaviour
+## 行为变化
 
-| Scenario | Before | After |
+| 场景 | 修复前 | 修复后 |
 |---|---|---|
-| Narrow-layer model + `vpeft` | plan validation raises → silent fallback to legacy (raises under `vpeft_strict=True`) | narrow layers excluded, remaining targets placed, audit recorded |
-| Capacity logging | only the exception / fallback warning | `[V-PEFT] capacity-excluded: N layer(s) below the requested rank: ...` |
-| Hand-written plan over capacity | first violating target raises | all violating targets listed in one message, audit field referenced |
-| Explicit `target_modules` | skipped layers stayed trainable | unadapted layers are frozen |
-| `rank_min=4` semantics / existing config keys | — | unchanged (no new key, `default.yaml` and `cfg/__init__.py` untouched) |
+| 窄层模型 + `vpeft` | plan 校验抛错 → 静默回退 legacy（`vpeft_strict=True` 下直接失败） | 窄层被排除，其余目标正常放置，审计信息落盘 |
+| 容量日志 | 只有异常 / 回退告警 | `[V-PEFT] capacity-excluded: N layer(s) below the requested rank: ...` |
+| 手写 plan 超出容量 | 命中第一个违规目标就抛错 | 一次列出全部违规目标，并引用审计字段 |
+| 显式 `target_modules` | 被跳过的层仍然在训练 | 未适配层被冻结 |
+| `rank_min=4` 语义 / 既有配置键 | — | 不变（不加新键，`default.yaml` 与 `cfg/__init__.py` 未改） |
 
-## Validation
+## 验证
 
 ```bash
 python -m pytest tests/test_vpeft_capacity_guard.py tests/test_vpeft.py tests/test_placement_plan_schema.py \
@@ -62,51 +62,51 @@ python -m pytest tests/test_vpeft_capacity_guard.py tests/test_vpeft.py tests/te
 # 70 passed, 1 failed
 ```
 
-- The single failure is `test_p0_system_gates.py::test_cpu_gloo_two_rank_routed_continuous_training`, which asserts on `torchrun` subprocess stdout; on this host that stdout carries an `Ultralytics settings updated to the latest schema` warning. No code path in this PR is involved and the test was not skipped or relaxed.
-- New `tests/test_vpeft_capacity_guard.py` (8 cases): constraint semantics, unknown capacity is not excluded, registry and legacy-alias registration, solver excludes narrow layers, plan audit field, single-pass strict validation, `rank == capacity` boundary on both sides.
-- `tests/test_vpeft.py` hard-constraint list assertion updated to include `C_cap` (intentional: the default hard set grows).
-- Ruff on the changed files and `git diff --check` pass.
+- 唯一失败的是 `test_p0_system_gates.py::test_cpu_gloo_two_rank_routed_continuous_training`，它断言的是 `torchrun` 子进程 stdout，而本机这份 stdout 里夹带了 `Ultralytics settings updated to the latest schema` 警告。该用例不涉及本 PR 的任何代码路径，也没有被 skip 或放宽条件。
+- 新增 `tests/test_vpeft_capacity_guard.py`（8 个用例）：约束语义、容量未知时不排除、注册表与 legacy 别名注册、求解器排除窄层、plan 审计字段、严格校验一次报全、`rank == capacity` 两侧边界。
+- `tests/test_vpeft.py` 的硬约束列表断言补上 `C_cap`（有意为之：默认硬约束集合变大了）。
+- 改动文件 Ruff 检查与 `git diff --check` 通过。
 
-## Scope
+## 改动范围
 
-Two commits, source and tests only — no experiment scaffolding, data or reports:
+两个 commit，只动源码和测试 —— 不含实验脚手架、数据或报告：
 
-1. `fix(vpeft): align solver rank projection with plan capacity validation` — `ultralytics/vpeft/constraints.py` (`C_cap` + registry/alias registration), `ultralytics/vpeft/placement_plan.py` (single-pass error report), `ultralytics/utils/lora/api.py` (second capacity pass + audit field + log), `tests/test_vpeft_capacity_guard.py`, `tests/test_vpeft.py`.
-2. `fix(lora): freeze layers left out of an explicit target list` — `ultralytics/utils/lora/api.py`. `_replace_conv_with_manual_lora` only froze the layers it wrapped, so layers skipped by `target_modules`, by the depthwise/`only_3x3` filters or by head-like names kept training (and were missing from `save_adapters`). The official P0 gate `test_planner_adapter_full_lifecycle` covers that path; before commit 2 it only "passed" because the plan validation failure degraded the whole run to the legacy planner.
+1. `fix(vpeft): align solver rank projection with plan capacity validation` —— `ultralytics/vpeft/constraints.py`（`C_cap` + 注册表/别名注册）、`ultralytics/vpeft/placement_plan.py`（一次报全的错误信息）、`ultralytics/utils/lora/api.py`（第二遍容量校验 + 审计字段 + 日志）、`tests/test_vpeft_capacity_guard.py`、`tests/test_vpeft.py`。
+2. `fix(lora): freeze layers left out of an explicit target list` —— `ultralytics/utils/lora/api.py`。`_replace_conv_with_manual_lora` 只冻结了自己包裹的层，被 `target_modules`、depthwise/`only_3x3` 过滤或 head 类名字跳过的层仍在训练（也没进 `save_adapters`）。官方 P0 门禁用例 `test_planner_adapter_full_lifecycle` 覆盖的就是这条路径；在 commit 2 之前它只是"看起来通过"，因为 plan 校验失败把整个运行降级到了 legacy planner。
 
-## Experiments (context, not the acceptance basis for this PR)
+## 实验（背景信息，不作为本 PR 的验收依据）
 
-NEU-DET (1800 images) and DeepPCB with YOLO-Master EsMoE-N (2.8M parameters), 3 strategies × 3 seeds, same budget (epochs 100, batch 8, imgsz 640, amp off):
+NEU-DET（1800 张）与 DeepPCB，YOLO-Master EsMoE-N（2.8M 参数），3 策略 × 3 seed，同预算（epochs 100、batch 8、imgsz 640、amp 关闭）：
 
-| Strategy | NEU mAP50 (best) | DeepPCB mAP50 (best) | Trainable parameters | Peak VRAM |
+| 策略 | NEU mAP50（best） | DeepPCB mAP50（best） | 可训练参数 | 显存峰值 |
 |---|---|---|---|---|
-| full_sft | 0.767±0.014 | 0.989±0.000 | 2,813,626 (100%) | ~5.3G |
-| vpeft (planner, 6/6 ACCEPT) | 0.694±0.052* | 0.881±0.072 | 116,736 (4.15%) | ~4.1G |
-| frozen_backbone | 0.694±0.041* | 0.769±0.151 | 1,906,822 (67.8%) | ~3.7G |
+| full_sft | 0.767±0.014 | 0.989±0.000 | 2,813,626（100%） | ~5.3G |
+| vpeft（planner，6/6 ACCEPT） | 0.694±0.052* | 0.881±0.072 | 116,736（4.15%） | ~4.1G |
+| frozen_backbone | 0.694±0.041* | 0.769±0.151 | 1,906,822（67.8%） | ~3.7G |
 
-\* robust estimate (one sporadic seed removed, n=3); including it, vpeft is 0.612±0.167.
-Those runs worked around the defect above with `lora_exclude_modules`; **no training was re-run with the fixed code**.
+\* 稳健估计（剔除 1 个偶发 seed，n=3）；若计入该 seed，vpeft 为 0.612±0.167。
+上述训练都是用 `lora_exclude_modules` 规避该缺陷跑出来的；**修复后的代码没有重跑训练**。
 
-## Limitations
+## 局限
 
-- No accuracy claim. This PR only removes the validation failure and the silent fallback; the ablation numbers still come from the pre-fix workaround.
-- Seed stability: on NEU, vpeft and frozen each produced one extreme seed (0.369 / 0.210) while the re-run with a fresh seed was normal, and the DeepPCB frozen oscillation at seed 824 reproduces deterministically with the same seed. The observation is limited to this seed pool and does not estimate a failure probability.
-- EsMoE-N is a 2.8M model, so the parameter-efficiency comparison does not automatically transfer to larger models; under equal epochs the three strategies take about the same wall-clock (data pipeline bound).
-- `capacity_excluded` is audit metadata only and does not change the plan schema version, but `C_cap` joins the default hard-constraint set and therefore the plan fingerprint.
+- 不主张精度收益。本 PR 只消除校验失败与静默回退；消融数字仍来自修复前的规避方案。
+- seed 稳定性：NEU 上 vpeft 与 frozen 各出现过一个极端 seed（0.369 / 0.210），换新 seed 重跑即恢复正常；DeepPCB frozen 在 seed 824 的振荡用同一 seed 可确定性复现。该观察仅限于当前 seed 池，不能估计失败概率。
+- EsMoE-N 是 2.8M 的小模型，其参数效率结论不能直接外推到更大模型；同 epoch 下三种策略的墙钟时间接近（瓶颈在数据管线）。
+- `capacity_excluded` 只是审计元数据，不改 plan schema 版本；但 `C_cap` 进入了默认硬约束集合，因此会改变 plan fingerprint。
 
-## Non-goals
+## 不做的事
 
-- No silent rank clipping (`ADAPT` / `REFUSE` semantics unchanged).
-- `exclude_modules` substring matching is left as is.
-- Legacy planner behaviour unchanged.
-- Non-Conv2d unadapted modules (Linear / BN) are not frozen yet.
-- No experiment scaffolding, data or reports are added to the repository.
+- 不做静默 rank 裁剪（`ADAPT` / `REFUSE` 语义不变）。
+- `exclude_modules` 的子串匹配保持原样。
+- legacy planner 行为不变。
+- 暂不冻结非 Conv2d 的未适配模块（Linear / BN）。
+- 不向仓库加入实验脚手架、数据或报告。
 
-## Reproduction
+## 复现
 
 ```bash
 git fetch origin && git checkout af961b9
-git checkout fix/vpeft-capacity-guard   # or check out this PR branch
+git checkout fix/vpeft-capacity-guard   # 或直接切到本 PR 分支
 python -m pytest tests/test_vpeft_capacity_guard.py -q
 python -c "
 import torch.nn as nn

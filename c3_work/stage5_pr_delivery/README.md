@@ -61,7 +61,7 @@ reproduction/
 标题（替换 GitHub 上由分支名派生的 `Fix/vpeft capacity guard`）：
 
 ```text
-[犀牛鸟-C3]：Fix V-PEFT capacity guard for layers narrower than the smallest candidate rank
+[犀牛鸟-C3]：修复 V-PEFT 容量约束 —— 窄于最小候选 rank 的层不再被选为适配目标
 ```
 
 正文：把 `pr_body_capacity_guard.md` 里 `## Summary` 之后的全部内容粘进描述框（文件开头那段 HTML 注释是本地说明，不要一起粘）。
