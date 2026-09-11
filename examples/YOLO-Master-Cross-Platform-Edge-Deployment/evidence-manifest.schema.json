@@ -1,0 +1,253 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Tencent/YOLO-Master/evidence-manifest.schema.json",
+  "title": "YOLO-Master Issue #51 evidence manifest",
+  "type": "object",
+  "required": ["schema_version", "status", "dataset", "protocol", "artifacts", "calibration"],
+  "properties": {
+    "schema_version": {"const": "issue51-evidence/v1"},
+    "status": {"enum": ["template", "diagnostic", "acceptance-candidate"]},
+    "dataset": {
+      "type": "object",
+      "required": ["name", "split", "image_count", "images", "image_list_sha256"],
+      "properties": {
+        "name": {"enum": ["visdrone", "sku110k"]},
+        "split": {"type": "string", "minLength": 1},
+        "image_count": {"type": "integer", "minimum": 0},
+        "image_list_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-fA-F]{64}$"},
+        "images": {"type": "array", "items": {"$ref": "#/$defs/file_record"}}
+      }
+    },
+    "protocol": {
+      "type": "object",
+      "required": ["imgsz", "conf", "iou", "max_det", "multi_label", "letterbox"],
+      "properties": {
+        "imgsz": {"type": "integer", "minimum": 1},
+        "conf": {"type": "number", "minimum": 0, "maximum": 1},
+        "iou": {"type": "number", "minimum": 0, "maximum": 1},
+        "max_det": {"type": "integer", "minimum": 1},
+        "multi_label": {"type": "boolean"},
+        "letterbox": {"type": "boolean"},
+        "small_conf": {
+          "type": "number", "minimum": -1, "maximum": 1,
+          "description": "Optional confidence floor for boxes below small_area; -1 disables the sweep."
+        },
+        "small_area": {
+          "type": "number", "minimum": 0,
+          "description": "Original-image area threshold in square pixels for small_conf."
+        },
+        "routing_semantics": {
+          "type": ["string", "null"],
+          "enum": ["native_sparse", "dense_fallback", "dense_native", "not_applicable", null]
+        }
+      }
+    },
+    "training": {
+      "type": ["object", "null"],
+      "description": "Optional training provenance supplied by the experiment owner.",
+      "properties": {
+        "epochs": {"type": "integer", "minimum": 1},
+        "batch_size": {"type": "integer", "minimum": 1},
+        "seed": {"type": "integer"},
+        "base_model": {"type": ["string", "null"]},
+        "dataset_version": {"type": ["string", "null"]},
+        "optimizer": {"type": ["string", "null"]},
+        "lr_schedule": {"type": ["string", "null"]},
+        "command": {"type": ["string", "null"]}
+      },
+      "additionalProperties": true
+    },
+    "artifacts": {
+      "type": "object",
+      "required": ["checkpoint", "models", "labels", "predictions"],
+      "properties": {
+        "checkpoint": {"anyOf": [{"$ref": "#/$defs/file_record"}, {"type": "null"}]},
+        "models": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/hashed_collection"
+          }
+        },
+        "reports": {
+          "type": "object",
+          "description": "Content-addressed mAP, benchmark, and diagnostic reports.",
+          "additionalProperties": {"$ref": "#/$defs/hashed_collection"}
+        },
+        "labels": {"anyOf": [{"$ref": "#/$defs/file_collection"}, {"type": "null"}]},
+        "predictions": {"anyOf": [{"$ref": "#/$defs/file_collection"}, {"type": "null"}]}
+      }
+    },
+    "calibration": {
+      "type": "object",
+      "required": ["enabled", "image_count", "images", "image_list_sha256", "disjoint_from_validation"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "image_count": {"type": "integer", "minimum": 0},
+        "images": {"type": "array", "items": {"$ref": "#/$defs/file_record"}},
+        "image_list_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-fA-F]{64}$"},
+        "disjoint_from_validation": {"type": ["boolean", "null"]}
+      }
+    },
+    "environment": {
+      "type": "object",
+      "properties": {
+        "python": {"type": ["string", "null"]},
+        "platform": {"type": ["string", "null"]},
+        "machine": {"type": ["string", "null"]},
+        "git_commit": {"type": ["string", "null"]}
+      }
+    },
+    "run": {
+      "type": "object",
+      "properties": {
+        "command": {"type": ["string", "null"]}
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"status": {"const": "acceptance-candidate"}},
+        "required": ["status"]
+      },
+      "then": {
+        "required": ["training", "environment", "run"],
+        "properties": {
+          "protocol": {
+            "required": ["small_conf", "small_area", "routing_semantics"],
+            "properties": {
+              "small_conf": {"type": "number", "minimum": -1, "maximum": 1},
+              "small_area": {"type": "number", "minimum": 0},
+              "routing_semantics": {
+                "type": "string",
+                "enum": ["native_sparse", "dense_fallback", "dense_native", "not_applicable"],
+                "minLength": 1
+              }
+            }
+          },
+          "dataset": {
+            "required": ["image_count", "images", "image_list_sha256"],
+            "properties": {
+              "image_count": {"minimum": 500},
+              "images": {"minItems": 500},
+              "image_list_sha256": {"type": "string"}
+            }
+          },
+          "artifacts": {
+            "required": ["checkpoint", "models", "reports", "labels", "predictions"],
+            "properties": {
+              "checkpoint": {"$ref": "#/$defs/file_record"},
+              "models": {
+                "minProperties": 1,
+                "additionalProperties": {
+                  "properties": {"files": {"minItems": 1}}
+                }
+              },
+              "reports": {
+                "minProperties": 1,
+                "additionalProperties": {
+                  "properties": {"files": {"minItems": 1}}
+                }
+              },
+              "labels": {
+                "type": "object",
+                "properties": {
+                  "count": {"minimum": 500},
+                  "files": {"minItems": 500}
+                }
+              },
+              "predictions": {
+                "type": "object",
+                "properties": {
+                  "count": {"minimum": 500},
+                  "files": {"minItems": 500}
+                }
+              }
+            }
+          },
+          "training": {
+            "type": "object",
+            "required": ["base_model", "dataset_version", "epochs", "seed", "command"],
+            "properties": {
+              "base_model": {"type": "string", "minLength": 1},
+              "dataset_version": {"type": "string", "minLength": 1},
+              "command": {"type": "string", "minLength": 1}
+            }
+          },
+          "environment": {
+            "required": ["python", "platform", "machine", "git_commit"],
+            "properties": {
+              "python": {"type": "string", "minLength": 1},
+              "platform": {"type": "string", "minLength": 1},
+              "machine": {"type": "string", "minLength": 1},
+              "git_commit": {"type": "string", "minLength": 1}
+            }
+          },
+          "run": {
+            "required": ["command"],
+            "properties": {
+              "command": {"type": "string", "minLength": 1}
+            }
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "calibration": {
+                  "properties": {"enabled": {"const": true}},
+                  "required": ["enabled"]
+                }
+              },
+              "required": ["calibration"]
+            },
+            "then": {
+              "properties": {
+                "calibration": {
+                  "properties": {
+                    "image_count": {"minimum": 300},
+                    "images": {"minItems": 300},
+                    "image_list_sha256": {"type": "string"},
+                    "disjoint_from_validation": {"const": true}
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "$defs": {
+    "file_record": {
+      "type": "object",
+      "required": ["path", "bytes", "sha256"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Relative POSIX path below the corresponding verification root.",
+          "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(?:^|/)\\.\\.?(?:/|$))(?!.*//).+"
+        },
+        "bytes": {"type": "integer", "minimum": 0},
+        "sha256": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"}
+      }
+    },
+    "file_collection": {
+      "type": "object",
+      "required": ["count", "files"],
+      "properties": {
+        "count": {"type": "integer", "minimum": 0},
+        "files": {"type": "array", "items": {"$ref": "#/$defs/file_record"}}
+      }
+    },
+    "hashed_collection": {
+      "type": "object",
+      "required": ["files", "sha256"],
+      "properties": {
+        "files": {"type": "array", "items": {"$ref": "#/$defs/file_record"}},
+        "sha256": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"}
+      }
+    }
+  }
+}

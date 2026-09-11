@@ -166,8 +166,8 @@ class TestMoTOnnxExport:
         assert len(raw) > 0
 
     def test_motblock_onnx_matches_dense_export_fallback(self):
-        """ONNX output must match the documented dense MoT export semantics."""
-        m = MoTBlock(64, num_heads=4, top_k=2).eval()
+        """Legacy ``export_masked=False`` ONNX output must match dense softmax blending."""
+        m = MoTBlock(64, num_heads=4, top_k=2, export_masked=False).eval()
         dummy = torch.randn(1, 64, 8, 8)
         with torch.no_grad():
             reference = _mot_dense_export_reference(m, dummy)
@@ -179,6 +179,22 @@ class TestMoTOnnxExport:
         session = ort.InferenceSession(raw)
         onnx_out = session.run(None, {"input": dummy.numpy()})[0]
         np.testing.assert_allclose(reference.numpy(), onnx_out, atol=1e-4, rtol=1e-4)
+
+    def test_motblock_onnx_matches_sparse_eager_by_default(self):
+        """Default ``export_masked=True`` ONNX output must match eager sparse dispatch."""
+        m = MoTBlock(64, num_heads=4, top_k=2).eval()
+        dummy = torch.randn(1, 64, 8, 8)
+        with torch.no_grad():
+            eager = m(dummy)
+            eager = eager[0] if isinstance(eager, tuple) else eager
+        model, raw = _export_onnx(m, dummy, "MoTBlock_masked_default")
+        if model is None:
+            pytest.skip("onnx not installed")
+        import onnxruntime as ort
+
+        session = ort.InferenceSession(raw)
+        onnx_out = session.run(None, {"input": dummy.numpy()})[0]
+        np.testing.assert_allclose(eager.numpy(), onnx_out, atol=1e-4, rtol=1e-4)
 
 
 # ── MoLoRA ONNX export tests ────────────────────────────────────────────
@@ -252,13 +268,25 @@ class TestTorchScriptExport:
         m.eval()
         dummy = torch.randn(1, 64, 8, 8)
         with torch.no_grad():
-            # MoT tracing intentionally switches from eager sparse routing to
-            # dense export routing, so PyTorch's eager self-comparison checks
-            # the wrong contract here.
+            traced = torch.jit.trace(m, dummy, check_trace=False)
+            eager_out = m(dummy)
+            traced_out = traced(dummy)
+        if isinstance(eager_out, tuple):
+            eager_out = eager_out[0]
+        if isinstance(traced_out, tuple):
+            traced_out = traced_out[0]
+        assert torch.allclose(eager_out, traced_out, atol=1e-4), (
+            "MoTBlock traced output differs from eager sparse dispatch"
+        )
+
+    def test_motblock_trace_dense_fallback(self):
+        m = MoTBlock(64, num_heads=4, top_k=2, export_masked=False)
+        m.eval()
+        dummy = torch.randn(1, 64, 8, 8)
+        with torch.no_grad():
             traced = torch.jit.trace(m, dummy, check_trace=False)
             eager_out = _mot_dense_export_reference(m, dummy)
             traced_out = traced(dummy)
-        # MoT forward returns an (out, aux) tuple.
         if isinstance(traced_out, tuple):
             traced_out = traced_out[0]
         assert torch.allclose(eager_out, traced_out, atol=1e-4), (

@@ -449,6 +449,11 @@ class MultiTaskHead(Detect):
                 preds["one2one"]["candidate_indices"] = candidate_indices
             else:
                 y = self.postprocess(y.permute(0, 2, 1))
+        elif self.has_task("segment") or self.has_task("pose"):
+            # Keep dense-anchor auxiliary outputs aligned when validation
+            # explicitly disables the one-to-one detection branch.
+            candidate_indices = torch.arange(y.shape[-1], device=y.device).view(1, -1).expand(y.shape[0], -1)
+            preds["candidate_indices"] = candidate_indices
         return y if self.export else (y, preds)
 
     def _export_outputs(

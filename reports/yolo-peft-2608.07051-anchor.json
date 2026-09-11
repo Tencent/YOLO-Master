@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "arxiv": "2608.07051",
+  "title": "YOLO-PEFT: Parameter-Efficient Fine-Tuning on YOLO Family",
+  "url": "https://arxiv.org/abs/2608.07051",
+  "status": "claims_frozen",
+  "note": "Numbers below are the published paper claims. CI does not retrain the full protocol; scripts/reproduce_yolo_peft_paper.py --check-anchor verifies README and this file stay aligned.",
+  "claims": {
+    "yolo11s_planner_rslora_map50_95": 0.7138,
+    "yolo12s_planner_rslora_map50_95": 0.7307,
+    "yolo11s_full_sft_map50_95": 0.6428,
+    "yolo12s_full_sft_map50_95": 0.6662,
+    "yolo11_peak_memory_reduction_pct": 43.9,
+    "yolo11_train_time_ratio": 1.72,
+    "rtdetr_l_lora_family_refuse": true,
+    "rtdetr_l_evaluated_lora_configs": 7
+  },
+  "in_repo_entrypoints": {
+    "default_yaml_flag": "lora_planner_backend",
+    "default_value": "legacy",
+    "paper_backend": "vpeft",
+    "enable_flag": "lora_planner_enabled",
+    "reproduce_cli": "python scripts/reproduce_yolo_peft_paper.py --check-anchor",
+    "protocol_cli": "python scripts/reproduce_yolo_peft_paper.py --protocol",
+    "audit_cli": "python scripts/paper_experiment_audit.py --runs runs/*/runs.json --report reports/paper_audit.json",
+    "yolo11s_validation": "scripts/verify_planner_YOLO11s Planner+training validation.py",
+    "yolo12s_validation": "scripts/verify_planner_YOLO12s Planner+training validation.py",
+    "rtdetr_validation": "scripts/verify_planner_RT-DETR-l Planner+training validation.py"
+  }
+}

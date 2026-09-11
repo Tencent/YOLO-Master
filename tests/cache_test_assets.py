@@ -42,7 +42,11 @@ SLOW_WEIGHTS = [
 ]
 
 DATASETS = [
-    *TASK2DATA.values(),
+    # The full COCO multi-task index is intentionally user-provided: its YAML
+    # has no automatic download target and the generic multi-task tests create
+    # a tiny synthetic fixture instead. Trying to pre-cache it makes every CI
+    # matrix fail before pytest can start when COCO 2017 is not installed.
+    *(data for task, data in TASK2DATA.items() if task != "multitask"),
     *TASK2CALIBRATIONDATA.values(),
     "coco8-grayscale.yaml",
     "coco8-multispectral.yaml",

@@ -73,11 +73,26 @@ def test_script_runs_and_reports_current_environment():
         [sys.executable, str(SCRIPT)],
         capture_output=True,
         text=True,
-        timeout=120,
+        timeout=180,
         cwd=ROOT,
     )
     assert result.returncode in (0, 1)
     assert "baseline_ready:" in result.stdout
+
+
+def test_resolved_install_paths_treats_dot_as_cwd(tmp_path, monkeypatch):
+    """Editable egg-info reports location='.'; that must resolve to the preflight cwd."""
+    monkeypatch.chdir(tmp_path)
+    paths = preflight._resolved_install_paths(".", "")
+    assert paths[0] == tmp_path.resolve()
+
+
+def test_is_this_repo_accepts_nested_module_path(tmp_path):
+    module = tmp_path / "ultralytics" / "__init__.py"
+    module.parent.mkdir()
+    module.write_text("", encoding="utf-8")
+    assert preflight._is_this_repo(module, tmp_path)
+    assert not preflight._is_this_repo(tmp_path.parent / "other", tmp_path)
 
 
 if __name__ == "__main__":

@@ -483,6 +483,26 @@ class TrainingRecoveryController:
         trainer.nan_recovery_attempts += 1
         if trainer.nan_recovery_attempts > 3:
             raise RuntimeError(f"Training failed: NaN persisted for {trainer.nan_recovery_attempts} epochs")
+        # Surface the rollback before the recorded diagnostic is cleared below. Without this line a NaN
+        # recovery silently replays the whole epoch and the only visible signal is the eventual abort.
+        # The diagnostic is rank-local, so also log from any rank that holds one, not just rank 0.
+        diagnostic = getattr(trainer, "_nonfinite_diagnostic", None)
+        if rank in {-1, 0} or diagnostic is not None:
+            detail = ""
+            if isinstance(diagnostic, dict):
+                detail = (
+                    f"; first non-finite event: {diagnostic.get('component')} at epoch "
+                    f"{diagnostic.get('epoch')} step {diagnostic.get('step')}"
+                )
+                if diagnostic.get("parameter"):
+                    detail += f", parameter {diagnostic['parameter']}"
+                if diagnostic.get("loss_items"):
+                    detail += f", loss_items {diagnostic['loss_items']}"
+            prefix = f"[rank {rank}] " if rank != -1 else ""
+            LOGGER.warning(
+                f"{prefix}Non-finite training state ({reason}) at epoch {epoch + 1}: restoring the healthy "
+                f"checkpoint and replaying the epoch (NaN recovery attempt {trainer.nan_recovery_attempts}/3){detail}."
+            )
         checkpoint = torch_load(io.BytesIO(payload), map_location="cpu", weights_only=False)
         snapshot = checkpoint.get("model")
         if snapshot is None:

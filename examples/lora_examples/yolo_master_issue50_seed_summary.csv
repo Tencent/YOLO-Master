@@ -1,0 +1,10 @@
+protocol_id,dataset,method,n,seeds,precision_mean,precision_sample_std,precision_best,recall_mean,recall_sample_std,recall_best,mAP50_mean,mAP50_sample_std,mAP50_best,mAP50_95_mean,mAP50_95_sample_std,mAP50_95_best
+issue50_research_extension_v1,Brain Tumor,Full fine-tuning,1,0,0.4426,not_estimable,0.4426,0.83539,not_estimable,0.83539,0.51586,not_estimable,0.51586,0.37121,not_estimable,0.37121
+issue50_research_extension_v1,Brain Tumor,Head-only,1,0,0.45906,not_estimable,0.45906,0.86525,not_estimable,0.86525,0.51525,not_estimable,0.51525,0.36997,not_estimable,0.36997
+issue50_research_extension_v1,Brain Tumor,Last stage + Neck + Head,3,"0,1,2",0.4435766666666667,0.027983720862911225,0.4666,0.7886466666666667,0.024872145732391736,0.81704,0.5442666666666667,0.02979463933886987,0.56568,0.39172333333333337,0.023157271716101047,0.40944
+issue50_research_extension_v1,Brain Tumor,Neck + Head,1,0,0.42841,not_estimable,0.42841,0.8249,not_estimable,0.8249,0.48627,not_estimable,0.48627,0.3477,not_estimable,0.3477
+issue50_research_extension_v1,Brain Tumor,Partial fine-tuning + LoRA,1,0,0.45995,not_estimable,0.45995,0.74795,not_estimable,0.74795,0.49727,not_estimable,0.49727,0.35319,not_estimable,0.35319
+issue50_research_extension_v1,Brain Tumor,Stable LoRA,2,"0,1",0.39093999999999995,0.0116531197539543,0.39918,0.053035,0.01136320597366782,0.06107,0.10095499999999999,0.018674690091136724,0.11416,0.057405000000000005,0.00925602776573191,0.06395
+issue50_research_extension_v1,VisDrone,Full fine-tuning,3,"0,1,2",0.38211,0.003869586541221171,0.38523,0.29718333333333335,0.004199051480195662,0.30202,0.27549666666666667,0.0029350014196475684,0.2773,0.15341666666666667,0.0022105504593501906,0.15527
+issue50_research_extension_v1,VisDrone,Last stage + Neck + Head,1,0,0.37922,not_estimable,0.37922,0.29369,not_estimable,0.29369,0.27054,not_estimable,0.27054,0.14988,not_estimable,0.14988
+issue50_research_extension_v1,VisDrone,Neck + Head,1,0,0.35764,not_estimable,0.35764,0.28831,not_estimable,0.28831,0.25819,not_estimable,0.25819,0.14359,not_estimable,0.14359

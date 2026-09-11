@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -15,6 +16,7 @@ from agent.runtime.cli.contract import (
     write_manifest,
 )
 from agent.runtime.cli.normalize import normalize_request
+from agent.runtime.cli.validate import run_dispatcher_case
 from ultralytics.cfg.mixture_catalog import DEFAULT_MIXTURE_MODEL_ROOT
 
 
@@ -144,3 +146,22 @@ def test_manifest_preserves_pipeline_evidence_and_redacts_secrets(tmp_path: Path
 
     manifest["status"] = "failed"
     assert manifest_checksum(manifest) != manifest["manifest_sha256"]
+
+
+def test_agent_validator_decodes_dispatcher_output_as_utf8(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep non-ASCII dispatcher JSON independent of the Windows locale."""
+    payload = {"skill": "yolo.system", "status": "ok", "summary": "检测完成"}
+
+    def fake_run(*_args, **kwargs):
+        assert kwargs["encoding"] == "utf-8"
+        assert kwargs["errors"] == "replace"
+        assert kwargs["env"]["PYTHONIOENCODING"] == "utf-8"
+        return SimpleNamespace(stdout=json.dumps(payload, ensure_ascii=False), stderr="", returncode=0)
+
+    monkeypatch.setattr("agent.runtime.cli.validate.subprocess.run", fake_run)
+    result = run_dispatcher_case(
+        {"name": "utf8-output", "request": {"skill": "yolo.system"}, "expect": {"status": "ok"}}
+    )
+
+    assert result["passed"] is True
+    assert result["payload"]["summary"] == "检测完成"

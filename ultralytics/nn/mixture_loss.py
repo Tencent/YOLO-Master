@@ -413,7 +413,7 @@ class CompositeCriterion:
             aux_budget=_model_arg(self.model, "mixture_aux_budget", 3.0),
         )
         self.model._last_mixture_aux_loss = aux.detach()
-        total = native_loss + aux
+        total = native_loss.sum() + aux
         if isinstance(native_items, torch.Tensor):
             items = torch.cat((native_items.reshape(-1), aux.detach().reshape(1)))
         elif isinstance(native_items, (list, tuple)):
@@ -448,7 +448,7 @@ def compose_native_result(model: nn.Module, native_loss: torch.Tensor, native_it
         aux_budget=_model_arg(model, "mixture_aux_budget", 3.0),
     )
     model._last_mixture_aux_loss = aux.detach()
-    return native_loss + aux, torch.cat((native_items.reshape(-1), aux.detach().reshape(1)))
+    return native_loss.sum() + aux, torch.cat((native_items.reshape(-1), aux.detach().reshape(1)))
 
 
 __all__ = [

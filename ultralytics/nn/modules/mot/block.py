@@ -43,6 +43,8 @@ class MoTBlock(nn.Module):
         exploration_eps (float): Training-only dense routing floor that keeps all experts trainable.
         sparse_train_warmup_steps (int): Dense training forwards before enabled sparse dispatch begins.
         local_attn_window (int): LocalConv attention window; 0 keeps global attention.
+        export_masked (bool): When True (default), traced/exported routers rebuild
+            sparse-equivalent Top-K masked weights. Pass False for legacy dense softmax.
 
     Shape:
         Input:  [B, dim, H, W]
@@ -74,7 +76,7 @@ class MoTBlock(nn.Module):
         sparse_train_warmup_steps: int = 0,
         scene_inference_mode: str = "dynamic",
         local_attn_window: int = 0,
-        export_masked: bool = False,
+        export_masked: bool = True,
     ):
         super().__init__()
         if not 1 <= top_k <= self.NUM_EXPERTS:
@@ -215,9 +217,13 @@ class MoTBlock(nn.Module):
             dynamic_export_compute_reduction_guaranteed_per_sample=bool(eager_sparse and not self.router.use_spatial),
             masked_dense_is_dynamic_execution=False,
             sparse_export_limitation=(
-                "MoT eager execution supports Top-K sparse dispatch; ONNX and TorchScript tracing use dense blending "
-                "because expert selection is data-dependent. The split dynamic runtime launches only the selected "
-                "batch/expert pairs, but spatial routing can still select the union of every expert for one image."
+                "MoT eager execution supports Top-K sparse dispatch; ONNX and TorchScript tracing rebuild "
+                "sparse-equivalent masked Top-K router weights (bit-exact with eager dispatch), but the static graph "
+                "can still compute every expert. Use the split dynamic runtime for conditional expert launches."
+                if self.router.export_masked
+                else "MoT eager execution supports Top-K sparse dispatch; ONNX and TorchScript tracing use dense blending "
+                "because expert selection is data-dependent. Use the split dynamic runtime for conditional expert "
+                "launches; spatial routing can still select the union of every expert for one image."
             ),
         )
         return capabilities
@@ -349,7 +355,9 @@ class MoTBlock(nn.Module):
         route_mask.scatter_(1, route_ids, True)
         token_mask_sparsity = 1.0 - float(route_mask.float().mean())
         experts_per_sample = route_mask.reshape(B, self.NUM_EXPERTS, -1).any(dim=2).sum(dim=1)
-        batch_expert_union = int(route_mask.any(dim=(0, 2, 3)).sum())
+        # Torch 1.8 does not accept a tuple for ``Tensor.any(dim=...)``.
+        # Flatten batch and spatial axes while retaining one expert axis.
+        batch_expert_union = int(route_mask.permute(1, 0, 2, 3).reshape(self.NUM_EXPERTS, -1).any(dim=1).sum())
         if use_sparse:
             expert_calls = 0
             for e_idx, expert in enumerate(self.experts):

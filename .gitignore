@@ -54,6 +54,21 @@ coverage.xml
 *.py,cover
 .hypothesis/
 .pytest_cache/
+# Local dependency/bootstrap trees used by offline QA; never publish them.
+/.qa-deps/
+/.qa-cmake-*/
+/.qa-tmp*/
+/.qa-pytest-*/
+**/.qa-cmake-*/
+**/.qa-tmp*/
+**/.qa-pytest-*/
+/.qa-audit-note.txt
+*.qa-tmp/
+/work/pytest-*/
+/.qa-run-*/
+# Ad-hoc local verification directories
+/.qa-env-*/
+/qa_tmp_*/
 mlruns/
 
 # Translations
