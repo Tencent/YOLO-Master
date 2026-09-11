@@ -87,7 +87,7 @@ class _MoTRouter(FP32RouterMixin, nn.Module):
         scene_aware: bool = False,
         scene_hidden_dim: Optional[int] = None,
         scene_inference_mode: str = "dynamic",
-        export_masked: bool = False,
+        export_masked: bool = True,
     ):
         super().__init__()
         if num_experts < 1:
@@ -103,9 +103,10 @@ class _MoTRouter(FP32RouterMixin, nn.Module):
         self.num_experts = num_experts
         self.top_k = top_k
         self.use_spatial = use_spatial
-        # When True, exported graphs rebuild the renormalized Top-K weights with
-        # static traceable ops so the artifact matches the eager sparse path
-        # numerically; when False (default), exports use dense softmax blending.
+        # When True (default), exported graphs rebuild the renormalized Top-K
+        # weights with static traceable ops so the artifact matches the eager
+        # sparse path numerically. Pass False to keep the legacy dense-softmax
+        # export fallback.
         self.export_masked = bool(export_masked)
         # Register temperature as a buffer so checkpoint save/restore
         # preserves annealing progress (Python float would be lost).

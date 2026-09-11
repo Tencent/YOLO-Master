@@ -26,6 +26,7 @@ from torch import distributed as dist
 from torch import nn, optim
 
 from ultralytics.cfg import _YOLO_CLI_COMMAND, get_cfg, get_save_dir
+from ultralytics.data.utils import check_cls_dataset, check_det_dataset, convert_ndjson_to_yolo_if_needed
 from ultralytics.engine.extensions import (
     AdapterRuntimeController,
     MixtureRuntimeController,
@@ -34,7 +35,6 @@ from ultralytics.engine.extensions import (
     validate_adapter_configuration,
 )
 from ultralytics.engine.telemetry import TrainingTelemetry
-from ultralytics.data.utils import check_cls_dataset, check_det_dataset, convert_ndjson_to_yolo_if_needed
 from ultralytics.nn.distill_model import DistillationModel
 from ultralytics.nn.foundation_distill_model import (
     FoundationDistillationModel,
@@ -43,7 +43,7 @@ from ultralytics.nn.foundation_distill_model import (
 )
 from ultralytics.nn.mixture_loss import has_routed_modules
 from ultralytics.nn.tasks import load_checkpoint
-from ultralytics.optim import MuSGD
+from ultralytics.optim import MuSGD, audit_optimizer_param_groups
 from ultralytics.utils import (
     DEFAULT_CFG,
     LOCAL_RANK,
@@ -103,6 +103,12 @@ def _distributed_env() -> tuple[int, int, int] | None:
             f"Invalid distributed environment: RANK={rank}, LOCAL_RANK={local_rank}, WORLD_SIZE={world_size}."
         )
     return rank, local_rank, world_size
+
+
+def _reset_optimizer_accumulation_after_recovery(optimizer: optim.Optimizer) -> int:
+    """Clear restored gradients and restart the optimizer accumulation cursor for an epoch replay."""
+    optimizer.zero_grad()
+    return -1
 
 
 def _validate_cuda_ddp_device(device: torch.device, env: tuple[int, int, int] | None) -> None:
@@ -378,6 +384,39 @@ class BaseTrainer:
             self.lf = lambda x: max(1 - x / self.epochs, 0) * (1.0 - self.args.lrf) + self.args.lrf  # linear
         self.scheduler = optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=self.lf)
 
+    def _audit_optimizer_groups(self):
+        """Capture and log a read-only snapshot of finalized optimizer parameter groups."""
+        audit = audit_optimizer_param_groups(self.model, self.optimizer, strict=False)
+        self.optimizer_group_audit = audit
+        if RANK not in {-1, 0}:
+            return audit
+        group_summary = ", ".join(
+            f"{group['index']}:{group['name']}"
+            f"(tensors={group['tensor_count']}, elements={group['total_element_count']}, "
+            f"lr={group['lr']}, decay={group['weight_decay']})"
+            for group in audit["groups"]
+        )
+        LOGGER.info(
+            f"{colorstr('optimizer audit:')} groups={audit['group_count']}, "
+            f"coverage={'complete' if audit['trainable_coverage_complete'] else 'incomplete'}, "
+            f"missing={audit['missing_trainable_count']}, duplicates={audit['duplicated_count']}, "
+            f"frozen={audit['frozen_in_optimizer_count']}, "
+            f"unknown={audit['unknown_optimizer_parameter_count']}; {group_summary}"
+        )
+        issue_samples = []
+        for issue_name in (
+            "missing_trainable",
+            "duplicated",
+            "frozen_in_optimizer",
+            "unknown_optimizer_parameters",
+        ):
+            if audit[issue_name]:
+                names = ", ".join(item["name"] for item in audit[issue_name][:5])
+                issue_samples.append(f"{issue_name}=[{names}]")
+        if issue_samples:
+            LOGGER.warning(f"{colorstr('optimizer audit:')} " + "; ".join(issue_samples))
+        return audit
+
     def _setup_ddp(self):
         """Initialize and set the DistributedDataParallel parameters for training."""
         index = int(self.args.device.split(",")[LOCAL_RANK])  # world_size > 1 guarantees a multi-device string
@@ -425,6 +464,7 @@ class BaseTrainer:
             iterations=iterations,
         )
         self.adapter_controller.configure_optimizer(self.optimizer)
+        self._audit_optimizer_groups()
         self.args.effective_optimizer = type(self.optimizer).__name__
         self.args.effective_optimizer_lrs = [float(group["lr"]) for group in self.optimizer.param_groups]
         self._save_run_args()
@@ -816,12 +856,16 @@ class BaseTrainer:
             if validated:
                 self._clear_memory(None if self.device.type == "mps" else 0.5)  # prevent VRAM spike
                 if self._recover_before_validation(epoch):
-                    self._finalize_moe_map_saturation_epoch(recovered=True, validated=True)
+                    last_opt_step = _reset_optimizer_accumulation_after_recovery(self.optimizer)
+                    self._finalize_moe_map_saturation_epoch(recovered=True, validated=False)
                     continue
                 self.metrics, self.fitness = self.validate()
 
             # NaN recovery
             if self._handle_nan_recovery(epoch):
+                # The same epoch is replayed from a restored optimizer state. Keeping the previous pass's
+                # accumulation cursor suppresses optimizer steps until the replay catches up with that index.
+                last_opt_step = _reset_optimizer_accumulation_after_recovery(self.optimizer)
                 self._finalize_moe_map_saturation_epoch(recovered=True, validated=validated)
                 continue
             self._finalize_moe_map_saturation_epoch(recovered=False, validated=validated)
@@ -1211,7 +1255,7 @@ class BaseTrainer:
         }
 
     def _recover_before_validation(self, epoch):
-        """Recover before validation if the online or EMA model is already non-finite."""
+        """Return whether to replay the epoch after prevalidation recovery; EMA-only resync needs no replay."""
         flags = self._collect_prevalidation_nonfinite_flags()
         if flags["ema_nonfinite"]:
             self._recovery_controller().resync_nonfinite_ema()
@@ -1221,9 +1265,9 @@ class BaseTrainer:
         self.fitness = float("nan")
         recovered = self._handle_nan_recovery(epoch)
         if recovered:
-            # The live graph is finite again. Validate and checkpoint the restored state
-            # instead of replaying an epoch that may repeat a deterministic callback fault.
-            return False
+            # Rolling back the online model discards this attempt's updates. Replay it without
+            # committing stale metrics or clearing the consecutive recovery budget.
+            return True
         return any(self._collect_prevalidation_nonfinite_flags().values())
 
     def _record_nonfinite_diagnostic(self, component, *, epoch, step, loss_items=None, parameter=None):

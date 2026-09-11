@@ -25,8 +25,18 @@ def _autocast_is_available(device_type: str) -> bool:
 
 def disabled_autocast(device_type: str):
     """Disable autocast when supported, otherwise return a no-op context."""
-    if _autocast_is_available(device_type):
-        return torch.autocast(device_type=device_type, enabled=False)
+    if not _autocast_is_available(device_type):
+        return nullcontext()
+
+    # ``torch.autocast`` was introduced after the oldest supported PyTorch
+    # release.  Keep the legacy CUDA context available while treating CPU
+    # autocast as a no-op on those builds.
+    autocast = getattr(torch, "autocast", None)
+    if callable(autocast):
+        return autocast(device_type=device_type, enabled=False)
+    legacy_autocast = getattr(getattr(torch.cuda, "amp", None), "autocast", None)
+    if device_type == "cuda" and callable(legacy_autocast):
+        return legacy_autocast(enabled=False)
     return nullcontext()
 
 

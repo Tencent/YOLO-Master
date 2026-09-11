@@ -1,184 +1,150 @@
 # YOLO-Master Edge Deployment Example
 
-This example supports issue #51: vertical-model edge inference acceleration and consistency validation.
+This example defines a reproducible protocol for issue #51. It covers model
+export, preprocessing and postprocessing consistency, cross-runtime numerical
+comparison, and latency measurement. The example is independent of a specific
+checkpoint or dataset and does not bundle model weights or runtime SDKs.
 
-It provides a lightweight, reproducible scaffold for exporting YOLO-Master models to ONNX plus NCNN/MNN, running vertical-domain preprocessing, comparing backend outputs, and summarizing edge benchmark logs.
+## Scope and files
 
-## Files
+- `edge_utils.py` contains shared preprocessing, box scaling, tensor comparison,
+  and latency-summary utilities.
+- `export_edge_models.py` is a lightweight wrapper around the Ultralytics exporter.
+- `validate_edge_outputs.py` compares saved `.npy` tensors before decoding and NMS.
+- `CMakeLists.txt` builds the dependency-light benchmark scaffold.
+- `cpp/` contains the scaffold benchmark and optional backend adapters.
 
-- `edge_utils.py` - shared preprocessing, postprocessing, consistency, and benchmark utilities.
-- `export_edge_models.py` - export helper for ONNX, NCNN, and MNN.
-- `validate_edge_outputs.py` - compare PyTorch/exported backend outputs saved as `.npy` tensors.
-- `cpp/edge_benchmark.cpp` - C++ benchmark runner with backend selection, OpenCV letterbox preprocessing, CSV latency output, and summary stats.
-- `cpp/backends/` - backend interface plus ONNX, NCNN, and MNN implementation slots.
-- `CMakeLists.txt` - portable CMake target for the C++ benchmark entry.
+The end-to-end C++ runner for ONNX Runtime, NCNN, MNN, and native TensorRT 10 is
+maintained in
+[`../YOLO-Master-Cross-Platform-Edge-Deployment/`](../YOLO-Master-Cross-Platform-Edge-Deployment/).
+Its export and validation scripts are described in that directory and in
+[`VALIDATION.md`](VALIDATION.md).
+Targets that ship TensorRT 8 should use the runner's ONNX Runtime TensorRT
+execution-provider route rather than the native TensorRT backend.
 
-## Vertical Profiles
+## Reference profiles
 
-The example includes two profiles:
+The Python utilities expose two explicit profiles:
 
-- `visdrone`: keeps long/short aspect ratio, uses lower confidence for small objects.
-- `sku110k`: supports high-resolution shelf images and a slightly higher NMS IoU.
+- `visdrone`: aspect-ratio-preserving input preparation, `conf=0.001`, and
+  `iou=0.70`, `max_det=300`, and multi-label decoding at `640x640`, matching
+  the small-object evaluation protocol used by the production runner.
+- `sku110k`: high-resolution shelf-image preparation at `1280x1280`,
+  `conf=0.25`, `iou=0.60`, `max_det=300`, and multi-label decoding. This is
+  the same static-input protocol used by the production runner and evaluators.
+  A rectangular deployment must be requested with an explicit `--imgsz`
+  override and reported as a separate protocol.
+
+These values are defaults rather than hidden global state. Experiments should
+record any command-line overrides with the resulting metrics.
 
 ## Export
 
-```bash
-python export_edge_models.py --model runs/train/weights/best.pt --formats onnx ncnn --imgsz 960 --half
-python export_edge_models.py --model runs/train/weights/best.pt --formats onnx mnn --imgsz 960
-```
-
-For ONNX simplification, install export dependencies and pass `--simplify`.
-
-## Consistency Validation
-
-Save backend outputs as `.npy` tensors with compatible shapes, then run:
+For the lightweight wrapper:
 
 ```bash
-python validate_edge_outputs.py --reference pytorch.npy --candidate onnx.npy --tolerance 0.005
-python validate_edge_outputs.py --reference pytorch.npy --candidate ncnn.npy --tolerance 0.01
+python export_edge_models.py \
+  --model runs/train/weights/best.pt \
+  --formats onnx ncnn \
+  --profile visdrone \
+  --half
 ```
 
-The tool reports max absolute error, mean absolute error, RMSE, and whether the configured tolerance is met.
-
-## CMake Benchmark Build
-
-The C++ runner requires OpenCV for image loading and letterbox preprocessing. Build with the backend SDKs you want to benchmark:
+The cross-platform exporter performs additional graph checks and emits a JSON
+summary:
 
 ```bash
-cmake -S . -B build
-cmake --build build
+python examples/YOLO-Master-Cross-Platform-Edge-Deployment/scripts/export_models.py \
+  --model runs/train/weights/best.pt \
+  --formats onnx ncnn \
+  --imgsz 640 \
+  --out-dir artifacts/exports
 ```
 
-Without a backend flag, ONNX/NCNN/MNN compile in stub mode so the benchmark CLI and CSV plumbing remain buildable without SDKs installed.
+ONNX exports are static and simplified by default. `--no-simplify` is reserved
+for diagnostics and must be paired with `--allow-unsimplified`; that artifact
+is not a validation result.
 
-### ONNX Runtime
+## Tensor consistency
+
+Save raw outputs from PyTorch and each exported backend using the same ordered
+input list, then compare them before decoding:
+
+```bash
+python validate_edge_outputs.py \
+  --reference artifacts/pytorch.npy \
+  --candidate artifacts/onnx.npy \
+  --tolerance 0.005
+```
+
+The comparison reports maximum and mean absolute error, RMSE, and a Boolean
+decision for the declared tolerance. Shape mismatches and non-finite values
+are failures. Keep the first failing tensor and image as diagnostic evidence.
+
+## C++ scaffold build
+
+The scaffold can be compiled without an inference SDK. This verifies the CLI
+and CSV contract; it does not constitute neural-network inference evidence.
 
 ```bash
 cmake -S examples/YOLO-Master-Edge-Deployment \
-  -B examples/YOLO-Master-Edge-Deployment/build-ort \
-  -DWITH_ONNXRUNTIME=ON \
-  -DONNXRUNTIME_ROOT=/path/to/onnxruntime
-cmake --build examples/YOLO-Master-Edge-Deployment/build-ort
+  -B build/edge-scaffold
+cmake --build build/edge-scaffold
 ```
 
-If needed, pass explicit paths instead of `ONNXRUNTIME_ROOT`:
+For a real backend, configure the corresponding SDK in the CMake invocation.
+The cross-platform runner's CMake options and platform-specific toolchains are
+documented in its README.
+
+The benchmark accepts either a directory or a fixed, newline-delimited image
+list. Relative list entries are resolved against the list file, blank/comment
+lines are ignored, and duplicate filename stems are rejected so prediction
+artifacts cannot overwrite one another:
 
 ```bash
--DONNXRUNTIME_INCLUDE_DIR=/path/to/onnxruntime/include
--DONNXRUNTIME_LIB=/path/to/onnxruntime/lib/libonnxruntime.so
+./build/edge-scaffold/yolo_master_edge_benchmark \
+  --backend onnx --model artifacts/model.onnx \
+  --images artifacts/visdrone_val.txt --profile visdrone \
+  --min-images 500 --warmup 10 --runs 3 \
+  --output artifacts/onnx_benchmark.csv --json artifacts/onnx_benchmark.json
 ```
 
-Run:
+The JSON sidecar records the resolved profile, image count, warm-up/repeat
+counts, thread count, host/compiler information, and mean/P50/P95/P99/FPS for
+preprocess, inference, postprocess, and end-to-end latency. It is metadata for
+the benchmark and does not replace the SHA256 evidence manifest.
 
-```bash
-examples/YOLO-Master-Edge-Deployment/build-ort/yolo_master_edge_benchmark \
-  --backend onnx \
-  --model /path/to/model.onnx \
-  --images /path/to/VisDrone/images/val \
-  --profile visdrone \
-  --imgsz 960 \
-  --threads 4 \
-  --limit 500 \
-  --output benchmark_onnx.csv
-```
+## Benchmark output
 
-### NCNN
-
-```bash
-cmake -S examples/YOLO-Master-Edge-Deployment \
-  -B examples/YOLO-Master-Edge-Deployment/build-ncnn \
-  -DWITH_NCNN=ON \
-  -DNCNN_ROOT=/path/to/ncnn/install
-cmake --build examples/YOLO-Master-Edge-Deployment/build-ncnn
-```
-
-If NCNN was built but not installed, pass explicit paths. Include both source and build include dirs so generated headers such as `platform.h` are visible:
-
-```bash
--DNCNN_INCLUDE_DIR="/path/to/ncnn/src;/path/to/ncnn/build/src"
--DNCNN_LIB=/path/to/ncnn/build/src/libncnn.a
-```
-
-Run:
-
-```bash
-examples/YOLO-Master-Edge-Deployment/build-ncnn/yolo_master_edge_benchmark \
-  --backend ncnn \
-  --model /path/to/exported_ncnn_model_dir \
-  --images /path/to/VisDrone/images/val \
-  --profile visdrone \
-  --imgsz 960 \
-  --threads 4 \
-  --limit 500 \
-  --output benchmark_ncnn.csv
-```
-
-### MNN
-
-```bash
-cmake -S examples/YOLO-Master-Edge-Deployment \
-  -B examples/YOLO-Master-Edge-Deployment/build-mnn \
-  -DWITH_MNN=ON \
-  -DMNN_ROOT=/path/to/MNN
-cmake --build examples/YOLO-Master-Edge-Deployment/build-mnn
-```
-
-If needed, pass explicit paths instead of `MNN_ROOT`:
-
-```bash
--DMNN_INCLUDE_DIR=/path/to/MNN/include
--DMNN_LIB=/path/to/MNN/lib/libMNN.so
-```
-
-Run:
-
-```bash
-examples/YOLO-Master-Edge-Deployment/build-mnn/yolo_master_edge_benchmark \
-  --backend mnn \
-  --model /path/to/model.mnn \
-  --images /path/to/VisDrone/images/val \
-  --profile visdrone \
-  --imgsz 960 \
-  --threads 4 \
-  --limit 500 \
-  --output benchmark_mnn.csv
-```
-
-`--images` accepts either a directory of images or a text file with one image path per line.
-`--threads` configures the CPU worker count for ONNX Runtime, NCNN, and MNN. Keep it identical across backends for a
-fair CPU comparison. Thread configuration is applied before each runtime loads its model.
-
-For MNN, the input session is resized only when the input tensor shape changes. Fixed-shape benchmark loops therefore
-exclude repeated session-resize overhead.
-
-## Benchmark CSV Output
-
-ONNX Runtime, NCNN, and MNN write the same per-image CSV structure:
+Per-image CSV output uses the following columns:
 
 ```text
-image,preprocess_ms,inference_ms,postprocess_ms,total_ms,detections
+image,preprocess_ms,inference_ms,postprocess_ms,total_ms,detections,run
 ```
 
-Column meanings:
+The current runner appends a `run` column when repeated measurements are
+requested. For acceptance measurements, retain the CSV together with the JSON
+sidecar and evidence manifest; do not average values copied from console output.
 
-- `image`: source image path
-- `preprocess_ms`: OpenCV image load, letterbox, RGB conversion, and tensor packing time
-- `inference_ms`: backend runtime execution time
-- `postprocess_ms`: YOLO decode and NMS time
-- `total_ms`: end-to-end time for one image
-- `detections`: number of detections after confidence filtering and NMS
+`preprocess_ms` includes image loading, letterbox, color conversion, and tensor
+packing. `inference_ms` is runtime execution, `postprocess_ms` is decoding and
+NMS, and `total_ms` is their end-to-end sum. Aggregate statistics are reported
+as mean, P50, P95, P99, and FPS. The shared `read_latency_csv` helper accepts
+both the scaffold's `latency_ms` column and the runner's `total_ms` column.
 
-The aggregate latency summary is printed to stdout, not written to the CSV:
+## Reproducibility workflow
 
-```text
-count,mean_ms,p50_ms,p95_ms,p99_ms,fps
-```
+1. Record the checkpoint revision, class mapping, input size, and export opset.
+2. Export ONNX and at least one mobile format (NCNN or MNN).
+3. Validate graph structure, preprocessing, and conversion artifacts.
+4. Generate a SHA256-pinned evidence manifest with
+   `../YOLO-Master-Cross-Platform-Edge-Deployment/scripts/evidence_manifest.py`.
+5. Evaluate all formats on the same ordered validation image list.
+6. Enforce the image-count and accuracy gates in [`VALIDATION.md`](VALIDATION.md).
+7. Report latency with platform, runtime version, precision, and thread count.
 
-## Recommended Issue #51 Workflow
-
-1. Train or reuse a YOLO-Master-EsMoE-N checkpoint on VisDrone or SKU-110K.
-2. Export ONNX plus NCNN or MNN.
-3. Validate ONNX opset/simplification and NCNN/MNN conversion files.
-4. Run the same 500-image validation list through PyTorch and exported backends.
-5. Compare mAP50-95 deltas and tensor/output differences.
-6. Report latency P50/P95/P99 and FPS per backend/platform.
+For VisDrone, use the C++ runner's `--profile visdrone` and the evaluator's
+`--max-abs-delta-pp 0.5` (FP32) or `1.0` (INT8). Quantitative results are
+meaningful only when the image manifest, model artifact, command line and
+software versions are retained. A smoke run or a reference table without those
+artifacts is not an acceptance result.

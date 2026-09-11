@@ -912,7 +912,12 @@ def validate_foundation_config(cfg: dict) -> None:
     if mode != "train":
         raise ValueError("Foundation Teacher distillation is training-only; set 'mode=train' or disable it.")
     if teacher == "none":
-        raise ValueError("'foundation_enabled=True' requires 'foundation_teacher' to name a teacher family.")
+        cache_dir = cfg.get("foundation_cache_dir")
+        if cache_dir in (None, "", "none"):
+            raise ValueError(
+                "'foundation_enabled=True' with 'foundation_teacher=none' requires 'foundation_cache_dir' "
+                "pointing to a valid offline feature cache directory."
+            )
     if multitask_enabled:
         if cfg.get("task", DEFAULT_CFG_DICT.get("task")) != "multitask":
             raise ValueError("F15 foundation_multitask=True requires task='multitask'.")
@@ -942,6 +947,9 @@ def validate_foundation_config(cfg: dict) -> None:
         and (not router_enabled or router_loss_weight <= 0)
         and (not semantic_distill or semantic_loss_weight <= 0)
     ):
+        return
+    cache_dir = cfg.get("foundation_cache_dir")
+    if teacher == "none" and cache_dir not in (None, "", "none"):
         return
     model_ref = model or weights
     if teacher == "multi":

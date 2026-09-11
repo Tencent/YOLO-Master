@@ -91,8 +91,11 @@ def delete_dsstore(path: str | Path, files_to_delete: tuple[str, ...] = (".DS_St
     for file in files_to_delete:
         matches = list(Path(path).rglob(file))
         LOGGER.info(f"Deleting {file} files: {matches}")
-        for f in matches:
-            f.unlink()
+        for f in sorted(matches, key=lambda entry: len(entry.parts), reverse=True):
+            if f.is_dir() and not f.is_symlink():
+                shutil.rmtree(f)
+            else:
+                f.unlink()
 
 
 def zip_directory(
@@ -120,13 +123,12 @@ def zip_directory(
     """
     from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile
 
-    delete_dsstore(directory)
     directory = Path(directory)
     if not directory.is_dir():
         raise FileNotFoundError(f"Directory '{directory}' does not exist.")
 
     # Zip with progress bar
-    files = [f for f in directory.rglob("*") if f.is_file() and all(x not in f.name for x in exclude)]  # files to zip
+    files = [f for f in directory.rglob("*") if f.is_file() and not any(part in exclude for part in f.relative_to(directory).parts)]  # files to zip
     zip_file = directory.with_suffix(".zip")
     compression = ZIP_DEFLATED if compress else ZIP_STORED
     with ZipFile(zip_file, "w", compression) as f:
@@ -496,31 +498,39 @@ def attempt_download_asset(
     file = Path(file.strip().replace("'", ""))
     if file.exists():
         return str(file)
-    elif (SETTINGS["weights_dir"] / file).exists():
+    if (SETTINGS["weights_dir"] / file).exists():
         return str(SETTINGS["weights_dir"] / file)
-    else:
-        # URL specified
-        name = Path(parse.unquote(str(file))).name  # decode '%2F' to '/' etc.
-        download_url = f"https://github.com/{repo}/releases/download"
-        if str(file).startswith(("http:/", "https:/")):  # download
-            url = str(file).replace(":/", "://")  # Pathlib turns :// -> :/
-            file = url2file(name)  # parse authentication query strings
-            if Path(file).is_file():
-                LOGGER.info(f"Found {clean_url(url)} locally at {file}")  # file already exists
-            else:
-                safe_download(url=url, file=file, min_bytes=1e5, **kwargs)
+    if file.suffix.lower() in {".yaml", ".yml"} and "://" not in str(file):
+        # YAML model definitions live in the repository and are not release
+        # assets. Resolve a missing absolute/cache path by basename before
+        # attempting any network lookup.
+        local_file = checks.check_yaml(file.name, hard=False)
+        if local_file:
+            return str(local_file)
 
-        elif repo == GITHUB_ASSETS_REPO and name in GITHUB_ASSETS_NAMES:
-            safe_download(url=f"{download_url}/{release}/{name}", file=file, min_bytes=1e5, **kwargs)
-
+    # URL or release asset specified. YAML files that were not found locally
+    # continue through the existing behavior and return the unresolved path.
+    name = Path(parse.unquote(str(file))).name  # decode '%2F' to '/' etc.
+    download_url = f"https://github.com/{repo}/releases/download"
+    if str(file).startswith(("http:/", "https:/")):  # download
+        url = str(file).replace(":/", "://")  # Pathlib turns :// -> :/
+        file = url2file(name)  # parse authentication query strings
+        if Path(file).is_file():
+            LOGGER.info(f"Found {clean_url(url)} locally at {file}")  # file already exists
         else:
-            tag, assets = get_github_assets(repo, release)
-            if not assets:
-                tag, assets = get_github_assets(repo)  # latest release
-            if name in assets:
-                safe_download(url=f"{download_url}/{tag}/{name}", file=file, min_bytes=1e5, **kwargs)
+            safe_download(url=url, file=file, min_bytes=1e5, **kwargs)
 
-        return str(file)
+    elif repo == GITHUB_ASSETS_REPO and name in GITHUB_ASSETS_NAMES:
+        safe_download(url=f"{download_url}/{release}/{name}", file=file, min_bytes=1e5, **kwargs)
+
+    else:
+        tag, assets = get_github_assets(repo, release)
+        if not assets:
+            tag, assets = get_github_assets(repo)  # latest release
+        if name in assets:
+            safe_download(url=f"{download_url}/{tag}/{name}", file=file, min_bytes=1e5, **kwargs)
+
+    return str(file)
 
 
 def download(

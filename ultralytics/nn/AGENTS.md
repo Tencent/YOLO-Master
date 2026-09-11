@@ -8,7 +8,7 @@ Neural network core for YOLO-Master: MoE/MoA/MoT modules, routing layers, detect
 
 - **`modules/moe/`** — MoE module family: routers, experts, pruning, dynamic scheduling, config, diagnostics
 - **`modules/moa/`** — Mixture-of-Attention: blocks, heads, router, wrappers
-- **`modules/mot/`** — Mixture-of-Trackers: block, experts, router, wrappers
+- **`modules/mot/`** — Mixture-of-Transformers: block, experts, router, wrappers
 - **`modules/multitask/`** — Multi-task heads and routers (detection, segmentation, pose)
 - **`peft/`** — V-PEFT compiler and MoLoRA parameter-efficient fine-tuning
 - **`backends/`** — Inference backends (ONNX, TensorRT, CoreML, NCNN, MNN, OpenVINO, etc.)

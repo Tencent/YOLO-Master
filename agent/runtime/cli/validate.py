@@ -305,8 +305,11 @@ def run_dispatcher_case(case: dict[str, Any]) -> dict[str, Any]:
     cmd = [sys.executable, str(DISPATCHER), "--json", json.dumps(request, ensure_ascii=False)]
     env = apply_env_overrides(os.environ.copy(), case.get("env"))
     env["YOLO_MASTER_AGENT_RUNTIME_CACHE"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
     start = time.perf_counter()
-    proc = subprocess.run(cmd, capture_output=True, text=True, cwd=REPO_ROOT, env=env)
+    proc = subprocess.run(
+        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=REPO_ROOT, env=env, check=False
+    )
     elapsed = time.perf_counter() - start
     stdout = proc.stdout.strip()
     stderr = proc.stderr.strip()

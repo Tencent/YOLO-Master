@@ -9,6 +9,7 @@ import pytest
 from PIL import Image
 
 from tests import CUDA_DEVICE_COUNT, CUDA_IS_AVAILABLE, MODELS, TASK_MODEL_DATA
+from tests.dataset_fixtures import tiny_coco_multitask_yaml
 from ultralytics.utils import ARM64, ASSETS, DATASETS_DIR, IS_RASPBERRYPI, LINUX, WEIGHTS_DIR, checks
 from ultralytics.utils.torch_utils import TORCH_1_11, TORCH_VERSION
 
@@ -42,14 +43,18 @@ def test_cli_imports_defer_torchvision() -> None:
 
 @pytest.mark.parametrize("task,model,data", TASK_MODEL_DATA)
 @pytest.mark.skipif(IS_RASPBERRYPI, reason="Edge devices not intended for training")
-def test_train(task: str, model: str, data: str) -> None:
+def test_train(task: str, model: str, data: str, tmp_path) -> None:
     """Test YOLO training for different tasks, models, and datasets."""
+    if task == "multitask":
+        data = tiny_coco_multitask_yaml(tmp_path / "mt_data")
     run(f"yolo train {task} model={model} data={data} imgsz=32 epochs=1 cache=disk")
 
 
 @pytest.mark.parametrize("task,model,data", TASK_MODEL_DATA)
-def test_val(task: str, model: str, data: str) -> None:
+def test_val(task: str, model: str, data: str, tmp_path) -> None:
     """Test YOLO validation process for specified task, model, and data using a shell command."""
+    if task == "multitask":
+        data = tiny_coco_multitask_yaml(tmp_path / "mt_data")
     for end2end in {False, True}:
         run(f"yolo val {task} model={model} data={data} imgsz=32 end2end={end2end} max_det=100 agnostic_nms")
 
@@ -158,8 +163,10 @@ def test_mobilesam() -> None:
 @pytest.mark.parametrize("task,model,data", TASK_MODEL_DATA)
 @pytest.mark.skipif(not CUDA_IS_AVAILABLE, reason="CUDA is not available")
 @pytest.mark.skipif(CUDA_DEVICE_COUNT < 2, reason="DDP is not available")
-def test_train_gpu(task: str, model: str, data: str) -> None:
+def test_train_gpu(task: str, model: str, data: str, tmp_path) -> None:
     """Test YOLO training on GPU(s) for various tasks and models."""
+    if task == "multitask":
+        data = tiny_coco_multitask_yaml(tmp_path / "mt_data")
     run(f"yolo train {task} model={model} data={data} imgsz=32 epochs=1 device=0")  # single GPU
     run(f"yolo train {task} model={model} data={data} imgsz=32 epochs=1 device=0,1")  # multi GPU
 

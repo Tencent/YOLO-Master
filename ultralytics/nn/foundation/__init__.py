@@ -3,14 +3,17 @@
 from .projectors import P4AlignmentProjector
 from .protocol import FoundationFeatures, FoundationTeacher
 from .losses import RouterKDLoss, cosine_kd_loss, foreground_token_weights, hybrid_kd_loss, relational_kd_loss
+from .offline import extract_foundation_cache, load_foundation_batch, load_foundation_features, save_foundation_features
 from .taps import StudentFeatureTap
 from .teachers import (
     DEFAULT_DINOV2_MODEL,
     DEFAULT_DINOV3_MODEL,
+    DEFAULT_SAM3_IMAGE_SIZE,
     DEFAULT_SIGLIP2_MODEL,
     DINOv2Teacher,
     DINOv3Teacher,
     MultiFoundationTeacher,
+    SAM3Teacher,
     SigLIP2Teacher,
 )
 from .routing import (
@@ -34,9 +37,15 @@ __all__ = [
     "DINOv3Teacher",
     "DEFAULT_SIGLIP2_MODEL",
     "SigLIP2Teacher",
+    "DEFAULT_SAM3_IMAGE_SIZE",
+    "SAM3Teacher",
     "MultiFoundationTeacher",
     "FoundationFeatures",
     "FoundationTeacher",
+    "extract_foundation_cache",
+    "load_foundation_batch",
+    "load_foundation_features",
+    "save_foundation_features",
     "P4AlignmentProjector",
     "StudentFeatureTap",
     "cosine_kd_loss",

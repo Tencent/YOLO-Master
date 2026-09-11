@@ -38,8 +38,9 @@ class C2fMoT(nn.Module):
         balance_loss_coeff (float): Router balance loss weight.
         e (float): Internal channel expansion ratio.
         sparse_train_warmup_steps (int): Dense training forwards before enabled sparse dispatch begins.
-        export_masked (bool): When True, traced/exported routers rebuild sparse-equivalent
-            Top-K masked weights (bit-exact with eager sparse dispatch) instead of dense softmax.
+        export_masked (bool): When True (default), traced/exported routers rebuild
+            sparse-equivalent Top-K masked weights (bit-exact with eager sparse dispatch).
+            Pass False to keep the legacy dense-softmax export fallback.
 
     Shape:
         Input:  [B, c1, H, W]
@@ -66,7 +67,7 @@ class C2fMoT(nn.Module):
         sparse_train_warmup_steps: int = 0,
         scene_inference_mode: str = "dynamic",
         local_attn_window: int = 0,
-        export_masked: bool = False,
+        export_masked: bool = True,
     ):
         super().__init__()
         self.c = int(c2 * e)
@@ -191,7 +192,7 @@ class C2fMoT(nn.Module):
             ddp_sparse_train_safe=child_capabilities.get("ddp_sparse_train_safe", True),
             ddp_contract_source=child_capabilities.get("ddp_contract_source", "unconfigured"),
             ddp_fallback_reason=child_capabilities.get("ddp_fallback_reason"),
-            export_router_weights=child_capabilities.get("export_router_weights", "dense_softmax"),
+            export_router_weights=child_capabilities.get("export_router_weights", "masked_topk"),
             sparse_export_limitation=(
                 "C2fMoT eager execution supports Top-K sparse dispatch; ONNX and TorchScript tracing rebuild "
                 "sparse-equivalent masked Top-K router weights (bit-exact with eager dispatch)."

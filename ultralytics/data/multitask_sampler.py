@@ -9,7 +9,7 @@ import torch
 from torch.utils.data import Dataset, Sampler
 
 
-class MultiTaskBatchSampler(Sampler[list[tuple[str, int]]]):
+class MultiTaskBatchSampler(Sampler):
     """Schedule task/source samples with a resumable deterministic state."""
 
     schema_version = 1
