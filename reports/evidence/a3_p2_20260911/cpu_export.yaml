@@ -1,0 +1,98 @@
+dataset:
+  calibration_images: /mnt/workspace/datasets/coco8/images/train
+  calibration_samples: 4
+  data_yaml: repo://ultralytics/cfg/datasets/coco.yaml
+  validation_images: /mnt/workspace/datasets/coco/images/val2017
+  validation_labels: /mnt/workspace/datasets/coco/labels/val2017
+  validation_samples: 5000
+experiment:
+  batch: 1
+  benchmark_device: cpu
+  benchmark_images: 16
+  conf: 0.001
+  device: cpu
+  dynamic: false
+  export_device: cpu
+  imgsz: 640
+  iou: 0.7
+  opset: 17
+  ort_providers:
+  - CPUExecutionProvider
+  output_dir: /mnt/workspace/a3_precision_cpu_export_v1
+  profile_provider_assignment: true
+  repeats: 200
+  seed: 42
+  simplify: false
+  validation_batch: 1
+  validation_device: cpu
+  warmup: 20
+  workers: 0
+locking:
+  inspect_checkpoints: true
+models:
+- checkpoint: /mnt/workspace/yolo_master_n.pt
+  config: /mnt/workspace/a3_coco_training/moe_checkpoint_architecture.yaml
+  family: moe
+- checkpoint: /mnt/workspace/weights/moa_coco.pt
+  config: repo://ultralytics/cfg/models/26/yolo26-master-moa-n.yaml
+  family: moa
+- checkpoint: /mnt/workspace/weights/mot_coco.pt
+  config: repo://ultralytics/cfg/models/26/yolo26-master-mot-n.yaml
+  family: mot
+- adapter: null
+  checkpoint: /mnt/workspace/weights/molora_coco.pt
+  config: repo://ultralytics/cfg/models/26/yolo26.yaml
+  family: molora
+- checkpoint: /mnt/workspace/weights/latent_coco.pt
+  config: repo://ultralytics/cfg/models/26/yolo26-master-latent-n.yaml
+  family: latent
+quantization:
+  activation_type: QInt8
+  calibration_method: MinMax
+  calibration_providers:
+  - CPUExecutionProvider
+  extra_options:
+    ActivationSymmetric: true
+    QuantizeBias: false
+    WeightSymmetric: true
+  format: QDQ
+  manual_fallback_roles:
+  - router
+  - topk
+  - attention
+  - matmul
+  op_types:
+  - Conv
+  - Gemm
+  - MatMul
+  per_channel: true
+  weight_type: QInt8
+schema_version: 1
+sensitivity:
+  calibration_samples: 32
+  keep_probe_models: false
+  map_loss_pp_threshold: 0.1
+  map_weight: 0.6
+  max_groups: 0
+  roles:
+  - router
+  - topk
+  - attention
+  - matmul
+  route_device: cpu
+  route_per_channel: true
+  route_samples: 64
+  route_weight: 0.4
+  score_threshold: 0.5
+  top1_flip_max: 0.01
+  topk_exact_min: 0.99
+  topk_ordered_exact_min: 0.99
+  validation:
+    validation_batch: 1
+    workers: 0
+  validation_samples: 128
+trained_mot_drift:
+  device: cpu
+  limit: 548
+  per_channel: true
+  scope: router_only

@@ -445,6 +445,7 @@ class DynamicRoutingLayer(nn.Module):
         self.num_experts = num_experts
         self.top_k = min(top_k, num_experts) if top_k is not None else num_experts
         self.use_top_k = top_k is not None  # whether to enable Top-K
+        self.route_tie_tolerance = 1e-6
 
         self.global_pool = nn.AdaptiveAvgPool2d(1)
 
@@ -520,7 +521,13 @@ class DynamicRoutingLayer(nn.Module):
         """Inference Top-K without building the training one-hot mask graph."""
         B, E, H, W = logits.shape
         weights = F.softmax(logits.reshape(B, E, -1).float().clamp(-30.0, 30.0), dim=1).type_as(logits)
-        values, indices = torch.topk(weights, self.top_k, dim=1)
+        tie_tolerance = float(getattr(self, "route_tie_tolerance", 1e-6))
+        ranking_weights = weights
+        if tie_tolerance > 0.0:
+            expert_priority = torch.arange(self.num_experts, device=weights.device, dtype=weights.dtype)
+            ranking_weights = weights - expert_priority.view(1, -1, 1) * tie_tolerance
+        indices = torch.argsort(ranking_weights, dim=1, descending=True, stable=True)[:, : self.top_k]
+        values = weights.gather(1, indices)
         values = stable_normalize(values, dim=1)
         sparse = torch.zeros_like(weights)
         sparse.scatter_(1, indices, values)

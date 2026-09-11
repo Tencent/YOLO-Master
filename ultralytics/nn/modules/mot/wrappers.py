@@ -192,12 +192,14 @@ class C2fMoT(nn.Module):
             ddp_contract_source=child_capabilities.get("ddp_contract_source", "unconfigured"),
             ddp_fallback_reason=child_capabilities.get("ddp_fallback_reason"),
             export_router_weights=child_capabilities.get("export_router_weights", "dense_softmax"),
-            sparse_export_limitation=(
-                "C2fMoT eager execution supports Top-K sparse dispatch; ONNX and TorchScript tracing rebuild "
-                "sparse-equivalent masked Top-K router weights (bit-exact with eager dispatch)."
-                if child_capabilities.get("export_router_weights") == "masked_topk"
-                else "C2fMoT eager execution supports Top-K sparse dispatch; ONNX and TorchScript tracing use dense blending."
+            dynamic_export_available=child_capabilities.get("dynamic_export_available", False),
+            dynamic_export_strategy=child_capabilities.get("dynamic_export_strategy"),
+            dynamic_export_routing_granularity=child_capabilities.get("dynamic_export_routing_granularity"),
+            dynamic_export_compute_reduction_guaranteed_per_sample=child_capabilities.get(
+                "dynamic_export_compute_reduction_guaranteed_per_sample", False
             ),
+            masked_dense_is_dynamic_execution=False,
+            sparse_export_limitation=child_capabilities.get("sparse_export_limitation"),
         )
         return capabilities
 

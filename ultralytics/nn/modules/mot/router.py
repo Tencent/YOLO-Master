@@ -107,6 +107,7 @@ class _MoTRouter(FP32RouterMixin, nn.Module):
         # static traceable ops so the artifact matches the eager sparse path
         # numerically; when False (default), exports use dense softmax blending.
         self.export_masked = bool(export_masked)
+        self.route_tie_tolerance = 1e-6
         # Register temperature as a buffer so checkpoint save/restore
         # preserves annealing progress (Python float would be lost).
         self.register_buffer("temperature", torch.tensor(max(temperature, 0.1)), persistent=True)
@@ -289,7 +290,13 @@ class _MoTRouter(FP32RouterMixin, nn.Module):
         # Top-K mask
         elif self.top_k < self.num_experts:
             # get top-k indices [B, K, H, W]
-            topk_vals, topk_idx = weights.topk(self.top_k, dim=1)
+            tie_tolerance = float(getattr(self, "route_tie_tolerance", 1e-6))
+            ranking_weights = weights
+            if tie_tolerance > 0.0:
+                expert_priority = torch.arange(self.num_experts, device=weights.device, dtype=weights.dtype)
+                ranking_weights = weights - expert_priority.view(1, -1, 1, 1) * tie_tolerance
+            topk_idx = torch.argsort(ranking_weights, dim=1, descending=True, stable=True)[:, : self.top_k]
+            topk_vals = weights.gather(1, topk_idx)
             # renormalize selected weights
             topk_weights = stable_normalize(topk_vals, dim=1)
             # scatter back to [B, E, H, W] sparse

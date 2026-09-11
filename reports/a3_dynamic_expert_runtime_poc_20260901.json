@@ -1,0 +1,313 @@
+{
+  "schema_version": 1,
+  "status": "PASS",
+  "pure_dispatch": {
+    "audit": {
+      "routing_granularity": "sample",
+      "batch_size": 3,
+      "num_experts": 4,
+      "top_k": 2,
+      "executed_expert_ids": [
+        0,
+        1,
+        2
+      ],
+      "executed_expert_calls": 3,
+      "dense_expert_calls": 4,
+      "selected_sample_expert_pairs": 4,
+      "dense_sample_expert_pairs": 12,
+      "min_selected_experts_per_sample": 1,
+      "max_selected_experts_per_sample": 2,
+      "sample_pair_reduction_ratio": 0.6666666666666667,
+      "batch_union_reduction_ratio": 0.25,
+      "conditional_execution_observed": true,
+      "batch_union_reduction_observed": true,
+      "dense_fallback_detected": false
+    },
+    "dense_router_rejected": true
+  },
+  "spatial_union_gate": {
+    "audit": {
+      "routing_granularity": "spatial_union",
+      "batch_size": 1,
+      "num_experts": 3,
+      "top_k": 1,
+      "executed_expert_ids": [
+        0,
+        1,
+        2
+      ],
+      "executed_expert_calls": 3,
+      "dense_expert_calls": 3,
+      "selected_sample_expert_pairs": 3,
+      "dense_sample_expert_pairs": 3,
+      "min_selected_experts_per_sample": 3,
+      "max_selected_experts_per_sample": 3,
+      "sample_pair_reduction_ratio": 0.0,
+      "batch_union_reduction_ratio": 0.0,
+      "conditional_execution_observed": false,
+      "batch_union_reduction_observed": false,
+      "dense_fallback_detected": true
+    },
+    "false_reduction_claim_rejected": true
+  },
+  "portable_topk_tie_policy": {
+    "status": "PASS",
+    "selected_expert": 0,
+    "policy": "probability_minus_expert_id_times_tolerance",
+    "tie_tolerance": 1e-06
+  },
+  "esmoe": {
+    "manifest": {
+      "schema_version": 1,
+      "format": "yolo-master-split-onnx-dynamic-experts",
+      "family": "ES-MoE",
+      "module_type": "ultralytics.nn.modules.moe.modules.ES_MOE",
+      "execution_semantics": "host_conditional_expert_dispatch",
+      "masked_dense_allowed": false,
+      "reference_semantics": "eager_sparse_portable_tie_break",
+      "num_experts": 3,
+      "top_k": 1,
+      "router_output_semantics": "dense_probabilities_host_topk",
+      "host_topk_tie_break": "probability_minus_expert_id_times_tolerance",
+      "host_topk_tie_tolerance": 1e-06,
+      "routing_granularity": "sample",
+      "dynamic_threshold": 0.0,
+      "zero_tolerance": 1e-08,
+      "dynamic_batch": true,
+      "dynamic_spatial": false,
+      "sample_shape": [
+        2,
+        4,
+        6,
+        6
+      ],
+      "sample_dtype": "float32",
+      "compute_reduction_guaranteed_per_sample": true,
+      "claim_boundary": "Top-K is global per sample; each sample executes fewer than all experts.",
+      "artifacts": {
+        "router": {
+          "path": "router.onnx",
+          "inputs": [
+            "x"
+          ],
+          "outputs": [
+            "routing_weights"
+          ],
+          "bytes": 4048,
+          "sha256": "ef7cf080e95fa746b4edac52c4dc1b7759862f7f135d152c320b71bf0d4efce4"
+        },
+        "experts": [
+          {
+            "path": "expert_0.onnx",
+            "inputs": [
+              "x"
+            ],
+            "outputs": [
+              "expert_output"
+            ],
+            "bytes": 1017,
+            "sha256": "6b1a99ff9b7c5869b4c34dfba4530ea61d0fcd6162664492885931d969d71b92"
+          },
+          {
+            "path": "expert_1.onnx",
+            "inputs": [
+              "x"
+            ],
+            "outputs": [
+              "expert_output"
+            ],
+            "bytes": 1273,
+            "sha256": "e09346f13477e134e398c92ec1bcf0e32f04d5e748fd294dcf06fde18fa9dcf4"
+          },
+          {
+            "path": "expert_2.onnx",
+            "inputs": [
+              "x"
+            ],
+            "outputs": [
+              "expert_output"
+            ],
+            "bytes": 1657,
+            "sha256": "6c4383a58fecff975b25dcafefa5f0782d2913c702ee826109031435e38be316"
+          }
+        ],
+        "postprocess": {
+          "path": "postprocess.onnx",
+          "inputs": [
+            "mixture"
+          ],
+          "outputs": [
+            "y"
+          ],
+          "bytes": 749,
+          "sha256": "99bdb132a1fc2eaf778f1146452cb3f9c81ac92d4ee115725fc62296a16328ef"
+        }
+      },
+      "postprocess_kind": "norm"
+    },
+    "max_abs_error": 5.960464477539063e-08,
+    "audit": {
+      "routing_granularity": "sample",
+      "batch_size": 2,
+      "num_experts": 3,
+      "top_k": 1,
+      "executed_expert_ids": [
+        0
+      ],
+      "executed_expert_calls": 1,
+      "dense_expert_calls": 3,
+      "selected_sample_expert_pairs": 2,
+      "dense_sample_expert_pairs": 6,
+      "min_selected_experts_per_sample": 1,
+      "max_selected_experts_per_sample": 1,
+      "sample_pair_reduction_ratio": 0.6666666666666667,
+      "batch_union_reduction_ratio": 0.6666666666666667,
+      "conditional_execution_observed": true,
+      "batch_union_reduction_observed": true,
+      "dense_fallback_detected": false
+    },
+    "loaded_expert_ids": [
+      0
+    ]
+  },
+  "mot_image_router": {
+    "manifest": {
+      "schema_version": 1,
+      "format": "yolo-master-split-onnx-dynamic-experts",
+      "family": "MoT",
+      "module_type": "ultralytics.nn.modules.mot.block.MoTBlock",
+      "execution_semantics": "host_conditional_expert_dispatch",
+      "masked_dense_allowed": false,
+      "reference_semantics": "eager_sparse_portable_tie_break",
+      "num_experts": 3,
+      "top_k": 1,
+      "router_output_semantics": "dense_probabilities_host_topk",
+      "host_topk_tie_break": "probability_minus_expert_id_times_tolerance",
+      "host_topk_tie_tolerance": 1e-06,
+      "routing_granularity": "sample",
+      "dynamic_threshold": 0.0,
+      "zero_tolerance": 1e-08,
+      "dynamic_batch": true,
+      "dynamic_spatial": false,
+      "sample_shape": [
+        2,
+        8,
+        4,
+        4
+      ],
+      "sample_dtype": "float32",
+      "compute_reduction_guaranteed_per_sample": true,
+      "claim_boundary": "Top-K is global per sample; each sample executes fewer than all experts.",
+      "artifacts": {
+        "router": {
+          "path": "router.onnx",
+          "inputs": [
+            "x"
+          ],
+          "outputs": [
+            "routing_weights"
+          ],
+          "bytes": 2216,
+          "sha256": "288929e3cd3ac24cb944c8140453f238d30e3a82d1edbe4b83e83d463a006813"
+        },
+        "experts": [
+          {
+            "path": "expert_0.onnx",
+            "inputs": [
+              "x"
+            ],
+            "outputs": [
+              "expert_output"
+            ],
+            "bytes": 16755,
+            "sha256": "ad1af362716004495c157a8a217212d0099b236ef491abf6bbd55c3b6d5f483d"
+          },
+          {
+            "path": "expert_1.onnx",
+            "inputs": [
+              "x"
+            ],
+            "outputs": [
+              "expert_output"
+            ],
+            "bytes": 22686,
+            "sha256": "86f264c077e58f8f804e0788b97752c0a6973c5f08ff945d3cf2dd458e0f195b"
+          },
+          {
+            "path": "expert_2.onnx",
+            "inputs": [
+              "x"
+            ],
+            "outputs": [
+              "expert_output"
+            ],
+            "bytes": 19987,
+            "sha256": "1da1902b0a0d14b9156d13815095e3fd8ae1d3daee2674eb83b9ceaed7bb4c95"
+          }
+        ],
+        "postprocess": {
+          "path": "postprocess.onnx",
+          "inputs": [
+            "x",
+            "mixture"
+          ],
+          "outputs": [
+            "y"
+          ],
+          "bytes": 1844,
+          "sha256": "3e1a769007868d2f1300027a359b1fd46ae9013e9ad6df4780fa615ac626cd6b"
+        }
+      },
+      "postprocess_kind": "projection_norm_residual"
+    },
+    "max_abs_error": 2.384185791015625e-07,
+    "audit": {
+      "routing_granularity": "sample",
+      "batch_size": 2,
+      "num_experts": 3,
+      "top_k": 1,
+      "executed_expert_ids": [
+        0
+      ],
+      "executed_expert_calls": 1,
+      "dense_expert_calls": 3,
+      "selected_sample_expert_pairs": 2,
+      "dense_sample_expert_pairs": 6,
+      "min_selected_experts_per_sample": 1,
+      "max_selected_experts_per_sample": 1,
+      "sample_pair_reduction_ratio": 0.6666666666666667,
+      "batch_union_reduction_ratio": 0.6666666666666667,
+      "conditional_execution_observed": true,
+      "batch_union_reduction_observed": true,
+      "dense_fallback_detected": false
+    },
+    "loaded_expert_ids": [
+      0
+    ],
+    "ort_router_torch_experts": {
+      "max_abs_error": 0.0,
+      "onnx_expert_sessions_loaded": [],
+      "execution_summary": {
+        "calls": 1,
+        "samples": 2,
+        "selected_sample_expert_pairs": 2,
+        "dense_sample_expert_pairs": 6,
+        "sample_pair_reduction_ratio": 0.6666666666666667,
+        "executed_expert_calls": 1,
+        "dense_expert_calls": 3,
+        "batch_union_reduction_ratio": 0.6666666666666667,
+        "onnx_expert_sessions_loaded": [],
+        "checkpoint_pytorch_experts_executed": true,
+        "route_drift_audit_enabled": true,
+        "route_location_mismatch_count": 0,
+        "route_location_total": 2,
+        "route_location_mismatch_ratio": 0.0,
+        "route_mask_mismatch_count": 0,
+        "route_mask_total": 6,
+        "route_mask_mismatch_ratio": 0.0,
+        "sparse_weight_max_abs_error": 0.0
+      }
+    }
+  }
+}

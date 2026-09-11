@@ -1,0 +1,96 @@
+# A3 five-family COCO 2017 FP32/FP16/INT8 routing-sensitivity experiment.
+# The validator derives an exact locked val list from COCO class metadata.
+# COCO val is the evaluation split. A separate COCO8 train split is the
+# intentionally small calibration/smoke source; full train2017 is not needed.
+schema_version: 1
+
+experiment:
+  output_dir: ${A3_OUTPUT_DIR:-runs/a3_five_family_precision_coco}
+  seed: 42
+  imgsz: 640
+  batch: 1
+  validation_batch: 1
+  device: ${A3_DEVICE:-cuda:0}
+  export_device: ${A3_EXPORT_DEVICE:-cpu}
+  validation_device: ${A3_DEVICE:-cuda:0}
+  benchmark_device: ${A3_DEVICE:-cuda:0}
+  workers: 8
+  opset: 17
+  simplify: false
+  dynamic: false
+  conf: 0.001
+  iou: 0.7
+  warmup: 20
+  repeats: ${A3_LATENCY_REPEATS:-200}
+  benchmark_images: ${A3_BENCHMARK_IMAGES:-16}
+  profile_provider_assignment: true
+  ort_providers: [CUDAExecutionProvider, CPUExecutionProvider]
+
+locking:
+  inspect_checkpoints: true
+
+dataset:
+  data_yaml: ${A3_DATA_YAML:-repo://ultralytics/cfg/datasets/coco.yaml}
+  calibration_images: ${A3_COCO_CALIB_IMAGES}
+  validation_images: ${A3_COCO_ROOT}/images/val2017
+  validation_labels: ${A3_COCO_ROOT}/labels/val2017
+  calibration_samples: ${A3_CALIBRATION_SAMPLES:-4}
+  validation_samples: ${A3_VALIDATION_SAMPLES:-5000}
+
+trained_mot_drift:
+  limit: ${A3_STAGE0_SAMPLES:-500}
+  scope: router_only
+  per_channel: true
+  device: ${A3_DEVICE:-cuda:0}
+
+quantization:
+  format: QDQ
+  calibration_method: MinMax
+  activation_type: QInt8
+  weight_type: QInt8
+  calibration_providers: [CUDAExecutionProvider, CPUExecutionProvider]
+  per_channel: true
+  op_types: [Conv, Gemm, MatMul]
+  extra_options:
+    ActivationSymmetric: true
+    WeightSymmetric: true
+    QuantizeBias: false
+  manual_fallback_roles: [router, topk, attention, matmul]
+
+sensitivity:
+  roles: [router, topk, attention, matmul]
+  max_groups: ${A3_MAX_GROUPS:-0}
+  route_samples: ${A3_ROUTE_SAMPLES:-64}
+  validation_samples: ${A3_SENSITIVITY_SAMPLES:-128}
+  calibration_samples: ${A3_SENSITIVITY_CALIBRATION_SAMPLES:-32}
+  keep_probe_models: false
+  route_device: ${A3_DEVICE:-cuda:0}
+  route_per_channel: true
+  map_loss_pp_threshold: 0.10
+  topk_exact_min: 0.99
+  topk_ordered_exact_min: 0.99
+  top1_flip_max: 0.01
+  score_threshold: 0.50
+  map_weight: 0.60
+  route_weight: 0.40
+  validation:
+    validation_batch: 1
+    workers: 8
+
+models:
+  - family: moe
+    config: ${A3_MOE_CONFIG}
+    checkpoint: ${A3_MOE_WEIGHT}
+  - family: moa
+    config: repo://ultralytics/cfg/models/26/yolo26-master-moa-n.yaml
+    checkpoint: ${A3_MOA_WEIGHT}
+  - family: mot
+    config: repo://ultralytics/cfg/models/26/yolo26-master-mot-n.yaml
+    checkpoint: ${A3_MOT_WEIGHT}
+  - family: molora
+    config: repo://ultralytics/cfg/models/26/yolo26.yaml
+    checkpoint: ${A3_MOLORA_WEIGHT}
+    adapter: ${A3_MOLORA_ADAPTER:-}
+  - family: latent
+    config: repo://ultralytics/cfg/models/26/yolo26-master-latent-n.yaml
+    checkpoint: ${A3_LATENT_WEIGHT}
