@@ -1,0 +1,62 @@
+{
+  "schema_version": "e3.training_smoke.v1",
+  "git": {
+    "commit": "93447754366983497bf01e7e7a9c098ec877df9e",
+    "dirty": false,
+    "task_baseline": "e9ac08b2bd135c379206b8f77df9714b8800cbe0",
+    "pr_base": "af961b99b8ef80491e58cb5fd16e25ebaf3741eb"
+  },
+  "environment": {
+    "device": "NVIDIA GeForce RTX 4060",
+    "python": "3.12.14",
+    "torch": "2.14.0+cu130",
+    "ultralytics": "8.4.101"
+  },
+  "data": "coco8.yaml",
+  "epochs": 2,
+  "imgsz": 64,
+  "batch": 2,
+  "routing_interval": 1,
+  "families": {
+    "moe": {
+      "routed_layers": 6,
+      "routing_observations": 4,
+      "routing_scalar_tags": 136,
+      "tensorboard_steps": [1, 2],
+      "invalid_layers": 0,
+      "unsupported_layers": 0,
+      "aux_statuses": ["active_training"],
+      "tensorboard_matches_final_json": true
+    },
+    "mot": {
+      "routed_layers": 4,
+      "routing_observations": 4,
+      "routing_scalar_tags": 42,
+      "tensorboard_steps": [1, 2],
+      "invalid_layers": 0,
+      "unsupported_layers": 0,
+      "aux_statuses": ["active_training"],
+      "tensorboard_matches_final_json": true
+    },
+    "latent": {
+      "routed_layers": 9,
+      "routing_observations": 4,
+      "routing_scalar_tags": 169,
+      "tensorboard_steps": [1, 2],
+      "invalid_layers": 0,
+      "unsupported_layers": 0,
+      "aux_statuses": ["active_training"],
+      "tensorboard_matches_final_json": true
+    }
+  },
+  "disabled_control": {
+    "telemetry_json": false,
+    "routing_scalar_tags": 0,
+    "training_values_match_moe": true
+  },
+  "passed": true,
+  "limitations": [
+    "This smoke validates live logging and training invariance, not model accuracy or long-run performance.",
+    "MoT CUDA kernels warn that fixed seeds do not imply bitwise determinism."
+  ]
+}
