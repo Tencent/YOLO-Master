@@ -239,3 +239,9 @@ agent/logs/
 
 # Foundation local run records (kept local per repo policy)
 reports/foundation/v0.1/
+
+# ==== F11 本地执行产物(绝不入库) ====
+experiments/
+logs/
+*.tar.gz
+scripts/tmp_*.py
