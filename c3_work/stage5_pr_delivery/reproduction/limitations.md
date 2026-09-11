@@ -21,7 +21,7 @@
 ## 3. 缺陷规避：精度数字是"修复前"口径
 
 - planner 的 `cap<8` 缺陷（窄层被投影成适配目标 → plan 校验抛错 → `vpeft` 静默回退 legacy planner）是本轮实验**用 `lora_exclude_modules` 手工排除清单规避**的，所以所有精度/显存数字都来自**修复前的规避方案**。
-- 源码修复在独立分支 `fix/vpeft-capacity-guard`（上游 PR #279：`C_cap` 硬约束 + `capacity_excluded` 审计 + 未适配层冻结 + 8 个单测），**修复后没有重跑训练**。
+- 源码修复在独立分支 `fix/vpeft-capacity-guard`（另开的上游 PR，编号待创建：`C_cap` 硬约束 + `capacity_excluded` 审计 + 未适配层冻结 + 8 个单测），**修复后没有重跑训练**。
 
 ## 4. 数据与许可
 

@@ -1,5 +1,6 @@
 <!--
 C3 整体结项交付 PR 正文（分支 c3-vpeft-smoke → base Tencent:main）。
+用途：仓库 PR #279 重开时作为描述（head 分支换成 c3-vpeft-smoke，见 stage5 README）。
 标题：
 [犀牛鸟-C3]：V-PEFT 小样本工业缺陷检测结项交付
 粘贴范围：从 "## 交付内容" 开始到文件末尾（含 "## PPT"）。
@@ -82,7 +83,7 @@ NEU 那两个 0.694 是剔除偶发 seed 2024 后的稳健口径（n=3）；不�
 
 ## 过程中发现的上游缺陷
 
-做实验时定位到 V-PEFT 的一个真实缺陷，顺便修了，但没混进这个 PR：修复单独放在基于官方 `af961b9` 的分支 `fix/vpeft-capacity-guard`（2 个 commit），对应上游 PR #279。
+做实验时定位到 V-PEFT 的一个真实缺陷，顺便修了，但没混进这个 PR：修复单独放在基于官方 `af961b9` 的分支 `fix/vpeft-capacity-guard`（2 个 commit），走另一个上游 PR 提交。
 
 问题是七个硬约束都没有建模层的容量，而 plan 校验会拒绝 `rank > min(in, out)` 的目标，于是投影和校验互相矛盾：`0.conv`、`routing_network.2`、`25.dfl.conv` 被选为目标后 `apply_lora` 抛 `ValueError`，vpeft 后端下异常被吞掉，运行静默回退到 legacy planner（`vpeft_strict=True` 时直接失败，等于 V-PEFT 没生效）。
 
@@ -119,7 +120,7 @@ python c3_work/stage4_analysis/analysis_stats.py
 
 - P0 达成：NEU-DET 和 DeepPCB 上都跑通了 V-PEFT（各 3 个 seed，共 6 个单元，另有 3 个补跑单元），planner 决策与护栏日志都留档，见 `stage3_matrix/matrix.json`、`stage4_analysis/planner_audit_summary.md` 和各单元 `training.log` 里的 `[V-PEFT]` 行。
 - P1 达成：三种策略严格同预算（epochs=100 / batch 8 / imgsz 640 / amp 关闭，同一 seed 池），PEFT 的参数效率数量级优势成立——vpeft 只训练 116,736 个参数，是全量微调的 4.15%（约 1/24）。显存低 1.15G、训练时长三者相当，这两项不是数量级。
-- P2 达成，走的是"发现并修复 planner 真实 bug"这一支：定位并修复了容量约束缺失导致 V-PEFT 静默降级 legacy planner 的缺陷（源码修复 + 8 个单测），放在独立 PR #279。小样本曲线没有画：k5/10/50/100 的划分已备好（任务书要求的是 10/50/100/500 张，仓库里备的是 30/60/300/600 张），本轮矩阵跑的是两个数据集的全量划分。
+- P2 达成，走的是"发现并修复 planner 真实 bug"这一支：定位并修复了容量约束缺失导致 V-PEFT 静默降级 legacy planner 的缺陷（源码修复 + 8 个单测），放在另一个独立 PR 里。小样本曲线没有画：k5/10/50/100 的划分已备好（任务书要求的是 10/50/100/500 张，仓库里备的是 30/60/300/600 张），本轮矩阵跑的是两个数据集的全量划分。
 
 ## 已知问题
 
@@ -130,7 +131,7 @@ python c3_work/stage4_analysis/analysis_stats.py
 
 ## 说明
 
-这个 PR 只提交 `c3_work/` 下的交付物，没有改动 `ultralytics/` 源码。相对 `main` 看到的源码差异是因为这个分支的基线较早，不是这次改的。训练产物 `runs/`、数据集二进制和缓存都不入库。源码修复走单独的 PR #279。
+这个 PR 只提交 `c3_work/` 下的交付物，没有改动 `ultralytics/` 源码。相对 `main` 看到的源码差异是因为这个分支的基线较早，不是这次改的。训练产物 `runs/`、数据集二进制和缓存都不入库。源码修复走另一个单独的 PR。
 
 ## PPT
 

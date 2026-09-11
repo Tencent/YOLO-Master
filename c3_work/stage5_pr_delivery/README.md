@@ -12,12 +12,16 @@
 | PR-3 matrix | stage3(matrix/queue_runner/collect_evidence/18 单元结果) | 已 push(同上) |
 | PR-4 analysis | stage4(统计四维同表/planner 审计/p2 素材) | 已 push(同上) |
 | PR-5 report | stage5(复现包/结项报告/汇报 pptx) | 已 push + report_final 定稿 + pptx 已重生成(末页含链接区) |
-| PR-6 上游源码 | `fix/vpeft-capacity-guard`: C_cap 容量硬约束 + capacity_excluded 审计 + 未适配层冻结 + 单测 | 已 push(tip `daed306`)；PR **#279** 当前 `closed`、标题为分支名派生、正文为空 → 重开后按 `pr_body_capacity_guard.md` 填 |
-| **整体 PR** | `c3-vpeft-smoke` 全部交付物(stage1-5) → base `Tencent:main` | 本地历史已重写(18 commit, Conventional Commits)，需 `--force-with-lease` 推回 fork；正文 `pr_body_c3_overall.md` 已就绪, 待网页发起 |
+| **整体交付 PR** | `c3-vpeft-smoke` 全部交付物(stage1-5) → base `Tencent:main` | **复用仓库 PR `#279`**（重开）：正文 `pr_body_c3_overall.md` 已就绪；分支内容需先换成交付分支（见下） |
+| 上游源码修复 PR | `fix/vpeft-capacity-guard`: C_cap 容量硬约束 + capacity_excluded 审计 + 未适配层冻结 + 单测（2 commit, 8 文件） | 已 push(tip `daed306`)；**改为新建 PR**（编号待创建），正文 `pr_body_capacity_guard.md` |
 
-> PR-6 说明:仓库同门 PR 的写法是「`[犀牛鸟-Xx]：` 前缀标题 + `Summary` / `Problem` / `Validation` / `Limitations` 分节正文」
+> 同门写法:仓库同门 PR 是「`[犀牛鸟-Xx]：` 前缀标题 + `Summary` / `Problem` / `Validation` / `Limitations` 分节正文」
 > （已合并的源码修复参照 #240 `fix(lora): ...`、#267 `fix(mixture): ...`；带前缀的软件修复参照 #253 `[犀牛鸟-A2]：Fix ...`）。
-> 本目录的 `pr_body_capacity_guard.md` 已按该风格重写，标题与正文可直接粘贴。
+> 本目录两个正文文件都已按该风格写好，标题与正文可直接粘贴。
+>
+> 归属约定（2026-09-11 更新）：**`#279` 用作整体交付 PR**，源码修复单独开新 PR。
+> 注意 GitHub **不允许修改已有 PR 的 head 分支**，所以 #279 的 head 分支（现为 `fix/vpeft-capacity-guard`）
+> 必须先改名为 `c3-vpeft-smoke` 再推交付内容，详见下方「整体交付 PR」。
 
 ## 复现包结构 `reproduction/`
 
@@ -59,44 +63,46 @@ reproduction/
 - [x] 结项报告 report_final.md(结论/证据表/局限/复现)
 - [x] 汇报 pptx(三策略对照 + planner 决策 + 证据链 + 末页链接区)
 - [x] `fix/vpeft-capacity-guard` 已在 fork 上(源码修复, tip `daed306`)
-- [ ] `c3-vpeft-smoke` 需 force push 回 fork: 本地历史重写为 18 条 Conventional Commits, 与 fork 上 11 条旧格式提交分叉 → 用 `--force-with-lease=refs/heads/c3-vpeft-smoke:<fork tip>`
+- [ ] **#279 改造为整体交付 PR**：fork 上删掉旧的 `c3-vpeft-smoke`，把 `fix/vpeft-capacity-guard` 改名为 `c3-vpeft-smoke`（#279 的 head 自动跟随），再把本地产出分支 force push 上去
+- [ ] `c3-vpeft-smoke` 需 force push 回 fork: 本地历史重写为 20 条 Conventional Commits, 与 fork 上 11 条旧格式提交分叉 → 用 `--force-with-lease=refs/heads/c3-vpeft-smoke:<改名后分支当前 tip=`daed306`>`
+- [ ] 源码修复另开新 PR：把本地 `fix/vpeft-capacity-guard` 推到 fork 同名新分支（改名后该名字已空闲），base `Tencent:main`
 - [x] commit 信息风格对齐上游: `c3-vpeft-smoke` 已统一为 Conventional Commits(`feat(c3): …` / `docs(c3): …`), 与 `origin/main` 一致
-- [ ] 重填 PR #279 的标题与正文(见下方「PR-6 提交方式」), 然后点 `Reopen pull request`
+- [ ] 重填 #279 的标题与正文（整体交付），然后点 `Reopen pull request`
 - [x] PPT 用 Google Drive 链接交付: PR 描述末尾新增 `## PPT` 一节, 只放该链接(仓库 `c3_work/stage5_pr_delivery/` 保留同源副本, 未重新导出)
-- [ ] (可选) pptx 末页②仍是占位符 `<<EVIDENCE_LINK_PLACEHOLDER>>`, 若要重出可填同一 Drive 链接
+- [ ] (可选) 交付的 pptx 末页①写的是「上游修复 PR #279」，改号后与网页不一致；若要重出 deck 可运行 `gen_slides.py`（文案已同步）
 
-## 整体交付 PR（`c3-vpeft-smoke` → `Tencent:main`）
+## 整体交付 PR（复用仓库 `#279`）
 
-正文：`pr_body_c3_overall.md`（中文，覆盖 stage1-5 全部交付 + 上游修复概述 + P0/P1/P2 达成情况，末尾带 `## PPT`）。
-标题建议：
+- 标题：`[犀牛鸟-C3]：V-PEFT 小样本工业缺陷检测结项交付`
+- 正文：`pr_body_c3_overall.md`（中文，覆盖 stage1-5 全部交付 + 上游修复概述 + P0/P1/P2 达成情况，末尾带 `## PPT`），从 `## 交付内容` 起粘贴。
+- 分支：`lycyhrc:YOLO-Master:c3-vpeft-smoke` → base `Tencent:main`（即 #279 的 head）。
 
-```text
-[犀牛鸟-C3]：V-PEFT 小样本工业缺陷检测结项交付
-```
+GitHub 改不了已有 PR 的 head 分支，所以要让 #279 显示交付内容，得先把它的 head 分支换成 `c3-vpeft-smoke`：
 
-发起方式（网页）：`Tencent/YOLO-Master` → New pull request → base `main` ← compare `lycyhrc:YOLO-Master:c3-vpeft-smoke`。
+1. 网页 fork → Branches：删除 `c3-vpeft-smoke`（旧的 11 条旧格式历史，不是任何 PR 的 head），
+   然后把 `fix/vpeft-capacity-guard` **改名**为 `c3-vpeft-smoke`。#279 的 head 会自动跟随改名，内容暂时还是那 2 个修复 commit，属正常。
+2. 推送交付分支覆盖它（期望值 `daed306` = 改名后分支的当前 tip）：
+   ```bash
+   GIT_SSH_COMMAND='ssh -i /tmp/c3_push_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new' \
+     git push --force-with-lease=refs/heads/c3-vpeft-smoke:daed306 \
+     git@github.com:lycyhrc/YOLO-Master.git c3-vpeft-smoke:refs/heads/c3-vpeft-smoke
+   ```
+3. 打开 https://github.com/Tencent/YOLO-Master/pull/279 → 改标题/正文 → `Reopen pull request`。
 
-> 两个正文文件的用途：`pr_body_c3_overall.md` = 整体交付 PR（本课题全部工作）；
-> `pr_body_capacity_guard.md` = 只讲源码修复的上游 PR #279（2 commit，8 文件）。
+> 不想折腾分支名也行（不推荐）：直接 `git push --force-with-lease=refs/heads/fix/vpeft-capacity-guard:daed306 <fork> c3-vpeft-smoke:fix/vpeft-capacity-guard`
+> 把交付内容推进 #279 的现有 head 分支，代价是 PR 头部显示的分支名与内容不符。
 
-## PR-6 提交方式（只剩网页操作）
+## 上游源码修复 PR（新建）
 
-标题（替换 GitHub 上由分支名派生的 `Fix/vpeft capacity guard`）：
+- 标题：`[犀牛鸟-C3]：修复 V-PEFT 容量约束 —— 窄于最小候选 rank 的层不再被选为适配目标`
+- 正文：`pr_body_capacity_guard.md` 里 `## 概述` 之后的全部内容（文件开头那段 HTML 注释是本地说明，不要一起粘）。
+- 分支：`lycyhrc:YOLO-Master:fix/vpeft-capacity-guard` → base `Tencent:main`（2 commit，tip `daed306`；改名步骤后该分支名空闲，普通 push 即可重建）。
 
-```text
-[犀牛鸟-C3]：修复 V-PEFT 容量约束 —— 窄于最小候选 rank 的层不再被选为适配目标
-```
-
-正文：把 `pr_body_capacity_guard.md` 里 `## 概述` 之后的全部内容粘进描述框（文件开头那段 HTML 注释是本地说明，不要一起粘）。
-
-PPT（正文末尾 `## PPT` 一节只放此链接）：
+PPT（两个 PR 的正文末尾 `## PPT` 一节都只放此链接）：
 
 ```text
 https://drive.google.com/file/d/1dg8tZyI11xJR1JrCCKBWqbC4_kFgmsVp/view?usp=sharing
 ```
 
-然后在本 PR 页面点 `Reopen pull request`（分支还在，直接重开即可）：
-
-https://github.com/Tencent/YOLO-Master/pull/279
-
-> 若选择新建 PR 而不是重开，pptx 末页①的链接要同步换成新编号。
+> 发起方式：`Tencent/YOLO-Master` → New pull request → base `main` ← compare `lycyhrc:YOLO-Master:fix/vpeft-capacity-guard`。
+> 若改成先建这个 PR 再处理 #279，pptx 末页①的链接要同步换成新编号。

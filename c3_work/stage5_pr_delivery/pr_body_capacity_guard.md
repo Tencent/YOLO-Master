@@ -2,6 +2,7 @@
 PR 标题（GitHub 上填这一行，对齐 #253 的 [犀牛鸟-Ax] 前缀风格，正文用中文）：
 [犀牛鸟-C3]：修复 V-PEFT 容量约束 —— 窄于最小候选 rank 的层不再被选为适配目标
 分支：lycyhrc/YOLO-Master:fix/vpeft-capacity-guard（base: Tencent:main，2 commits，tip daed306）
+用途：**新建**的上游源码修复 PR（编号待创建；仓库 PR #279 已改作整体交付 PR，见 stage5 README）。
 下面的内容从 "## 概述" 开始整段粘贴到 PR 描述框。
 -->
 
