@@ -65,6 +65,28 @@ def run_checked(command: list[str], *, cwd: Path = REPO) -> str:
     return result.stdout.strip()
 
 
+def run_visible(command: list[str], *, cwd: Path) -> str:
+    """Run setup commands with live combined stdout/stderr (notably git clone/fetch)."""
+    print("RUN:", " ".join(command), flush=True)
+    output: list[str] = []
+    process = subprocess.Popen(
+        command,
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    assert process.stdout is not None
+    for line in process.stdout:
+        print(line, end="", flush=True)
+        output.append(line)
+    return_code = process.wait()
+    if return_code:
+        raise RuntimeError(f"command failed ({return_code}): {' '.join(command)}")
+    return "".join(output).strip()
+
+
 def run_stream(command: list[str], log_path: Path) -> int:
     print("\nRUN:", " ".join(command), flush=True)
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -97,11 +119,24 @@ def sha256(path: Path) -> str:
 
 
 assert ASSET_REPO.is_dir(), f"找不到原有训练资产目录：{ASSET_REPO}"
-if not (REPO / ".git").is_dir():
-    if REPO.exists() and any(REPO.iterdir()):
-        raise RuntimeError(f"专用代码目录已存在但不是 Git 仓库，请换名或人工检查：{REPO}")
-    run_checked(
-        ["git", "clone", "--branch", BRANCH, "--single-branch", REMOTE, str(REPO)],
+repo_probe = subprocess.run(
+    ["git", "-C", str(REPO), "rev-parse", "--verify", "HEAD"],
+    text=True,
+    capture_output=True,
+)
+repo_ready = repo_probe.returncode == 0
+if REPO.exists() and not repo_ready:
+    # A stopped/failed clone may leave a partial directory. Preserve it for diagnosis,
+    # then retry in the dedicated code path without touching ASSET_REPO.
+    incomplete_repo = REPO.with_name(f"{REPO.name}-incomplete-{run_tag}")
+    REPO.rename(incomplete_repo)
+    print("Preserved incomplete clone:", incomplete_repo, flush=True)
+if not repo_ready:
+    run_visible(
+        [
+            "git", "clone", "--depth", "20", "--branch", BRANCH,
+            "--single-branch", "--progress", REMOTE, str(REPO),
+        ],
         cwd=WORKSPACE,
     )
 tracked_dirty = run_checked(
@@ -110,7 +145,10 @@ tracked_dirty = run_checked(
 assert not tracked_dirty, (
     "专用代码仓库存在 tracked 修改，脚本拒绝覆盖。请先人工检查：\n" + tracked_dirty
 )
-run_checked(["git", "fetch", REMOTE, BRANCH])
+run_visible(
+    ["git", "fetch", "--depth", "20", "--progress", REMOTE, BRANCH],
+    cwd=REPO,
+)
 run_checked(["git", "checkout", "--detach", "FETCH_HEAD"])
 source_commit = run_checked(["git", "rev-parse", "HEAD"])
 run_checked(["git", "merge-base", "--is-ancestor", MINIMUM_COMMIT, source_commit])
