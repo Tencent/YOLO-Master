@@ -1,0 +1,317 @@
+{
+  "bucket_thresholds": {
+    "simple_max": 3,
+    "medium_max": 8
+  },
+  "buckets": {
+    "simple": {
+      "n_images": 2110,
+      "layers": {
+        "model.3.routing": {
+          "num_experts": 3,
+          "total_hits": 162124800.0,
+          "load_balance_std": 0.0,
+          "gini": 0.0,
+          "hit_shares_degenerate": true,
+          "experts": {
+            "0": {
+              "hits": 54041600.0,
+              "share": 0.333333,
+              "avg_weight": 0.706659
+            },
+            "1": {
+              "hits": 54041600.0,
+              "share": 0.333333,
+              "avg_weight": 0.131864
+            },
+            "2": {
+              "hits": 54041600.0,
+              "share": 0.333333,
+              "avg_weight": 0.162029
+            }
+          }
+        },
+        "model.6.routing": {
+          "num_experts": 3,
+          "total_hits": 40531200.0,
+          "load_balance_std": 0.0,
+          "gini": 0.0,
+          "hit_shares_degenerate": true,
+          "experts": {
+            "0": {
+              "hits": 13510400.0,
+              "share": 0.333333,
+              "avg_weight": 0.327245
+            },
+            "1": {
+              "hits": 13510400.0,
+              "share": 0.333333,
+              "avg_weight": 0.40163
+            },
+            "2": {
+              "hits": 13510400.0,
+              "share": 0.333333,
+              "avg_weight": 0.271028
+            }
+          }
+        },
+        "model.9.routing": {
+          "num_experts": 3,
+          "total_hits": 10132800.0,
+          "load_balance_std": 0.0,
+          "gini": 0.0,
+          "hit_shares_degenerate": true,
+          "experts": {
+            "0": {
+              "hits": 3377600.0,
+              "share": 0.333333,
+              "avg_weight": 0.373005
+            },
+            "1": {
+              "hits": 3377600.0,
+              "share": 0.333333,
+              "avg_weight": 0.354346
+            },
+            "2": {
+              "hits": 3377600.0,
+              "share": 0.333333,
+              "avg_weight": 0.272694
+            }
+          }
+        },
+        "model.12.routing": {
+          "num_experts": 3,
+          "total_hits": 2533200.0,
+          "load_balance_std": 0.0,
+          "gini": 0.0,
+          "hit_shares_degenerate": true,
+          "experts": {
+            "0": {
+              "hits": 844400.0,
+              "share": 0.333333,
+              "avg_weight": 0.3796
+            },
+            "1": {
+              "hits": 844400.0,
+              "share": 0.333333,
+              "avg_weight": 0.355789
+            },
+            "2": {
+              "hits": 844400.0,
+              "share": 0.333333,
+              "avg_weight": 0.264579
+            }
+          }
+        }
+      }
+    },
+    "medium": {
+      "n_images": 1367,
+      "layers": {
+        "model.3.routing": {
+          "num_experts": 3,
+          "total_hits": 104985600.0,
+          "load_balance_std": 0.0,
+          "gini": 0.0,
+          "hit_shares_degenerate": true,
+          "experts": {
+            "0": {
+              "hits": 34995200.0,
+              "share": 0.333333,
+              "avg_weight": 0.70667
+            },
+            "1": {
+              "hits": 34995200.0,
+              "share": 0.333333,
+              "avg_weight": 0.13151
+            },
+            "2": {
+              "hits": 34995200.0,
+              "share": 0.333333,
+              "avg_weight": 0.16254
+            }
+          }
+        },
+        "model.6.routing": {
+          "num_experts": 3,
+          "total_hits": 26246400.0,
+          "load_balance_std": 0.0,
+          "gini": 0.0,
+          "hit_shares_degenerate": true,
+          "experts": {
+            "0": {
+              "hits": 8748800.0,
+              "share": 0.333333,
+              "avg_weight": 0.32765
+            },
+            "1": {
+              "hits": 8748800.0,
+              "share": 0.333333,
+              "avg_weight": 0.401364
+            },
+            "2": {
+              "hits": 8748800.0,
+              "share": 0.333333,
+              "avg_weight": 0.270723
+            }
+          }
+        },
+        "model.9.routing": {
+          "num_experts": 3,
+          "total_hits": 6561600.0,
+          "load_balance_std": 0.0,
+          "gini": 0.0,
+          "hit_shares_degenerate": true,
+          "experts": {
+            "0": {
+              "hits": 2187200.0,
+              "share": 0.333333,
+              "avg_weight": 0.373005
+            },
+            "1": {
+              "hits": 2187200.0,
+              "share": 0.333333,
+              "avg_weight": 0.354346
+            },
+            "2": {
+              "hits": 2187200.0,
+              "share": 0.333333,
+              "avg_weight": 0.272695
+            }
+          }
+        },
+        "model.12.routing": {
+          "num_experts": 3,
+          "total_hits": 1640400.0,
+          "load_balance_std": 0.0,
+          "gini": 0.0,
+          "hit_shares_degenerate": true,
+          "experts": {
+            "0": {
+              "hits": 546800.0,
+              "share": 0.333333,
+              "avg_weight": 0.379601
+            },
+            "1": {
+              "hits": 546800.0,
+              "share": 0.333333,
+              "avg_weight": 0.355789
+            },
+            "2": {
+              "hits": 546800.0,
+              "share": 0.333333,
+              "avg_weight": 0.264579
+            }
+          }
+        }
+      }
+    },
+    "complex": {
+      "n_images": 1523,
+      "layers": {
+        "model.3.routing": {
+          "num_experts": 3,
+          "total_hits": 116966400.0,
+          "load_balance_std": 0.0,
+          "gini": 0.0,
+          "hit_shares_degenerate": true,
+          "experts": {
+            "0": {
+              "hits": 38988800.0,
+              "share": 0.333333,
+              "avg_weight": 0.707605
+            },
+            "1": {
+              "hits": 38988800.0,
+              "share": 0.333333,
+              "avg_weight": 0.131285
+            },
+            "2": {
+              "hits": 38988800.0,
+              "share": 0.333333,
+              "avg_weight": 0.162387
+            }
+          }
+        },
+        "model.6.routing": {
+          "num_experts": 3,
+          "total_hits": 29241600.0,
+          "load_balance_std": 0.0,
+          "gini": 0.0,
+          "hit_shares_degenerate": true,
+          "experts": {
+            "0": {
+              "hits": 9747200.0,
+              "share": 0.333333,
+              "avg_weight": 0.328362
+            },
+            "1": {
+              "hits": 9747200.0,
+              "share": 0.333333,
+              "avg_weight": 0.401143
+            },
+            "2": {
+              "hits": 9747200.0,
+              "share": 0.333333,
+              "avg_weight": 0.27031
+            }
+          }
+        },
+        "model.9.routing": {
+          "num_experts": 3,
+          "total_hits": 7310400.0,
+          "load_balance_std": 0.0,
+          "gini": 0.0,
+          "hit_shares_degenerate": true,
+          "experts": {
+            "0": {
+              "hits": 2436800.0,
+              "share": 0.333333,
+              "avg_weight": 0.373006
+            },
+            "1": {
+              "hits": 2436800.0,
+              "share": 0.333333,
+              "avg_weight": 0.354346
+            },
+            "2": {
+              "hits": 2436800.0,
+              "share": 0.333333,
+              "avg_weight": 0.272695
+            }
+          }
+        },
+        "model.12.routing": {
+          "num_experts": 3,
+          "total_hits": 1827600.0,
+          "load_balance_std": 0.0,
+          "gini": 0.0,
+          "hit_shares_degenerate": true,
+          "experts": {
+            "0": {
+              "hits": 609200.0,
+              "share": 0.333333,
+              "avg_weight": 0.379601
+            },
+            "1": {
+              "hits": 609200.0,
+              "share": 0.333333,
+              "avg_weight": 0.35579
+            },
+            "2": {
+              "hits": 609200.0,
+              "share": 0.333333,
+              "avg_weight": 0.264578
+            }
+          }
+        }
+      }
+    }
+  },
+  "l1_divergence_simple_vs_complex": {
+    "model.3.routing": 0.0,
+    "model.6.routing": 0.0,
+    "model.9.routing": 0.0,
+    "model.12.routing": 0.0
+  }
+}
