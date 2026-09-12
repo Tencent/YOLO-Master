@@ -1,0 +1,2 @@
+mode,lat_ms_median,lat_ms_p90,mAP50,mAP50_95,dmAP50_95,build_s,size_MB,n_pinned_fp16
+int8,1.965,1.97,0.5489,0.39547,0.0,791.9,17.0,124
