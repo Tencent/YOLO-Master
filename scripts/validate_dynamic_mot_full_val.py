@@ -73,6 +73,30 @@ def load_validation_model(checkpoint: Path) -> tuple[torch.nn.Module, int]:
     return model, strip_thop_runtime_state(model)
 
 
+def preflight_onnxruntime() -> dict[str, Any]:
+    """Fail before expensive eager validation if the ORT router cannot run."""
+    try:
+        import onnxruntime as ort
+    except ImportError as error:
+        raise ImportError(
+            "onnxruntime is required before validation starts. Install it into the same interpreter with: "
+            f"{sys.executable} -m pip install onnxruntime==1.23.2"
+        ) from error
+
+    providers = list(ort.get_available_providers())
+    if "CPUExecutionProvider" not in providers:
+        raise RuntimeError(
+            "onnxruntime is installed but CPUExecutionProvider is unavailable; "
+            f"available providers: {providers}"
+        )
+    return {
+        "python_executable": sys.executable,
+        "onnxruntime_version": ort.__version__,
+        "available_providers": providers,
+        "selected_router_provider": "CPUExecutionProvider",
+    }
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("checkpoint", type=Path, help="Real trained MoT .pt checkpoint")
@@ -204,6 +228,13 @@ def main() -> int:
     if args.require_exact_route and args.skip_route_drift_audit:
         raise ValueError("--require-exact-route cannot be combined with --skip-route-drift-audit")
 
+    # The eager checkpoint does not need ORT, but phase 2 does. Check ORT now
+    # so a missing package fails immediately instead of after all 548 eager images.
+    ort_preflight = preflight_onnxruntime()
+    print(f"[preflight] Python: {ort_preflight['python_executable']}")
+    print(f"[preflight] ONNX Runtime: {ort_preflight['onnxruntime_version']}")
+    print(f"[preflight] providers: {ort_preflight['available_providers']}")
+
     model_manifest = json.loads(model_manifest_path.read_text(encoding="utf-8"))
     if model_manifest.get("scope") != "routed_blocks_only":
         raise ValueError("model manifest does not describe routed checkpoint blocks")
@@ -299,6 +330,7 @@ def main() -> int:
         "model_manifest": {"path": str(model_manifest_path), "status": model_manifest.get("status")},
         "data": str(data),
         "execution_semantics": "host_ort_router_conditional_pytorch_checkpoint_experts",
+        "runtime_preflight": ort_preflight,
         "masked_dense_allowed": False,
         "not_a_full_export": True,
         "not_tensorrt": True,

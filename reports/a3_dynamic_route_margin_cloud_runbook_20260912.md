@@ -4,17 +4,20 @@
 
 ## Jupyter Python 单元
 
-先上传 `dynamic_route_margin_audit_cloud_20260912_v1.zip` 到 `/mnt/workspace/`，然后运行：
+先上传 `dynamic_route_margin_audit_cloud_20260912_v2.zip` 到 `/mnt/workspace/`，然后运行。该单元会先在
+**当前 Notebook 的同一个 Python 解释器**中检查并补装 CPU 版 ONNX Runtime，避免 eager 548 张跑完后才
+发现 ORT 缺失。ORT 路由器使用 CPU 不影响 checkpoint 专家继续使用 GPU 0。
 
 ```python
 from pathlib import Path
 import os
+import importlib
 import subprocess
 import sys
 import zipfile
 
 repo = Path("/mnt/workspace/YOLO-Master")
-archive = Path("/mnt/workspace/dynamic_route_margin_audit_cloud_20260912_v1.zip")
+archive = Path("/mnt/workspace/dynamic_route_margin_audit_cloud_20260912_v2.zip")
 checkpoint = repo / "examples/artifacts/mot_v10_visdrone_50e/best_for_quantization.pt"
 bundles = repo / "examples/artifacts/mot_v10_dynamic_blocks/dynamic_model_blocks.json"
 data = repo / "examples/configs/visdrone_local_for_mot.yaml"
@@ -26,6 +29,27 @@ assert archive.is_file(), archive
 assert checkpoint.is_file(), checkpoint
 assert bundles.is_file(), bundles
 assert data.is_file(), data
+
+try:
+    import onnxruntime as ort
+except ImportError:
+    print("Installing ONNX Runtime into:", sys.executable, flush=True)
+    subprocess.check_call([
+        sys.executable,
+        "-m",
+        "pip",
+        "install",
+        "--no-cache-dir",
+        "onnxruntime==1.23.2",
+    ])
+    importlib.invalidate_caches()
+    import onnxruntime as ort
+
+providers = ort.get_available_providers()
+print("Python:", sys.executable, flush=True)
+print("ONNX Runtime:", ort.__version__, flush=True)
+print("Providers:", providers, flush=True)
+assert "CPUExecutionProvider" in providers, providers
 
 with zipfile.ZipFile(archive) as zf:
     bad = [name for name in zf.namelist() if Path(name).is_absolute() or ".." in Path(name).parts]
