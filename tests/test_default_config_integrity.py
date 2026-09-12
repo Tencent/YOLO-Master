@@ -7,7 +7,6 @@ import yaml
 from ultralytics.cfg import check_cfg, get_cfg
 from ultralytics.nn.peft.molora import MoLoRAConfig
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -17,7 +16,7 @@ def _yaml_keys(path: Path):
 
 
 def test_default_yaml_has_unique_top_level_keys():
-    text = (ROOT / "ultralytics/cfg/default.yaml").read_text().splitlines()
+    text = (ROOT / "ultralytics/cfg/default.yaml").read_text(encoding="utf-8").splitlines()
     keys = []
     for line in text:
         stripped = line.strip()
@@ -28,6 +27,7 @@ def test_default_yaml_has_unique_top_level_keys():
 
 def test_mixture_defaults_parse_with_expected_types():
     cfg = get_cfg()
+
     assert isinstance(cfg.latent_aux_gain, float)
     assert cfg.latent_aux_gain == 0.1
     assert isinstance(cfg.molora_top_k_warmup, (int, type(None)))
@@ -38,6 +38,20 @@ def test_mixture_defaults_parse_with_expected_types():
     assert cfg.mot_scene_hidden_dim is None
     assert cfg.mot_scene_inference_mode == "dynamic"
     assert cfg.moa_regional_max_kv_tokens == 4096
+
+
+def test_a2_acceptance_defaults_parse_with_expected_values():
+    cfg = get_cfg()
+
+    assert cfg.stal_area_threshold == 16.0
+    assert cfg.stal_min_candidates == 4
+    assert cfg.a2_model == "v0.1-N"
+    assert cfg.a2_epochs == 120
+    assert cfg.a2_imgsz == 800
+    assert cfg.a2_batch == 8
+    assert cfg.a2_seed == 42
+    assert cfg.a2_patience == 0
+    assert cfg.a2_wandb_project == "yolo-master-a2-0831"
 
 
 def test_new_mixture_float_key_is_type_checked():

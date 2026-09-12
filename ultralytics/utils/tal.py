@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 from . import LOGGER
 from .metrics import bbox_iou, probiou
@@ -352,6 +352,135 @@ class TaskAlignedAssigner(nn.Module):
         # Find each grid serve which gt(index)
         target_gt_idx = mask_pos.argmax(-2)  # (b, h*w)
         return target_gt_idx, fg_mask, mask_pos
+
+
+class AreaAwareTaskAlignedAssigner(TaskAlignedAssigner):
+    """Task-aligned assigner with an area-gated candidate floor for tiny targets.
+
+    The native TAL candidate mask remains unchanged for targets above
+    ``area_threshold`` and for the one-to-one branch. In the one-to-many
+    branch, eligible targets with fewer than ``min_candidates`` geometric
+    candidates receive the nearest missing anchors until that floor is reached.
+    Candidate ranking, overlaps, target scores, and losses remain native TAL.
+    """
+
+    def __init__(self, *args, area_threshold: float = 16.0, min_candidates: int = 4, **kwargs):
+        """Initialize the area-aware candidate floor."""
+        if area_threshold <= 0:
+            raise ValueError("area_threshold must be positive")
+        if min_candidates <= 0:
+            raise ValueError("min_candidates must be positive")
+        super().__init__(*args, **kwargs)
+        self.area_threshold = float(area_threshold)
+        self.min_candidates = int(min_candidates)
+        self.last_area_stats: dict[str, int | str] = {}
+        self._area_valid_mask = None
+        self._area_eligible_mask = None
+        self.last_pre_assigned = None
+
+    def select_candidates_in_gts(self, xy_centers, gt_bboxes, mask_gt, eps=1e-9):
+        """Return native TAL candidates plus the area-gated four-anchor floor."""
+        base_mask = super().select_candidates_in_gts(xy_centers, gt_bboxes, mask_gt, eps)
+        branch = "one2one" if self.topk2 == 1 else "one2many"
+        valid = mask_gt.squeeze(-1).bool()
+        self._area_valid_mask = valid
+        self._area_eligible_mask = torch.zeros_like(valid)
+        self.last_area_stats = {
+            "assignment_branch": branch,
+            "gt_total": int(valid.sum().item()),
+            "eligible_gt": 0,
+            "base_candidates": int(base_mask.sum().item()),
+            "final_candidates": int(base_mask.sum().item()),
+            "floor_added": 0,
+        }
+        if self.topk2 == 1 or not valid.any():
+            return base_mask
+
+        wh = (gt_bboxes[..., 2:] - gt_bboxes[..., :2]).clamp_min(0)
+        area = wh.prod(dim=-1)
+        eligible = (area <= self.area_threshold) & valid
+        self._area_eligible_mask = eligible
+        if not eligible.any():
+            return base_mask
+
+        candidates = base_mask.bool().clone()
+        base_count = candidates.sum(dim=-1)
+        needed = (self.min_candidates - base_count).clamp(min=0)
+        needs_floor = eligible & (needed > 0)
+        if needs_floor.any():
+            centers = (gt_bboxes[..., :2] + gt_bboxes[..., 2:]) / 2
+            distances = (xy_centers.view(1, 1, -1, 2) - centers.unsqueeze(2)).square().sum(dim=-1)
+            distances = distances.masked_fill(candidates, float("inf"))
+            k = min(self.min_candidates, candidates.shape[-1])
+            nearest_missing = distances.topk(k, dim=-1, largest=False).indices
+            selected_ranks = torch.arange(k, device=candidates.device).view(1, 1, -1) < needed.unsqueeze(-1)
+            additions = torch.zeros_like(candidates)
+            additions.scatter_(-1, nearest_missing, selected_ranks)
+            candidates |= additions & needs_floor.unsqueeze(-1)
+
+        final_count = candidates.sum(dim=-1)
+        self.last_area_stats.update(
+            {
+                "eligible_gt": int(eligible.sum().item()),
+                "base_candidates": int(base_count.masked_select(valid).sum().item()),
+                "final_candidates": int(final_count.masked_select(valid).sum().item()),
+                "floor_added": int((candidates & ~base_mask.bool()).sum().item()),
+            }
+        )
+        return candidates
+
+    def get_pos_mask(self, pd_scores, pd_bboxes, gt_labels, gt_bboxes, anc_points, mask_gt):
+        """Select positives with candidate-only tie breaking for eligible targets.
+
+        The ranking tensor is a temporary copy.  It prevents zero-valued anchors
+        outside the candidate mask from winning ties during early training, while
+        the original alignment metrics and overlaps remain unchanged for target
+        normalization and loss computation.
+        """
+        mask_in_gts = self.select_candidates_in_gts(anc_points, gt_bboxes, mask_gt)
+        align_metric, overlaps = self.get_box_metrics(pd_scores, pd_bboxes, gt_labels, gt_bboxes, mask_in_gts * mask_gt)
+        metric_for_topk = align_metric
+        if self.topk2 != 1 and self._area_eligible_mask is not None and self._area_eligible_mask.any():
+            eligible = self._area_eligible_mask.unsqueeze(-1).expand_as(mask_in_gts)
+            metric_for_topk = torch.where(
+                eligible,
+                align_metric.masked_fill(~mask_in_gts.bool(), -1.0),
+                align_metric,
+            )
+        mask_topk = self.select_topk_candidates(metric_for_topk, topk_mask=mask_gt.expand(-1, -1, self.topk).bool())
+        mask_pos = mask_topk * mask_in_gts * mask_gt
+        self.last_pre_assigned = mask_pos.sum(dim=-1).detach()
+        if self.topk2 != 1 and self._area_valid_mask is not None:
+            pre_count = mask_pos.sum(dim=-1)
+            valid = self._area_valid_mask
+            eligible = self._area_eligible_mask
+            self.last_area_stats.update(
+                {
+                    "pre_assigned": int(pre_count.masked_select(valid).sum().item()),
+                    "zero_pre": int((valid & (pre_count == 0)).sum().item()),
+                    "eligible_pre_assigned": int(pre_count.masked_select(eligible).sum().item()),
+                }
+            )
+        return mask_pos, align_metric, overlaps
+
+    def select_highest_overlaps(self, mask_pos, overlaps, n_max_boxes, align_metric):
+        """Run native conflict resolution and record its assignment effect."""
+        conflict_anchors = int((mask_pos.sum(dim=-2) > 1).sum().item())
+        result = super().select_highest_overlaps(mask_pos, overlaps, n_max_boxes, align_metric)
+        if self.topk2 != 1 and self._area_valid_mask is not None:
+            resolved_mask = result[2]
+            post_count = resolved_mask.sum(dim=-1)
+            valid = self._area_valid_mask
+            eligible = self._area_eligible_mask
+            self.last_area_stats.update(
+                {
+                    "post_assigned": int(post_count.masked_select(valid).sum().item()),
+                    "zero_post": int((valid & (post_count == 0)).sum().item()),
+                    "eligible_post_assigned": int(post_count.masked_select(eligible).sum().item()),
+                    "conflict_anchors": conflict_anchors,
+                }
+            )
+        return result
 
 
 class RotatedTaskAlignedAssigner(TaskAlignedAssigner):
