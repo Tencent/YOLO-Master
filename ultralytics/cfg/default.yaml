@@ -107,6 +107,16 @@ warmup_bias_lr: 0.1 # (float) bias learning rate during warmup
 distill_model: # (str, optional) path to teacher model for knowledge distillation
 dis: 6.0 # (float) distillation loss weight
 
+# Small-target adaptive label assignment (training-only; default preserves the existing fixed-stride behavior) -------
+stal_mode: fixed # (str) candidate policy: tal (no expansion), fixed (legacy stride expansion), or adaptive
+stal_small_area: 1024.0 # (float) small-object threshold in assigner-input pixels (32^2)
+stal_medium_area: 9216.0 # (float) medium-object threshold in assigner-input pixels (96^2)
+stal_candidate_scale: 1.5 # (float) adaptive expansion factor applied to small-object width and height
+stal_min_candidates: 3 # (int) minimum pre-conflict candidate anchors guaranteed for each valid small GT
+stal_topk_small: 13 # (int) adaptive top-k for small GT
+stal_topk_medium: 10 # (int) adaptive top-k for medium GT
+stal_topk_large: 10 # (int) adaptive top-k for large GT
+
 # Foundation teacher distillation (training-only, opt-in; does not affect deployment) -------------------------------
 foundation_enabled: False # (bool) enable Foundation Teacher distillation during training
 foundation_teacher: none # (str) teacher family: none, dinov3, siglip2, or multi
