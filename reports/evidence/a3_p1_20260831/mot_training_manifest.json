@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "family": "MoT",
+  "model": "YOLO-Master-v0.10-MoT-N",
+  "model_cfg": "/mnt/workspace/YOLO-Master/ultralytics/cfg/models/master/v0_10/det/yolo-master-mot-n.yaml",
+  "data_yaml": "/mnt/workspace/YOLO-Master/examples/configs/visdrone_local_for_mot.yaml",
+  "dataset_root": "/mnt/workspace/visdrone",
+  "training": {
+    "epochs": 50,
+    "imgsz": 640,
+    "batch": 8,
+    "optimizer": "AdamW",
+    "lr0": 0.001,
+    "amp": false,
+    "seed": 42,
+    "device": "NVIDIA A10"
+  },
+  "run_dir": "/mnt/workspace/YOLO-Master/examples/runs/train/mot_v10_visdrone_50e",
+  "best_pt": "/mnt/workspace/YOLO-Master/examples/runs/train/mot_v10_visdrone_50e/weights/best.pt",
+  "last_pt": "/mnt/workspace/YOLO-Master/examples/runs/train/mot_v10_visdrone_50e/weights/last.pt",
+  "quantization_source": "/mnt/workspace/YOLO-Master/examples/artifacts/mot_v10_visdrone_50e/best_for_quantization.pt",
+  "created_at": "2026-08-31 17:06:58"
+}

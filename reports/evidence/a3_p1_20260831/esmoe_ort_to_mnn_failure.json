@@ -1,0 +1,204 @@
+{
+  "classification": "ORT-calibrated Conv INT8 PTQ converted to MNN",
+  "original_model_classification": "sparse-to-dense fallback",
+  "true_dynamic_sparse_dispatch": false,
+  "full_graph_int8": false,
+  "quantized_ops": [
+    "Conv"
+  ],
+  "float_ops": "Routing TopK/OneHot/mask and unsupported operators remain FP32",
+  "calibration_dataset": "VisDrone train",
+  "calibration_images": 300,
+  "calibration_method": "MinMax",
+  "native_mnn_ptq_failed": true,
+  "native_mnn_failure_manifest": "/mnt/workspace/YOLO-Master/examples/exports/mnn_dense_fallback/ptq_runs/retry_20260831_114127/ptq_crash_resolution.json",
+  "attempts": [
+    {
+      "name": "QDQ_S8S8",
+      "int8_onnx": "/mnt/workspace/YOLO-Master/examples/exports/mnn_dense_fallback/ort_ptq_to_mnn_runs/20260831_114542/QDQ_S8S8/dense_fallback_conv_int8_ptq.onnx",
+      "int8_mnn": "/mnt/workspace/YOLO-Master/examples/exports/mnn_dense_fallback/ort_ptq_to_mnn_runs/20260831_114542/QDQ_S8S8/dense_fallback_conv_int8_ptq.mnn",
+      "ort_ptq_success": true,
+      "ort_runtime_success": true,
+      "mnn_conversion_success": true,
+      "mnn_runtime_success": false,
+      "mnn_int8_graph_verified": true,
+      "onnx_op_counts": {
+        "Constant": 243,
+        "QuantizeLinear": 283,
+        "DequantizeLinear": 586,
+        "ConstantOfShape": 4,
+        "Conv": 160,
+        "Sigmoid": 106,
+        "Mul": 144,
+        "Split": 14,
+        "Add": 49,
+        "Concat": 28,
+        "GlobalAveragePool": 4,
+        "Reshape": 68,
+        "Clip": 16,
+        "Cast": 20,
+        "Softmax": 13,
+        "TopK": 8,
+        "Transpose": 73,
+        "OneHot": 8,
+        "ReduceSum": 16,
+        "Div": 10,
+        "Expand": 4,
+        "Tile": 4,
+        "ReduceMean": 4,
+        "GreaterOrEqual": 4,
+        "Or": 4,
+        "Unsqueeze": 4,
+        "Slice": 26,
+        "BatchNormalization": 4,
+        "Shape": 9,
+        "MatMul": 16,
+        "Resize": 2,
+        "Gather": 1,
+        "Sub": 2
+      },
+      "ort_three_image": [
+        {
+          "image": "0000001_02999_d_0000005.jpg",
+          "box_mae": 5.22668981552124,
+          "score_mae": 0.0003400807036086917,
+          "score_max_diff": 0.27096861600875854
+        },
+        {
+          "image": "0000280_02201_d_0000623.jpg",
+          "box_mae": 6.88189697265625,
+          "score_mae": 0.0005602115415968001,
+          "score_max_diff": 0.5595138072967529
+        },
+        {
+          "image": "0000364_01765_d_0000782.jpg",
+          "box_mae": 6.392284393310547,
+          "score_mae": 0.0005332695436663926,
+          "score_max_diff": 0.40940579771995544
+        }
+      ],
+      "mnnconvert_command": [
+        "/usr/local/bin/mnnconvert",
+        "-f",
+        "ONNX",
+        "--modelFile",
+        "/mnt/workspace/YOLO-Master/examples/exports/mnn_dense_fallback/ort_ptq_to_mnn_runs/20260831_114542/QDQ_S8S8/dense_fallback_conv_int8_ptq.onnx",
+        "--MNNModel",
+        "/mnt/workspace/YOLO-Master/examples/exports/mnn_dense_fallback/ort_ptq_to_mnn_runs/20260831_114542/QDQ_S8S8/dense_fallback_conv_int8_ptq.mnn",
+        "--bizCode",
+        "YOLO_Master_A3_ORT_PTQ",
+        "--keepInputFormat"
+      ],
+      "mnnconvert_return_code": 0,
+      "mnnconvert_log": "/mnt/workspace/YOLO-Master/examples/exports/mnn_dense_fallback/ort_ptq_to_mnn_runs/20260831_114542/QDQ_S8S8/mnnconvert.log",
+      "mnn_dump": {
+        "command": [
+          "/usr/local/bin/mnnconvert",
+          "-f",
+          "MNN",
+          "--modelFile",
+          "/mnt/workspace/YOLO-Master/examples/exports/mnn_dense_fallback/ort_ptq_to_mnn_runs/20260831_114542/QDQ_S8S8/dense_fallback_conv_int8_ptq.mnn",
+          "--JsonFile",
+          "/mnt/workspace/YOLO-Master/examples/exports/mnn_dense_fallback/ort_ptq_to_mnn_runs/20260831_114542/QDQ_S8S8/int8_model.json"
+        ],
+        "return_code": 0,
+        "output": "The device supports: i8sdot:0, fp16:0, i8mm: 0, sve2: 0, sme2: 0\nThe device supports: i8sdot:0, fp16:0, i8mm: 0, sve2: 0, sme2: 0\nDon't has bizCode, use MNNTest for default\nStart to Convert Other Model Format To MNN Model..., target version: 3.6\nMNNModel /mnt/workspace/YOLO-Master/examples/exports/mnn_dense_fallback/ort_ptq_to_mnn_runs/20260831_114542/QDQ_S8S8/dense_fallback_conv_int8_ptq.mnn has convert to JsonFile /mnt/workspace/YOLO-Master/examples/exports/mnn_dense_fallback/ort_ptq_to_mnn_runs/20260831_114542/QDQ_S8S8/int8_model.json.\n",
+        "json_exists": true
+      },
+      "mnn_quant_marker_counts": {
+        "ConvInt8": 0,
+        "DepthwiseConvInt8": 0,
+        "FloatToInt8": 1,
+        "Int8ToFloat": 1,
+        "symmetricQuan": 0,
+        "quanParameter": 0,
+        "quantInfo": 0
+      },
+      "mnn_runtime_error": "RuntimeError: 异常输出形状：(0, 0, 0, 0)"
+    },
+    {
+      "name": "QOperator_U8S8",
+      "int8_onnx": "/mnt/workspace/YOLO-Master/examples/exports/mnn_dense_fallback/ort_ptq_to_mnn_runs/20260831_114542/QOperator_U8S8/dense_fallback_conv_int8_ptq.onnx",
+      "int8_mnn": "/mnt/workspace/YOLO-Master/examples/exports/mnn_dense_fallback/ort_ptq_to_mnn_runs/20260831_114542/QOperator_U8S8/dense_fallback_conv_int8_ptq.mnn",
+      "ort_ptq_success": true,
+      "ort_runtime_success": true,
+      "mnn_conversion_success": false,
+      "mnn_runtime_success": false,
+      "mnn_int8_graph_verified": false,
+      "onnx_op_counts": {
+        "Constant": 243,
+        "QuantizeLinear": 123,
+        "ConstantOfShape": 4,
+        "QLinearConv": 160,
+        "DequantizeLinear": 144,
+        "Sigmoid": 106,
+        "Mul": 144,
+        "Split": 14,
+        "Add": 49,
+        "Concat": 28,
+        "GlobalAveragePool": 4,
+        "Reshape": 68,
+        "Clip": 16,
+        "Cast": 20,
+        "Softmax": 13,
+        "TopK": 8,
+        "Transpose": 73,
+        "OneHot": 8,
+        "ReduceSum": 16,
+        "Div": 10,
+        "Expand": 4,
+        "Tile": 4,
+        "ReduceMean": 4,
+        "GreaterOrEqual": 4,
+        "Or": 4,
+        "Unsqueeze": 4,
+        "Slice": 26,
+        "BatchNormalization": 4,
+        "Shape": 9,
+        "MatMul": 16,
+        "Resize": 2,
+        "Gather": 1,
+        "Sub": 2
+      },
+      "ort_three_image": [
+        {
+          "image": "0000001_02999_d_0000005.jpg",
+          "box_mae": 6.540894508361816,
+          "score_mae": 0.0001855560258263722,
+          "score_max_diff": 0.3117648661136627
+        },
+        {
+          "image": "0000280_02201_d_0000623.jpg",
+          "box_mae": 6.362729549407959,
+          "score_mae": 0.00033404561690986156,
+          "score_max_diff": 0.545845627784729
+        },
+        {
+          "image": "0000364_01765_d_0000782.jpg",
+          "box_mae": 6.309072971343994,
+          "score_mae": 0.0003865458129439503,
+          "score_max_diff": 0.20894435048103333
+        }
+      ],
+      "mnnconvert_command": [
+        "/usr/local/bin/mnnconvert",
+        "-f",
+        "ONNX",
+        "--modelFile",
+        "/mnt/workspace/YOLO-Master/examples/exports/mnn_dense_fallback/ort_ptq_to_mnn_runs/20260831_114542/QOperator_U8S8/dense_fallback_conv_int8_ptq.onnx",
+        "--MNNModel",
+        "/mnt/workspace/YOLO-Master/examples/exports/mnn_dense_fallback/ort_ptq_to_mnn_runs/20260831_114542/QOperator_U8S8/dense_fallback_conv_int8_ptq.mnn",
+        "--bizCode",
+        "YOLO_Master_A3_ORT_PTQ",
+        "--keepInputFormat"
+      ],
+      "mnnconvert_return_code": 1,
+      "mnnconvert_log": "/mnt/workspace/YOLO-Master/examples/exports/mnn_dense_fallback/ort_ptq_to_mnn_runs/20260831_114542/QOperator_U8S8/mnnconvert.log",
+      "mnn_conversion_error": "MNNConvert rejected quantized ONNX"
+    }
+  ],
+  "selected": null,
+  "accuracy_evaluated": false,
+  "npu_evaluated": false,
+  "success": false
+}

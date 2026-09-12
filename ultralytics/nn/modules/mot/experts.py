@@ -45,7 +45,9 @@ def _sdpa(
     bounds peak memory to O(chunk·N) instead of materialising the full N×N
     matrix — so it no longer crashes at high resolution, only runs slower.
     """
-    if hasattr(F, "scaled_dot_product_attention"):
+    # The legacy ONNX exporter mishandles an explicit Python-float SDPA scale.
+    # Reuse the explicit attention fallback only while tracing an ONNX graph.
+    if hasattr(F, "scaled_dot_product_attention") and not torch.onnx.is_in_onnx_export():
         return F.scaled_dot_product_attention(q, k, v, attn_mask=mask, scale=scale)
     n_tokens = q.shape[-2]
     if n_tokens > _SDPA_EXPLICIT_MAX_TOKENS:

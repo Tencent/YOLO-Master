@@ -32,6 +32,8 @@ NEW_BODY = (
     "                rank0 = F.one_hot(importance.argmax(dim=1), E).bool()\n"
     "                keep = in_topk & (rank0 | (importance >= thr))\n"
     "                masked_w = routing_weights * keep.to(routing_weights.dtype).view(B, E, 1, 1)\n"
+    "                normalizer = masked_w.sum(dim=1, keepdim=True).clamp_min(torch.finfo(routing_weights.dtype).eps)\n"
+    "                masked_w = masked_w / normalizer\n"
     "            else:\n"
     "                # NCNN: pnnx cannot lower topk OR comparison ops, so pruning is\n"
     "                # impossible — fall back to all-experts dense (valid graph).\n"
@@ -52,7 +54,11 @@ NEW_BODY = (
 p = Path(sys.argv[1])
 s = p.read_text()
 a = s.index("    def _dense_forward(self, x, routing_weights):")
-b = s.index("    def _compute_load_balancing_loss")
+# Replace only _dense_forward.  _sparse_forward is a separate method in current
+# YOLO-Master and must remain available for eager sparse inference.
+b = s.index("    def _sparse_forward(self, x, routing_weights):", a)
 s = s[:a] + NEW_BODY + s[b:]
+if "    def _sparse_forward(self, x, routing_weights):" not in s:
+    raise RuntimeError("refusing to write patch: _sparse_forward would be missing")
 p.write_text(s)
 print("PATCHED _dense_forward (topk + topk-free pruning)")

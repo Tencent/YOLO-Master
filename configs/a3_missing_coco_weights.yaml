@@ -1,0 +1,71 @@
+# Training contract for the four missing COCO routed-model checkpoints.
+# All paths may be overridden with environment variables before invoking the
+# Python runner. Runs are deliberately single-family and single-GPU.
+schema_version: 1
+
+paths:
+  coco_root: ${A3_COCO_ROOT:-/mnt/workspace/datasets/coco}
+  # The existing routed MoE result is kept as the MoE family checkpoint only.
+  moe_weight: ${A3_MOE_WEIGHT:-/mnt/workspace/yolo_master_n.pt}
+  # The official YOLO26n COCO checkpoint initializes all four missing families.
+  initializer_weight: ${A3_INITIALIZER_COCO_WEIGHT:-/mnt/workspace/yolo26n.pt}
+  # A new root prevents the interrupted 30-epoch/full-COCO run from being resumed.
+  output_root: ${A3_TRAIN_OUTPUT_ROOT:-/mnt/workspace/a3_coco_training_budget_v1}
+  registry_root: ${A3_WEIGHT_ROOT:-/mnt/workspace/weights}
+
+dataset:
+  expected_train_images: 118287
+  expected_val_images: 5000
+  minimum_train_labels: 110000
+  minimum_val_labels: 4000
+
+training:
+  # Quota-aware real training: the same deterministic 10% COCO subset is used
+  # for every missing family; final validation remains the complete COCO val2017.
+  epochs: 5
+  fraction: 0.10
+  imgsz: 640
+  batch: 4
+  workers: 8
+  device: cuda:0
+  optimizer: AdamW
+  lr0: 0.001
+  lrf: 0.01
+  weight_decay: 0.0005
+  warmup_epochs: 1.0
+  close_mosaic: 2
+  cos_lr: true
+  amp: true
+  seed: 42
+  deterministic: true
+  cache: false
+  save_period: 1
+  plots: false
+
+models:
+  moa:
+    config: repo://ultralytics/cfg/models/26/yolo26-master-moa-n.yaml
+    registered_weight: moa_coco.pt
+    minimum_transfer_ratio: 0.70
+  mot:
+    config: repo://ultralytics/cfg/models/26/yolo26-master-mot-n.yaml
+    registered_weight: mot_coco.pt
+    minimum_transfer_ratio: 0.60
+  molora:
+    # MoLoRA is attached to the official trained YOLO26n COCO initializer.
+    config: repo://ultralytics/cfg/models/26/yolo26-master-n.yaml
+    registered_weight: molora_coco.pt
+    minimum_transfer_ratio: 1.0
+    trainer_overrides:
+      molora_num_experts: 4
+      molora_top_k: 2
+      molora_router_type: linear
+      molora_r: 8
+      molora_alpha: 16
+      molora_balance_loss: 0.01
+      molora_router_z_loss: 0.001
+      molora_use_rslora: true
+  latent:
+    config: repo://ultralytics/cfg/models/26/yolo26-master-latent-n.yaml
+    registered_weight: latent_coco.pt
+    minimum_transfer_ratio: 0.25

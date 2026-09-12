@@ -601,9 +601,15 @@ class ES_MOE(nn.Module):
             sparse_dispatch=eager_sparse,
             eager_sparse_dispatch=eager_sparse,
             training_sparse_dispatch=False,
+            dynamic_export_available=eager_sparse,
+            dynamic_export_strategy="split_onnx_host_dispatch" if eager_sparse else None,
+            dynamic_export_routing_granularity="sample",
+            dynamic_export_compute_reduction_guaranteed_per_sample=eager_sparse,
+            masked_dense_is_dynamic_execution=False,
             sparse_export_limitation=(
                 "ES_MOE eager inference supports sample-level Top-K dispatch; ONNX and TorchScript tracing execute "
-                "all experts through the dense fallback."
+                "all experts through the dense fallback. Use dynamic_runtime.export_dynamic_expert_bundle for "
+                "split router/expert artifacts with host-side conditional execution."
             ),
         )
         return capabilities

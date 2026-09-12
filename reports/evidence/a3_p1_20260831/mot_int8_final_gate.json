@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "family": "MoT",
+  "experiment": "ONNX Runtime Conv static INT8 PTQ, QDQ S8S8",
+  "status": "PASS",
+  "evaluation": {
+    "dataset": "VisDrone val",
+    "images": 548,
+    "imgsz": 640,
+    "provider": "CPUExecutionProvider",
+    "same_preprocessing": true,
+    "same_postprocessing": true
+  },
+  "fp32": {
+    "mAP50": 0.0551070479205116,
+    "mAP50-95": 0.03058921335971764,
+    "per_class_AP50": {
+      "0": 0.05102559621239194,
+      "1": 0.15012676831217509,
+      "2": 0.03753230455180254,
+      "3": 0.03672773716377784,
+      "4": 0.06682680487890047,
+      "5": 0.004700977679096716,
+      "6": 0.0939161945659482,
+      "7": 0.0
+    },
+    "latency_ms": 143.42130973839957,
+    "fps": 6.972464564882302,
+    "size_mb": 17.4929141998291,
+    "model_path": "/mnt/workspace/YOLO-Master/examples/exports/mot_v10_visdrone_fp32/mot_v10_masked_topk_fp32.onnx",
+    "evaluation_seconds": 137.83558040857315
+  },
+  "int8": {
+    "mAP50": 0.056098550258419276,
+    "mAP50-95": 0.030531749807394308,
+    "per_class_AP50": {
+      "0": 0.053588006924563045,
+      "1": 0.12840610226977284,
+      "2": 0.03581045065632113,
+      "3": 0.047105976772638905,
+      "4": 0.08987568135721173,
+      "5": 0.004621379982267891,
+      "6": 0.08938080410457865,
+      "7": 0.0
+    },
+    "latency_ms": 188.12031217640006,
+    "fps": 5.315747079253738,
+    "size_mb": 8.510103225708008,
+    "model_path": "/mnt/workspace/YOLO-Master/examples/exports/mot_v10_visdrone_int8/mot_v10_qdq_s8s8_int8.onnx",
+    "evaluation_seconds": 165.17454603873193
+  },
+  "comparison": {
+    "delta_mAP50-95": -5.7463552323333555e-05,
+    "delta_percentage_points": -0.0057463552323333555,
+    "absolute_delta_percentage_points": 0.0057463552323333555,
+    "target_max_percentage_points": 0.5,
+    "latency_change_ms": 44.69900243800049,
+    "latency_change_percent": 31.166221058454614,
+    "speedup_ratio": 0.7623914083446431,
+    "size_reduction_percent": 51.35114064761635,
+    "latency_benefit": false,
+    "size_benefit": true
+  },
+  "checks": {
+    "fp32_nonzero": true,
+    "int8_nonzero": true,
+    "finite": true,
+    "accuracy_within_0_5_percentage_points": true
+  },
+  "quantization_scope": {
+    "mixed_precision": true,
+    "quantized_operator": "Conv",
+    "kept_fp32": [
+      "TopK",
+      "Softmax",
+      "MatMul",
+      "Transformer attention",
+      "routing control"
+    ],
+    "claim_boundary": "该模型属于 Conv INT8 + 路由/注意力 FP32 的混合精度 PTQ，不是全模型纯 INT8"
+  },
+  "failed_attempt": {
+    "name": "QOperator U8S8",
+    "status": "FAILED",
+    "error": "AttributeError(\"'NoneType' object has no attribute 'data_type'\")",
+    "interpretation": "ONNX Runtime QOperator 量化器无法解析部分非标准 bias 的 data_type；作为量化工具兼容性失败记录"
+  },
+  "ptq_manifest": "/mnt/workspace/YOLO-Master/examples/exports/mot_v10_visdrone_int8/MOT_ORT_INT8_PTQ_MANIFEST.json",
+  "full_metrics": "/mnt/workspace/YOLO-Master/examples/results/mot_v10_ort_int8/MOT_FP32_INT8_FULL_548_CPU_METRICS.json",
+  "created_at": "2026-08-31 21:21:18"
+}
