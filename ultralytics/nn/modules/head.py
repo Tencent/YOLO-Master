@@ -242,7 +242,7 @@ class Detect(nn.Module):
         Returns:
             (torch.Tensor, torch.Tensor, torch.Tensor): Top scores, class indices, and filtered indices.
         """
-        batch_size, anchors, nc = scores.shape  # i.e. shape(16,8400,80)
+        _, anchors, nc = scores.shape  # i.e. shape(16,8400,80)
         # Use max_det directly during export for TensorRT compatibility (requires k to be constant),
         # otherwise use min(max_det, anchors) for safety with small inputs during Python inference
         k = max_det if self.export else min(max_det, anchors)
@@ -254,7 +254,9 @@ class Detect(nn.Module):
         ori_index = scores.max(dim=-1)[0].topk(k)[1].unsqueeze(-1)
         scores = scores.gather(dim=1, index=ori_index.repeat(1, 1, nc))
         scores, index = scores.flatten(1).topk(k)
-        idx = ori_index[torch.arange(batch_size)[..., None], index // nc]  # original index
+        # NOTE: torch.gather 与高级索引语义等价，但 ONNX 有原生 GatherElements 对应，
+        # 避免 aten::index 在导出时被拼装为不等价算子组合（torch 2.5.1 + onnx 1.22.0 下坐标列错位）
+        idx = torch.gather(ori_index, 1, (index // nc).unsqueeze(-1))  # original index
         return scores[..., None], (index % nc)[..., None].float(), idx
 
     def fuse(self) -> None:
