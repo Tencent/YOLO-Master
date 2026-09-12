@@ -4,9 +4,10 @@ import json
 
 import pytest
 import torch
-import torch.nn as nn
 from PIL import Image
+from torch import nn
 
+from ultralytics.nn.modules.latent_mixture import LatentMixture
 from ultralytics.nn.modules.moa import MoABlock
 from ultralytics.nn.modules.moe.modules import ES_MOE, OptimizedMOE
 from ultralytics.nn.modules.mot import MoTBlock
@@ -291,10 +292,16 @@ def test_single_sample_dataset_metrics_have_finite_zero_spread():
             torch.randn(2, 8, 4, 5),
             (2, 3),
         ),
+        (
+            LatentMixture([8, 8], 8, num_experts=4),
+            [torch.randn(1, 8, 4, 5), torch.randn(1, 8, 4, 5)],
+            (1, 4),
+        ),
     ],
 )
 def test_capture_routing_supports_real_mixture_families(module, batch, expected_shape):
-    heatmap = RoutingInterpreter(module).capture_routing(batch, layer_name="<root>")["<root>"]
+    forward_fn = (lambda model, values: model(values)) if isinstance(module, LatentMixture) else None
+    heatmap = RoutingInterpreter(module).capture_routing(batch, layer_name="<root>", forward_fn=forward_fn)["<root>"]
 
     assert tuple(heatmap.probabilities.shape) == expected_shape
     assert torch.allclose(
