@@ -1,0 +1,19 @@
+run_id: p2i-20260905-image-driver-v1
+require_committed_source: true
+
+parent_run_dir: artifacts/p2/p2s-20260905-coco128-32-v1
+expected_parent_run_id: p2s-20260905-coco128-32-v1
+expected_parent_manifest_sha256: 42d85cb411ef3776bc03b857025dcb77304b5530c4b4b2b4218d0d773d8d45c1
+
+expected_image_count: 32
+expected_seeds: [0, 1, 2]
+candidate_transformations:
+  - brightness_090
+  - contrast_090
+  - gaussian_blur_075
+endpoints:
+  - probability_mae
+  - dominant_switch_fraction
+
+bootstrap_draws: 10000
+bootstrap_seed: 20260905

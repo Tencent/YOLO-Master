@@ -1,0 +1,31 @@
+run_id: p0-20260831-cpu-multisample
+schema_version: e3.routing/v1.0.0
+
+# Run against the containing YOLO-Master checkout.
+runtime_root: ../..
+official_locked_base_ref: acce839c7e895d6b179de7f7093fa879e237cc7b
+official_runtime_ref: 7bfbfd374a6b44720f98366e088f3a962e16321d
+official_runtime_tree: cfdc006e9da0f0daa6ead7aa66af742983ea14bc
+official_source_archive_url: https://codeload.github.com/Tencent/YOLO-Master/zip/7bfbfd374a6b44720f98366e088f3a962e16321d
+official_source_archive_sha256: null  # live Git checkout is bound by commit/tree; frozen evidence keeps its archive hash
+
+device: cpu
+seed: 0
+dataset: coco8.yaml
+dataset_split: val
+sample_indices: [0, 1, 2, 3]
+image_size: 64
+primary_batch_size: 1
+boundary_batch_sizes: [2, 4]
+repeat_primary_passes: 2
+batch_consistency_tolerance: 0.00001
+selection_policy: leaf_routed_modules
+moe_snapshot_interval: 1
+
+profiles:
+  moe:
+    model_config: ultralytics/cfg/models/26/yolo26-master-n.yaml
+  mot:
+    model_config: ultralytics/cfg/models/26/yolo26-master-mot-n.yaml
+  latent:
+    model_config: ultralytics/cfg/models/26/yolo26-master-latent-n.yaml
