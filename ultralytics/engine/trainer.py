@@ -1434,6 +1434,7 @@ class BaseTrainer:
                     "augmentations",
                     "save_period",
                     "workers",
+                    "amp",
                     "cache",
                     "epochs",
                     "fraction",
@@ -1487,8 +1488,20 @@ class BaseTrainer:
                     if not adapter_active:
                         raise
                     LOGGER.warning("[PEFT] Resume optimizer state is incompatible; using the initialized optimizer.")
-        if ckpt.get("scaler") is not None:
-            self.scaler.load_state_dict(ckpt["scaler"])
+        scaler_state = ckpt.get("scaler")
+        if scaler_state == {}:
+            # AMP can have been disabled by NaN recovery even when the saved
+            # launch arguments still say amp=True. Preserve that runtime mode.
+            if getattr(self, "amp", False):
+                LOGGER.warning("Checkpoint GradScaler was disabled; resuming with AMP disabled.")
+            self.amp = False
+            if (args := getattr(self, "args", None)) is not None:
+                args.amp = False
+            self.scaler = (
+                torch.amp.GradScaler("cuda", enabled=False) if TORCH_2_4 else torch.cuda.amp.GradScaler(enabled=False)
+            )
+        elif scaler_state is not None:
+            self.scaler.load_state_dict(scaler_state)
         self.optimizer_steps = int(ckpt.get("optimizer_steps", getattr(self, "optimizer_steps", 0)))
         if self.ema and ckpt.get("ema"):
             from ultralytics.nn.mixture_loss import initialize_mixture_loss_ema_buffer
