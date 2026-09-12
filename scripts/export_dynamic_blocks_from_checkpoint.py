@@ -23,6 +23,7 @@ from ultralytics.nn.modules.dynamic_runtime import (
 )
 from ultralytics.nn.modules.moe.modules import ES_MOE
 from ultralytics.nn.modules.mot.block import MoTBlock
+from ultralytics.nn.modules.topk_contract import LEGACY_PRIORITY_BIAS_TOPK
 
 
 def parse_args() -> argparse.Namespace:
@@ -209,6 +210,7 @@ def component_parity_errors(
                     top_k=int(manifest["top_k"]),
                     zero_tolerance=float(manifest["zero_tolerance"]),
                     tie_tolerance=float(manifest.get("host_topk_tie_tolerance", 0.0)),
+                    tie_break=str(manifest.get("host_topk_tie_break", LEGACY_PRIORITY_BIAS_TOPK)),
                 )
             )
         router_error = float((eager_router.cpu() - ort_router).abs().max())
@@ -324,6 +326,8 @@ def main() -> None:
             "routing_granularity": bundle["routing_granularity"],
             "num_experts": bundle["num_experts"],
             "top_k": bundle["top_k"],
+            "host_topk_tie_break": bundle["host_topk_tie_break"],
+            "host_topk_tie_tolerance": bundle["host_topk_tie_tolerance"],
             "compute_reduction_guaranteed_per_sample": bundle[
                 "compute_reduction_guaranteed_per_sample"
             ],

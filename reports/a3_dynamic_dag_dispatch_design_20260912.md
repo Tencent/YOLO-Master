@@ -70,4 +70,5 @@ dispatch 节点的实际专家 ID、样本/专家对数量和相对 dense 的缩
 代码合并前需要一次 GPU 云端任务：重新导出真实 MoT checkpoint 的 6 个动态块，并对 VisDrone val 548 张
 运行 eager 与混合动态路径。门禁至少包括：mAP50-95 差值不超过 `0.5` 个百分点、路由漂移统计、6/6 块执行、
 未选专家调用缩减。此任务仍是“GPU PyTorch 专家 + CPU ORT 路由”；只有进入 CUDA/TensorRT backend 阶段
-才开始采集部署性能。
+才开始采集部署性能。可直接运行的 Notebook 单元见
+[`a3_deterministic_topk_cloud_revalidation_20260912.md`](a3_deterministic_topk_cloud_revalidation_20260912.md)。

@@ -115,7 +115,8 @@ MoA 的概率误差很小但排名翻转很多，说明专家分数存在大量�
 1. 立即提交现有锁、五族精度表、逐层路由 CSV、复现脚本、测试和本报告。
 2. PR 中把 P2 状态写为“measurement complete, gate failed”，将未通过项登记为后续工作。
 3. 在云端用新确定性 Top-K 合同重新跑真实 MoT checkpoint + VisDrone val 548 张，验证 mAP 门禁、
-   路由漂移和 6/6 动态块执行；本地构造测试不能替代该证据。
+   路由漂移和 6/6 动态块执行；本地构造测试不能替代该证据。完整运行单元见
+   [`a3_deterministic_topk_cloud_revalidation_20260912.md`](a3_deterministic_topk_cloud_revalidation_20260912.md)。
 4. 生成完整 YOLO 动态 DAG，并实现 CUDA/TensorRT `ConditionalDispatchBackend`；空间路由优先做
    token/window 分组，避免 batch union 覆盖全专家。
 5. GPU 延迟只在真正条件执行 backend 正确性通过后测试，同时记录 provider、batch、warmup、重复次数、
