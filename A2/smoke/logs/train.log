@@ -1,0 +1,85 @@
+Generated VisDrone-smoke subset: D:\CODE\smoke\datasets\VisDrone-smoke (D:\CODE\smoke\datasets\VisDrone-smoke.yaml)
+WARNING no model scale passed. Assuming scale='n'.
+New https://pypi.org/project/ultralytics/8.4.137 available  Update with 'pip install -U ultralytics'
+Ultralytics 8.4.101  Python-3.11.15 torch-2.11.0+cu128 CUDA:0 (NVIDIA GeForce RTX 5070 Ti Laptop GPU, 12199MiB)
+[34m[1mengine\trainer: [0magnostic_nms=False, amp=True, angle=1.0, augment=False, auto_augment=randaugment, batch=4, bgr=0.0, box=7.5, cache=False, cfg=None, classes=None, close_mosaic=10, cls=0.5, cls_pw=0.0, cls_remap=True, cluster=False, compile=False, conf=None, copy_paste=0.0, copy_paste_mode=flip, cos_lr=False, cutmix=0.0, data=D:\CODE\smoke\datasets\VisDrone-smoke.yaml, degrees=0.0, deterministic=True, device=0, dfl=1.5, dis=6.0, distill_model=None, dnn=False, dropout=0.0, dynamic=False, embed=None, end2end=None, epochs=1, erasing=0.4, exist_ok=False, fliplr=0.5, flipud=0.0, format=torchscript, foundation_align_dim=256, foundation_backend=transformers, foundation_background_weight=0.25, foundation_boundary_weight=1.0, foundation_cache_teacher_features=False, foundation_cosine_weight=1.0, foundation_decay_start=0.7, foundation_dinov3_model=None, foundation_dinov3_weights=None, foundation_enabled=False, foundation_foreground_weight=1.5, foundation_foreground_weighting=False, foundation_gate_cosine=1.0, foundation_gate_cosine_low=0.9, foundation_gate_ema=0.9, foundation_gate_width=0.05, foundation_loss=relational, foundation_loss_weight=0.0, foundation_model=None, foundation_multiscale=False, foundation_multitask=False, foundation_multitask_enabled=False, foundation_multitask_negative_transfer_threshold=4.0, foundation_multitask_tasks=None, foundation_relation_mode=sampled, foundation_relation_samples=256, foundation_relation_weight=1.0, foundation_router_distill=False, foundation_router_loss_weight=0.0, foundation_router_native_state=True, foundation_router_teachers=['dinov3', 'siglip2'], foundation_router_temperature=1.0, foundation_semantic_distill=False, foundation_semantic_image_weight=1.0, foundation_semantic_loss_weight=0.0, foundation_semantic_prompt_template=a photo of a {class_name}, foundation_semantic_prompts=None, foundation_semantic_temperature=0.07, foundation_semantic_text_weight=1.0, foundation_siglip2_model=google/siglip2-base-patch16-512, foundation_siglip2_weights=None, foundation_target_levels=['p4'], foundation_teacher=none, foundation_teacher_device=auto, foundation_teacher_dtype=auto, foundation_warmup_floor=0.2, foundation_weight_schedule=constant, foundation_weights=None, fraction=1.0, freeze=None, hsv_h=0.015, hsv_s=0.7, hsv_v=0.4, imgsz=320, iou=0.7, iou_type=iou, keras=False, kobj=1.0, latent_aux_gain=0.1, latent_inference_top_k=None, line_width=None, lora_adapter_budget=None, lora_adapter_dir=lora_adapter, lora_allow_depthwise=False, lora_allow_rtdetr_dora=False, lora_alpha=32, lora_alpha_warmup=3, lora_auto_r_ratio=0.0, lora_backend=auto, lora_beta1=0.85, lora_beta2=0.85, lora_bias=none, lora_boft_block_num=0, lora_boft_block_size=2, lora_boft_n_butterfly_factor=2, lora_delta_t=1, lora_dropout=0.05, lora_dropout_end=0.15, lora_dropout_start_ratio=0.3, lora_exclude_modules=None, lora_few_shot_adaptive_rank=True, lora_few_shot_adaptive_temperature=False, lora_few_shot_curriculum_sampling=False, lora_few_shot_distill_layers=None, lora_few_shot_distill_schedule=cosine, lora_few_shot_distill_weight=0.5, lora_few_shot_distill_weight_max=1.0, lora_few_shot_distill_weight_min=0.1, lora_few_shot_dropconnect=0.1, lora_few_shot_dropconnect_max=0.3, lora_few_shot_dropconnect_min=0.0, lora_few_shot_dropconnect_schedule=cosine, lora_few_shot_ema_decay=0.999, lora_few_shot_gradient_importance_weighted=False, lora_few_shot_hierarchical_distill=False, lora_few_shot_hook_cache=True, lora_few_shot_layerwise_rank=False, lora_few_shot_mode=False, lora_few_shot_rank_budget=0.5, lora_few_shot_response_distill=False, lora_few_shot_response_distill_weight=0.3, lora_few_shot_teacher=None, lora_few_shot_use_ema_teacher=False, lora_few_shot_variational_rank=False, lora_freeze_bn=False, lora_from_layer=None, lora_gradient_checkpointing=True, lora_hra_apply_gs=False, lora_include_attention=False, lora_include_head=False, lora_include_moe=False, lora_init_lora_weights=True, lora_init_r=12, lora_kernels=None, lora_last_n=None, lora_layer_decay=0.85, lora_lr_mult=2.0, lora_min_channels=0, lora_oft_block_share=False, lora_oft_block_size=0, lora_oft_coft=False, lora_oft_eps=6e-05, lora_only_3x3=False, lora_only_backbone=False, lora_orth_reg_weight=0.5, lora_ortho_frequency=10, lora_ortho_weight=0.0, lora_planner_backend=legacy, lora_planner_enabled=False, lora_planner_solver=ao, lora_quantization=none, lora_r=0, lora_rank_pattern=None, lora_save_adapters=True, lora_sensitivity_beta=1.0, lora_sensitivity_keep_risky=False, lora_sensitivity_max_layers=None, lora_sensitivity_num_batches=4, lora_sensitivity_select=False, lora_sensitivity_top_ratio=0.5, lora_skip_stem=True, lora_target_modules=None, lora_target_r=8, lora_tfinal=0, lora_tinit=0, lora_to_layer=None, lora_total_step=0, lora_type=lora, lora_use_dora=False, lora_use_rslora=True, lora_variant=lora, lora_vpeft_strict=False, lr0=0.01, lrf=0.01, mask_ratio=4, max_det=300, mixture_aux_budget=3.0, mixup=0.0, moa_aux_gain=1.0, moa_aux_loss_coeff=0.01, moa_local_window_size=7, moa_mot_min_temperature=0.3, moa_mot_temperature_factor=0.97, moa_regional_max_kv_tokens=4096, moa_sparse_inference=False, moa_sparse_inference_threshold=0.02, moa_temperature=1.0, mode=train, model=D:\CODE\smoke\ultralytics\cfg\models\master\v0_1\det\yolo-master-n.yaml, moe=0.3, moe_aux_gain=1.0, moe_balance_loss=1.0, moe_collapse_threshold=0.8, moe_dynamic_balance_max=2.0, moe_dynamic_balance_min=0.5, moe_dynamic_gini_alpha=1.0, moe_dynamic_gini_beta=0.8, moe_dynamic_gini_target=0.25, moe_dynamic_schedule=none, moe_expert_warmup_epochs=3, moe_map_saturation_decay_factor=0.8, moe_map_saturation_enabled=False, moe_map_saturation_min_scale=0.1, moe_map_saturation_threshold=0.001, moe_map_saturation_window_size=5, moe_noise_std=0.5, moe_num_experts=4, moe_prune_calibration_steps=8, moe_prune_keep_top_m=None, moe_prune_threshold=0.15, moe_router_lr_scale=0.5, moe_router_z_loss=0.1, moe_temperature=1.0, moe_top_k=2, moe_weight_threshold=0.01, molora_alpha=16, molora_balance_loss=0.01, molora_capacity_factor=0.0, molora_diversity_loss=0.0, molora_domain_experts=None, molora_expert_dropout=0.0, molora_expert_init=default, molora_export_mode=dynamic, molora_freeze_experts=None, molora_num_experts=0, molora_r=8, molora_router_hidden_dim=None, molora_router_type=linear, molora_router_z_loss=0.001, molora_share_moe_registry=True, molora_top_k=2, molora_top_k_warmup=None, molora_use_rslora=True, molora_warmup_steps=0, momentum=0.937, mosaic=1.0, mot_aux_gain=1.0, mot_balance_loss=0.01, mot_local_attn_window=0, mot_router_z_loss=0.01, mot_scene_aware_router=False, mot_scene_consistency=0.0, mot_scene_hidden_dim=None, mot_scene_inference_mode=dynamic, mot_sparse_train=False, mot_sparse_train_warmup_steps=0, mot_temperature=1.0, multi_scale=0.0, name=train-6, nbs=64, nms=False, objectness_threshold=0.15, opset=None, optimize=False, optimizer=auto, overlap_mask=True, overlap_ratio=0.2, patience=100, perspective=0.0, plots=True, pose=12.0, pre_export_prune=False, pretrained=False, profile=False, project=None, quantize=None, rect=False, resume=False, retina_masks=False, rle=1.0, save=True, save_conf=False, save_crop=False, save_dir=D:\yolo\ultralytics\runs\detect\train-6, save_frames=False, save_json=False, save_period=-1, save_txt=False, scale=0.5, seed=0, shear=0.0, show=False, show_boxes=True, show_conf=True, show_labels=True, sigma=0.1, simplify=True, single_cls=False, slice_size=640, source=None, sparse_sahi=False, sparse_sahi_fallback=True, split=val, stal_area_medium=9216, stal_area_small=1024, stal_expand=1.0, stal_min_positive=False, stal_mode=fixed, stal_topk_small=13, stream_buffer=False, tal_topk=10, task=detect, time=None, tracker=tracktrack.yaml, translate=0.1, val=True, verbose=True, vid_stride=1, visualize=False, warmup_bias_lr=0.1, warmup_epochs=3.0, warmup_momentum=0.8, weight_decay=0.0005, weighted=False, workers=0, workspace=None
+Overriding model.yaml nc=80 with nc=10
+WARNING no model scale passed. Assuming scale='n'.
+
+                   from  n    params  module                                       arguments                     
+  0                  -1  1       464  ultralytics.nn.modules.conv.Conv             [3, 16, 3, 2]                 
+  1                  -1  1      4672  ultralytics.nn.modules.conv.Conv             [16, 32, 3, 2]                
+  2                  -1  1      6640  ultralytics.nn.modules.block.C3k2            [32, 64, 1, False, 0.25]      
+  3                  -1  1     36992  ultralytics.nn.modules.conv.Conv             [64, 64, 3, 2]                
+  4                  -1  1     26080  ultralytics.nn.modules.block.C3k2            [64, 128, 1, False, 0.25]     
+  5                  -1  1    300392  ultralytics.nn.modules.moe.modules.OptimizedMOEImproved[128, 128, 4, 2]              
+  6                  -1  1    147712  ultralytics.nn.modules.conv.Conv             [128, 128, 3, 2]              
+  7                  -1  2    180864  ultralytics.nn.modules.block.A2C2f           [128, 128, 2, True, 4]        
+  8                  -1  1    565680  ultralytics.nn.modules.moe.modules.OptimizedMOEImproved[128, 128, 8, 2]              
+  9                  -1  1    295424  ultralytics.nn.modules.conv.Conv             [128, 256, 3, 2]              
+ 10                  -1  2    689408  ultralytics.nn.modules.block.A2C2f           [256, 256, 2, True, 1]        
+ 11                  -1  1   4359264  ultralytics.nn.modules.moe.modules.OptimizedMOEImproved[256, 256, 16, 2]             
+ 12                  -1  1         0  torch.nn.modules.upsampling.Upsample         [None, 2, 'nearest']          
+ 13             [-1, 8]  1         0  ultralytics.nn.modules.conv.Concat           [1]                           
+ 14                  -1  1    119808  ultralytics.nn.modules.block.C3k2            [384, 128, 1, True]           
+ 15                  -1  1         0  torch.nn.modules.upsampling.Upsample         [None, 2, 'nearest']          
+ 16             [-1, 5]  1         0  ultralytics.nn.modules.conv.Concat           [1]                           
+ 17                  -1  1     34304  ultralytics.nn.modules.block.C3k2            [256, 64, 1, True]            
+ 18                  -1  1     36992  ultralytics.nn.modules.conv.Conv             [64, 64, 3, 2]                
+ 19            [-1, 14]  1         0  ultralytics.nn.modules.conv.Concat           [1]                           
+ 20                  -1  1     95232  ultralytics.nn.modules.block.C3k2            [192, 128, 1, True]           
+ 21                  -1  1    147712  ultralytics.nn.modules.conv.Conv             [128, 128, 3, 2]              
+ 22            [-1, 11]  1         0  ultralytics.nn.modules.conv.Concat           [1]                           
+ 23                  -1  1    119808  ultralytics.nn.modules.block.C3k2            [384, 128, 1, True]           
+ 24        [17, 20, 23]  1    349294  ultralytics.nn.modules.head.Detect           [10, 16, None, [64, 128, 128]]
+YOLO-master-n summary: 442 layers, 7,516,742 parameters, 7,516,726 gradients
+
+Freezing layer 'model.24.dfl.conv.weight'
+[34m[1mAMP: [0mrunning Automatic Mixed Precision (AMP) checks...
+[34m[1mAMP: [0mchecks passed 
+WARNING [34m[1mtrain: [0mSlow image access detected (ping: 0.10.1 ms, read: 18.21.8 MB/s, size: 91.9 KB). Use local storage instead of remote/mounted storage for better performance. See https://docs.ultralytics.com/guides/model-training-tips/
+[K[34m[1mtrain: [0mScanning D:\CODE\smoke\datasets\VisDrone-smoke\labels\train.cache... 6 images, 0 backgrounds, 0 corrupt: 100% ━━━━━━━━━━━━ 6/6  0.0s
+WARNING [34m[1mval: [0mSlow image access detected (ping: 0.10.1 ms, read: 21.12.9 MB/s, size: 92.3 KB). Use local storage instead of remote/mounted storage for better performance. See https://docs.ultralytics.com/guides/model-training-tips/
+[K[34m[1mval: [0mScanning D:\CODE\smoke\datasets\VisDrone-smoke\labels\val.cache... 2 images, 0 backgrounds, 0 corrupt: 100% ━━━━━━━━━━━━ 2/2  0.0s
+[34m[1moptimizer:[0m 'optimizer=auto' found, ignoring 'lr0=0.01' and 'momentum=0.937' and determining best 'optimizer', 'lr0' and 'momentum' automatically... 
+[34m[1moptimizer:[0m AdamW(lr=0.000714, momentum=0.9) with parameter groups 172 weight(decay=0.0), 179 weight(decay=0.0005), 178 bias(decay=0.0), 18 router(lr=0.5x), 0 adapter(lr=2x)
+Plotting labels to D:\yolo\ultralytics\runs\detect\train-6\labels.jpg... 
+Image sizes 320 train, 320 val
+Using 0 dataloader workers
+Logging results to [1mD:\yolo\ultralytics\runs\detect\train-6[0m
+Starting training for 1 epochs...
+
+      Epoch    GPU_mem   box_loss   cls_loss   dfl_lossmixture_aux_loss  Instances       Size
+[K        1/1     0.514G  6.246e-08      8.058  1.075e-07          3         27        320: 0% ──────────── 0/2  4.7s[K        1/1     0.514G  3.123e-08      6.032  5.374e-08          3          8        320: 50% ━━━━━━────── 1/2 17.8s/it 10.0s<17.8s[K        1/1     0.514G  3.123e-08      6.032  5.374e-08          3          8        320: 100% ━━━━━━━━━━━━ 2/2 5.0s/it 10.0s
+[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 100% ━━━━━━━━━━━━ 1/1 1.3s/it 1.3s
+                   all          2         12          0          0          0          0
+
+      Epoch    GPU_mem   box_loss   cls_loss   dfl_lossmixture_aux_loss  Instances       Size
+[K        1/1     0.643G  1.337e-10      8.035  8.693e-11          3         27        320: 0% ──────────── 0/2  0.3s[K        1/1     0.643G  6.685e-11      6.018  4.346e-11          3          7        320: 50% ━━━━━━────── 1/2 1.2s/it 0.6s<1.2s[K        1/1     0.643G  6.685e-11      6.018  4.346e-11          3          7        320: 100% ━━━━━━━━━━━━ 2/2 3.2it/s 0.6s
+[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 100% ━━━━━━━━━━━━ 1/1 12.2it/s 0.1s
+                   all          2         12          0          0          0          0
+
+1 epochs completed in 0.004 hours.
+Optimizer stripped from D:\yolo\ultralytics\runs\detect\train-6\weights\last.pt, 15.5MB
+Optimizer stripped from D:\yolo\ultralytics\runs\detect\train-6\weights\best.pt, 15.5MB
+
+Validating D:\yolo\ultralytics\runs\detect\train-6\weights\best.pt...
+Ultralytics 8.4.101  Python-3.11.15 torch-2.11.0+cu128 CUDA:0 (NVIDIA GeForce RTX 5070 Ti Laptop GPU, 12199MiB)
+YOLO-master-n summary: 329 layers, 7,505,902 parameters, 0 gradients
+[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 100% ━━━━━━━━━━━━ 1/1 23.9it/s 0.0s
+                   all          2         12          0          0          0          0
+            pedestrian          2          2          0          0          0          0
+                people          1          2          0          0          0          0
+               bicycle          2          3          0          0          0          0
+                   van          1          1          0          0          0          0
+                 truck          1          1          0          0          0          0
+       awning-tricycle          1          1          0          0          0          0
+                   bus          1          1          0          0          0          0
+                 motor          1          1          0          0          0          0
+Speed: 1.4ms preprocess, 12.4ms inference, 0.0ms loss, 0.8ms postprocess per image
+Results saved to [1mD:\yolo\ultralytics\runs\detect\train-6[0m
+
+=== STAL smoke test metric log ===
+epoch,time,train/box_loss,train/cls_loss,train/dfl_loss,train/mixture_aux_loss,metrics/precision(B),metrics/recall(B),metrics/mAP50(B),metrics/mAP50-95(B),val/box_loss,val/cls_loss,val/dfl_loss,val/mixture_aux_loss,lr/pg0,lr/pg1,lr/pg2,lr/pg3,lr/pg4
+1,14.7804,0,6.01786,0,3,0,0,0,0,0,4.54074,0,0,7.14e-06,7.14e-06,7.14e-06,3.57e-06,1.428e-05
+Run artifacts: D:\yolo\ultralytics\runs\detect\train-6

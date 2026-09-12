@@ -289,6 +289,9 @@ CFG_FLOAT_KEYS = frozenset(
         "time",
         "workspace",
         "batch",
+        "stal_expand",
+        "tal_alpha",
+        "tal_beta",
     }
 ) | MIXTURE_FLOAT_KEYS
 CFG_FRACTION_KEYS = frozenset(
@@ -372,6 +375,10 @@ CFG_INT_KEYS = frozenset(
         "line_width",
         "nbs",
         "save_period",
+        "tal_topk",
+        "stal_area_small",
+        "stal_area_medium",
+        "stal_topk_small",
     }
 ) | MIXTURE_INT_KEYS
 CFG_INT_MIN = {  # minimum valid values for integer arguments used as divisors, sizes or seeds
@@ -386,6 +393,10 @@ CFG_INT_MIN = {  # minimum valid values for integer arguments used as divisors, 
     "foundation_align_dim": 1,
     "foundation_relation_samples": 1,
     "moa_regional_max_kv_tokens": 0,
+    "tal_topk": 1,
+    "stal_area_small": 1,
+    "stal_area_medium": 1,
+    "stal_topk_small": 1,
 }
 MIXTURE_BOOL_KEYS = frozenset(
     {
@@ -474,6 +485,7 @@ CFG_BOOL_KEYS = frozenset(
         "foundation_semantic_distill",
         "foundation_multitask",
         "foundation_multitask_enabled",
+        "stal_min_positive",
     }
 ) | MIXTURE_BOOL_KEYS
 MIXTURE_STR_KEYS = frozenset(
@@ -511,6 +523,7 @@ CFG_STR_KEYS = frozenset(
         "foundation_siglip2_model",
         "foundation_dinov3_weights",
         "foundation_siglip2_weights",
+        "stal_mode",
     }
 ) | MIXTURE_STR_KEYS
 FOUNDATION_TEACHERS = frozenset({"none", "dinov3", "siglip2", "multi"})
@@ -519,6 +532,7 @@ FOUNDATION_LOSSES = frozenset({"cosine", "l2", "relational", "hybrid"})
 FOUNDATION_RELATION_MODES = frozenset({"sampled", "full"})
 FOUNDATION_DTYPES = frozenset({"auto", "fp32", "fp16", "bf16"})
 FOUNDATION_TARGET_LEVELS = frozenset({"p3", "p4", "p5"})
+STAL_MODES = frozenset({"none", "fixed", "adaptive"})
 # fmt: on
 LORA_RUNTIME_METADATA_KEYS = frozenset(
     {
@@ -632,6 +646,7 @@ def get_cfg(
     # Type and Value checks
     check_cfg(cfg)
     validate_foundation_config(cfg)
+    validate_stal_config(cfg)
 
     # Return instance
     return IterableSimpleNamespace(**cfg)
@@ -964,6 +979,47 @@ def validate_foundation_config(cfg: dict) -> None:
             "Foundation Transformers backend requires optional dependency 'transformers>=4.56.0,<6'. "
             "Install with: pip install -e '.[foundation]'"
         )
+
+
+def validate_stal_config(cfg: dict) -> None:
+    """Validate the STAL (area-aware task-aligned assignment) configuration boundary.
+
+    STAL augments the task-aligned assigner with area-aware candidate selection for small-object detection. The
+    ``stal_mode`` enum selects the behavior (``none`` = pure TAL, ``fixed`` = legacy stride clamp, ``adaptive`` =
+    area-aware expansion + per-tier top-k). Area thresholds must be ordered and the expansion multiplier
+    non-negative.
+
+    Args:
+        cfg (dict): Merged YOLO configuration dictionary.
+
+    Raises:
+        ValueError: If a STAL value or combination is unsupported.
+    """
+    mode = cfg.get("stal_mode", DEFAULT_CFG_DICT["stal_mode"])
+    if mode not in STAL_MODES:
+        raise ValueError(f"'stal_mode={mode}' is invalid. Valid values are {sorted(STAL_MODES)}.")
+
+    area_small = cfg.get("stal_area_small", DEFAULT_CFG_DICT["stal_area_small"])
+    area_medium = cfg.get("stal_area_medium", DEFAULT_CFG_DICT["stal_area_medium"])
+    if area_small <= 0 or area_medium <= 0:
+        raise ValueError("'stal_area_small' and 'stal_area_medium' must be positive integers.")
+    if area_small >= area_medium:
+        raise ValueError("'stal_area_small' must be strictly less than 'stal_area_medium'.")
+
+    expand = cfg.get("stal_expand", DEFAULT_CFG_DICT["stal_expand"])
+    if expand < 0:
+        raise ValueError("'stal_expand' must be non-negative.")
+
+    topk_small = cfg.get("stal_topk_small", DEFAULT_CFG_DICT["stal_topk_small"])
+    if topk_small <= 0:
+        raise ValueError("'stal_topk_small' must be a positive integer.")
+
+    alpha = cfg.get("tal_alpha", DEFAULT_CFG_DICT["tal_alpha"])
+    beta = cfg.get("tal_beta", DEFAULT_CFG_DICT["tal_beta"])
+    if not isinstance(alpha, (int, float)) or alpha <= 0:
+        raise ValueError("'tal_alpha' must be a positive number.")
+    if not isinstance(beta, (int, float)) or beta <= 0:
+        raise ValueError("'tal_beta' must be a positive number.")
 
 
 def get_save_dir(args: SimpleNamespace, name: str | None = None) -> Path:

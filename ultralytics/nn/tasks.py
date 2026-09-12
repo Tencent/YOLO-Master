@@ -656,7 +656,12 @@ class DetectionModel(BaseModel):
 
     def init_criterion(self):
         """Initialize the loss criterion for the DetectionModel."""
-        native = E2ELoss(self) if getattr(self, "end2end", False) else v8DetectionLoss(self)
+        if getattr(self, "end2end", False):
+            native = E2ELoss(self)
+        else:
+            tal_topk = getattr(self.args, "tal_topk", 10)
+            tal_topk2 = getattr(self.args, "tal_topk2", None)
+            native = v8DetectionLoss(self, tal_topk=tal_topk, tal_topk2=tal_topk2)
         return build_composite_criterion(self, native)
 
 
