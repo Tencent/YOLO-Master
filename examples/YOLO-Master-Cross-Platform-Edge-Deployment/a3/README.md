@@ -2,7 +2,7 @@
 
 **状态（2026-09-12）：P0 全部完成；P1 的 ES-MoE 族完成、MoT 族因上游没有发布训练权重而无法开展；P2 的混合精度敏感层回退与 QAT 已完成（QAT 为负结果），路由一致率工具与五族对比未完成。详见第 11 节。**
 
-本目录是 `skywalker-lt/yolo-master-edge` 分支 `dev/a3-smoke` 的原样副本（`a3/` 为配置、环境矩阵、日志与结果，`scripts/a3/` 为可复现脚本），作为 A3 课题的提交材料放入 `examples/`。
+本文件与 `a3/`、`scripts/a3/` 是 `skywalker-lt/yolo-master-edge` 分支 `dev/a3-smoke` 的原样副本，放在跨平台边缘部署示例 `examples/YOLO-Master-Cross-Platform-Edge-Deployment/` 内（本文件位于 `a3/README.md`；下文所有路径均相对于该示例根目录）。
 
 <img width="3386" height="1241" alt="50001 copy" src="https://github.com/user-attachments/assets/e2c83800-36d6-4ea2-be5c-af2abbc43524" />
 

@@ -1,0 +1,16 @@
+[torch] 2.4.1+cu124 cuda 12.4
+[torch] 2.4.1+cu124 cuda 12.4
+/usr/local/lib/python3.11/dist-packages/torch/cuda/__init__.py:58: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+[torch] 2.4.1+cu124 cuda 12.4
+/usr/local/lib/python3.11/dist-packages/torch/cuda/__init__.py:58: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+WARNING ⚠️ user config directory '/root/.config/Ultralytics' is not writable, using '/tmp/Ultralytics'. Set YOLO_CONFIG_DIR to override.
+Creating new Ultralytics Settings v0.0.6 file ✅ 
+View Ultralytics Settings with 'yolo settings' or at '/tmp/Ultralytics/settings.json'
+Update Settings with 'yolo settings key=value', i.e. 'yolo settings runs_dir=path/to/dir'. For help see https://docs.ultralytics.com/quickstart/#ultralytics-settings.
+[trt] 10.13.3.9
+[ort] 1.20.2 ['TensorrtExecutionProvider', 'CUDAExecutionProvider', 'CPUExecutionProvider']
+[onnx] 1.17.0 [modelopt] 0.27.1
+[ultralytics] 8.3.240 /data/YOLO-Master/ultralytics/__init__.py
+[setup] done: /root/a3venv
