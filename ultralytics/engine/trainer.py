@@ -1495,7 +1495,8 @@ class BaseTrainer:
             if getattr(self, "amp", False):
                 LOGGER.warning("Checkpoint GradScaler was disabled; resuming with AMP disabled.")
             self.amp = False
-            self.args.amp = False
+            if (args := getattr(self, "args", None)) is not None:
+                args.amp = False
             self.scaler = (
                 torch.amp.GradScaler("cuda", enabled=False) if TORCH_2_4 else torch.cuda.amp.GradScaler(enabled=False)
             )

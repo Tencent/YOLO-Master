@@ -915,8 +915,8 @@ def validate_foundation_config(cfg: dict) -> None:
         cache_dir = cfg.get("foundation_cache_dir")
         if cache_dir in (None, "", "none"):
             raise ValueError(
-                "'foundation_enabled=True' with 'foundation_teacher=none' requires 'foundation_cache_dir' "
-                "pointing to a valid offline feature cache directory."
+                "'foundation_enabled=True' requires 'foundation_teacher' or 'foundation_cache_dir' pointing to a "
+                "valid offline feature cache directory."
             )
     if multitask_enabled:
         if cfg.get("task", DEFAULT_CFG_DICT.get("task")) != "multitask":
