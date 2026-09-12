@@ -38,6 +38,11 @@ scripts/project03/measure_latency.py   model-only vs end-to-end latency, mAP re-
 jetson/11_p03_trt_bench.sh             Orin Nano engine builds + benchmarks for pruned v0.1 N/S/M/L
 tempo-ncnn/                            Orin-CPU ncnn fp16 vs INT8 bench (pruned v0.1-N)
 coreml_export/export_coreml_p03.py     Core ML export of the pruned model with the dense k==E MoE rewrite (ANE-resident)
+android/                               Android runtime module (ncnn + ONNX Runtime with the QNN NPU provider) and the Compose app; the C++ core it compiles against is vendored under android/runtime/src/main/cpp/core
+scripts/export_ncnn_dense.py           dense ncnn export (fused SDPA attention, native gate broadcast)
+scripts/export_onnx_dense.py           dense ONNX export for the ONNX Runtime + QNN path
+scripts/quantize_onnx_qnn.py           A16W8 quantization of the dense ONNX for the Hexagon NPU
+scripts/score_device_dumps.sh          scores the on-device output dumps against the reference
 project03/results/pruning/             diagnosis reports, scene analysis, sweep CSVs, plans, plots
 project03/results/quant/               INT8_RESULTS.md, ladders, sensitivity reports, pin sets, bisect/ablation, QAT results
 project03/results/orin/                Jetson Orin Nano deployment log
@@ -147,8 +152,7 @@ on the same phone. The pruned model was timed on the phone with the stock export
 re-export runs at the unpruned model's speed on x86 (`project03/results/api/API_SERVER_RESULTS.md`) and is
 not yet re-timed on the S26. On this graph CPU fp16 beats Vulkan and beats mixed INT8, so INT8 is
 kept for size only. A16W8 quantized ONNX for the NPU: v0.1-N -0.56 mAP, seg-N -0.86, EsMoE-N -0.35
-(MEASURED on Linux; device certification of the A16W8 dumps is the open item). App sources:
-yolo-master-edge `android/`.
+(MEASURED on Linux; device certification of the A16W8 dumps is the open item). App and runtime sources: `android/` in this example (mirror of yolo-master-edge `android/` with the C++ core vendored under `android/runtime/src/main/cpp/core`); build instructions in `android/README.md`.
 
 ## 5. Inference service and Docker
 
