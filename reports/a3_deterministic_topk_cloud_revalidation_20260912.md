@@ -32,19 +32,20 @@ import zipfile
 
 
 WORKSPACE = Path("/mnt/workspace")
-REPO = WORKSPACE / "YOLO-Master"
+ASSET_REPO = WORKSPACE / "YOLO-Master"
+REPO = WORKSPACE / "YOLO-Master-deterministic-topk"
 REMOTE = "https://github.com/KennnMai/YOLO-Master.git"
 BRANCH = "rhino-a3-dev/smoke/a3"
 MINIMUM_COMMIT = "56325fe"
 POLICY = "max_deadband_then_lowest_expert_id"
 
-CKPT = REPO / "examples/artifacts/mot_v10_visdrone_50e/best_for_quantization.pt"
+CKPT = ASSET_REPO / "examples/artifacts/mot_v10_visdrone_50e/best_for_quantization.pt"
 IMAGE = WORKSPACE / "visdrone/images/val/0000364_01765_d_0000782.jpg"
-DATA = REPO / "examples/configs/visdrone_local_for_mot.yaml"
+DATA = ASSET_REPO / "examples/configs/visdrone_local_for_mot.yaml"
 
 run_tag = datetime.now().strftime("%Y%m%d_%H%M%S")
-BUNDLES = REPO / f"examples/artifacts/mot_v10_dynamic_topk_{run_tag}"
-OUT = REPO / f"examples/results/mot_v10_dynamic_topk_full_val_{run_tag}"
+BUNDLES = ASSET_REPO / f"examples/artifacts/mot_v10_dynamic_topk_{run_tag}"
+OUT = ASSET_REPO / f"examples/results/mot_v10_dynamic_topk_full_val_{run_tag}"
 RESULT = OUT / "DYNAMIC_MOT_DETERMINISTIC_TOPK_FULL_VAL.json"
 EXPORT_LOG = OUT / "export_dynamic_blocks.log"
 VAL_LOG = OUT / "full_548_validation.log"
@@ -95,12 +96,19 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-assert (REPO / ".git").is_dir(), f"不是 Git 仓库：{REPO}"
+assert ASSET_REPO.is_dir(), f"找不到原有训练资产目录：{ASSET_REPO}"
+if not (REPO / ".git").is_dir():
+    if REPO.exists() and any(REPO.iterdir()):
+        raise RuntimeError(f"专用代码目录已存在但不是 Git 仓库，请换名或人工检查：{REPO}")
+    run_checked(
+        ["git", "clone", "--branch", BRANCH, "--single-branch", REMOTE, str(REPO)],
+        cwd=WORKSPACE,
+    )
 tracked_dirty = run_checked(
     ["git", "status", "--porcelain", "--untracked-files=no"],
 ).strip()
 assert not tracked_dirty, (
-    "云端仓库存在 tracked 修改，脚本拒绝覆盖。请先备份/提交这些修改，再重跑：\n" + tracked_dirty
+    "专用代码仓库存在 tracked 修改，脚本拒绝覆盖。请先人工检查：\n" + tracked_dirty
 )
 run_checked(["git", "fetch", REMOTE, BRANCH])
 run_checked(["git", "checkout", "--detach", "FETCH_HEAD"])
