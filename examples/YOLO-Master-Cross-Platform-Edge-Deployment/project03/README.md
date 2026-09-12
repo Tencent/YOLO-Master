@@ -152,7 +152,7 @@ on the same phone. The pruned model was timed on the phone with the stock export
 re-export runs at the unpruned model's speed on x86 (`project03/results/api/API_SERVER_RESULTS.md`) and is
 not yet re-timed on the S26. On this graph CPU fp16 beats Vulkan and beats mixed INT8, so INT8 is
 kept for size only. A16W8 quantized ONNX for the NPU: v0.1-N -0.56 mAP, seg-N -0.86, EsMoE-N -0.35
-(MEASURED on Linux; device certification of the A16W8 dumps is the open item). App and runtime sources: `android/` in this example (mirror of yolo-master-edge `android/` with the C++ core vendored under `android/runtime/src/main/cpp/core`); build instructions in `android/README.md`.
+(MEASURED on Linux; device certification of the A16W8 dumps is the open item). App and runtime sources: `android/` in this example (mirror of yolo-master-edge `android/` with the C++ core vendored under `android/runtime/src/main/cpp/core`); build instructions in `android/README.md`. A release build of the app (`yolomaster-edge-android-app-1.1.0.apk`) and the runtime module (`yolomaster-edge-android-runtime-1.1.0.aar`) are attached to the [yolo-master-edge v1.1.0 release](https://github.com/skywalker-lt/yolo-master-edge/releases/tag/v1.1.0).
 
 ## 5. Inference service and Docker
 
