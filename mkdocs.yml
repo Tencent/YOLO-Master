@@ -542,6 +542,7 @@ nav:
       - Isolating Segmentation Objects: guides/isolating-segmentation-objects.md
       - K-Fold Cross Validation: guides/kfold-cross-validation.md
       - Foundation Teacher Distillation: guides/foundation-distillation.md
+      - Foundation Distillation Evaluation: guides/foundation-distillation-evaluation.md
       - Knowledge Distillation 🚀: guides/knowledge-distillation.md
       - Maintaining Your Computer Vision Model: guides/model-monitoring-and-maintenance.md
       - Modal Quickstart: guides/modal-quickstart.md
