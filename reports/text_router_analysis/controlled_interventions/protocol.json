@@ -1,0 +1,73 @@
+{
+  "schema": "b1-controlled-routing-interventions/v1",
+  "question": "Separate the effect of expert identity from the continuous selected-expert gate at three fixed checkpoints.",
+  "data": {
+    "dataset": "COCO val2017",
+    "images": 5000,
+    "class_split": "Base48 / New17 / Overall65",
+    "checkpoints": 3,
+    "checkpoint_identity": "See reports/text_router_analysis/artifacts/artifact_index.csv",
+    "classification_text": "fixed 65-class tensor for every condition"
+  },
+  "execution": {
+    "direct_conditions_per_checkpoint": [
+      "T_NATIVE",
+      "T",
+      "GZ",
+      "GW",
+      "E0",
+      "E1",
+      "FZ",
+      "FW"
+    ],
+    "direct_condition_runs": 24,
+    "source_type": "one image path string per prediction call",
+    "actual_batch_size": 1,
+    "image_size": 640,
+    "confidence_threshold": 0.001,
+    "nms_iou": 0.7,
+    "max_detections": 300,
+    "software": {
+      "python": "3.11.15",
+      "pytorch": "2.7.1+cu126",
+      "ultralytics": "8.4.101",
+      "pycocotools": "2.0.11"
+    },
+    "hardware": "single NVIDIA GeForce RTX 4090 24 GB; conditions serialized"
+  },
+  "statistics": {
+    "paired_bootstrap_replicates": 1000,
+    "rng_seed": 20260911,
+    "interval": "per-comparison 95% percentile interval",
+    "multiple_comparison_correction": false,
+    "sampling": "the same resampled image indices are shared by every condition in a replicate",
+    "duplicate_identity": "each repeated image and annotation receives a unique bootstrap identity"
+  },
+  "code_identity": {
+    "condition_runner_sha256": "bf4ab04813951ee537fa60bee4ceb57159c11695bf3a2fafc3ffd95bd1ec0e4b",
+    "diagnostic_matcher_repair_sha256": "9551d03934ab381ab1de4ffcf983d8aeece18f4dad709c3923b553362fe3a390",
+    "bootstrap_resume_sha256": "1ab79132fd008e860aa7b774b003cad09d491222b3ed9366c6725c692425675a",
+    "bootstrap_launcher_sha256": "d26cf876aecccac7a57d6203a692702ec5a789fbc34b54619175865aa1675800",
+    "assembly_source_binding": "The historical execution manifest did not bind the D1 assembly script by SHA; public claims therefore rely on the retained D1 receipt and zero-mismatch rebuild, not an exact-source identity claim."
+  },
+  "validation": {
+    "canonical_condition_runs_passed": "24/24",
+    "T_vs_T_NATIVE_prediction_equality": "3/3 checkpoints",
+    "T_rebuild_mismatch_images": [
+      0,
+      0,
+      0
+    ],
+    "bootstrap_replicates_complete": "1000 unique replicate IDs",
+    "bootstrap_summary_local_recompute_max_abs_error": 3.82e-17,
+    "diagnostic_matcher_tests": "9/9 standard-library red/green fixtures passed",
+    "diagnostic_iou_reference_checks": "8/8 regular/crowd bbox cases matched pycocotools",
+    "diagnostic_repair_scope": "COCO xywh interpretation plus explicit ignore and crowd-overlap matching; original invalid diagnostic output excluded"
+  },
+  "resource_scope": {
+    "gpu_seconds": 9916.956,
+    "gpu_budget_seconds": 12600,
+    "gpu_released": true,
+    "latency": "observational only; the run window was not reserved as an exclusive formal latency benchmark"
+  }
+}

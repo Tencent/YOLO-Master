@@ -116,7 +116,7 @@ def classify_routed_module(module: nn.Module) -> str | None:
     name = module.__class__.__name__
     if name in {"MoABlock", "C2fMoA", "NeckMoAFusion"}:
         return "MoA"
-    if name in {"MoTBlock", "C2fMoT"}:
+    if name in {"MoTBlock", "C2fMoT", "TextConditionedMoT"}:
         return "MoT"
     if name in {"MoLoRALayer", "MoLoRAMoEAwareLayer"}:
         return "MoLoRA"

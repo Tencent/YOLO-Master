@@ -1,0 +1,44 @@
+{
+  "source_commit": "5f744437bc7b1620e8d547fbd0c608e80d2ea760",
+  "source_branch": "feat/b1-p1-ovd-text-router",
+  "tracked_source_changes": false,
+  "execution_mode": "CPU",
+  "platform": "macOS arm64",
+  "python": "3.12.14",
+  "packages": {
+    "torch": "2.7.1",
+    "torchvision": "0.22.1",
+    "pytest": "8.4.2",
+    "numpy": "2.3.5",
+    "opencv-python": "4.11.0.86",
+    "PyYAML": "6.0.2",
+    "requests": "2.32.4",
+    "psutil": "7.0.0",
+    "scipy": "1.15.3",
+    "matplotlib": "3.10.3",
+    "ultralytics-thop": "2.0.18",
+    "polars": "1.31.0",
+    "nvidia-ml-py": "12.575.51"
+  },
+  "configuration_paths": [
+    "pyproject.toml",
+    "tests/conftest.py",
+    "tests/test_yoloe_p1_text_router.py",
+    "tests/test_routing_aux_contract.py",
+    "tests/test_moe_router_boundaries.py",
+    "tests/test_master_model_configs.py"
+  ],
+  "runtime_settings": {
+    "YOLO_AUTOINSTALL": "false",
+    "YOLO_OFFLINE": "true",
+    "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+    "OMP_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+    "OPENBLAS_NUM_THREADS": "1"
+  },
+  "exit_code": 0,
+  "test_count": 69,
+  "failure_count": 0,
+  "error_count": 0,
+  "warning_count": 2
+}

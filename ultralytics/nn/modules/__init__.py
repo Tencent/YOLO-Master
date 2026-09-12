@@ -130,7 +130,7 @@ from .moe import (
     UltraOptimizedMoE,
     VisualEnhancedAdaptiveGateMoE,
 )
-from .mot import C2fMoT, MoTBlock, anneal_mot_temperature, collect_mot_aux_loss
+from .mot import C2fMoT, MoTBlock, TextConditionedMoT, anneal_mot_temperature, collect_mot_aux_loss
 from .multitask import MultiTaskHead, TaskRouter
 from .latent_mixture import (
     DenseChannelExpert,
@@ -229,6 +229,7 @@ __all__ = (
     "AdaptiveGateMoE",
     "C2fMoA",
     "C2fMoT",
+    "TextConditionedMoT",
     "DetailAwareLowRankHybridAdaptiveGateMoE",
     "DiversifiedExpertMoE",
     "ES_MOE",

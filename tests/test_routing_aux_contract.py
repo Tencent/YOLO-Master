@@ -19,7 +19,7 @@ from ultralytics.nn.peft.molora.layer import MoLoRALayer
 from ultralytics.utils.loss import _collect_moe_aux_loss
 
 
-def test_training_publication_is_graph_connected_and_replaces_record():
+def test_training_publication_is_graph_connected_and_consumed_once():
     clear_aux_records(step=11)
     module = MoABlock(48, num_heads=6).train()
     assert isinstance(module, RoutingAuxPublisher)
@@ -30,9 +30,13 @@ def test_training_publication_is_graph_connected_and_replaces_record():
     assert record.training is True
     assert record.value.requires_grad
     first = collect_aux_loss(module, step=11)
+    first_record = get_aux_record(module)
     module(torch.randn(1, 48, 4, 4))
     second = collect_aux_loss(module, step=11)
-    assert first.requires_grad and second.requires_grad
+    record_after_duplicate = get_aux_record(module)
+    assert first.requires_grad and not second.requires_grad
+    assert record_after_duplicate is first_record
+    assert getattr(module, "_routing_duplicate_publication_count", 0) == 1
     assert len(list(module.parameters())) > 0
 
 

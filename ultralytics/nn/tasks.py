@@ -81,6 +81,7 @@ from ultralytics.nn.modules import (
     YOLOEDetect,
     YOLOESegment,
     YOLOESegment26,
+    TextConditionedMoT,
     v10Detect,
 )
 from ultralytics.utils import (
@@ -1268,6 +1269,57 @@ class WorldModel(DetectionModel):
         return self.criterion(preds, batch)
 
 
+class _P1TextRouterCriterion:
+    """Compose a native YOLOE loss with one raw, single-consumption MoT aux term."""
+
+    def __init__(self, model, native_criterion):
+        self.model = model
+        self.native_criterion = native_criterion
+
+    @property
+    def updates(self) -> int:
+        return int(getattr(self.native_criterion, "updates", 0))
+
+    @updates.setter
+    def updates(self, value: int) -> None:
+        setattr(self.native_criterion, "updates", int(value))
+
+    def __getattr__(self, name):
+        if name in {"model", "native_criterion"}:
+            raise AttributeError(name)
+        return getattr(self.native_criterion, name)
+
+    def __call__(self, preds, batch):
+        native_loss, native_items = self.native_criterion(preds, batch)
+        from ultralytics.nn.modules.routing_protocol import collect_aux_loss
+
+        aux = collect_aux_loss(
+            self.model,
+            device=native_loss.device,
+            include_kinds=("mot",),
+            return_value_scalars=False,
+        )
+        self.model._last_mixture_aux_loss = aux.detach()
+        if native_loss.ndim == 0:
+            total = native_loss + aux
+        else:
+            flat = native_loss.reshape(-1)
+            total = torch.cat((flat[:1] + aux, flat[1:])).reshape_as(native_loss)
+        if isinstance(native_items, torch.Tensor):
+            items = torch.cat((native_items.reshape(-1), aux.detach().reshape(1)))
+        elif isinstance(native_items, (list, tuple)):
+            values = [*native_items, aux.detach()]
+            items = type(native_items)(values) if isinstance(native_items, tuple) else values
+        else:
+            items = native_items
+        return total, items
+
+    def update(self) -> None:
+        update = getattr(self.native_criterion, "update", None)
+        if callable(update):
+            update()
+
+
 class YOLOEModel(DetectionModel):
     """YOLOE detection model.
 
@@ -1306,6 +1358,151 @@ class YOLOEModel(DetectionModel):
         """
         super().__init__(cfg=cfg, ch=ch, nc=nc, verbose=verbose)
         self.text_model = self.yaml.get("text_model", "mobileclip:blt")
+        # P1's adapter is intentionally created only after the released
+        # checkpoint has loaded.  Keeping it outside ``self.model`` preserves
+        # every YOLOE ModuleList index and released state-dict key.
+        self._p5_text_router: TextConditionedMoT | None = None
+        self._p5_text_router_enabled = False
+        self._p1_core_frozen = False
+        self._p1_core_parameter_states = None
+        self._p1_core_training = None
+
+    @property
+    def p5_text_router_enabled(self) -> bool:
+        """Whether the explicit P5 text-conditioned runtime adapter is active."""
+
+        return bool(
+            getattr(self, "_p5_text_router_enabled", False) and getattr(self, "_p5_text_router", None) is not None
+        )
+
+    @property
+    def p5_text_router(self) -> TextConditionedMoT | None:
+        """Return the optional P5 adapter without changing its enabled state."""
+
+        return getattr(self, "_p5_text_router", None)
+
+    def train(self, mode: bool = True):
+        """Set adapter mode while keeping the released OVD core frozen and eval-only."""
+
+        super().train(mode)
+        if getattr(self, "_p1_core_frozen", False):
+            self.model.eval()
+            if isinstance(getattr(self, "clip_model", None), nn.Module):
+                self.clip_model.eval()
+            if self._p5_text_router is not None:
+                self._p5_text_router.train(mode)
+        return self
+
+    def _freeze_p1_core(self) -> None:
+        """Freeze the released YOLOE core and keep its stateful layers in eval mode."""
+
+        if not self._p1_core_frozen:
+            modules = [self.model]
+            if isinstance(getattr(self, "clip_model", None), nn.Module):
+                modules.append(self.clip_model)
+            self._p1_core_parameter_states = [
+                (parameter, parameter.requires_grad) for module in modules for parameter in module.parameters()
+            ]
+            self._p1_core_training = self.model.training
+        self.model.requires_grad_(False)
+        self.model.eval()
+        if isinstance(getattr(self, "clip_model", None), nn.Module):
+            self.clip_model.requires_grad_(False)
+            self.clip_model.eval()
+        self._p1_core_frozen = True
+
+    def p5_text_router_parameters(self):
+        """Return only enabled adapter parameters for an optimizer parameter group."""
+
+        if not self.p5_text_router_enabled:
+            return ()
+        return tuple(parameter for parameter in self._p5_text_router.parameters() if parameter.requires_grad)
+
+    def _p5_channels(self) -> int:
+        """Infer the last detector feature width without changing the model graph."""
+
+        head = self.model[-1]
+        if not isinstance(head, YOLOEDetect) or not head.cv2:
+            raise TypeError("P5 text router requires an unfused YOLOEDetect head")
+        first_conv = head.cv2[-1][0]
+        channels = getattr(getattr(first_conv, "conv", None), "in_channels", None)
+        if channels is None:
+            raise RuntimeError("unable to infer YOLOEDetect P5 feature channels")
+        return int(channels)
+
+    def enable_p5_text_router(
+        self,
+        *,
+        text_dim: int = 512,
+        hidden_dim: int = 64,
+        balance_loss_coeff: float = 0.01,
+    ) -> TextConditionedMoT:
+        """Enable a two-expert P5 adapter after loading a released checkpoint.
+
+        The adapter is registered as an additive model attribute rather than a
+        YAML layer.  This keeps the released ``self.model`` indices and keys
+        unchanged while making the new parameters visible to optimizers and
+        checkpoints once explicitly enabled.
+        """
+
+        head = self.model[-1]
+        if not isinstance(head, YOLOEDetect):
+            raise TypeError("P5 text router requires a YOLOEDetect head")
+        if head.is_fused or not hasattr(head, "reprta") or isinstance(head.reprta, nn.Identity):
+            raise RuntimeError("P5 text router requires the released YOLOEDetect head to remain unfused")
+
+        channels = self._p5_channels()
+        adapter = self._p5_text_router
+        if adapter is None:
+            adapter = TextConditionedMoT(
+                channels,
+                channels,
+                text_dim=text_dim,
+                hidden_dim=hidden_dim,
+                balance_loss_coeff=balance_loss_coeff,
+            )
+            parameter = next(self.parameters())
+            self._p5_text_router = adapter.to(device=parameter.device, dtype=parameter.dtype)
+        elif (
+            adapter.text_dim != int(text_dim)
+            or adapter.hidden_dim != int(hidden_dim)
+            or adapter.balance_loss_coeff != float(balance_loss_coeff)
+        ):
+            raise ValueError("existing P5 text router configuration does not match the requested configuration")
+
+        self._p5_text_router_enabled = True
+        self._freeze_p1_core()
+        self._p5_text_router.train(self.training)
+        # A criterion built while the adapter was disabled has no routed
+        # collector.  Rebuild it lazily on the first enabled loss call.
+        if hasattr(self, "criterion"):
+            self.criterion = None
+        return adapter
+
+    def disable_p5_text_router(self) -> None:
+        """Disable the adapter while retaining its additive checkpoint state."""
+
+        self._p5_text_router_enabled = False
+        if self._p1_core_frozen:
+            for parameter, requires_grad in self._p1_core_parameter_states or ():
+                parameter.requires_grad_(requires_grad)
+            if self._p1_core_training is not None:
+                self.model.train(self._p1_core_training)
+            self._p1_core_frozen = False
+            self._p1_core_parameter_states = None
+            self._p1_core_training = None
+        if hasattr(self, "criterion"):
+            self.criterion = None
+
+    def _apply_p5_text_router(self, features, router_condition):
+        """Apply the optional adapter to only the P5 tensor before YOLOEDetect."""
+
+        if not self.p5_text_router_enabled:
+            return features
+        if not isinstance(features, list) or len(features) < 1:
+            raise ValueError("YOLOE P5 text router expects the detector feature list")
+        features[-1] = self._p5_text_router(features[-1], condition=router_condition)
+        return features
 
     def load(self, weights, verbose=True):
         """Load weights and preserve released segmentation checkpoint execution semantics when fully shared."""
@@ -1314,6 +1511,14 @@ class YOLOEModel(DetectionModel):
         migrated = self._migrate_released_segmentation_execution_semantics(source)
         if verbose and migrated:
             LOGGER.info(f"Migrated released YOLOE segmentation execution semantics: {', '.join(migrated)}")
+
+    def init_criterion(self):
+        """Build the native loss, using raw single-consumption aux when P1 is enabled."""
+
+        if not self.p5_text_router_enabled:
+            return super().init_criterion()
+        native = E2ELoss(self) if getattr(self, "end2end", False) else v8DetectionLoss(self)
+        return _P1TextRouterCriterion(self, native)
 
     def _migrate_released_segmentation_execution_semantics(self, source):
         """Migrate non-state SPPF activation metadata for fully shared released segmentation sources only."""
@@ -1363,6 +1568,9 @@ class YOLOEModel(DetectionModel):
             if cache_clip_model
             else build_text_model(getattr(self, "text_model", "mobileclip:blt"), device=device)
         )
+        if getattr(self, "_p1_core_frozen", False):
+            model.eval()
+            model.requires_grad_(False)
         text_token = model.tokenize(text)
         txt_feats = [model.encode_text(token).detach() for token in text_token.split(batch)]
         txt_feats = txt_feats[0] if len(txt_feats) == 1 else torch.cat(txt_feats, dim=0)
@@ -1480,7 +1688,16 @@ class YOLOEModel(DetectionModel):
         return torch.cat(all_pe, dim=1)
 
     def predict(
-        self, x, profile=False, visualize=False, tpe=None, augment=False, embed=None, vpe=None, return_vpe=False
+        self,
+        x,
+        profile=False,
+        visualize=False,
+        tpe=None,
+        augment=False,
+        embed=None,
+        vpe=None,
+        return_vpe=False,
+        router_condition=None,
     ):
         """Perform a forward pass through the model.
 
@@ -1493,10 +1710,19 @@ class YOLOEModel(DetectionModel):
             embed (list, optional): A list of layer indices to return embeddings from.
             vpe (torch.Tensor, optional): Visual positional embeddings.
             return_vpe (bool): If True, return visual positional embeddings.
+            router_condition (torch.Tensor, optional): Detached prompt-derived condition for the P5 adapter.
 
         Returns:
             (torch.Tensor): Model's output tensor.
         """
+        if self.training:
+            from ultralytics.nn.modules.moe._common import MOE_LOSS_REGISTRY, _MOE_LOSS_REGISTRY_LOCK
+            from ultralytics.nn.modules.routing_protocol import reset_routing_runtime_state
+
+            with _MOE_LOSS_REGISTRY_LOCK:
+                MOE_LOSS_REGISTRY.clear()
+            reset_routing_runtime_state(self)
+
         y, dt, embeddings = [], [], []  # outputs
         b = x.shape[0]
         embed = frozenset(embed) if embed else {-1}
@@ -1512,6 +1738,7 @@ class YOLOEModel(DetectionModel):
                     assert vpe is not None
                     assert not self.training
                     return vpe
+                x = self._apply_p5_text_router(x, router_condition)
                 cls_pe = self.get_cls_pe(m.get_tpe(tpe), vpe).to(device=x[0].device, dtype=x[0].dtype)
                 if cls_pe.shape[0] != b or m.export:
                     cls_pe = cls_pe.expand(b, -1, -1)
@@ -1534,25 +1761,41 @@ class YOLOEModel(DetectionModel):
             batch (dict): Batch to compute loss on.
             preds (torch.Tensor | list[torch.Tensor], optional): Predictions.
         """
-        if not hasattr(self, "criterion"):
+        if getattr(self, "criterion", None) is None:
             from ultralytics.utils.loss import TVPDetectLoss
 
             visual_prompt = batch.get("visuals", None) is not None  # TODO
-            self.criterion = (
-                build_composite_criterion(
-                    self,
-                    E2ELoss(self, TVPDetectLoss) if getattr(self, "end2end", False) else TVPDetectLoss(self),
+            if self.p5_text_router_enabled:
+                if visual_prompt:
+                    native = E2ELoss(self, TVPDetectLoss) if getattr(self, "end2end", False) else TVPDetectLoss(self)
+                else:
+                    native = E2ELoss(self) if getattr(self, "end2end", False) else v8DetectionLoss(self)
+                self.criterion = _P1TextRouterCriterion(self, native)
+            else:
+                self.criterion = (
+                    build_composite_criterion(
+                        self,
+                        E2ELoss(self, TVPDetectLoss) if getattr(self, "end2end", False) else TVPDetectLoss(self),
+                    )
+                    if visual_prompt
+                    else self.init_criterion()
                 )
-                if visual_prompt
-                else self.init_criterion()
-            )
         if preds is None:
             preds = self.forward(
                 batch["img"],
                 tpe=None if "visuals" in batch else batch.get("txt_feats", None),
                 vpe=batch.get("visuals", None),
+                router_condition=batch.get("router_condition", None),
             )
-        return self.criterion(preds, batch)
+        from ultralytics.nn.modules.routing_protocol import clear_aux_records
+
+        try:
+            return self.criterion(preds, batch)
+        finally:
+            # A YOLOE override bypasses BaseModel._predict_once, so clear the
+            # canonical record after the criterion consumes this forward.  The
+            # next training forward will pre-clear again before publishing.
+            clear_aux_records()
 
 
 class YOLOESegModel(YOLOEModel, SegmentationModel):

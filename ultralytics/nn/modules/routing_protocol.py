@@ -56,6 +56,9 @@ class RoutedModule(Protocol):
 
 
 _RECORDS: weakref.WeakKeyDictionary[nn.Module, AuxLossRecord] = weakref.WeakKeyDictionary()
+# Consumption is tracked separately so diagnostics can still inspect the most
+# recent publication while a second collector call cannot reuse its graph.
+_CONSUMED_RECORDS: weakref.WeakKeyDictionary[nn.Module, set[tuple[int, str]]] = weakref.WeakKeyDictionary()
 _RECORDS_LOCK = Lock()
 _CURRENT_STEP: ContextVar[int] = ContextVar("routing_aux_step", default=0)
 
@@ -88,6 +91,7 @@ def clear_aux_records(*, step: int | None = None) -> int:
     next_step = begin_aux_step(step)
     with _RECORDS_LOCK:
         _RECORDS.clear()
+        _CONSUMED_RECORDS.clear()
     return next_step
 
 
@@ -106,6 +110,8 @@ def reset_routing_runtime_state(model: nn.Module | None = None, *, step: int | N
             module.last_routing_snapshot = {}
         if hasattr(module, "last_routing_diagnostics"):
             module.last_routing_diagnostics = {}
+        if hasattr(module, "_routing_duplicate_publication_count"):
+            module._routing_duplicate_publication_count = 0
         if hasattr(module, "_last_routing_stats"):
             module._last_routing_stats = None
         for name in ("_last_routing_logits", "_last_routing_probs", "_last_routing_summary"):
@@ -204,10 +210,11 @@ def publish_aux_loss(
 ) -> torch.Tensor:
     """Publish one canonical scalar loss for ``module``.
 
-    Evaluation publications are intentionally detached zeros.  This keeps
-    diagnostics available without retaining an autograd graph between eval
-    batches.  Re-publishing a module replaces its previous record, so repeated
-    reads never accumulate state.
+    Publishers are responsible for calling this helper only for training
+    forwards; ``training`` is retained as record metadata for compatibility
+    with legacy publishers.  A module may publish at most once per canonical
+    step: a duplicate keeps the first record and increments the module-local
+    duplicate counter, so a retry cannot silently add a second loss weight.
     """
 
     if not isinstance(value, torch.Tensor):
@@ -222,6 +229,15 @@ def publish_aux_loss(
     covered = frozenset(id(item) if isinstance(item, nn.Module) else int(item) for item in covered_modules)
     record = AuxLossRecord(canonical, step, training, str(kind), covered)
     with _RECORDS_LOCK:
+        previous = _RECORDS.get(module)
+        consumed = _CONSUMED_RECORDS.setdefault(module, set())
+        duplicate = (record.step, record.kind) in consumed or (previous is not None and previous.step == record.step)
+        if duplicate:
+            # A module may publish at most once per canonical step. Keep the
+            # first graph-connected record so a same-step re-publication cannot
+            # silently receive a second loss weight.
+            module._routing_duplicate_publication_count = getattr(module, "_routing_duplicate_publication_count", 0) + 1
+            return previous.value if previous is not None else canonical
         _RECORDS[module] = record
     return canonical
 
@@ -453,7 +469,7 @@ def collect_aux_loss(
     return_value_scalars: bool = True,
     modules: Iterable[nn.Module] | None = None,
 ):
-    """Collect canonical losses once, rejecting stale and eval publications."""
+    """Collect canonical losses once, rejecting stale/eval records and consuming the current record."""
 
     kinds = frozenset(include_kinds)
     target_step = current_aux_step() if step is None else int(step)
@@ -462,6 +478,8 @@ def collect_aux_loss(
         "counts_by_kind": {kind: 0 for kind in kinds},
         "values_by_kind": {},
         "modules": [],
+        "consumed": 0,
+        "duplicate_published": 0,
         "stale_skipped": 0,
         "eval_skipped": 0,
         "duplicate_skipped": 0,
@@ -472,29 +490,42 @@ def collect_aux_loss(
 
     selected: list[torch.Tensor] = []
     covered: set[int] = set()
-    for module, record in iter_aux_records(model, modules=modules):
-        if record.kind not in kinds:
-            continue
-        if record.step != target_step:
-            diagnostics["stale_skipped"] += 1
-            continue
-        if require_training and not record.training:
-            diagnostics["eval_skipped"] += 1
-            continue
-        if not isinstance(record.value, torch.Tensor) or not record.value.requires_grad:
-            continue
-        if id(module) in covered:
-            diagnostics["duplicate_skipped"] += 1
-            continue
-        selected.append(record.value)
-        covered.add(id(module))
-        covered.update(record.covered_modules)
-        diagnostics["counts_by_kind"][record.kind] = diagnostics["counts_by_kind"].get(record.kind, 0) + 1
-        if return_value_scalars:
-            diagnostics["values_by_kind"].setdefault(record.kind, []).append(float(record.value.detach()))
-        if return_tensor_values:
-            diagnostics.setdefault("_tensor_values_by_kind", {}).setdefault(record.kind, []).append(record.value)
-        diagnostics["modules"].append(module.__class__.__name__)
+    # Mark matching records consumed while holding the registry lock. This
+    # makes a second collector call for the same step observe no graph, while
+    # retaining the publication for post-forward diagnostics.
+    candidates = list(model.modules() if modules is None else modules)
+    with _RECORDS_LOCK:
+        for module in candidates:
+            record = _RECORDS.get(module)
+            if record is None or record.kind not in kinds:
+                continue
+            diagnostics["duplicate_published"] += int(getattr(module, "_routing_duplicate_publication_count", 0))
+            consumed = _CONSUMED_RECORDS.setdefault(module, set())
+            token = (record.step, record.kind)
+            if token in consumed:
+                continue
+            consumed.add(token)
+            diagnostics["consumed"] += 1
+            if record.step != target_step:
+                diagnostics["stale_skipped"] += 1
+                continue
+            if require_training and not record.training:
+                diagnostics["eval_skipped"] += 1
+                continue
+            if not isinstance(record.value, torch.Tensor) or not record.value.requires_grad:
+                continue
+            if id(module) in covered:
+                diagnostics["duplicate_skipped"] += 1
+                continue
+            selected.append(record.value)
+            covered.add(id(module))
+            covered.update(record.covered_modules)
+            diagnostics["counts_by_kind"][record.kind] = diagnostics["counts_by_kind"].get(record.kind, 0) + 1
+            if return_value_scalars:
+                diagnostics["values_by_kind"].setdefault(record.kind, []).append(float(record.value.detach()))
+            if return_tensor_values:
+                diagnostics.setdefault("_tensor_values_by_kind", {}).setdefault(record.kind, []).append(record.value)
+            diagnostics["modules"].append(module.__class__.__name__)
 
     if selected:
         total = selected[0]
