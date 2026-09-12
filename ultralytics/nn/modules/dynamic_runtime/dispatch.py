@@ -7,6 +7,13 @@ from typing import Callable, Sequence
 
 import numpy as np
 
+from ultralytics.nn.modules.topk_contract import (
+    DEADBAND_LOWEST_ID_TOPK,
+    DEFAULT_DETERMINISTIC_TOPK,
+    LEGACY_PRIORITY_BIAS_TOPK,
+    SUPPORTED_DETERMINISTIC_TOPK,
+)
+
 
 class DynamicDispatchContractError(RuntimeError):
     """Raised when routing tensors violate the conditional-execution contract."""
@@ -85,13 +92,15 @@ def sparsify_topk_probabilities(
     top_k: int,
     zero_tolerance: float = 1e-8,
     tie_tolerance: float = 1e-6,
+    tie_break: str = DEFAULT_DETERMINISTIC_TOPK,
 ) -> np.ndarray:
     """Apply deterministic host Top-K to dense router probabilities.
 
-    A tiny expert-id priority bias is applied for ranking only, so near-ties are
-    resolved by the lowest expert id across backends. The original probabilities
-    are retained as mixture weights. Keeping Top-K outside ONNX avoids backend-
-    specific ``TopK`` behavior while experts remain conditionally executed.
+    The default deadband policy repeatedly selects the largest remaining
+    probability and chooses the lowest expert id among values within
+    ``tie_tolerance`` of that maximum. Original probabilities are retained as
+    mixture weights. Keeping Top-K outside ONNX avoids backend-specific ``TopK``
+    behavior while experts remain conditionally executed.
     """
     probabilities = np.asarray(routing_probabilities)
     if probabilities.ndim != 4:
@@ -103,6 +112,8 @@ def sparsify_topk_probabilities(
         raise DynamicDispatchContractError(f"top_k must be in [1, {num_experts - 1}], got {top_k}")
     if float(tie_tolerance) < 0.0:
         raise DynamicDispatchContractError(f"tie_tolerance must be nonnegative, got {tie_tolerance}")
+    if tie_break not in SUPPORTED_DETERMINISTIC_TOPK:
+        raise DynamicDispatchContractError(f"unsupported deterministic Top-K policy: {tie_break!r}")
     if not np.isfinite(probabilities).all():
         raise DynamicDispatchContractError("routing_probabilities contains NaN or Inf")
     if (probabilities < -zero_tolerance).any():
@@ -114,11 +125,28 @@ def sparsify_topk_probabilities(
             f"routing probabilities must sum to one across experts; maximum error={maximum_error:.6g}"
         )
 
-    ranking_probabilities = probabilities
-    if tie_tolerance > 0.0:
-        expert_priority = np.arange(num_experts, dtype=probabilities.dtype).reshape(1, -1, 1, 1)
-        ranking_probabilities = probabilities - expert_priority * tie_tolerance
-    top_indices = np.argsort(-ranking_probabilities, axis=1, kind="stable")[:, : int(top_k)]
+    if tie_break == LEGACY_PRIORITY_BIAS_TOPK:
+        ranking_probabilities = probabilities
+        if tie_tolerance > 0.0:
+            expert_priority = np.arange(num_experts, dtype=probabilities.dtype).reshape(1, -1, 1, 1)
+            ranking_probabilities = probabilities - expert_priority * tie_tolerance
+        top_indices = np.argsort(-ranking_probabilities, axis=1, kind="stable")[:, : int(top_k)]
+    elif tie_break == DEADBAND_LOWEST_ID_TOPK:
+        available = np.ones_like(probabilities, dtype=bool)
+        expert_ids = np.arange(num_experts, dtype=np.int64).reshape(1, -1, 1, 1)
+        expert_ids = np.broadcast_to(expert_ids, probabilities.shape)
+        selections = []
+        for _ in range(int(top_k)):
+            remaining = np.where(available, probabilities, -np.inf)
+            maximum = remaining.max(axis=1, keepdims=True)
+            candidates = available & (remaining >= maximum - float(tie_tolerance))
+            candidate_ids = np.where(candidates, expert_ids, num_experts)
+            selected = candidate_ids.min(axis=1, keepdims=True)
+            selections.append(selected)
+            np.put_along_axis(available, selected, False, axis=1)
+        top_indices = np.concatenate(selections, axis=1)
+    else:  # pragma: no cover - guarded above, retained for type narrowing.
+        raise DynamicDispatchContractError(f"unsupported deterministic Top-K policy: {tie_break!r}")
     top_values = np.take_along_axis(probabilities, top_indices, axis=1)
     sparse = np.zeros_like(probabilities)
     np.put_along_axis(sparse, top_indices, top_values, axis=1)

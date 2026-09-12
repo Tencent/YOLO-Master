@@ -10,6 +10,11 @@ import numpy as np
 import torch
 from torch import nn
 
+from ultralytics.nn.modules.topk_contract import (
+    DEADBAND_LOWEST_ID_TOPK,
+    LEGACY_PRIORITY_BIAS_TOPK,
+)
+
 from .dispatch import DynamicDispatchContractError, audit_sparse_routing
 from .ort import ORTDynamicExpertRuntime
 
@@ -24,13 +29,14 @@ def _host_topk_boundary_margin(
     *,
     top_k: int,
     tie_tolerance: float,
+    tie_break: str,
 ) -> np.ndarray:
     """Return the selected/unselected boundary margin used by host Top-K.
 
-    The host selector subtracts ``expert_id * tie_tolerance`` before its
-    stable descending sort. Measuring that adjusted score, rather than only
-    the raw softmax values, diagnoses the exact decision boundary that can
-    flip when eager PyTorch and ORT differ by a few floating-point ulps.
+    Legacy bundles rank an expert-id-adjusted score, while new bundles use a
+    raw-probability deadband followed by the lowest expert id. For the latter,
+    the raw K/K+1 gap is reported; the policy and tolerance are recorded next
+    to it so the value is not misrepresented as a standalone decision rule.
     """
     probabilities = np.asarray(dense_probabilities)
     if probabilities.ndim != 4:
@@ -42,8 +48,13 @@ def _host_topk_boundary_margin(
         raise DynamicDispatchContractError(
             f"route-margin audit requires Top-K in [1, {num_experts - 1}], got {top_k}"
         )
-    priority = np.arange(num_experts, dtype=probabilities.dtype).reshape(1, -1, 1, 1)
-    ranking_scores = probabilities - priority * float(tie_tolerance)
+    if tie_break == LEGACY_PRIORITY_BIAS_TOPK:
+        priority = np.arange(num_experts, dtype=probabilities.dtype).reshape(1, -1, 1, 1)
+        ranking_scores = probabilities - priority * float(tie_tolerance)
+    elif tie_break == DEADBAND_LOWEST_ID_TOPK:
+        ranking_scores = probabilities
+    else:
+        raise DynamicDispatchContractError(f"unsupported route-margin Top-K policy: {tie_break!r}")
     ordered = np.sort(ranking_scores, axis=1)[:, ::-1]
     return ordered[:, top_k - 1] - ordered[:, top_k]
 
@@ -163,6 +174,11 @@ class ORTRouterTorchExpertAdapter(nn.Module):
                 f"bundle Top-{self.top_k}/{self.num_experts}, "
                 f"checkpoint Top-{block.top_k}/{block.NUM_EXPERTS}"
             )
+        # Bind the eager reference to the versioned bundle contract. This is
+        # essential when replaying a legacy manifest with a checkpoint whose
+        # serialized router predates the explicit policy attribute.
+        block.router.route_tie_break = str(manifest.get("host_topk_tie_break", LEGACY_PRIORITY_BIAS_TOPK))
+        block.router.route_tie_tolerance = float(manifest.get("host_topk_tie_tolerance", 0.0))
         self.require_reduction = bool(require_reduction)
         self.compare_eager_routes = bool(compare_eager_routes)
         self.last_audit = None
@@ -233,15 +249,23 @@ class ORTRouterTorchExpertAdapter(nn.Module):
         }
         if dense_probabilities is not None and self.top_k < self.num_experts:
             tie_tolerance = float(self.runtime.manifest.get("host_topk_tie_tolerance", 0.0))
+            tie_break = str(
+                self.runtime.manifest.get(
+                    "host_topk_tie_break",
+                    LEGACY_PRIORITY_BIAS_TOPK,
+                )
+            )
             margins = _host_topk_boundary_margin(
                 dense_probabilities,
                 top_k=self.top_k,
                 tie_tolerance=tie_tolerance,
+                tie_break=tie_break,
             )
             eager_margins = _host_topk_boundary_margin(
                 eager_dense,
                 top_k=self.top_k,
                 tie_tolerance=tie_tolerance,
+                tie_break=tie_break,
             )
             margin_values = margins.reshape(-1).astype(np.float64, copy=False)
             mismatch_margins = margins[route_location_mismatch].reshape(-1).astype(np.float64, copy=False)
@@ -257,7 +281,12 @@ class ORTRouterTorchExpertAdapter(nn.Module):
             }
             result["host_topk_boundary_margin"] = {
                 "available": True,
-                "definition": "kth_minus_k_plus_1_adjusted_ranking_score",
+                "definition": (
+                    "kth_minus_k_plus_1_adjusted_ranking_score"
+                    if tie_break == LEGACY_PRIORITY_BIAS_TOPK
+                    else "kth_minus_k_plus_1_raw_probability"
+                ),
+                "tie_break": tie_break,
                 "tie_tolerance": tie_tolerance,
                 "locations": int(margin_values.size),
                 "min": float(margin_values.min()),
@@ -435,6 +464,12 @@ class ORTRouterTorchExpertAdapter(nn.Module):
                 sparse_weight_max_abs_error=self._max_sparse_weight_abs_error,
             )
             if self._total_route_margin_locations:
+                tie_break = str(
+                    self.runtime.manifest.get(
+                        "host_topk_tie_break",
+                        LEGACY_PRIORITY_BIAS_TOPK,
+                    )
+                )
                 sampled_mismatch_margins = np.asarray(self._mismatch_route_margins, dtype=np.float64)
                 sampled_eager_mismatch_margins = np.asarray(
                     self._mismatch_eager_route_margins,
@@ -442,7 +477,12 @@ class ORTRouterTorchExpertAdapter(nn.Module):
                 )
                 summary["route_margin_audit"] = {
                     "available": True,
-                    "definition": "kth_minus_k_plus_1_adjusted_ranking_score",
+                    "definition": (
+                        "kth_minus_k_plus_1_adjusted_ranking_score"
+                        if tie_break == LEGACY_PRIORITY_BIAS_TOPK
+                        else "kth_minus_k_plus_1_raw_probability"
+                    ),
+                    "tie_break": tie_break,
                     "tie_tolerance": float(self.runtime.manifest.get("host_topk_tie_tolerance", 0.0)),
                     "locations": self._total_route_margin_locations,
                     "min": self._route_margin_min,

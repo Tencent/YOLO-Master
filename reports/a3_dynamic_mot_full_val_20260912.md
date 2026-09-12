@@ -10,6 +10,9 @@
 - 6/6 动态块均执行了真实 checkpoint PyTorch 专家；ONNX 专家会话加载数为 `0`。
 - 观测到 `173 / 3,945,600` 个路由位置漂移，占 `0.00438463%`。漂移没有被隐藏，所以结论不是
   “严格逐位置一致”。
+- 后续裕量审计确认 173 个漂移全部位于浮点决策边界：两处漂移块的错位裕量最大值均不超过对应的
+  eager/ORT dense 概率最大绝对误差。因此现有证据支持“近似并列下的跨后端浮点翻转”，不支持“专家图
+  导出语义错误”。
 - 4 个块获得了真实的专家调用缩减；两个 Top-2 空间路由块的整批专家并集覆盖 3/3，因此缩减为 `0%`。
 - 当前系统仍是“ORT CPU 路由器 + 宿主 Top-K + PyTorch checkpoint 专家 + PyTorch 外层 YOLO”的混合
   FP32 验证路径，不是完整导出模型，不是 TensorRT，也不能据此声明端到端加速。
@@ -26,6 +29,11 @@
 | 原始证据包 SHA256 | `0B05BACB5FAB5A91ACABE4211A6CF6852ABD01B7C37588E04A874E7BAE18CC72` |
 | 本地归档 | `D:/YOLO_Master/P1_dynamic_runtime_20260912/mot_dynamic_full_val_20260912_evidence.zip` |
 | 安全解压目录 | `D:/YOLO_Master/P1_dynamic_runtime_20260912/evidence_0B05BACB5FAB5A91` |
+| 裕量审计证据包 | `mot_dynamic_route_margin_20260912_evidence.zip` |
+| 裕量审计包大小 | `18,728 bytes` |
+| 裕量审计包 SHA256 | `818607439F165D63369A1839F365BCC3C266D8EBD5F828759073C4D78BD2C63D` |
+| 裕量审计本地归档 | `D:/YOLO_Master/P1_dynamic_runtime_20260912/mot_dynamic_route_margin_20260912_evidence.zip` |
+| 裕量审计安全解压目录 | `D:/YOLO_Master/P1_dynamic_runtime_20260912/evidence_margin_818607439F165D63` |
 | checkpoint SHA256 | `5f6ff684f74c773de5cdf0a2e4a51773317829bbeccc48c5c13f0ed3a2f3d417` |
 | 模型清单状态 | `VALIDATED` |
 | 图片数 | eager `548`；dynamic `548` |
@@ -79,19 +87,38 @@ batch 只调用 K 个专家”；前两个块的空间位置并集覆盖全部�
 
 这是一项验证稳定性修复，不是对结果的数值修正。
 
-## 下一阶段：路由漂移成因审计
+## 路由漂移成因审计：已完成
 
-仓库运行时已增加 Top-K 边界裕量审计：保存 ORT 的导出前 dense 路由概率，并在不改变选择结果的情况下记录：
+裕量审计使用相同真实 checkpoint 和 548 张 VisDrone val，结果仍为 `PASS_WITH_ROUTE_DRIFT`，并把 173 个
+漂移位置定位到两个 Top-2 空间路由块：
 
-1. host Top-K 第 K 名与第 K+1 名的调整后排序分数差；
-2. 漂移位置的 eager/ORT 两侧裕量；
-3. eager/ORT dense 概率最大绝对误差；
-4. `1e-7 / 1e-6 / 1e-5 / 1e-4` 四档近似并列计数；
-5. 最多 32 个漂移位置坐标样例，不保存输入图像内容。
+| 动态块 | 漂移 | ORT 错位裕量 median / p95 / max | eager 错位裕量 median / p95 / max | dense 概率最大误差 |
+|---|---:|---:|---:|---:|
+| `model.14.m.0` | `149 / 876,800` | `2.98e-8 / 1.19e-7 / 1.79e-7` | `2.98e-8 / 1.19e-7 / 1.49e-7` | `2.68e-7` |
+| `model.20.m.0` | `24 / 876,800` | `2.98e-8 / 1.45e-7 / 1.49e-7` | `5.96e-8 / 1.74e-7 / 2.09e-7` | `2.98e-7` |
 
-这一步需要重新在云端跑 548 张验证，目的是区分“近似并列导致的浮点翻转”和“导出语义错误”。若漂移位置
-两侧裕量都与 dense 概率误差同量级，可继续研发确定性排序与 CUDA dispatch；若裕量显著大于概率误差，则应
-暂停 GPU 插件开发，先修复路由器导出。
+另外四个块的路由漂移为 0；其中三块最小边界分别为 `6.15e-4`、`1.87e-3`、`1.64e-4`，明显远离上述
+浮点误差量级；`model.23.m.0` 的最小裕量为 `1.55e-6`，仍未发生翻转。两处漂移块的错位裕量最大值均不大于
+该块全量 dense 概率最大误差，且错位裕量集中在 `1e-7` 量级附近。因此当前成因判定为：**导出前后 dense 概率数值等价，
+离散 Top-K 在近似并列位置发生浮点翻转**。
+
+该结论不是“逐位置严格一致”，也不能证明任意输入都不会存在语义问题；它只对本 checkpoint、本数据和本次
+锁定运行成立。
+
+## 确定性 Top-K 与动态 DAG 研发进展
+
+本地运行时已统一为版本化策略 `max_deadband_then_lowest_expert_id`：逐次取剩余最大值，在距最大值不超过
+`1e-6` 的 deadband 内按最小专家 ID 决定，混合权重仍使用原始概率。新 bundle 显式记录策略；旧 bundle
+继续按 `probability_minus_expert_id_times_tolerance` 回放，避免静默改变已有证据语义。NumPy/PyTorch 合同、
+ES-MoE 和 MoT 拆分 ONNX 本地回归均通过。
+
+同时新增可执行的动态 DAG 和自定义 `ConditionalDispatchBackend` 接口。DAG 中路由节点与专家分支是显式
+依赖，dispatch 后端必须声明真实条件执行并返回专家调用审计；masked-dense 后端会被拒绝。当前实现是 CPU
+NumPy 参考后端，用于冻结接口和验证“未选专家不执行”，尚不是完整 YOLO 单图、CUDA/TensorRT 或零拷贝
+实现。
+
+下一次需要云端时，只做新 Top-K 合同的真实 checkpoint + 548 张复验；通过后再开始 CUDA/TensorRT
+backend 的正确性与 P50/P95 性能验证。在此之前不扩展动态 INT8。
 
 ## 尚不可声明
 

@@ -4,15 +4,25 @@
 >
 > 日期：2026-09-11
 >
-> 建议 PR 标题：`[犀牛鸟-A3] Export Gap：五族 INT8 量化与路由一致性评测`
+> 建议 PR 标题：`[犀牛鸟-A3] Export Gap：量化证据、路由一致性与真动态专家运行时`
 >
 > 总结状态：**P0 通过；P1 有条件完成；P2 测量闭环完成但严格验收门禁未通过**
+
+> 2026-09-12 更新：真实 MoT checkpoint + VisDrone val 548 张的 FP32 条件专家执行已完成；路由裕量
+> 审计确认 173 个漂移均为近似并列处的跨后端浮点翻转。确定性 Top-K 与动态 DAG/dispatch 接口已进入
+> 本地实现阶段；动态 INT8 扩展冻结。
 
 ## 1. 结论
 
 本工作完成了从 PyTorch、FP32 ONNX 到 INT8 ONNX 的数值与精度验证，并把实验从 ES-MoE/MoT 两族扩展到 MoE、MoA、MoT、MoLoRA、Latent 五族。核心 P2 精度矩阵的五族 FP32 与 full-INT8 共 `10/10` 项可运行，COCO val2017 全量 5,000 张均有 mAP50-95 结果；五族 FP32/INT8 专家选择一致率也已在锁定的 64 张图上 `5/5` 测量完成。
 
 研究结论并非“INT8 加速已经实现”。当前 P2 产物仍是静态 ONNX/QDQ 路径，未证明 INT8 只执行 Top-K 专家，也没有可用的 GPU 延迟证据。严格路由门槛为集合一致率和有序一致率均不低于 `99%`、Top-1 翻转率不高于 `1%`；结果仅 MoE 通过，MoA、MoT、MoLoRA、Latent 均未通过。因此 P2 的实验闭环和失败机制分析已经形成，但部署验收不能写成通过。
+
+FP32 真动态路线已有新的、独立于上述静态 P2 矩阵的证据：MoT 的 6 个真实路由块在完整 YOLO 和 548 张
+VisDrone val 上均执行 checkpoint PyTorch 专家，ONNX 专家会话加载数为 0；动态路径与 eager 的
+mAP50-95 差为 `+0.0002007108` 个百分点。路由漂移为 `173 / 3,945,600`（`0.00438463%`），不是严格
+逐位置一致；裕量审计显示两处漂移块的错位裕量最大值不超过对应 dense 概率跨后端最大误差，支持近似并列
+浮点翻转诊断。完整解释见 [`a3_dynamic_mot_full_val_20260912.md`](a3_dynamic_mot_full_val_20260912.md)。
 
 ## 2. P0/P1/P2 验收映射
 
@@ -22,7 +32,7 @@
 | P1 | 至少两族 INT8 PTQ/等价量化并记录精度、体积、延迟、失败路径 | ES-MoE 与 MoT 的 VisDrone 全量证据、失败算子、CPU 延迟和体积见 P1 报告 | **有条件完成**；精度与体积成立，INT8 加速和真正条件执行不成立 |
 | P2 | 五族对比、FP32/INT8 专家选择一致率、QAT 或敏感层回退尝试 | 五族 COCO FP32/INT8、五族路由测量、三族手工混合精度回退 | **测量闭环完成，门禁失败**；未做 QAT，回退未覆盖 Latent/MoLoRA，未做真实端侧/GPU 延迟 |
 
-P1 原始结论及量化产物见 [`a3_p1_int8_ptq_delivery_20260831.md`](a3_p1_int8_ptq_delivery_20260831.md)。真实条件专家执行的研究性 PoC 见 [`a3_dynamic_expert_runtime_poc_20260901.md`](a3_dynamic_expert_runtime_poc_20260901.md)；该 PoC 证明了按选择调用专家的可行性，但还不是统一可部署 DAG，也不提供 INT8 加速结论。
+P1 原始结论及量化产物见 [`a3_p1_int8_ptq_delivery_20260831.md`](a3_p1_int8_ptq_delivery_20260831.md)。真实条件专家执行从单块 PoC 已推进到完整 YOLO 的 6 个 MoT 路由块和 548 张全量验证；新实现还提供了版本化确定性 Top-K、可执行动态 DAG 与自定义 dispatch backend 合同，设计边界见 [`a3_dynamic_dag_dispatch_design_20260912.md`](a3_dynamic_dag_dispatch_design_20260912.md)。当前 backend 仍为 CPU NumPy 参考实现，完整图生成、CUDA/TensorRT、零拷贝和端到端加速尚未完成。
 
 ## 3. P2 实验口径与锁定信息
 
@@ -93,21 +103,24 @@ MoA 的概率误差很小但排名翻转很多，说明专家分数存在大量�
 1. **校准集过小。** 本轮仅使用 COCO8 的 4 张 train 图，适合作为流水线/机制诊断，不足以作为稳健 PTQ 最终配置。P1 的 VisDrone 300 张校准曾获得明显更小的量化损失，二者不能直接比较。
 2. **环境漂移。** 导出锁为 Python 3.11.11、NumPy 1.26.4、ONNX 1.20.1、ORT 1.23.2、Torch 2.3.1+cpu；验证时为 Python 3.12.13、NumPy 2.5.2、ONNX 1.22.0、ORT 1.29.0、Torch 2.13.0+cpu。脚本显式允许漂移并保留双方契约，因此结果可审计，但还不是严格同环境复现。
 3. **Git 工作树非净。** 实验锁记录 commit `637c66e72520118d1409ec06869aa42ee301e74b` 且 `dirty=true`。checkpoint、配置、数据选择和脚本均有单独哈希，可定位实验资产；仍建议 PR 合并前在干净提交上重跑快速契约测试。
-4. **静态执行边界。** full-INT8 ONNX 并不等于真实 Top-K 条件计算，不能声称已实现动态 INT8 加速。
+4. **静态 INT8 与动态 FP32 边界。** full-INT8 ONNX 并不等于真实 Top-K 条件计算；现有真动态证据是
+   FP32 混合路径，不能声称已实现动态 INT8 加速。
 5. **没有 GPU 延迟。** 本包只提供 CPU 完整验证耗时；不能从中推出 GPU 延迟或吞吐。
 6. **可选矩阵不完整。** 核心 FP32/full-INT8 是 10/10；FP16 与 manual fallback 并非五族全覆盖。MoT FP16 的已存失败是字体下载环境错误，不应写成模型 FP16 不可运行。
 
 ## 8. 最小剩余实验与工程路线
 
-若在 9 月 12 日前以“可审查 PR”为目标，不应再重跑当前 5,000 张矩阵。建议按下面顺序收尾：
+若以“可审查统一 PR”为目标，不再重跑当前 5,000 张 INT8 矩阵。后续按下面顺序推进：
 
 1. 立即提交现有锁、五族精度表、逐层路由 CSV、复现脚本、测试和本报告。
 2. PR 中把 P2 状态写为“measurement complete, gate failed”，将未通过项登记为后续工作。
-3. 若还有云端时段，优先用不少于 300 张 COCO train 图重新校准 MoT、MoLoRA、MoA；保持导出与验证版本一致，仅先跑 128 张快速门禁，改善后再跑 5,000 张。
-4. 使用本轮最差层排名做定点 FP32 回退；先补 MoLoRA，再补 MoT。不要先做成本更高、解释更弱的全模型 QAT。
-5. GPU 延迟必须在真正条件执行运行时或明确的 masked-dense 基线上另测，并同时记录 provider、batch、warmup、重复次数、P50/P95、实际专家调用数。
-
-若校准扩充和定点回退仍不能使路由门禁及 mAP 门禁通过，再对失败族做短周期 QAT，并保持 router/TopK 为 FP16/FP32、专家计算为 INT8 的混合精度策略。
+3. 在云端用新确定性 Top-K 合同重新跑真实 MoT checkpoint + VisDrone val 548 张，验证 mAP 门禁、
+   路由漂移和 6/6 动态块执行；本地构造测试不能替代该证据。
+4. 生成完整 YOLO 动态 DAG，并实现 CUDA/TensorRT `ConditionalDispatchBackend`；空间路由优先做
+   token/window 分组，避免 batch union 覆盖全专家。
+5. GPU 延迟只在真正条件执行 backend 正确性通过后测试，同时记录 provider、batch、warmup、重复次数、
+   P50/P95、吞吐、显存和实际专家调用数。
+6. 动态 FP32 正确性和性能闭环前，不扩展 INT8、QAT 或更多混合精度实验。
 
 ## 9. GitHub 证据
 
@@ -119,3 +132,13 @@ SHA256 468523B784E9FCFAF5E92521E81785C55D16569A44F9A7799E4120B9A829BF6B
 ```
 
 为避免把大 JSON 和二进制归档写入普通 Git 历史，仓库保留精简汇总、逐层 CSV、实验锁和配置；完整的逐样本路由 JSON 由上述 ZIP 哈希锚定。`accuracy_summary.json` 顶层的 `completed=4/4` 只代表最后一次恢复运行的 Latent 四变体选择，五族核心结论以保留的逐族结果和 `accuracy_summary.csv` 为准，不宣称 20/20 四变体矩阵完成。
+
+MoT 真动态全量与裕量审计证据另见 [`evidence/a3_dynamic_mot_20260912/`](evidence/a3_dynamic_mot_20260912/)：
+
+```text
+mot_dynamic_full_val_20260912_evidence.zip
+SHA256 0B05BACB5FAB5A91ACABE4211A6CF6852ABD01B7C37588E04A874E7BAE18CC72
+
+mot_dynamic_route_margin_20260912_evidence.zip
+SHA256 818607439F165D63369A1839F365BCC3C266D8EBD5F828759073C4D78BD2C63D
+```

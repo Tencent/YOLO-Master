@@ -9,6 +9,8 @@ from typing import Sequence
 
 import numpy as np
 
+from ultralytics.nn.modules.topk_contract import LEGACY_PRIORITY_BIAS_TOPK, SUPPORTED_DETERMINISTIC_TOPK
+
 from .bundle import BUNDLE_SCHEMA_VERSION
 from .dispatch import (
     DynamicDispatchAudit,
@@ -53,6 +55,11 @@ class ORTDynamicExpertRuntime:
             raise DynamicDispatchContractError("manifest does not declare host conditional expert dispatch")
         if self.manifest.get("masked_dense_allowed") is not False:
             raise DynamicDispatchContractError("manifest must explicitly forbid masked-dense execution")
+        tie_break = str(self.manifest.get("host_topk_tie_break", LEGACY_PRIORITY_BIAS_TOPK))
+        if tie_break not in SUPPORTED_DETERMINISTIC_TOPK:
+            raise DynamicDispatchContractError(f"unsupported manifest Top-K policy: {tie_break!r}")
+        if float(self.manifest.get("host_topk_tie_tolerance", 0.0)) < 0.0:
+            raise DynamicDispatchContractError("manifest Top-K tie tolerance must be nonnegative")
 
         self._ort = ort
         self.providers = list(providers or ["CPUExecutionProvider"])
@@ -190,6 +197,12 @@ class ORTDynamicExpertRuntime:
                 top_k=int(self.manifest["top_k"]),
                 zero_tolerance=float(self.manifest["zero_tolerance"]),
                 tie_tolerance=float(self.manifest.get("host_topk_tie_tolerance", 0.0)),
+                tie_break=str(
+                    self.manifest.get(
+                        "host_topk_tie_break",
+                        LEGACY_PRIORITY_BIAS_TOPK,
+                    )
+                ),
             )
         elif router_semantics == "sparse_topk":
             self.last_dense_routing_probabilities = None

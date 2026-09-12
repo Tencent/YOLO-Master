@@ -9,10 +9,16 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ultralytics.nn.modules._numeric import FP32RouterMixin, disabled_autocast, stable_normalize
+from ultralytics.nn.modules._numeric import (
+    FP32RouterMixin,
+    deterministic_topk_indices,
+    disabled_autocast,
+    stable_normalize,
+)
 from ultralytics.nn.modules.moe import loss as _moe_loss
 from ultralytics.nn.modules.routing_protocol import graph_connected_finite_zero
 from ultralytics.nn.modules.routing_protocol import routing_finite_diagnostics
+from ultralytics.nn.modules.topk_contract import DEFAULT_DETERMINISTIC_TOPK
 from ultralytics.nn.modules.utils import get_safe_groups as _safe_groups
 from ultralytics.nn.modules.mot._constants import (
     DEFAULT_MIN_TEMPERATURE,
@@ -109,6 +115,7 @@ class _MoTRouter(FP32RouterMixin, nn.Module):
         # export fallback.
         self.export_masked = bool(export_masked)
         self.route_tie_tolerance = 1e-6
+        self.route_tie_break = DEFAULT_DETERMINISTIC_TOPK
         # Register temperature as a buffer so checkpoint save/restore
         # preserves annealing progress (Python float would be lost).
         self.register_buffer("temperature", torch.tensor(max(temperature, 0.1)), persistent=True)
@@ -292,11 +299,13 @@ class _MoTRouter(FP32RouterMixin, nn.Module):
         elif self.top_k < self.num_experts:
             # get top-k indices [B, K, H, W]
             tie_tolerance = float(getattr(self, "route_tie_tolerance", 1e-6))
-            ranking_weights = weights
-            if tie_tolerance > 0.0:
-                expert_priority = torch.arange(self.num_experts, device=weights.device, dtype=weights.dtype)
-                ranking_weights = weights - expert_priority.view(1, -1, 1, 1) * tie_tolerance
-            topk_idx = torch.argsort(ranking_weights, dim=1, descending=True, stable=True)[:, : self.top_k]
+            tie_break = str(getattr(self, "route_tie_break", DEFAULT_DETERMINISTIC_TOPK))
+            topk_idx = deterministic_topk_indices(
+                weights,
+                self.top_k,
+                tie_tolerance=tie_tolerance,
+                tie_break=tie_break,
+            )
             topk_vals = weights.gather(1, topk_idx)
             # renormalize selected weights
             topk_weights = stable_normalize(topk_vals, dim=1)

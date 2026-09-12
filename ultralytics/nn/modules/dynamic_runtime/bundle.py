@@ -12,6 +12,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
+from ultralytics.nn.modules.topk_contract import DEFAULT_DETERMINISTIC_TOPK
+
 from .dispatch import DynamicDispatchContractError
 
 
@@ -162,6 +164,7 @@ def export_dynamic_expert_bundle(
         routing_granularity = "sample"
         dynamic_threshold = float(module.dynamic_threshold)
         host_topk_tie_tolerance = float(getattr(module.routing, "route_tie_tolerance", 1e-6))
+        host_topk_tie_break = str(getattr(module.routing, "route_tie_break", DEFAULT_DETERMINISTIC_TOPK))
         postprocess_kind = "norm"
     elif isinstance(module, MoTBlock):
         family = "MoT"
@@ -177,6 +180,7 @@ def export_dynamic_expert_bundle(
         routing_granularity = "spatial_union" if bool(module.router.use_spatial) else "sample"
         dynamic_threshold = 0.0
         host_topk_tie_tolerance = float(getattr(module.router, "route_tie_tolerance", 1e-6))
+        host_topk_tie_break = str(getattr(module.router, "route_tie_break", DEFAULT_DETERMINISTIC_TOPK))
         postprocess_kind = "projection_norm_residual"
     else:
         raise TypeError(f"unsupported dynamic expert module: {type(module).__module__}.{type(module).__name__}")
@@ -232,11 +236,11 @@ def export_dynamic_expert_bundle(
         "module_type": f"{type(module).__module__}.{type(module).__name__}",
         "execution_semantics": "host_conditional_expert_dispatch",
         "masked_dense_allowed": False,
-        "reference_semantics": "eager_sparse_portable_tie_break",
+        "reference_semantics": "eager_sparse_deterministic_topk_v2",
         "num_experts": num_experts,
         "top_k": top_k,
         "router_output_semantics": "dense_probabilities_host_topk",
-        "host_topk_tie_break": "probability_minus_expert_id_times_tolerance",
+        "host_topk_tie_break": host_topk_tie_break,
         "host_topk_tie_tolerance": host_topk_tie_tolerance,
         "routing_granularity": routing_granularity,
         "dynamic_threshold": dynamic_threshold,

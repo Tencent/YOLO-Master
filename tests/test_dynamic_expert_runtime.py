@@ -9,15 +9,21 @@ import pytest
 import torch
 
 from ultralytics.nn.modules.dynamic_runtime import (
+    DAGCallableNode,
+    DAGDispatchNode,
     DynamicDispatchContractError,
+    DynamicDAG,
+    DynamicDAGExecutor,
     ORTDynamicExpertRuntime,
     ORTRouterTorchExpertAdapter,
     dispatch_numpy_experts,
     export_dynamic_expert_bundle,
     sparsify_topk_probabilities,
 )
+from ultralytics.nn.modules._numeric import deterministic_topk_indices
 from ultralytics.nn.modules.moe.modules import ES_MOE
 from ultralytics.nn.modules.mot import MoTBlock
+from ultralytics.nn.modules.topk_contract import DEFAULT_DETERMINISTIC_TOPK, LEGACY_PRIORITY_BIAS_TOPK
 
 
 class _SpyExpert:
@@ -83,6 +89,93 @@ def test_host_topk_is_sparse_normalized_and_uses_lowest_id_for_ties():
     np.testing.assert_allclose(sparse.sum(axis=1), 1.0)
 
 
+def test_deterministic_topk_contract_matches_numpy_and_torch_for_near_ties():
+    probabilities = np.array(
+        [
+            [[[0.3000004]], [[0.3]], [[0.2999999]], [[0.1000003]]],
+            [[[0.05]], [[0.4500003]], [[0.45]], [[0.0499997]]],
+        ],
+        dtype=np.float32,
+    )
+    sparse = sparsify_topk_probabilities(probabilities, top_k=2, tie_tolerance=1e-6)
+    numpy_indices = np.argsort(-sparse, axis=1, kind="stable")[:, :2]
+    torch_indices = deterministic_topk_indices(
+        torch.from_numpy(probabilities),
+        2,
+        tie_tolerance=1e-6,
+    ).numpy()
+
+    np.testing.assert_array_equal(numpy_indices, torch_indices)
+    np.testing.assert_array_equal(torch_indices[:, :, 0, 0], np.array([[0, 1], [1, 2]]))
+
+
+def test_legacy_topk_policy_remains_explicitly_replayable():
+    probabilities = np.array([[[[0.3333325]], [[0.3333333]], [[0.3333341]]]], dtype=np.float32)
+
+    current = sparsify_topk_probabilities(probabilities, top_k=2, tie_tolerance=1e-6)
+    legacy = sparsify_topk_probabilities(
+        probabilities,
+        top_k=2,
+        tie_tolerance=1e-6,
+        tie_break=LEGACY_PRIORITY_BIAS_TOPK,
+    )
+
+    current_ids = np.flatnonzero(current[0, :, 0, 0])
+    legacy_ids = np.flatnonzero(legacy[0, :, 0, 0])
+    np.testing.assert_array_equal(current_ids, np.array([1, 2]))
+    np.testing.assert_array_equal(legacy_ids, np.array([0, 1]))
+
+
+def test_dynamic_dag_executes_conditionally_selected_branches():
+    inputs = np.ones((2, 1, 1, 1), dtype=np.float32)
+    experts = [_SpyExpert(scale) for scale in (1.0, 10.0, 100.0)]
+
+    def router(x: np.ndarray) -> np.ndarray:
+        weights = np.zeros((x.shape[0], 3, 1, 1), dtype=np.float32)
+        weights[0, 0] = 1.0
+        weights[1, 2] = 1.0
+        return weights
+
+    dag = DynamicDAG(
+        inputs=("images",),
+        nodes=(
+            DAGCallableNode("router", "router", ("images",), "routing"),
+            DAGDispatchNode(
+                "experts",
+                "images",
+                "routing",
+                "mixture",
+                ("expert_0", "expert_1", "expert_2"),
+                top_k=1,
+                routing_granularity="sample",
+                require_reduction=True,
+            ),
+        ),
+        outputs=("mixture",),
+    )
+    executor = DynamicDAGExecutor(
+        dag,
+        {
+            "router": router,
+            "expert_0": experts[0],
+            "expert_1": experts[1],
+            "expert_2": experts[2],
+        },
+    )
+
+    output = executor.run({"images": inputs})["mixture"]
+
+    np.testing.assert_allclose(output[:, 0, 0, 0], np.array([1.0, 100.0], dtype=np.float32))
+    assert experts[0].batch_sizes == [1]
+    assert experts[1].batch_sizes == []
+    assert experts[2].batch_sizes == [1]
+    summary = executor.execution_summary()
+    assert summary["dag"]["execution_semantics"] == "runtime_conditional_dag"
+    assert summary["dag"]["masked_dense_allowed"] is False
+    assert summary["backend"]["conditional_execution"] is True
+    assert summary["dispatch_audits"]["experts"]["executed_expert_ids"] == (0, 2)
+
+
 def test_spatial_union_refuses_false_reduction_claim():
     inputs = np.ones((1, 1, 1, 3), dtype=np.float32)
     weights = np.zeros((1, 3, 1, 3), dtype=np.float32)
@@ -139,7 +232,7 @@ def test_esmoe_split_onnx_runtime_matches_eager_and_loads_one_expert(tmp_path):
     assert manifest["masked_dense_allowed"] is False
     assert manifest["routing_granularity"] == "sample"
     assert manifest["router_output_semantics"] == "dense_probabilities_host_topk"
-    assert manifest["host_topk_tie_break"] == "probability_minus_expert_id_times_tolerance"
+    assert manifest["host_topk_tie_break"] == DEFAULT_DETERMINISTIC_TOPK
     assert manifest["host_topk_tie_tolerance"] == pytest.approx(1e-6)
 
     runtime = ORTDynamicExpertRuntime(manifest_path)
