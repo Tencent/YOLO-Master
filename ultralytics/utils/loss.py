@@ -360,6 +360,11 @@ class v8DetectionLoss:
         self.no = m.nc + m.reg_max * 4
         self.reg_max = m.reg_max
         self.device = device
+        self.stal_stats = getattr(h, "stal_stats", False)
+        self._assignment_stats = torch.zeros(15, dtype=torch.long, device=device)
+        self._rescue_stats = torch.zeros(9, dtype=torch.long, device=device)
+        self._assignment_stage_stats = torch.zeros(9, dtype=torch.long, device=device)
+        self._target_score_stats = torch.zeros(9, dtype=torch.float64, device=device)
 
         self.use_dfl = m.reg_max > 1
 
@@ -368,6 +373,12 @@ class v8DetectionLoss:
         if self.class_weights is not None:
             self.class_weights = self.class_weights.to(device).view(1, 1, -1)
 
+        small_topk = getattr(h, "stal_small_topk", 10)
+        small_topk_min = getattr(h, "stal_small_topk_min", 10)
+        # Global neutral defaults follow each branch's native matching budget.
+        # One-to-one supervision must not inherit one-to-many budget overrides.
+        if (small_topk, small_topk_min) == (10, 10) or tal_topk == 1 or tal_topk2 == 1:
+            small_topk = small_topk_min = tal_topk
         self.assigner = TaskAlignedAssigner(
             topk=tal_topk,
             num_classes=self.nc,
@@ -375,9 +386,61 @@ class v8DetectionLoss:
             beta=6.0,
             stride=self.stride.tolist(),
             topk2=tal_topk2,
+            stal_enabled=getattr(h, "stal_enabled", False),
+            stal_stats=self.stal_stats,
+            stal_candidate_mode=getattr(h, "stal_candidate_mode", "fixed"),
+            stal_candidate_iou_floor=getattr(h, "stal_candidate_iou_floor", 0.0),
+            stal_expanded_quality_ratio=getattr(h, "stal_expanded_quality_ratio", 0.0),
+            stal_expanded_score_floor=getattr(h, "stal_expanded_score_floor", 1.0),
+            stal_area_threshold=getattr(h, "stal_area_threshold", 0.01),
+            stal_small_topk=small_topk,
+            stal_small_topk_min=small_topk_min,
+            stal_min_base_candidates=getattr(h, "stal_min_base_candidates", 0),
+            stal_max_extra_candidates=getattr(h, "stal_max_extra_candidates", 0),
+            stal_min_candidate_guarantee=getattr(h, "stal_min_candidate_guarantee", False),
+            stal_crowding_mode=getattr(h, "stal_crowding_mode", "none"),
+            stal_crowded_relaxation=getattr(h, "stal_crowded_relaxation", 0.0),
+            stal_relaxation=getattr(h, "stal_relaxation", 8.0),
+            stal_relaxation_scale_mode=getattr(h, "stal_relaxation_scale_mode", "constant"),
+            stal_relaxation_min=getattr(h, "stal_relaxation_min", 0.0),
+            stal_min_size_stride_ratio=getattr(h, "stal_min_size_stride_ratio", 0.0),
+            stal_warmup_epochs=getattr(h, "stal_warmup_epochs", 10.0),
+            stal_zero_positive_rescue=getattr(h, "stal_zero_positive_rescue", False),
+            stal_rescue_score_floor=getattr(h, "stal_rescue_score_floor", 0.0),
+            stal_rescue_floor_decay_epochs=getattr(h, "stal_rescue_floor_decay_epochs", 0.0),
+            stal_nwd_weight=getattr(h, "stal_nwd_weight", 0.0),
+            stal_nwd_constant=getattr(h, "stal_nwd_constant", 12.8),
+            stal_nwd_target_mode=getattr(h, "stal_nwd_target_mode", "match"),
+            stal_nwd_target_weight=getattr(h, "stal_nwd_target_weight", 0.0),
+            stal_nwd_zero_score_floor=getattr(h, "stal_nwd_zero_score_floor", 0.0),
+            stal_simd_weight=getattr(h, "stal_simd_weight", 0.0),
         )
         self.bbox_loss = BboxLoss(m.reg_max).to(device)
         self.proj = torch.arange(m.reg_max, dtype=torch.float, device=device)
+
+    def pop_assignment_stats(self) -> torch.Tensor:
+        """Return and reset accumulated STAL/all-target assignment counts."""
+        stats = self._assignment_stats.clone()
+        self._assignment_stats.zero_()
+        return stats
+
+    def pop_rescue_stats(self) -> torch.Tensor:
+        """Return and reset accumulated zero-positive rescue diagnostics."""
+        stats = self._rescue_stats.clone()
+        self._rescue_stats.zero_()
+        return stats
+
+    def pop_assignment_stage_stats(self) -> torch.Tensor:
+        """Return and reset accumulated small-target assignment-stage diagnostics."""
+        stats = self._assignment_stage_stats.clone()
+        self._assignment_stage_stats.zero_()
+        return stats
+
+    def pop_target_score_stats(self) -> torch.Tensor:
+        """Return and reset target-score diagnostics for STAL, all, and absolute COCO-small foreground targets."""
+        stats = self._target_score_stats.clone()
+        self._target_score_stats.zero_()
+        return stats
 
     def preprocess(self, targets: torch.Tensor, batch_size: int, scale_tensor: torch.Tensor) -> torch.Tensor:
         """Preprocess targets by converting to tensor format and scaling coordinates."""
@@ -437,7 +500,37 @@ class v8DetectionLoss:
             gt_labels,
             gt_bboxes,
             mask_gt,
+            image_size=imgsz,
+            epoch=batch.get("epoch", 0),
         )
+        if self.stal_stats and "epoch" in batch:
+            self._assignment_stats += self.assigner.assignment_statistics(
+                gt_bboxes, mask_gt, fg_mask, target_gt_idx, image_size=imgsz
+            )
+            self._rescue_stats += self.assigner.rescue_statistics().to(self.device)
+            self._assignment_stage_stats += self.assigner.assignment_stage_statistics().to(self.device)
+            foreground_scores = target_scores.sum(-1)[fg_mask]
+            foreground_gt = target_gt_idx[fg_mask]
+            foreground_batch = torch.arange(batch_size, device=self.device).unsqueeze(1).expand_as(fg_mask)[fg_mask]
+            assigned_boxes = gt_bboxes[foreground_batch, foreground_gt]
+            assigned_wh = (assigned_boxes[:, 2:] - assigned_boxes[:, :2]).clamp_min(0)
+            stal_foreground = self.assigner.small_target_mask(assigned_boxes, imgsz)
+            stal_scores = foreground_scores[stal_foreground]
+            coco_small = assigned_wh.prod(-1, dtype=torch.float32) < 32**2
+            coco_small_scores = foreground_scores[coco_small]
+            self._target_score_stats += torch.stack(
+                (
+                    stal_foreground.sum(),
+                    (stal_scores > 0).sum(),
+                    stal_scores.double().sum(),
+                    fg_mask.sum(),
+                    (foreground_scores > 0).sum(),
+                    foreground_scores.double().sum(),
+                    coco_small.sum(),
+                    (coco_small_scores > 0).sum(),
+                    coco_small_scores.double().sum(),
+                )
+            )
 
         target_scores_sum = max(target_scores.sum(), 1)
 
@@ -1211,6 +1304,28 @@ class E2ELoss:
         self.o2m_copy = self.o2m
         # final gain
         self.final_o2m = 0.1
+
+    def _pop_assignment_diagnostic(self, name: str) -> torch.Tensor:
+        """Return one-to-many diagnostics and reset both assignment branches."""
+        stats = getattr(self.one2many, name)()
+        getattr(self.one2one, name)()
+        return stats
+
+    def pop_assignment_stats(self) -> torch.Tensor:
+        """Return and reset accumulated assignment statistics."""
+        return self._pop_assignment_diagnostic("pop_assignment_stats")
+
+    def pop_rescue_stats(self) -> torch.Tensor:
+        """Return and reset accumulated rescue statistics."""
+        return self._pop_assignment_diagnostic("pop_rescue_stats")
+
+    def pop_assignment_stage_stats(self) -> torch.Tensor:
+        """Return and reset accumulated assignment-stage statistics."""
+        return self._pop_assignment_diagnostic("pop_assignment_stage_stats")
+
+    def pop_target_score_stats(self) -> torch.Tensor:
+        """Return and reset accumulated target-score statistics."""
+        return self._pop_assignment_diagnostic("pop_target_score_stats")
 
     def __call__(self, preds: Any, batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
         """Calculate the sum of the loss for box, cls and dfl multiplied by batch size."""

@@ -716,6 +716,7 @@ class BaseTrainer:
 
             self._model_train()
             self._reset_foundation_metric_state()
+            self._reset_assignment_metric_state()
             if not getattr(self.train_loader, "set_epoch", lambda _: False)(epoch) and RANK != -1:
                 self.train_loader.sampler.set_epoch(epoch)
             pbar = enumerate(self.train_loader)
@@ -757,6 +758,12 @@ class BaseTrainer:
                     with sync_context:
                         with autocast(self.amp):
                             batch = self.preprocess_batch(batch)
+                            if (
+                                self.args.stal_enabled
+                                or self.args.stal_stats
+                                or self.args.stal_candidate_mode == "adaptive"
+                            ):
+                                batch["epoch"] = epoch
                             if self.args.compile:
                                 # Decouple inference and loss calculations for improved compile performance
                                 preds = self.model(batch["img"])
@@ -844,6 +851,83 @@ class BaseTrainer:
             if hasattr(unwrap_model(self.model).criterion, "update"):
                 unwrap_model(self.model).criterion.update()
 
+            assignment_metrics = {}
+            pop_assignment_stats = getattr(unwrap_model(self.model).criterion, "pop_assignment_stats", None)
+            if callable(pop_assignment_stats) and self.args.stal_stats:
+                assignment_counts = pop_assignment_stats()
+                if RANK != -1:
+                    dist.all_reduce(assignment_counts, op=dist.ReduceOp.SUM)
+                groups = ("stal", "small", "medium", "large", "all")
+                assignment_metrics = {}
+                for index, group in enumerate(groups):
+                    gt, pos, zero = (int(x.item()) for x in assignment_counts[index * 3 : index * 3 + 3])
+                    suffix = f"{group}_gt"
+                    assignment_metrics[f"assign/{suffix}"] = gt
+                    pos_suffix = "stal_pos" if group == "stal" else "all_pos" if group == "all" else f"{group}_pos"
+                    assignment_metrics[f"assign/{pos_suffix}"] = pos
+                    mean_suffix = (
+                        "pos_per_stal_gt"
+                        if group == "stal"
+                        else "pos_per_gt"
+                        if group == "all"
+                        else f"pos_per_{group}_gt"
+                    )
+                    assignment_metrics[f"assign/{mean_suffix}"] = pos / max(gt, 1)
+                    assignment_metrics[f"assign/{group}_zero_pos_gt"] = zero
+                    assignment_metrics[f"assign/{group}_zero_pos_ratio"] = zero / max(gt, 1)
+
+                pop_rescue_stats = getattr(unwrap_model(self.model).criterion, "pop_rescue_stats", None)
+                if callable(pop_rescue_stats):
+                    rescue_counts = pop_rescue_stats()
+                    if RANK != -1:
+                        dist.all_reduce(rescue_counts, op=dist.ReduceOp.SUM)
+                    rescue_names = (
+                        "attempted",
+                        "has_legal_candidate",
+                        "has_free_candidate",
+                        "has_positive_quality_candidate",
+                        "proposed",
+                        "succeeded",
+                        "lost_to_conflict",
+                        "bootstrap_proposed",
+                        "bootstrap_succeeded",
+                    )
+                    assignment_metrics.update(
+                        {f"assign/rescue_{name}": int(value.item()) for name, value in zip(rescue_names, rescue_counts)}
+                    )
+                pop_stage_stats = getattr(unwrap_model(self.model).criterion, "pop_assignment_stage_stats", None)
+                if callable(pop_stage_stats):
+                    stage_counts = pop_stage_stats()
+                    if RANK != -1:
+                        dist.all_reduce(stage_counts, op=dist.ReduceOp.SUM)
+                    stage_names = (
+                        "stal_stage_gt",
+                        "stal_no_legal_candidate",
+                        "stal_legal_zero_alignment",
+                        "stal_sub_eps_alignment",
+                        "stal_above_eps_alignment",
+                        "stal_topk_missed_nonzero",
+                        "stal_preconflict_positive",
+                        "stal_conflict_lost",
+                        "stal_postconflict_zero",
+                    )
+                    assignment_metrics.update(
+                        {f"assign/{name}": int(value.item()) for name, value in zip(stage_names, stage_counts)}
+                    )
+                pop_target_score_stats = getattr(unwrap_model(self.model).criterion, "pop_target_score_stats", None)
+                if callable(pop_target_score_stats):
+                    score_stats = pop_target_score_stats()
+                    if RANK != -1:
+                        dist.all_reduce(score_stats, op=dist.ReduceOp.SUM)
+                    for index, group in enumerate(("stal", "all", "small")):
+                        foreground, nonzero, score_sum = (
+                            float(x.item()) for x in score_stats[index * 3 : index * 3 + 3]
+                        )
+                        assignment_metrics[f"assign/{group}_nonzero_score_pos"] = nonzero
+                        assignment_metrics[f"assign/{group}_nonzero_score_ratio"] = nonzero / max(foreground, 1.0)
+                        assignment_metrics[f"assign/{group}_target_score_sum"] = score_sum
+                        assignment_metrics[f"assign/{group}_target_score_per_pos"] = score_sum / max(foreground, 1.0)
+
             self.lr = {f"lr/pg{ir}": x["lr"] for ir, x in enumerate(self.optimizer.param_groups)}  # for loggers
 
             self.run_callbacks("on_train_epoch_end")
@@ -877,7 +961,9 @@ class BaseTrainer:
                     foundation_metrics = self._mean_foundation_metrics(prefix="train/")
                     if foundation_metrics:
                         self.metrics = {**(self.metrics or {}), **foundation_metrics}
-                    self.save_metrics(metrics={**self.label_loss_items(self.tloss), **self.metrics, **self.lr})
+                    self.save_metrics(
+                        metrics={**self.label_loss_items(self.tloss), **self.metrics, **assignment_metrics, **self.lr}
+                    )
                     self.stop |= self.stopper(epoch + 1, self.fitness) or final_epoch
                     if self.args.time:
                         self.stop |= (time.time() - self.train_time_start) > (self.args.time * 3600)
@@ -1311,6 +1397,19 @@ class BaseTrainer:
         self.foundation_metric_steps = 0
         self.foundation_metric_latest = {}
 
+    def _reset_assignment_metric_state(self) -> None:
+        """Discard counters from an abandoned epoch attempt before replaying batches."""
+        criterion = getattr(unwrap_model(self.model), "criterion", None)
+        for name in (
+            "pop_assignment_stats",
+            "pop_rescue_stats",
+            "pop_assignment_stage_stats",
+            "pop_target_score_stats",
+        ):
+            reset = getattr(criterion, name, None)
+            if callable(reset):
+                reset()
+
     def _collect_foundation_metrics(self) -> None:
         """Collect the latest Foundation wrapper metrics after a train forward pass."""
         model = unwrap_model(self.model)
@@ -1366,6 +1465,11 @@ class BaseTrainer:
         n = len(metrics) + 2  # number of cols
         t = time.time() - self.train_time_start
         self.csv.parent.mkdir(parents=True, exist_ok=True)  # ensure parent directory exists
+        if "assign/stal_nonzero_score_pos" in metrics and self.csv.exists():
+            with self.csv.open(encoding="utf-8") as existing:
+                header = existing.readline().strip().split(",")
+            if header != ["epoch", "time", *keys]:
+                raise ValueError("STAL metric schema changed; use a new run directory or the original frozen source")
         s = "" if self.csv.exists() else ("%s," * n % ("epoch", "time", *keys)).rstrip(",") + "\n"
         with open(self.csv, "a", encoding="utf-8") as f:
             f.write(s + ("%.6g," * n % (self.epoch + 1, t, *vals)).rstrip(",") + "\n")

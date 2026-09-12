@@ -104,6 +104,34 @@ weight_decay: 0.0005 # (float) weight decay (L2 regularization)
 warmup_epochs: 3.0 # (float) warmup epochs (fractions allowed)
 warmup_momentum: 0.8 # (float) initial momentum during warmup
 warmup_bias_lr: 0.1 # (float) bias learning rate during warmup
+stal_enabled: False # (bool) enable small-target area-aware label assignment for detection training
+stal_stats: False # (bool) record per-epoch positive assignments for STAL-target and all-target groups
+stal_candidate_mode: fixed # (str) candidate policy: pure TAL, existing fixed-stride, or adaptive STAL
+stal_candidate_iou_floor: 0.0 # (float) minimum geometric IoU capacity of expanded small-GT candidates; 0 disables
+stal_expanded_quality_ratio: 0.0 # (float) minimum expanded-candidate alignment relative to best base candidate; 0 disables
+stal_expanded_score_floor: 1.0 # (float) minimum target-score multiplier for adaptive-only candidates; 1 disables
+stal_max_extra_candidates: 0 # (int) max adaptive-only additions per small GT after preserving base TAL; 0 disables
+stal_area_threshold: 0.01 # (float) target-to-image area ratio below which STAL is applied
+stal_small_topk: 10 # (int) adaptive-mode top-k for small targets; 10 preserves standard TAL
+stal_small_topk_min: 10 # (int) minimum top-k for the tiniest targets; below stal_small_topk enables area adaptation
+stal_min_base_candidates: 0 # (int) expand only GTs with fewer base candidates; 0 expands every small GT
+stal_min_candidate_guarantee: False # (bool) add nearest point only when an adaptive small GT has no candidate
+stal_crowding_mode: none # (str) crowded-small-target policy: none or candidate_overlap
+stal_crowded_relaxation: 0.0 # (float) total width/height increase for crowded small GTs
+stal_relaxation: 8.0 # (float) maximum total width/height added to the candidate region in pixels
+stal_relaxation_scale_mode: constant # (str) constant or sqrt_area interpolation by augmented target area
+stal_relaxation_min: 0.0 # (float) expansion near the small-area threshold in sqrt_area mode
+stal_min_size_stride_ratio: 0.0 # (float) minimum candidate width/height in multiples of minimum stride; 0 disables
+stal_warmup_epochs: 10.0 # (float) epochs used to linearly ramp STAL relaxation
+stal_zero_positive_rescue: False # (bool) give an uncovered small GT its best positive-quality legal candidate
+stal_rescue_score_floor: 0.0 # (float) bootstrap supervision floor for rescued zero-quality candidates; 0 disables
+stal_rescue_floor_decay_epochs: 0.0 # (float) epochs used to linearly decay the bootstrap floor to zero; 0 keeps it
+stal_nwd_weight: 0.0 # (float) CIoU-to-NWD blend weight for small-target assignment quality; 0 preserves existing TAL
+stal_nwd_constant: 12.8 # (float) positive normalization constant in exp(-sqrt(W2)/C) NWD similarity
+stal_nwd_target_mode: match # (str) target-score quality: match uses NWD blend, ciou decouples supervision strength
+stal_nwd_target_weight: 0.0 # (float) NWD share for target scores when target mode is weighted
+stal_nwd_zero_score_floor: 0.0 # (float) target-score floor only for selected small anchors with zero CIoU score
+stal_simd_weight: 0.0 # (float) CIoU-to-SimD blend for small-target matching; 0 preserves existing behavior
 distill_model: # (str, optional) path to teacher model for knowledge distillation
 dis: 6.0 # (float) distillation loss weight
 
