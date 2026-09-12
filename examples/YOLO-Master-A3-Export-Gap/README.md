@@ -190,6 +190,25 @@ Smoke Test（`smoke_*.json`）：
 - **Routing的校准问题**（剪枝模型k==E时未发现）：未剪枝v0.1-N若在eager的稀疏路径上做校准，caliset里未被路由激活到的专家没有任何激活统计，而导出图会计算全部专家，modelopt在导出时直接assert "Quantizer has not been calibrated"。修复办法是校准时走与export相同的dense路径，并对未校准的quantizer做Explicit audit（本次 v0.1-N的360个和EsMoE-N的282个全部完成校准，0个禁用）。**校准覆盖必须以导出图为准，而并非eager的路由语义为准。**
 - ORT的CUDA EP默认对conv启用TF32：框坐标最大偏移 1.4/3.0 px，但mAP只差-0.0005 / -0.0003。因此smoke test的对齐测试限制`use_tf32=0`以做fp32 vs fp32 的比较，TF32的结果则单独记录。
 
+### 6.3 未剪枝 v0.1 N/S/M/L 与 EsMoE-N 的 INT8 缩放研究（L4，acce839c，COCO val2017 5000 张）
+
+同一条链路推到 S/M/L（上游发布权重，未剪枝）。fp32 为关闭 TF32 的基线；QDQ 为 modelopt Explicit Q/DQ（max 校准，仅校准不训练）；Implicit 为 TensorRT entropy 校准加 `--pin-attn-core`（head、router 与 attention core 保持 fp16，qkv/proj 保持 INT8）。原始数据：`a3/results/qdq_v01{s,m,l}.json`、`qdq_v01m_pin{2,4}.json`、`a3/logs/v01{s,m,l}_trt_ladder.log`、`v01{m,l}_impl.log`、`v01m_qdq_sq.log`；图：`a3/plots/a3_int8_unpruned.png`。
+
+| 规模 | fp32 ms / mAP50-95 | fp16 ms / mAP50-95 | Explicit QDQ ms / mAP50-95 / MB | Implicit entropy ms / mAP50-95 / MB |
+|---|---|---|---|---|
+| N | 3.990 / 0.4246 | 1.927 / 0.4244 | 2.238 / 0.4129 / 21.1 | 构建不可行（6.2 节） |
+| S | 9.835 / 0.4833 | 3.320 / 0.4834 | 3.571 / 0.4789 / 48.8 | 未跑 |
+| M | 20.509 / 0.5217 | 6.164 / 0.5215 | 5.405 / **0.0977（崩溃）** / 74.6 | 4.770 / 0.4979 / 65.7 |
+| L | 28.142 / 0.5334 | 8.102 / 0.5333 | 8.133 / 0.3299 / 83.0 | 6.818 / 0.5053 / 74.9 |
+
+M 尺度 QDQ 崩溃的定位与修复（`scripts/a3/act_range.py`、`act_range2.py`）：按块统计激活 max/p99.9 比值，S 全网均匀（1 至 4），M 出现系统性离群（5 至 17，最坏在 MoE expert 卷积 `experts.0.conv.3` 与宽 C3k2 主干，attention 块并不特殊）。per-tensor max 校准把 scale 撑到离群值上，主体被压扁。把离群最重的两个块 pin 到 fp16 即恢复：pin{4,5} 0.5061 / 6.139 ms，pin{4,5,11,14} 0.5095 / 6.346 ms，但恢复后延迟已不低于 fp16（6.164 ms），因为离群块正是计算最重的块。SmoothQuant（modelopt `INT8_SMOOTHQUANT_CFG`）在这个全卷积模型上匹配到 0 个模块，无效（`v01m_qdq_sq.log`）。
+
+同一模型在 Implicit（entropy）校准下不崩溃：entropy 校准对离群值做 KL 最优裁剪，而 max 校准不裁剪，因此 M/L 的"离群崩溃"有一半是校准方法的产物。L 的 Implicit INT8 比 fp16 快 17%、小 40%，代价 -2.8 AP。
+
+两个否定结果（N 尺度）：(1) Conv+BN 在量化前折叠（`qdq_*_fused.json`）没有减少 fp32 层或 reformat，TensorRT 构建时已经把 BN 折进 INT8 卷积；(2) 让整个 MoE 块保持 fp16、只量化主干与 head（`qdq_*_moefp16.json`）既不更快也不更小：v0.1-N 2.428 ms / 0.4143 / 25.1 MB，EsMoE-N 2.224 ms / 0.4087 / 13.5 MB，reformat 只是被搬到了主干里的 INT8 孤岛边界上。N 尺度卷积受访存与 launch 限制，任何 INT8 区域都只增加精度边界的 reformat；fp16 无边界，所以最快。
+
+Pareto 结论（INT8 要和整条 fp16 模型尺寸前沿比，而不是和自己的 fp16 比）：S-fp16 0.4834 @ 3.32 ms / 65 MB，M-INT8（Implicit entropy）0.4979 @ 4.77 ms / 66 MB，M-fp16 0.5215 @ 6.16 ms / 112 MB，L-fp16 0.5333 @ 8.10 ms / 125 MB 构成前沿；L-INT8 0.5053 @ 6.82 ms 被 M-fp16 支配（更慢且更不准），N/S 的 INT8 与全部 Explicit QDQ 都不在前沿上。整个缩放范围内 INT8 只赢得一个 Pareto 点（M，Implicit entropy 加 attn-core 保护），其余场景以 fp16 部署。校准方法在每个尺度上都是决定性的：max 对离群值脆弱，entropy 裁剪离群值。
+
 ---
 
 ## 7. 设计说明
