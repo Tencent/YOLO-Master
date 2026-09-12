@@ -384,6 +384,10 @@ class BaseTrainer:
             self.lf = lambda x: max(1 - x / self.epochs, 0) * (1.0 - self.args.lrf) + self.args.lrf  # linear
         self.scheduler = optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=self.lf)
 
+    def resolve_ddp_policy(self) -> tuple[bool, bool]:
+        """Return the routed-model unused-parameter and static-graph DDP policy."""
+        return self.mixture_controller.resolve_ddp_policy(compile_enabled=bool(self.args.compile))
+
     def _audit_optimizer_groups(self):
         """Capture and log a read-only snapshot of finalized optimizer parameter groups."""
         audit = audit_optimizer_param_groups(self.model, self.optimizer, strict=False)
@@ -470,6 +474,10 @@ class BaseTrainer:
         self._save_run_args()
         self._setup_scheduler()
 
+    def check_amp_compatibility(self) -> bool:
+        """Run the model-family-specific AMP compatibility check."""
+        return check_amp(self.model)
+
     def _setup_train(self):
         """Configure model, optimizer, dataloaders, and training utilities before the training loop."""
         ckpt = self.setup_model()
@@ -498,7 +506,7 @@ class BaseTrainer:
         self.amp = torch.tensor(self.args.amp).to(self.device)  # True or False
         if self.amp and RANK in {-1, 0}:  # Single-GPU and DDP
             callbacks_backup = callbacks.default_callbacks.copy()  # backup callbacks as check_amp() resets them
-            self.amp = torch.tensor(check_amp(self.model), device=self.device)
+            self.amp = torch.tensor(self.check_amp_compatibility(), device=self.device)
             callbacks.default_callbacks = callbacks_backup  # restore callbacks
         if RANK > -1 and self.world_size > 1:  # DDP
             amp_flag = self.amp.to(dtype=torch.int32)
@@ -540,9 +548,7 @@ class BaseTrainer:
         if self.world_size > 1:
             # static_graph=True permits params used >1 time per forward (e.g. flow_model in
             # o2m+o2o pose loss branches) under torch.compile.
-            ddp_find_unused_parameters, ddp_static_graph = self.mixture_controller.resolve_ddp_policy(
-                compile_enabled=bool(self.args.compile)
-            )
+            ddp_find_unused_parameters, ddp_static_graph = self.resolve_ddp_policy()
             self.mixture_controller.prepare_ddp(find_unused_parameters=ddp_find_unused_parameters)
             self.model = nn.parallel.DistributedDataParallel(
                 self.model,
@@ -677,6 +683,11 @@ class BaseTrainer:
     def _compute_hierarchical_distillation_loss(self, images, layer_indices):
         return self.adapter_controller.compute_hierarchical_distillation_loss(images, layer_indices)
 
+    @staticmethod
+    def _optimizer_step_cursor_before_epoch(epoch: int, num_batches: int) -> int:
+        """Return the global batch index immediately before an epoch starts."""
+        return epoch * num_batches - 1
+
     def _do_train(self):
         """Perform the full training loop including setup, epoch iteration, validation, and final evaluation."""
         if self.world_size > 1:
@@ -685,7 +696,7 @@ class BaseTrainer:
 
         nb = len(self.train_loader)  # number of batches
         nw = max(round(self.args.warmup_epochs * nb), 100) if self.args.warmup_epochs > 0 else -1  # warmup iterations
-        last_opt_step = -1
+        last_opt_step = self._optimizer_step_cursor_before_epoch(self.start_epoch, nb)
         self.epoch_time = None
         self.epoch_time_start = time.time()
         self.train_time_start = time.time()
@@ -755,7 +766,7 @@ class BaseTrainer:
                 sync_context = self.model.no_sync() if RANK != -1 and not should_step else nullcontext()
                 try:
                     with sync_context:
-                        with autocast(self.amp):
+                        with self.training_autocast():
                             batch = self.preprocess_batch(batch)
                             if self.args.compile:
                                 # Decouple inference and loss calculations for improved compile performance
@@ -1104,6 +1115,10 @@ class BaseTrainer:
         if self.ema:
             self.ema.update(self.model)
         return True
+
+    def training_autocast(self):
+        """Provide a scoped mixed-precision context for model-specific trainers."""
+        return autocast(self.amp)
 
     def preprocess_batch(self, batch):
         """Allow custom preprocessing of model inputs and ground truths depending on task type."""

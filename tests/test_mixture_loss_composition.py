@@ -108,3 +108,64 @@ def test_latent_aux_uses_conservative_default_gain():
     assert loss.requires_grad
     assert model._last_mixture_aux_loss.detach().abs().item() > 0
     assert loss.detach().abs().item() > 0
+
+
+@pytest.mark.parametrize("shape", [(), (1,), (3,), (2, 3)])
+@pytest.mark.parametrize("entry", ["wrapper", "custom"])
+def test_vector_aux_is_added_once_in_value_and_gradient(monkeypatch, shape, entry):
+    from ultralytics.nn import mixture_loss
+
+    model = nn.Linear(1, 1)
+    native = torch.full(shape, 2.0, requires_grad=True)
+    aux = torch.tensor(0.3, requires_grad=True)
+    metrics = torch.tensor([1.0, 2.0, 3.0])
+    monkeypatch.setattr(mixture_loss, "has_routed_modules", lambda _: True)
+    monkeypatch.setattr(mixture_loss, "_collect_mixture_aux_loss", lambda *a, **kw: aux)
+    if entry == "wrapper":
+        result, logged = CompositeCriterion(model, lambda *args: (native, metrics))(None, {})
+    else:
+        result, logged = mixture_loss.compose_native_result(model, native, metrics)
+    assert result.ndim == 0
+    torch.testing.assert_close(result.sum(), native.sum() + aux)
+    result.sum().backward()
+    torch.testing.assert_close(native.grad, torch.ones_like(native))
+    torch.testing.assert_close(aux.grad, torch.ones_like(aux))
+    torch.testing.assert_close(logged[:-1], metrics)
+    torch.testing.assert_close(logged[-1], aux.detach())
+    assert not logged.requires_grad
+
+
+@pytest.mark.parametrize("batch_size", [1, 8, 64])
+@pytest.mark.parametrize("world_size", [1, 2, 6])
+def test_aux_preserves_explicit_native_batch_and_ddp_scaling(batch_size, world_size):
+    from ultralytics.nn.mixture_loss import _add_aux_once
+
+    # Simulate Trainer's world-size multiplier followed by DDP gradient averaging.
+    parameter = torch.tensor(2.0, requires_grad=True)
+    ranks, expected = [], []
+    for rank in range(world_size):
+        native = torch.stack([parameter.square(), parameter * 2, parameter * 3]) * batch_size
+        aux = parameter * (rank + 1) * 0.1
+        ranks.append(world_size * _add_aux_once(native, aux).sum())
+        expected.append(world_size * (native.sum() + aux))
+    actual_gradient = torch.autograd.grad(sum(ranks) / world_size, parameter, retain_graph=True)[0]
+    expected_gradient = torch.autograd.grad(sum(expected) / world_size, parameter)[0]
+    torch.testing.assert_close(actual_gradient, expected_gradient)
+
+
+def test_empty_native_and_nonscalar_aux_are_rejected():
+    from ultralytics.nn.mixture_loss import _add_aux_once
+
+    with pytest.raises(ValueError, match="empty"):
+        _add_aux_once(torch.empty(0), torch.tensor(1.0))
+    with pytest.raises(ValueError, match="scalar"):
+        _add_aux_once(torch.ones(3), torch.ones(2))
+
+
+def test_custom_dense_path_returns_original_objects():
+    from ultralytics.nn.mixture_loss import compose_native_result
+
+    native, items = torch.ones(3), torch.ones(3)
+    result, logged = compose_native_result(nn.Linear(1, 1), native, items)
+    assert result is native
+    assert logged is items

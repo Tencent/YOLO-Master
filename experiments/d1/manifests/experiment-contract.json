@@ -1,0 +1,98 @@
+{
+  "cache": {
+    "dtype": "float16",
+    "format": "safetensors",
+    "key_fields": [
+      "image_sha256",
+      "preprocessing_sha256",
+      "teacher_weights_sha256",
+      "output_blocks",
+      "dtype",
+      "schema_version"
+    ],
+    "schema_version": "d1-cache-v1",
+    "target_shard_bytes": 2147483648
+  },
+  "dataset": {
+    "class_count": 80,
+    "name": "COCO 2017 detection",
+    "split_policy": "canonical train2017/val2017; no secondary random split",
+    "splits": {
+      "train2017": 118287,
+      "val2017": 5000
+    }
+  },
+  "features": {
+    "grid_size": [
+      40,
+      40
+    ],
+    "hidden_size": 384,
+    "output_blocks": [
+      {
+        "implementation_index": 3,
+        "name": "block4",
+        "ordinal": 4
+      },
+      {
+        "implementation_index": 7,
+        "name": "block8",
+        "ordinal": 8
+      },
+      {
+        "implementation_index": 11,
+        "name": "block12",
+        "ordinal": 12
+      }
+    ],
+    "patch_size": 16,
+    "raw_stride": 16
+  },
+  "input": {
+    "color_order": "RGB",
+    "image_size": [
+      640,
+      640
+    ],
+    "letterbox": {
+      "auto": false,
+      "center": true,
+      "interpolation": "INTER_LINEAR",
+      "padding_value": 114,
+      "scale_fill": false,
+      "scaleup": true,
+      "stride": 32
+    },
+    "normalize": {
+      "input_range": [
+        0.0,
+        1.0
+      ],
+      "mean": [
+        0.485,
+        0.456,
+        0.406
+      ],
+      "std": [
+        0.229,
+        0.224,
+        0.225
+      ]
+    },
+    "teacher_extra_crop": false,
+    "teacher_extra_resize": false
+  },
+  "reproducibility": {
+    "deterministic": true,
+    "random_spatial_augmentation": false,
+    "seed": 0
+  },
+  "schema_version": "d1-p0-contract-v1",
+  "teacher": {
+    "architecture": "DINOv3 ViT-S/16",
+    "frozen": true,
+    "model_id": "facebook/dinov3-vits16-pretrain-lvd1689m",
+    "source": "https://www.modelscope.cn/models/facebook/dinov3-vits16-pretrain-lvd1689m",
+    "source_revision": "master"
+  }
+}

@@ -204,6 +204,14 @@ def test_train_destroys_group_on_error():
     destroy.assert_called_once_with()
 
 
+def test_restarted_epoch_optimizer_cursor_allows_first_batch_step():
+    epoch, num_batches = 7, 4
+    cursor = BaseTrainer._optimizer_step_cursor_before_epoch(epoch, num_batches)
+
+    assert cursor == epoch * num_batches - 1
+    assert epoch * num_batches - cursor == 1
+
+
 def test_nonfinite_without_checkpoint_fails(tmp_path):
     t = recovery_trainer(tmp_path, loss=float("nan"))
     with pytest.raises(RuntimeError, match="without a healthy recovery checkpoint"):

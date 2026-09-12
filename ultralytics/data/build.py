@@ -366,6 +366,9 @@ def build_dataloader(
         >>> dataset = YOLODataset(...)
         >>> dataloader = build_dataloader(dataset, batch=16, workers=4, shuffle=True)
     """
+    prefetch_factor = getattr(dataset, "prefetch_factor", 4)
+    if type(prefetch_factor) is not int or prefetch_factor <= 0:
+        raise ValueError("dataset prefetch_factor must be a positive integer.")
     if batch_sampler is not None:
         return InfiniteDataLoader(
             dataset=dataset,
@@ -399,7 +402,7 @@ def build_dataloader(
         shuffle=shuffle and sampler is None,
         num_workers=nw,
         sampler=sampler,
-        prefetch_factor=4 if nw > 0 else None,  # increase over default 2
+        prefetch_factor=prefetch_factor if nw > 0 else None,
         pin_memory=nd > 0 and pin_memory,
         collate_fn=getattr(dataset, "collate_fn", None),
         worker_init_fn=seed_worker,

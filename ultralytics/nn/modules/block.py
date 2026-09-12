@@ -1291,15 +1291,17 @@ class Attention(nn.Module):
         pe (Conv): Convolutional layer for positional encoding.
     """
 
-    def __init__(self, dim: int, num_heads: int = 8, attn_ratio: float = 0.5):
+    def __init__(self, dim: int, num_heads: int = 8, attn_ratio: float = 0.5, fp32_attention: bool = False):
         """Initialize multi-head attention module.
 
         Args:
             dim (int): Input dimension.
             num_heads (int): Number of attention heads.
             attn_ratio (float): Attention ratio for key dimension.
+            fp32_attention (bool): Opt in to FP32 attention math while retaining autocast convolutions.
         """
         super().__init__()
+        self.fp32_attention = fp32_attention
         self.num_heads = num_heads
         self.head_dim = dim // num_heads
         self.key_dim = int(self.head_dim * attn_ratio)
@@ -1326,9 +1328,17 @@ class Attention(nn.Module):
             [self.key_dim, self.key_dim, self.head_dim], dim=2
         )
 
-        attn = (q * self.scale).transpose(-2, -1) @ k
-        attn = attn.softmax(dim=-1)
-        x = (v @ attn.transpose(-2, -1)).view(B, C, H, W) + self.pe(v.reshape(B, C, H, W))
+        if getattr(self, "fp32_attention", False):
+            # Finite FP16 queries and keys can still overflow their dot product before softmax.
+            with torch.autocast(x.device.type, enabled=False):
+                attn = (q.float() * self.scale).transpose(-2, -1) @ k.float()
+                attn = attn.softmax(dim=-1)
+                attended = (v.float() @ attn.transpose(-2, -1)).to(v.dtype)
+        else:
+            attn = (q * self.scale).transpose(-2, -1) @ k
+            attn = attn.softmax(dim=-1)
+            attended = v @ attn.transpose(-2, -1)
+        x = attended.view(B, C, H, W) + self.pe(v.reshape(B, C, H, W))
         x = self.proj(x)
         return x
 

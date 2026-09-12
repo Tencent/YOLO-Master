@@ -555,6 +555,12 @@ class DetectionModel(BaseModel):
             self.model.eval()  # Avoid changing batch statistics until training begins
             m.training = True  # Setting it to True to properly return strides
             m.stride = torch.tensor([s / x.shape[-2] for x in _forward(torch.zeros(1, ch, s, s))])  # forward
+            try:
+                from ultralytics.nn.modules.routing_protocol import reset_routing_runtime_state
+
+                reset_routing_runtime_state(self)
+            except Exception:  # noqa: BLE001, S110 - Preserve best-effort cleanup for external routing implementations.
+                pass
             self.stride = m.stride
             self.model.train()  # Set model back to training(default) mode
             m.bias_init()  # only run once

@@ -254,3 +254,6 @@ agent/logs/
 
 # Foundation local run records (kept local per repo policy)
 reports/foundation/v0.1/
+# Generated D1 COCO lists are validated against the published manifest.
+/experiments/d1/manifests/coco2017-train2017.txt
+/experiments/d1/manifests/coco2017-val2017.txt

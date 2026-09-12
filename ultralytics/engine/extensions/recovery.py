@@ -219,8 +219,12 @@ class TrainingRecoveryController:
             adapter_controller.sync_ema_treatment()
         buffer = io.BytesIO()
         source_model = unwrap_model(trainer.model)
+        self.reset_runtime(source_model)
+        ema_source = unwrap_model(trainer.ema.ema) if getattr(trainer, "ema", None) else None
+        if ema_source is not None:
+            self.reset_runtime(ema_source)
         model = deepcopy(source_model) if include_online_model else None
-        ema = deepcopy(unwrap_model(trainer.ema.ema)) if getattr(trainer, "ema", None) else None
+        ema = deepcopy(ema_source) if ema_source is not None else None
         if ema is not None:
             self.replace_nonfinite_tensors(ema, source_model)
         for snapshot in (model, ema):
@@ -299,19 +303,27 @@ class TrainingRecoveryController:
             stride = max(1, int(torch.as_tensor(getattr(model, "stride", torch.tensor([32.0]))).max().item()))
             configured = getattr(getattr(self.trainer, "args", None), "imgsz", 64)
             configured = max(configured) if isinstance(configured, (list, tuple)) else configured
-            is_rtdetr = any(module.__class__.__name__ == "RTDETRDecoder" for module in model.modules())
-            smoke_min, smoke_max = (128, 128) if is_rtdetr else (32, 64)
-            imgsz = math.ceil(max(smoke_min, min(int(configured), smoke_max)) / stride) * stride
-            first = next(model.parameters(), None)
-            sample = (
-                torch.zeros(1, first.shape[1], dtype=torch.float32)
-                if not yaml and first is not None and first.ndim == 2
-                else torch.zeros(1, channels, imgsz, imgsz, dtype=torch.float32)
-            )
+            input_builder = getattr(self.trainer, "checkpoint_smoke_inputs", None)
+            if callable(input_builder):
+                smoke_inputs = input_builder(model)
+                if not isinstance(smoke_inputs, (list, tuple)) or not smoke_inputs:
+                    return False, "checkpoint_smoke_inputs() must return a non-empty list or tuple"
+            else:
+                is_rtdetr = any(module.__class__.__name__ == "RTDETRDecoder" for module in model.modules())
+                smoke_min, smoke_max = (128, 128) if is_rtdetr else (32, 64)
+                imgsz = math.ceil(max(smoke_min, min(int(configured), smoke_max)) / stride) * stride
+                first = next(model.parameters(), None)
+                sample = (
+                    torch.zeros(1, first.shape[1], dtype=torch.float32)
+                    if not yaml and first is not None and first.ndim == 2
+                    else torch.zeros(1, channels, imgsz, imgsz, dtype=torch.float32)
+                )
+                smoke_inputs = (
+                    sample,
+                    torch.linspace(-1.0, 1.0, sample.numel(), dtype=torch.float32).reshape_as(sample),
+                )
             with torch.no_grad():
-                for index, smoke_input in enumerate(
-                    (sample, torch.linspace(-1.0, 1.0, sample.numel(), dtype=torch.float32).reshape_as(sample))
-                ):
+                for index, smoke_input in enumerate(smoke_inputs):
                     if not self.state_is_finite(model(smoke_input)):
                         return False, f"forward smoke sample {index} produced non-finite output"
         except Exception as exc:

@@ -1,0 +1,36 @@
+{
+  "config": {
+    "hidden_size": 384,
+    "model_type": "dinov3_vit",
+    "num_attention_heads": 6,
+    "num_hidden_layers": 12,
+    "num_register_tokens": 4,
+    "patch_size": 16
+  },
+  "files": {
+    "LICENSE.md": {
+      "bytes": 7503,
+      "sha256": "25d122eb8f5b880fd23c736fb6ea8018ee45c12237e00b8a86d14c653904999e"
+    },
+    "README.md": {
+      "bytes": 14519,
+      "sha256": "e15ec258bf2fe83dd9473cb483ad0c7f49bc3ee6195e3c177f17d995fced3478"
+    },
+    "config.json": {
+      "bytes": 743,
+      "sha256": "9481247be9f95a134a5599402b4bfc838eecdf9a7fffbf4debd1c70ec213898b"
+    },
+    "model.safetensors": {
+      "bytes": 86406384,
+      "sha256": "4610ad75edef83e75afdebf162d148dc628045ea6cbb83d67d4708c709c4f91d"
+    }
+  },
+  "license": {
+    "name": "DINOv3 License",
+    "url": "https://github.com/facebookresearch/dinov3/blob/main/LICENSE.md"
+  },
+  "model_id": "facebook/dinov3-vits16-pretrain-lvd1689m",
+  "schema_version": "d1-teacher-v1",
+  "source": "https://www.modelscope.cn/models/facebook/dinov3-vits16-pretrain-lvd1689m",
+  "source_revision": "2e601320d0545509ab03374e2f8707f303e1de7a"
+}

@@ -7,7 +7,7 @@ integrations can inject an already constructed backbone without importing Transf
 from __future__ import annotations
 
 import inspect
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable
@@ -77,6 +77,7 @@ class DINOv3Teacher(nn.Module):
         model (nn.Module | None): Injected backbone, primarily for tests and offline integrations.
         model_loader (Callable | None): Optional loader receiving ``model_id`` and returning a backbone.
         local_files_only (bool): Restrict Hugging Face resolution to the local cache.
+        output_layers (Sequence[int] | None): Optional one-based Transformer block numbers to return.
     """
 
     name = "dinov3"
@@ -91,11 +92,13 @@ class DINOv3Teacher(nn.Module):
         model: nn.Module | None = None,
         model_loader: Callable[..., nn.Module] | None = None,
         local_files_only: bool = False,
+        output_layers: Sequence[int] | None = None,
     ) -> None:
         super().__init__()
         self.model_id = str(model_id)
         self.weights_path = str(weights_path) if weights_path is not None else None
         self.local_files_only = bool(local_files_only)
+        self.output_layers = self._normalize_output_layers(output_layers)
         self._dtype_request = dtype
         self._device_request = device
         self.model = model if model is not None else self._load_model(model_loader)
@@ -106,10 +109,67 @@ class DINOv3Teacher(nn.Module):
         self.hidden_size = int(getattr(config, "hidden_size", 0) or 0)
         if self.patch_size <= 0:
             raise ValueError(f"DINOv3 config patch_size must be positive, got {self.patch_size}.")
+        self._configure_output_layers()
         self._device = _resolve_device(device, model=model)
         self._dtype = self._resolve_dtype(dtype, model=self.model)
         self.to(device=self._device, dtype=None if _is_auto(dtype) else self._dtype)
         self.freeze()
+
+    @staticmethod
+    def _normalize_output_layers(output_layers: Sequence[int] | None) -> tuple[int, ...] | None:
+        """Validate and normalize one-based Transformer block selections."""
+        if output_layers is None:
+            return None
+        if isinstance(output_layers, (str, bytes, bytearray, set, frozenset)) or not isinstance(
+            output_layers, Sequence
+        ):
+            raise TypeError("output_layers must be an ordered sequence of integers or None.")
+        layers = tuple(output_layers)
+        if not layers:
+            raise ValueError("output_layers must not be empty.")
+        if any(type(layer) is not int for layer in layers):
+            raise TypeError("output_layers must contain only integers; booleans are not accepted.")
+        if any(layer <= 0 for layer in layers):
+            raise ValueError("output_layers must contain positive one-based block numbers.")
+        if len(set(layers)) != len(layers):
+            raise ValueError("output_layers must not contain duplicate block numbers.")
+        if layers != tuple(sorted(layers)):
+            raise ValueError("output_layers must be strictly increasing.")
+        return layers
+
+    def _configure_output_layers(self) -> None:
+        """Configure public Transformers backbone stage selection for multi-layer mode."""
+        if self.output_layers is None:
+            return
+        config = getattr(self.model, "config", None)
+        if config is None:
+            raise ValueError("DINOv3 multi-layer output requires a model config.")
+        stage_names = getattr(self.model, "stage_names", None) or getattr(config, "stage_names", None)
+        if not isinstance(stage_names, (tuple, list)) or not stage_names:
+            raise ValueError("DINOv3 config does not expose public backbone stage names.")
+        stage_names = tuple(stage_names)
+        num_hidden_layers = int(getattr(config, "num_hidden_layers", 0) or 0)
+        if num_hidden_layers <= 0:
+            num_hidden_layers = len([name for name in stage_names if str(name).startswith("stage")])
+        if num_hidden_layers <= 0:
+            raise ValueError("DINOv3 config does not declare num_hidden_layers.")
+        self.num_hidden_layers = num_hidden_layers
+        if self.output_layers[-1] > num_hidden_layers:
+            raise ValueError(
+                f"output_layers requests block {self.output_layers[-1]}, but the model has {num_hidden_layers} blocks."
+            )
+        backbone_stages = tuple(f"stage{layer}" for layer in self.output_layers)
+        missing = [stage for stage in backbone_stages if stage not in stage_names]
+        if missing:
+            raise ValueError(f"DINOv3 backbone does not expose requested stages: {missing}.")
+        config.out_features = list(backbone_stages)
+        configured = tuple(getattr(self.model, "out_features", getattr(config, "out_features", ())))
+        if configured != backbone_stages:
+            raise ValueError(
+                f"DINOv3 backbone rejected requested stages: expected {backbone_stages}, got {configured}."
+            )
+        self.backbone_stages = backbone_stages
+        self.feature_names = tuple(f"block{layer}" for layer in self.output_layers)
 
     def _load_model(self, model_loader: Callable[..., nn.Module] | None) -> nn.Module:
         """Load a Transformers backbone lazily, with an injectable offline loader."""
@@ -226,19 +286,27 @@ class DINOv3Teacher(nn.Module):
         ).to(dtype=self.dtype)
 
     def encode(self, images: torch.Tensor) -> FoundationFeatures:
-        """Run frozen DINOv3 inference and return the final spatial feature map as ``p4``."""
+        """Run frozen DINOv3 inference and return normalized dense features."""
         if not isinstance(images, torch.Tensor):
             raise TypeError(f"images must be a torch.Tensor, got {type(images).__name__}.")
+        self.freeze()
         input_size = tuple(images.shape[-2:]) if images.ndim >= 2 else None
         pixel_values = self.preprocess(images)
         with torch.inference_mode():
-            output = self.model(pixel_values=pixel_values)
-        features = self._parse_output(output, batch_size=pixel_values.shape[0], spatial_size=pixel_values.shape[-2:])
-        for name, feature in features.dense.items():
-            if not torch.isfinite(feature).all():
-                raise ValueError(f"DINOv3 feature '{name}' contains NaN or Inf values.")
-        if features.pooled is not None and not torch.isfinite(features.pooled).all():
-            raise ValueError("DINOv3 pooled feature contains NaN or Inf values.")
+            model_kwargs = {"pixel_values": pixel_values}
+            if self.output_layers is not None and self.output_layers[-1] != self.num_hidden_layers:
+                model_kwargs["output_hidden_states"] = True
+            output = self.model(**model_kwargs)
+            features = self._parse_output(
+                output,
+                batch_size=pixel_values.shape[0],
+                spatial_size=pixel_values.shape[-2:],
+            )
+            for name, feature in features.dense.items():
+                if not torch.isfinite(feature).all():
+                    raise ValueError(f"DINOv3 feature '{name}' contains NaN or Inf values.")
+            if features.pooled is not None and not torch.isfinite(features.pooled).all():
+                raise ValueError("DINOv3 pooled feature contains NaN or Inf values.")
         features.metadata.update(
             {
                 "input_size": input_size,
@@ -252,58 +320,105 @@ class DINOv3Teacher(nn.Module):
     def _parse_output(self, output: Any, *, batch_size: int, spatial_size: tuple[int, int]) -> FoundationFeatures:
         """Normalize a DINOv3 backbone output without assuming a fixed special-token count."""
         feature_maps = _get_output_value(output, "feature_maps")
-        feature = None
-        if feature_maps is not None:
-            if isinstance(feature_maps, torch.Tensor):
-                feature = feature_maps
-            elif isinstance(feature_maps, (tuple, list)) and feature_maps:
-                feature = feature_maps[-1]
-        if feature is not None and feature.ndim == 3:
-            feature = self._tokens_to_feature_map(feature, spatial_size)
-        if feature is None:
-            hidden = _get_output_value(output, "last_hidden_state")
-            if hidden is None and isinstance(output, (tuple, list)) and output:
-                hidden = output[0]
-            if not isinstance(hidden, torch.Tensor):
-                raise ValueError("DINOv3 output does not contain a spatial feature map or token sequence.")
-            feature = self._tokens_to_feature_map(hidden, spatial_size)
-        if not isinstance(feature, torch.Tensor) or feature.ndim != 4:
-            raise ValueError(
-                f"DINOv3 spatial feature must be 4D BCHW, got {type(feature).__name__} {getattr(feature, 'shape', None)}."
-            )
-        if feature.shape[0] != batch_size:
-            raise ValueError(f"DINOv3 feature batch {feature.shape[0]} does not match input batch {batch_size}.")
-        expected_grid = (spatial_size[0] // self.patch_size, spatial_size[1] // self.patch_size)
-        if tuple(feature.shape[-2:]) != expected_grid:
-            raise ValueError(
-                f"DINOv3 feature grid {tuple(feature.shape[-2:])} does not match padded input geometry {expected_grid}."
-            )
+        if isinstance(feature_maps, torch.Tensor):
+            feature_maps = (feature_maps,)
+        elif isinstance(feature_maps, list):
+            feature_maps = tuple(feature_maps)
 
+        if self.output_layers is not None:
+            if not isinstance(feature_maps, tuple):
+                raise ValueError("DINOv3 multi-layer output does not contain feature_maps.")
+            if len(feature_maps) != len(self.output_layers):
+                raise ValueError(
+                    f"DINOv3 returned {len(feature_maps)} feature maps for {len(self.output_layers)} requested layers."
+                )
+            dense = {
+                name: self._normalize_spatial_feature(feature, name, batch_size, spatial_size)
+                for name, feature in zip(self.feature_names, feature_maps)
+            }
+        else:
+            feature = feature_maps[-1] if isinstance(feature_maps, tuple) and feature_maps else None
+            if feature is None:
+                hidden = _get_output_value(output, "last_hidden_state")
+                if hidden is None and isinstance(output, (tuple, list)) and output:
+                    hidden = output[0]
+                if not isinstance(hidden, torch.Tensor):
+                    raise ValueError("DINOv3 output does not contain a spatial feature map or token sequence.")
+                feature = hidden
+            dense = {"p4": self._normalize_spatial_feature(feature, "p4", batch_size, spatial_size)}
+
+        final_feature = next(reversed(dense.values()))
         pooled = _get_output_value(output, "pooler_output")
         hidden = _get_output_value(output, "last_hidden_state")
         if pooled is None and isinstance(hidden, torch.Tensor) and hidden.ndim == 3:
             pooled = hidden[:, 0, :]
+        hidden_states = _get_output_value(output, "hidden_states")
+        if pooled is None and isinstance(hidden_states, (tuple, list)) and hidden_states:
+            final_hidden = hidden_states[-1]
+            if isinstance(final_hidden, torch.Tensor) and final_hidden.ndim == 3:
+                pooled = final_hidden[:, 0, :]
+        if pooled is None and self.output_layers is not None and self.output_layers[-1] != self.num_hidden_layers:
+            raise ValueError("DINOv3 output does not contain the final-layer global representation.")
         if pooled is None:
-            pooled = feature.mean(dim=(2, 3))
+            pooled = final_feature.mean(dim=(2, 3))
         if not isinstance(pooled, torch.Tensor) or pooled.ndim != 2:
             raise ValueError(f"DINOv3 pooled feature must be 2D, got {getattr(pooled, 'shape', None)}.")
-        if pooled.shape[0] != batch_size or pooled.shape[1] != feature.shape[1]:
+        if pooled.shape[0] != batch_size or pooled.shape[1] != final_feature.shape[1]:
             raise ValueError(
-                f"DINOv3 pooled feature shape {tuple(pooled.shape)} does not match feature shape {tuple(feature.shape)}."
+                f"DINOv3 pooled feature shape {tuple(pooled.shape)} does not match "
+                f"feature shape {tuple(final_feature.shape)}."
             )
 
         config = getattr(self.model, "config", SimpleNamespace())
         metadata = {
-            "grid_size": tuple(feature.shape[-2:]),
+            "grid_size": tuple(final_feature.shape[-2:]),
             "patch_size": self.patch_size,
-            "hidden_dim": int(feature.shape[1]),
+            "hidden_dim": int(final_feature.shape[1]),
             "num_register_tokens": int(getattr(config, "num_register_tokens", 0)),
             "prefix_tokens": 1 + int(getattr(config, "num_register_tokens", 0)),
-            "feature_maps_available": len(feature_maps)
-            if isinstance(feature_maps, (tuple, list))
-            else int(feature_maps is not None),
+            "feature_maps_available": len(feature_maps) if isinstance(feature_maps, tuple) else 0,
         }
-        return FoundationFeatures(dense={"p4": feature}, pooled=pooled, metadata=metadata)
+        if self.output_layers is not None:
+            metadata.update(
+                {
+                    "output_layers": self.output_layers,
+                    "output_layer_indices": tuple(layer - 1 for layer in self.output_layers),
+                    "backbone_stages": self.backbone_stages,
+                    "feature_names": self.feature_names,
+                }
+            )
+        return FoundationFeatures(dense=dense, pooled=pooled, metadata=metadata)
+
+    def _normalize_spatial_feature(
+        self,
+        feature: Any,
+        name: str,
+        batch_size: int,
+        spatial_size: tuple[int, int],
+    ) -> torch.Tensor:
+        """Convert and validate one selected dense feature map."""
+        if isinstance(feature, torch.Tensor) and feature.ndim == 3:
+            feature = self._tokens_to_feature_map(feature, spatial_size)
+        if not isinstance(feature, torch.Tensor) or feature.ndim != 4:
+            raise ValueError(
+                f"DINOv3 feature '{name}' must be 4D BCHW, got "
+                f"{type(feature).__name__} {getattr(feature, 'shape', None)}."
+            )
+        if feature.shape[0] != batch_size:
+            raise ValueError(
+                f"DINOv3 feature '{name}' batch {feature.shape[0]} does not match input batch {batch_size}."
+            )
+        if self.hidden_size and feature.shape[1] != self.hidden_size:
+            raise ValueError(
+                f"DINOv3 feature '{name}' channels {feature.shape[1]} do not match hidden size {self.hidden_size}."
+            )
+        expected_grid = (spatial_size[0] // self.patch_size, spatial_size[1] // self.patch_size)
+        if tuple(feature.shape[-2:]) != expected_grid:
+            raise ValueError(
+                f"DINOv3 feature '{name}' grid {tuple(feature.shape[-2:])} "
+                f"does not match padded input geometry {expected_grid}."
+            )
+        return feature
 
     def _tokens_to_feature_map(self, tokens: torch.Tensor, spatial_size: tuple[int, int]) -> torch.Tensor:
         """Convert a token sequence using config-declared prefix tokens and patch geometry."""
