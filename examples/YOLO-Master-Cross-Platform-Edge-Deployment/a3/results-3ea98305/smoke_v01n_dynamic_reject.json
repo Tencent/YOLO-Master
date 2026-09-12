@@ -1,0 +1,172 @@
+{
+  "model": "/data/YOLO-Master/YOLO-Master-v0.1-N.pt",
+  "args": {
+    "model": "/data/YOLO-Master/YOLO-Master-v0.1-N.pt",
+    "out": "runs/a3/v01n-dynamic",
+    "data": "a3/config/coco-a3.yaml",
+    "routing": "auto",
+    "dynamic": true,
+    "imgsz": 640,
+    "opset": 17,
+    "parity_n": 8,
+    "rel_tol": 0.001,
+    "json": "a3/results/smoke_v01n_dynamic_reject.json",
+    "log": "a3/logs/v01n_smoke_dynamic_reject.log",
+    "yolo_repo": "/data/YOLO-Master"
+  },
+  "torch": "2.4.1+cu124",
+  "yolo_master_commit": "3ea98305a8449d8d9f4a00845e26ff9d8bf3b66e",
+  "edge_commit": "cc613153281ba6d8aee5a7ee8d9dbfac3a9b3d43",
+  "code_refs": [
+    {
+      "what": "exporter forces the legacy tracer (dynamo=False); dynamo ignores the MoE guards",
+      "file": "ultralytics/utils/export/engine.py",
+      "commit": "3ea98305a8449d8d9f4a00845e26ff9d8bf3b66e",
+      "hits": [
+        {
+          "line": 37,
+          "text": "kwargs = {\"dynamo\": False} if TORCH_2_4 else {}"
+        }
+      ],
+      "n_hits": 1
+    },
+    {
+      "what": "ES_MOE: dense path under export",
+      "file": "ultralytics/nn/modules/moe/modules.py",
+      "commit": "3ea98305a8449d8d9f4a00845e26ff9d8bf3b66e",
+      "hits": [
+        {
+          "line": 470,
+          "text": "or torch.onnx.is_in_onnx_export()"
+        }
+      ],
+      "n_hits": 1
+    },
+    {
+      "what": "ES_MOE: dense forward = weighted sum over ALL experts",
+      "file": "ultralytics/nn/modules/moe/modules.py",
+      "commit": "3ea98305a8449d8d9f4a00845e26ff9d8bf3b66e",
+      "hits": [
+        {
+          "line": 529,
+          "text": "def _dense_forward(self, x, routing_weights):"
+        }
+      ],
+      "n_hits": 1
+    },
+    {
+      "what": "ES_MOE: sparse path top-k + dynamic_threshold (what dense drops)",
+      "file": "ultralytics/nn/modules/moe/modules.py",
+      "commit": "3ea98305a8449d8d9f4a00845e26ff9d8bf3b66e",
+      "hits": [
+        {
+          "line": 538,
+          "text": "def _sparse_forward(self, x, routing_weights):"
+        }
+      ],
+      "n_hits": 1
+    },
+    {
+      "what": "OptimizedMOEImproved: exact top-k export via stack + gather",
+      "file": "ultralytics/nn/modules/moe/modules.py",
+      "commit": "3ea98305a8449d8d9f4a00845e26ff9d8bf3b66e",
+      "hits": [
+        {
+          "line": 739,
+          "text": "selected = torch.gather(all_outs, 1, idx_exp).squeeze(1)          # [B, out_C, H, W]"
+        },
+        {
+          "line": 1032,
+          "text": "selected = torch.gather(all_outs, 1, idx_exp).squeeze(1)          # [B, out_C, H, W]"
+        }
+      ],
+      "n_hits": 2
+    },
+    {
+      "what": "OptimizedMOEImproved: export branch bakes B/H/W as Python ints (dynamic axes unsafe)",
+      "file": "ultralytics/nn/modules/moe/modules.py",
+      "commit": "3ea98305a8449d8d9f4a00845e26ff9d8bf3b66e",
+      "hits": [
+        {
+          "line": 738,
+          "text": "idx_exp = idx_k.view(B, 1, 1, 1, 1).expand(B, 1, self.out_channels, H, W)"
+        },
+        {
+          "line": 1031,
+          "text": "idx_exp = idx_k.view(B, 1, 1, 1, 1).expand(B, 1, self.out_channels, H, W)"
+        }
+      ],
+      "n_hits": 2
+    },
+    {
+      "what": "OptimizedMOEImproved: compat shim defaults a MISSING add_residual to True (the trap)",
+      "file": "ultralytics/nn/modules/moe/modules.py",
+      "commit": "3ea98305a8449d8d9f4a00845e26ff9d8bf3b66e",
+      "hits": [
+        {
+          "line": 967,
+          "text": "self.add_residual = True"
+        }
+      ],
+      "n_hits": 1
+    },
+    {
+      "what": "exporter: no MoE awareness (grep count of 'moe' in exporter.py)",
+      "file": "ultralytics/engine/exporter.py",
+      "commit": "3ea98305a8449d8d9f4a00845e26ff9d8bf3b66e",
+      "hits": [],
+      "n_hits": 0
+    }
+  ],
+  "repairs": {
+    "add_residual_forced_false": 3,
+    "property_shadows_stripped": 0,
+    "esmoe_dense_forced": false
+  },
+  "inventory": [
+    {
+      "module": "model.6",
+      "cls": "OptimizedMOEImproved",
+      "E": 4,
+      "k": 2,
+      "use_top_k": false,
+      "router_cls": "EfficientSpatialRouter",
+      "router_use_top_k": false,
+      "use_sparse_inference": null,
+      "dynamic_threshold": null,
+      "add_residual": false
+    },
+    {
+      "module": "model.9",
+      "cls": "OptimizedMOEImproved",
+      "E": 8,
+      "k": 2,
+      "use_top_k": false,
+      "router_cls": "EfficientSpatialRouter",
+      "router_use_top_k": false,
+      "use_sparse_inference": null,
+      "dynamic_threshold": null,
+      "add_residual": false
+    },
+    {
+      "module": "model.12",
+      "cls": "OptimizedMOEImproved",
+      "E": 16,
+      "k": 2,
+      "use_top_k": false,
+      "router_cls": "EfficientSpatialRouter",
+      "router_use_top_k": false,
+      "use_sparse_inference": null,
+      "dynamic_threshold": null,
+      "add_residual": false
+    }
+  ],
+  "policy": {
+    "routing": "auto",
+    "dynamic": true,
+    "decisions": [],
+    "reason": "dynamic axes REJECTED: the MoE export branches bake batch/height/width as Python ints (view/expand in the gather path); a dynamic-axes graph is silently wrong at any other shape. Export is static 1x3x640x640 only.",
+    "exit_code": 2
+  },
+  "status": "rejected"
+}

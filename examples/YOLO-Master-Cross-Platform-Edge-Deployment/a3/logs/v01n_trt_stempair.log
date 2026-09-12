@@ -1,0 +1,170 @@
+[calib] 1024 images from /data/datasets/coco/images/train2017
+[onnx] runs/a3/v01n/trt/YOLO-Master-v0.1-N.onnx
+[head] pinned subgraph prefix: /model.25/ (mixed-semantics concat lives here)
+[router] always-pinned router subgraphs: ['/model.12/routing/', '/model.12/routing/router/', '/model.6/routing/', '/model.6/routing/router/', '/model.9/routing/', '/model.9/routing/router/']
+[pins] --pins head: ['/model.25/']
+[scan] per-layer sensitivity (ORT fp32 activation statistics)...
+[scan] 406 layers profiled; top hostility outside head: /model.25/cv3.1/cv3.1.1/cv3.1.1.0/act/Mul(67.5901), /model.25/cv3.0/cv3.0.1/cv3.0.1.0/conv/Conv(62.924), /model.25/cv3.1/cv3.1.1/cv3.1.1.0/conv/Conv(42.4036)
+[recipe] always-pinned modules: ['/model.0/', '/model.1/']
+/usr/local/lib/python3.11/dist-packages/torch/cuda/__init__.py:58: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/data/yolo-master-edge/scripts/a3/quantize_trt.py:202: DeprecationWarning: Use Deprecated in TensorRT 10.1. Superseded by explicit quantization. instead.
+  config.int8_calibrator = _make_calibrator(trt, calib_images, imgsz, calib_cache)
+/data/yolo-master-edge/scripts/a3/quantize_trt.py:221: DeprecationWarning: Use Deprecated in TensorRT 10.12. Superseded by strong typing. instead.
+  layer.precision = trt.DataType.HALF
+/data/yolo-master-edge/scripts/a3/quantize_trt.py:223: DeprecationWarning: Use Deprecated in TensorRT 10.12. Superseded by strong typing. instead.
+  layer.set_output_type(0, trt.DataType.HALF)
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.6/Cast_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.6/routing/Cast_1_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.6/routing/TopK_output (1), expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.6/Reshape_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.6/Constant_output_0_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.6/Gather_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.0/conv/Constant_output_0_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.6/Gather_2_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor (Unnamed Layer* 100) [Constant]_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_Broadcast_10_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor (Unnamed Layer* 103) [ElementWise]_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.6/routing/Clip_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.6/Reshape_2_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.6/Reshape_4_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.6/Expand_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.6/Expand_1_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_castHelper_16_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_castHelper_18_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.6/Cast_1_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_Broadcast_29_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_Broadcast_41_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_Broadcast_53_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_Broadcast_65_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.9/Cast_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.9/routing/Cast_1_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.9/routing/TopK_output (1), expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.9/Reshape_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.9/Gather_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.9/Gather_2_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor (Unnamed Layer* 319) [Constant]_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_Broadcast_74_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_Broadcast_76_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor (Unnamed Layer* 322) [ElementWise]_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.9/routing/Clip_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.9/Reshape_2_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.9/Reshape_4_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.9/Expand_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.9/Expand_1_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.25/Constant_15_output_0_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_castHelper_82_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_Broadcast_241_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_castHelper_84_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.9/Cast_1_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_Broadcast_95_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_Broadcast_107_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_Broadcast_119_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_Broadcast_131_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.12/Cast_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.12/routing/Cast_1_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.12/routing/TopK_output (1), expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.12/Reshape_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.12/Gather_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.12/Gather_2_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor (Unnamed Layer* 577) [Constant]_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_Broadcast_140_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_Broadcast_142_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor (Unnamed Layer* 580) [ElementWise]_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.12/routing/Clip_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.12/Reshape_2_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.12/Reshape_4_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.12/Expand_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.12/Expand_1_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_castHelper_147_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_castHelper_148_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_castHelper_149_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_castHelper_150_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.12/Cast_1_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.25/Reshape_3_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.25/Reshape_4_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.25/Reshape_5_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.25/Constant_13_output_0_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_Broadcast_239_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:10:27] [TRT] [W] Missing scale and zero-point for tensor /model.25/Constant_14_output_0_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [E] IBuilder::buildSerializedNetwork: Error Code 10: Internal Error (Could not find any implementation for node /model.7/conv/Conv + PWN(PWN(/model.7/act/Sigmoid), PWN(/model.7/act/Mul)). In computeCosts at optimizer/common/tactic/optimizer.cpp:4115)
+[int8 round 0] build infeasible with batch []...; reverting batch and stopping greedy (engine build failed (int8))
+[08/23/2026-14:13:18] [TRT] [W] WARNING The logger passed into createInferBuilder differs from one already registered for an existing builder, runtime, or refitter. So the current new logger is ignored, and TensorRT will use the existing one which is returned by nvinfer1::getLogger() instead.
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.6/Cast_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.6/routing/Cast_1_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.6/routing/TopK_output (1), expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.6/Reshape_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.6/Constant_output_0_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.6/Gather_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.0/conv/Constant_output_0_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.6/Gather_2_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor (Unnamed Layer* 100) [Constant]_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_Broadcast_10_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor (Unnamed Layer* 103) [ElementWise]_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.6/routing/Clip_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.6/Reshape_2_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.6/Reshape_4_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.6/Expand_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.6/Expand_1_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_castHelper_16_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_Broadcast_241_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_castHelper_18_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.6/Cast_1_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_Broadcast_29_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_Broadcast_41_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_Broadcast_53_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_Broadcast_65_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.9/Cast_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.9/routing/Cast_1_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.9/routing/TopK_output (1), expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_Broadcast_239_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.9/Reshape_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.9/Gather_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.9/Gather_2_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor (Unnamed Layer* 319) [Constant]_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_Broadcast_74_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_Broadcast_76_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor (Unnamed Layer* 322) [ElementWise]_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.9/routing/Clip_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.9/Reshape_2_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.9/Reshape_4_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.9/Expand_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.9/Expand_1_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_castHelper_82_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_castHelper_84_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.9/Cast_1_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_Broadcast_95_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_Broadcast_107_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_Broadcast_119_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_Broadcast_131_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.12/Cast_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.12/routing/Cast_1_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.12/routing/TopK_output (1), expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.12/Reshape_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.12/Gather_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.12/Gather_2_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor (Unnamed Layer* 577) [Constant]_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_Broadcast_140_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_Broadcast_142_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor (Unnamed Layer* 580) [ElementWise]_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.12/routing/Clip_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.12/Reshape_2_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.12/Reshape_4_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.12/Expand_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.12/Expand_1_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_castHelper_147_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_castHelper_148_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_castHelper_149_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor ONNXTRT_castHelper_150_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.12/Cast_1_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.25/Reshape_3_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.25/Reshape_4_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.25/Reshape_5_output_0, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.25/Constant_13_output_0_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.25/Constant_15_output_0_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:18] [TRT] [W] Missing scale and zero-point for tensor /model.25/Constant_14_output_0_output, expect fall back to non-int8 implementation for any layer consuming or producing given tensor
+[08/23/2026-14:13:37] [TRT] [E] IBuilder::buildSerializedNetwork: Error Code 10: Internal Error (Could not find any implementation for node /model.7/conv/Conv + PWN(PWN(/model.7/act/Sigmoid), PWN(/model.7/act/Mul)). In computeCosts at optimizer/common/tactic/optimizer.cpp:4115)
+[int8] FAILED (base pins head): engine build failed (int8)
+
+===== ladder =====
+artifacts -> runs/a3/v01n/trt-stempair
