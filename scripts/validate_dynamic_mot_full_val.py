@@ -13,6 +13,7 @@ import gc
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 import torch
 
@@ -24,6 +25,52 @@ from export_dynamic_blocks_from_checkpoint import load_model, sha256
 from ultralytics.models.yolo.detect import DetectionValidator
 from ultralytics.nn.modules.dynamic_runtime import ORTRouterTorchExpertAdapter
 from validate_full_yolo_hybrid_dynamic_runtime import replace_submodule
+
+
+def disable_thop_flop_profiling() -> bool:
+    """Disable optional THOP FLOPs accounting for this accuracy-only validator.
+
+    THOP registers temporary forward hooks and ``total_ops`` buffers. Some
+    PyTorch/THOP combinations can leave a counting hook behind after removing
+    the buffer, which later crashes conditional expert execution when that
+    expert is selected. FLOPs are not part of this validation gate, so avoiding
+    THOP is both safer and semantically neutral for predictions and mAP.
+    """
+    try:
+        import thop
+    except ImportError:
+        return False
+
+    def disabled_profile(*_args: Any, **kwargs: Any):
+        return (0.0, 0.0, {}) if kwargs.get("ret_layer_info") else (0.0, 0.0)
+
+    thop.profile = disabled_profile
+    return True
+
+
+def strip_thop_runtime_state(model: torch.nn.Module) -> int:
+    """Remove only THOP-owned hooks and temporary buffers from a model."""
+    removed_hooks = 0
+    for module in model.modules():
+        for hook_store_name in ("_forward_hooks", "_forward_pre_hooks", "_backward_hooks"):
+            hook_store = getattr(module, hook_store_name, None)
+            if hook_store is None:
+                continue
+            for hook_id, hook in list(hook_store.items()):
+                hook_function = getattr(hook, "func", hook)
+                hook_module = str(getattr(hook_function, "__module__", ""))
+                if hook_module == "thop" or hook_module.startswith("thop."):
+                    del hook_store[hook_id]
+                    removed_hooks += 1
+        module._buffers.pop("total_ops", None)
+        module._buffers.pop("total_params", None)
+    return removed_hooks
+
+
+def load_validation_model(checkpoint: Path) -> tuple[torch.nn.Module, int]:
+    """Load a checkpoint model and sanitize optional THOP instrumentation."""
+    model = load_model(checkpoint, torch.device("cpu"))
+    return model, strip_thop_runtime_state(model)
 
 
 def parse_args() -> argparse.Namespace:
@@ -142,6 +189,7 @@ def install_adapters(
 
 def main() -> int:
     args = parse_args()
+    thop_flop_profiling_disabled = disable_thop_flop_profiling()
     checkpoint = args.checkpoint.resolve()
     model_manifest_path = args.model_manifest.resolve()
     data = args.data.resolve()
@@ -174,7 +222,9 @@ def main() -> int:
     project.mkdir(parents=True, exist_ok=True)
 
     print("===== 1/2 EAGER CHECKPOINT FP32 VALIDATION =====")
-    eager_model = load_model(checkpoint, torch.device("cpu"))
+    eager_model, eager_thop_hooks_removed = load_validation_model(checkpoint)
+    if eager_thop_hooks_removed:
+        print(f"[safety] removed {eager_thop_hooks_removed} stale THOP hooks from eager model")
     eager = run_validation(
         eager_model,
         checkpoint=checkpoint,
@@ -192,7 +242,9 @@ def main() -> int:
         torch.cuda.empty_cache()
 
     print("===== 2/2 ORT ROUTER + PYTORCH CHECKPOINT EXPERTS VALIDATION =====")
-    hybrid_model = load_model(checkpoint, torch.device("cpu"))
+    hybrid_model, hybrid_thop_hooks_removed = load_validation_model(checkpoint)
+    if hybrid_thop_hooks_removed:
+        print(f"[safety] removed {hybrid_thop_hooks_removed} stale THOP hooks from hybrid model")
     adapters = install_adapters(
         hybrid_model,
         model_manifest=model_manifest,
@@ -251,6 +303,14 @@ def main() -> int:
         "not_a_full_export": True,
         "not_tensorrt": True,
         "latency_is_deployment_benchmark": False,
+        "validation_safety": {
+            "thop_flop_profiling_disabled": thop_flop_profiling_disabled,
+            "stale_thop_hooks_removed": {
+                "eager_model": eager_thop_hooks_removed,
+                "hybrid_model": hybrid_thop_hooks_removed,
+            },
+            "prediction_or_metric_semantics_changed": False,
+        },
         "eager_fp32": eager,
         "dynamic_hybrid_fp32": hybrid,
         "accuracy_gate": {

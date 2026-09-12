@@ -75,6 +75,7 @@ class ORTDynamicExpertRuntime:
         self._postprocess_session = self._new_session(self._resolve_artifact(self._postprocess_record))
         self._expert_sessions: dict[int, object] = {}
         self.last_audit: DynamicDispatchAudit | None = None
+        self.last_dense_routing_probabilities: np.ndarray | None = None
         self.last_routing_weights: np.ndarray | None = None
 
     def _resolve_artifact(self, record: dict) -> Path:
@@ -177,19 +178,23 @@ class ORTDynamicExpertRuntime:
                 f"runtime input dtype must be {self.manifest['sample_dtype']}, got {inputs.dtype}"
             )
 
-        routing_weights = self._router_session.run(
+        router_output = self._router_session.run(
             self._router_record["outputs"],
             {self._router_record["inputs"][0]: inputs},
         )[0]
         router_semantics = self.manifest.get("router_output_semantics", "sparse_topk")
         if router_semantics == "dense_probabilities_host_topk":
+            self.last_dense_routing_probabilities = router_output.copy()
             routing_weights = sparsify_topk_probabilities(
-                routing_weights,
+                router_output,
                 top_k=int(self.manifest["top_k"]),
                 zero_tolerance=float(self.manifest["zero_tolerance"]),
                 tie_tolerance=float(self.manifest.get("host_topk_tie_tolerance", 0.0)),
             )
-        elif router_semantics != "sparse_topk":
+        elif router_semantics == "sparse_topk":
+            self.last_dense_routing_probabilities = None
+            routing_weights = router_output
+        else:
             raise DynamicDispatchContractError(f"unsupported router_output_semantics: {router_semantics!r}")
         self.last_routing_weights = routing_weights.copy()
         return routing_weights

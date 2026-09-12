@@ -14,6 +14,40 @@ from .dispatch import DynamicDispatchContractError, audit_sparse_routing
 from .ort import ORTDynamicExpertRuntime
 
 
+_ROUTE_MARGIN_THRESHOLDS = (1e-7, 1e-6, 1e-5, 1e-4)
+_MAX_MISMATCH_MARGIN_SAMPLES = 4096
+_MAX_ROUTE_MISMATCH_EXAMPLES = 32
+
+
+def _host_topk_boundary_margin(
+    dense_probabilities: np.ndarray,
+    *,
+    top_k: int,
+    tie_tolerance: float,
+) -> np.ndarray:
+    """Return the selected/unselected boundary margin used by host Top-K.
+
+    The host selector subtracts ``expert_id * tie_tolerance`` before its
+    stable descending sort. Measuring that adjusted score, rather than only
+    the raw softmax values, diagnoses the exact decision boundary that can
+    flip when eager PyTorch and ORT differ by a few floating-point ulps.
+    """
+    probabilities = np.asarray(dense_probabilities)
+    if probabilities.ndim != 4:
+        raise DynamicDispatchContractError(
+            f"dense router probabilities must be [B,E,H,W], got {tuple(probabilities.shape)}"
+        )
+    num_experts = int(probabilities.shape[1])
+    if not 1 <= top_k < num_experts:
+        raise DynamicDispatchContractError(
+            f"route-margin audit requires Top-K in [1, {num_experts - 1}], got {top_k}"
+        )
+    priority = np.arange(num_experts, dtype=probabilities.dtype).reshape(1, -1, 1, 1)
+    ranking_scores = probabilities - priority * float(tie_tolerance)
+    ordered = np.sort(ranking_scores, axis=1)[:, ::-1]
+    return ordered[:, top_k - 1] - ordered[:, top_k]
+
+
 class ORTDynamicBlockAdapter(nn.Module):
     """Replace one eager routed block with a split-ORT conditional runtime.
 
@@ -153,6 +187,16 @@ class ORTRouterTorchExpertAdapter(nn.Module):
         self._total_route_mask_entries = 0
         self._total_route_mask_mismatches = 0
         self._max_sparse_weight_abs_error = 0.0
+        self._max_dense_probability_abs_error = 0.0
+        self._total_route_margin_locations = 0
+        self._route_margin_sum = 0.0
+        self._route_margin_min = float("inf")
+        self._route_margin_max = 0.0
+        self._route_margin_below_counts = {threshold: 0 for threshold in _ROUTE_MARGIN_THRESHOLDS}
+        self._mismatch_route_margins: list[float] = []
+        self._mismatch_eager_route_margins: list[float] = []
+        self._mismatch_route_margin_total = 0
+        self._route_mismatch_examples: list[dict] = []
 
     @property
     def router(self) -> nn.Module:
@@ -168,12 +212,15 @@ class ORTRouterTorchExpertAdapter(nn.Module):
         if not self.compare_eager_routes:
             return {"enabled": False}
         with torch.no_grad():
-            eager_weights, _ = self.block.router(x)
+            eager_weights, _, eager_logits = self.block.router(x, return_logits=True)
+            eager_dense_weights = torch.softmax(eager_logits / self.block.router.temperature.float(), dim=1)
         eager = eager_weights.detach().float().cpu().numpy()
+        eager_dense = eager_dense_weights.detach().float().cpu().numpy()
         zero_tolerance = float(self.runtime.manifest["zero_tolerance"])
         route_mask_mismatch = (eager > zero_tolerance) != (ort_weights > zero_tolerance)
         route_location_mismatch = route_mask_mismatch.any(axis=1)
         sparse_weight_error = float(np.max(np.abs(eager - ort_weights)))
+        dense_probabilities = self.runtime.last_dense_routing_probabilities
         result = {
             "enabled": True,
             "route_mask_mismatch_count": int(route_mask_mismatch.sum()),
@@ -184,6 +231,93 @@ class ORTRouterTorchExpertAdapter(nn.Module):
             "route_location_mismatch_ratio": float(route_location_mismatch.mean()),
             "sparse_weight_max_abs_error": sparse_weight_error,
         }
+        if dense_probabilities is not None and self.top_k < self.num_experts:
+            tie_tolerance = float(self.runtime.manifest.get("host_topk_tie_tolerance", 0.0))
+            margins = _host_topk_boundary_margin(
+                dense_probabilities,
+                top_k=self.top_k,
+                tie_tolerance=tie_tolerance,
+            )
+            eager_margins = _host_topk_boundary_margin(
+                eager_dense,
+                top_k=self.top_k,
+                tie_tolerance=tie_tolerance,
+            )
+            margin_values = margins.reshape(-1).astype(np.float64, copy=False)
+            mismatch_margins = margins[route_location_mismatch].reshape(-1).astype(np.float64, copy=False)
+            mismatch_eager_margins = eager_margins[route_location_mismatch].reshape(-1).astype(
+                np.float64,
+                copy=False,
+            )
+            dense_probability_error = np.abs(eager_dense - dense_probabilities)
+            dense_probability_max_abs_error = float(dense_probability_error.max())
+            threshold_counts = {
+                f"{threshold:.0e}": int(np.count_nonzero(margin_values <= threshold))
+                for threshold in _ROUTE_MARGIN_THRESHOLDS
+            }
+            result["host_topk_boundary_margin"] = {
+                "available": True,
+                "definition": "kth_minus_k_plus_1_adjusted_ranking_score",
+                "tie_tolerance": tie_tolerance,
+                "locations": int(margin_values.size),
+                "min": float(margin_values.min()),
+                "mean": float(margin_values.mean()),
+                "max": float(margin_values.max()),
+                "below_or_equal_counts": threshold_counts,
+                "mismatch_locations": int(mismatch_margins.size),
+                "ort_mismatch_min": float(mismatch_margins.min()) if mismatch_margins.size else None,
+                "ort_mismatch_median": float(np.median(mismatch_margins)) if mismatch_margins.size else None,
+                "ort_mismatch_max": float(mismatch_margins.max()) if mismatch_margins.size else None,
+                "eager_mismatch_min": (
+                    float(mismatch_eager_margins.min()) if mismatch_eager_margins.size else None
+                ),
+                "eager_mismatch_median": (
+                    float(np.median(mismatch_eager_margins)) if mismatch_eager_margins.size else None
+                ),
+                "eager_mismatch_max": (
+                    float(mismatch_eager_margins.max()) if mismatch_eager_margins.size else None
+                ),
+                "dense_probability_max_abs_error": dense_probability_max_abs_error,
+            }
+            self._total_route_margin_locations += int(margin_values.size)
+            self._route_margin_sum += float(margin_values.sum())
+            self._route_margin_min = min(self._route_margin_min, float(margin_values.min()))
+            self._route_margin_max = max(self._route_margin_max, float(margin_values.max()))
+            for threshold in _ROUTE_MARGIN_THRESHOLDS:
+                self._route_margin_below_counts[threshold] += int(np.count_nonzero(margin_values <= threshold))
+            self._mismatch_route_margin_total += int(mismatch_margins.size)
+            remaining = _MAX_MISMATCH_MARGIN_SAMPLES - len(self._mismatch_route_margins)
+            if remaining > 0 and mismatch_margins.size:
+                self._mismatch_route_margins.extend(mismatch_margins[:remaining].tolist())
+                self._mismatch_eager_route_margins.extend(mismatch_eager_margins[:remaining].tolist())
+            self._max_dense_probability_abs_error = max(
+                self._max_dense_probability_abs_error,
+                dense_probability_max_abs_error,
+            )
+            example_slots = _MAX_ROUTE_MISMATCH_EXAMPLES - len(self._route_mismatch_examples)
+            if example_slots > 0 and mismatch_margins.size:
+                mismatch_coordinates = np.argwhere(route_location_mismatch)
+                dense_error_by_location = dense_probability_error.max(axis=1)
+                for coordinate in mismatch_coordinates[:example_slots]:
+                    index = tuple(int(value) for value in coordinate)
+                    self._route_mismatch_examples.append(
+                        {
+                            "call_index": self._total_calls,
+                            "location_index": list(index),
+                            "ort_host_topk_boundary_margin": float(margins[index]),
+                            "eager_host_topk_boundary_margin": float(eager_margins[index]),
+                            "dense_probability_max_abs_error": float(dense_error_by_location[index]),
+                        }
+                    )
+        else:
+            result["host_topk_boundary_margin"] = {
+                "available": False,
+                "reason": (
+                    "bundle_router_output_is_already_sparse"
+                    if dense_probabilities is None
+                    else "top_k_selects_all_experts"
+                ),
+            }
         self._total_route_locations += result["route_location_total"]
         self._total_route_location_mismatches += result["route_location_mismatch_count"]
         self._total_route_mask_entries += result["route_mask_total"]
@@ -300,6 +434,75 @@ class ORTRouterTorchExpertAdapter(nn.Module):
                 ),
                 sparse_weight_max_abs_error=self._max_sparse_weight_abs_error,
             )
+            if self._total_route_margin_locations:
+                sampled_mismatch_margins = np.asarray(self._mismatch_route_margins, dtype=np.float64)
+                sampled_eager_mismatch_margins = np.asarray(
+                    self._mismatch_eager_route_margins,
+                    dtype=np.float64,
+                )
+                summary["route_margin_audit"] = {
+                    "available": True,
+                    "definition": "kth_minus_k_plus_1_adjusted_ranking_score",
+                    "tie_tolerance": float(self.runtime.manifest.get("host_topk_tie_tolerance", 0.0)),
+                    "locations": self._total_route_margin_locations,
+                    "min": self._route_margin_min,
+                    "mean": self._route_margin_sum / self._total_route_margin_locations,
+                    "max": self._route_margin_max,
+                    "below_or_equal_counts": {
+                        f"{threshold:.0e}": self._route_margin_below_counts[threshold]
+                        for threshold in _ROUTE_MARGIN_THRESHOLDS
+                    },
+                    "mismatch_locations": self._mismatch_route_margin_total,
+                    "mismatch_margin_sample_count": int(sampled_mismatch_margins.size),
+                    "mismatch_margin_sample_complete": (
+                        int(sampled_mismatch_margins.size) == self._mismatch_route_margin_total
+                    ),
+                    "ort_mismatch_min": (
+                        float(sampled_mismatch_margins.min()) if sampled_mismatch_margins.size else None
+                    ),
+                    "ort_mismatch_median": (
+                        float(np.median(sampled_mismatch_margins)) if sampled_mismatch_margins.size else None
+                    ),
+                    "ort_mismatch_p95": (
+                        float(np.percentile(sampled_mismatch_margins, 95))
+                        if sampled_mismatch_margins.size
+                        else None
+                    ),
+                    "ort_mismatch_max": (
+                        float(sampled_mismatch_margins.max()) if sampled_mismatch_margins.size else None
+                    ),
+                    "eager_mismatch_min": (
+                        float(sampled_eager_mismatch_margins.min())
+                        if sampled_eager_mismatch_margins.size
+                        else None
+                    ),
+                    "eager_mismatch_median": (
+                        float(np.median(sampled_eager_mismatch_margins))
+                        if sampled_eager_mismatch_margins.size
+                        else None
+                    ),
+                    "eager_mismatch_p95": (
+                        float(np.percentile(sampled_eager_mismatch_margins, 95))
+                        if sampled_eager_mismatch_margins.size
+                        else None
+                    ),
+                    "eager_mismatch_max": (
+                        float(sampled_eager_mismatch_margins.max())
+                        if sampled_eager_mismatch_margins.size
+                        else None
+                    ),
+                    "dense_probability_max_abs_error": self._max_dense_probability_abs_error,
+                    "mismatch_examples": self._route_mismatch_examples,
+                }
+            else:
+                summary["route_margin_audit"] = {
+                    "available": False,
+                    "reason": (
+                        "bundle_router_output_is_already_sparse"
+                        if self.runtime.last_dense_routing_probabilities is None
+                        else "top_k_selects_all_experts"
+                    ),
+                }
         return summary
 
 

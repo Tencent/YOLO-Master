@@ -214,3 +214,7 @@ def test_ort_router_torch_experts_adapter_uses_checkpoint_experts_without_loadin
     assert summary["checkpoint_pytorch_experts_executed"] is True
     assert summary["sample_pair_reduction_ratio"] == pytest.approx(2 / 3)
     assert summary["route_location_mismatch_count"] == 0
+    assert adapter.runtime.last_dense_routing_probabilities is not None
+    assert summary["route_margin_audit"]["available"] is True
+    assert summary["route_margin_audit"]["locations"] == sample.shape[0]
+    assert summary["route_margin_audit"]["mismatch_locations"] == 0

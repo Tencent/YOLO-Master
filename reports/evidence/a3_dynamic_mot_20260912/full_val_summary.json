@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "status": "PASS_WITH_ROUTE_DRIFT",
+  "source_archive": {
+    "name": "mot_dynamic_full_val_20260912_evidence.zip",
+    "bytes": 16182,
+    "sha256": "0B05BACB5FAB5A91ACABE4211A6CF6852ABD01B7C37588E04A874E7BAE18CC72"
+  },
+  "checkpoint_sha256": "5f6ff684f74c773de5cdf0a2e4a51773317829bbeccc48c5c13f0ed3a2f3d417",
+  "scope": "full_yolo_visdrone_ort_router_pytorch_checkpoint_experts",
+  "execution_semantics": "host_ort_router_conditional_pytorch_checkpoint_experts",
+  "masked_dense_allowed": false,
+  "not_a_full_export": true,
+  "not_tensorrt": true,
+  "latency_is_deployment_benchmark": false,
+  "eager": {
+    "images": 548,
+    "precision": 0.10710894554754607,
+    "recall": 0.2392802158725934,
+    "map50": 0.06634212473100944,
+    "map50_95": 0.032929580881133534,
+    "inference_ms_per_image_diagnostic": 9.63999991729714
+  },
+  "dynamic": {
+    "images": 548,
+    "precision": 0.107113262440674,
+    "recall": 0.23929897448223708,
+    "map50": 0.06633809398647492,
+    "map50_95": 0.03293158798954675,
+    "inference_ms_per_image_diagnostic": 12.948603960013735
+  },
+  "accuracy_gate": {
+    "delta_percentage_points": 0.00020071084132142203,
+    "absolute_delta_percentage_points": 0.00020071084132142203,
+    "tolerance_percentage_points": 0.5,
+    "passed": true
+  },
+  "route_gate": {
+    "exact_route_required": false,
+    "mismatched_locations": 173,
+    "total_locations": 3945600,
+    "mismatch_ratio": 0.0000438463098134631,
+    "mismatch_percent": 0.00438463098134631,
+    "passed": true
+  },
+  "dynamic_execution_gate": {
+    "all_blocks_executed": true,
+    "at_least_one_block_observed_sample_pair_reduction": true,
+    "onnx_expert_sessions_loaded": 0,
+    "checkpoint_pytorch_experts_executed": true,
+    "passed": true
+  },
+  "blocks": [
+    {"module_name": "model.14.m.0", "calls": 69, "sample_pair_reduction_ratio": 0.0, "executed_expert_calls": 207, "dense_expert_calls": 207, "route_location_mismatches": 149, "route_locations": 876800},
+    {"module_name": "model.14.m.1", "calls": 69, "sample_pair_reduction_ratio": 0.33333333333333337, "executed_expert_calls": 138, "dense_expert_calls": 207, "route_location_mismatches": 0, "route_locations": 876800},
+    {"module_name": "model.20.m.0", "calls": 69, "sample_pair_reduction_ratio": 0.0, "executed_expert_calls": 207, "dense_expert_calls": 207, "route_location_mismatches": 24, "route_locations": 876800},
+    {"module_name": "model.20.m.1", "calls": 69, "sample_pair_reduction_ratio": 0.33333333333333337, "executed_expert_calls": 138, "dense_expert_calls": 207, "route_location_mismatches": 0, "route_locations": 876800},
+    {"module_name": "model.23.m.0", "calls": 69, "sample_pair_reduction_ratio": 0.6666666666666667, "executed_expert_calls": 69, "dense_expert_calls": 207, "route_location_mismatches": 0, "route_locations": 219200},
+    {"module_name": "model.23.m.1", "calls": 69, "sample_pair_reduction_ratio": 0.6666666666666667, "executed_expert_calls": 69, "dense_expert_calls": 207, "route_location_mismatches": 0, "route_locations": 219200}
+  ],
+  "validation_safety": {
+    "thop_flop_profiling_disabled": true,
+    "stale_thop_hooks_removed_eager": 0,
+    "stale_thop_hooks_removed_hybrid": 0,
+    "prediction_or_metric_semantics_changed": false
+  }
+}

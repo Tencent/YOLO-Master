@@ -1,5 +1,9 @@
 # A3 真动态专家导出/运行时 PoC（2026-09-01）
 
+> 2026-09-12 更新：真实 MoT checkpoint 的 VisDrone val 548 张全量动态混合验证已完成，结果为
+> `PASS_WITH_ROUTE_DRIFT`。完整结论见
+> [`a3_dynamic_mot_full_val_20260912.md`](a3_dynamic_mot_full_val_20260912.md)。下文保留 9 月 1 日阶段记录。
+
 ## 结论
 
 暂停继续扩展 masked-dense INT8 路径，改为研发真正的条件专家执行。第一阶段块级 PoC 已通过：
