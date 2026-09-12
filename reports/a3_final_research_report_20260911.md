@@ -8,9 +8,10 @@
 >
 > 总结状态：**P0 通过；P1 有条件完成；P2 测量闭环完成但严格验收门禁未通过**
 
-> 2026-09-12 更新：真实 MoT checkpoint + VisDrone val 548 张的 FP32 条件专家执行已完成；路由裕量
-> 审计确认 173 个漂移均为近似并列处的跨后端浮点翻转。确定性 Top-K 与动态 DAG/dispatch 接口已进入
-> 本地实现阶段；动态 INT8 扩展冻结。
+> 2026-09-13 更新：真实 MoT checkpoint + VisDrone val 548 张的 FP32 条件专家执行已完成；统一确定性
+> Top-K 合同也已在真实数据上复验。精度和动态执行门禁通过，但严格路由门禁仍以
+> `196 / 3,945,600` 个漂移失败，故不得写成跨后端零漂移。动态 DAG/dispatch 接口已形成 CPU 参考实现；
+> 动态 INT8 扩展继续冻结。
 
 ## 1. 结论
 
@@ -23,6 +24,12 @@ VisDrone val 上均执行 checkpoint PyTorch 专家，ONNX 专家会话加载数
 mAP50-95 差为 `+0.0002007108` 个百分点。路由漂移为 `173 / 3,945,600`（`0.00438463%`），不是严格
 逐位置一致；裕量审计显示两处漂移块的错位裕量最大值不超过对应 dense 概率跨后端最大误差，支持近似并列
 浮点翻转诊断。完整解释见 [`a3_dynamic_mot_full_val_20260912.md`](a3_dynamic_mot_full_val_20260912.md)。
+
+新 `max_deadband_then_lowest_expert_id` 合同复验中，mAP50-95 为 eager `0.0329293978`、动态
+`0.0329282729`，差 `-0.0001124859` 个百分点；精度门禁、6/6 块执行和真实条件调用门禁均通过。但严格
+路由漂移变为 `196 / 3,945,600`（`0.00496756%`），全部错位裕量落在 `1e-6` deadband 边界附近。
+这证明统一 tie 顺序只能确定相同输入值的排序，不能保证 PyTorch CUDA 与 ORT CPU 已产生微小差异的概率
+跨越同一离散阈值后仍选择相同专家。该复验最终状态必须保留为 `FAIL`（严格路由门禁失败）。
 
 ## 2. P0/P1/P2 验收映射
 
@@ -114,14 +121,15 @@ MoA 的概率误差很小但排名翻转很多，说明专家分数存在大量�
 
 1. 立即提交现有锁、五族精度表、逐层路由 CSV、复现脚本、测试和本报告。
 2. PR 中把 P2 状态写为“measurement complete, gate failed”，将未通过项登记为后续工作。
-3. 在云端用新确定性 Top-K 合同重新跑真实 MoT checkpoint + VisDrone val 548 张，验证 mAP 门禁、
-   路由漂移和 6/6 动态块执行；本地构造测试不能替代该证据。完整运行单元见
-   [`a3_deterministic_topk_cloud_revalidation_20260912.md`](a3_deterministic_topk_cloud_revalidation_20260912.md)。
-4. 生成完整 YOLO 动态 DAG，并实现 CUDA/TensorRT `ConditionalDispatchBackend`；空间路由优先做
+3. **已完成但严格门禁失败：**新确定性 Top-K 合同的真实 MoT checkpoint + VisDrone val 548 张复验；
+   精度和动态执行通过，严格路由为 `196 / 3,945,600`，不得通过继续扫描容差把结果调成通过。
+4. 冻结路由权威语义：部署导出路由作为唯一选择源，或采用显式误差预算的歧义等价门禁；若要求绝对相同，
+   eager 与动态路径必须复用同一份路由输出。
+5. 生成完整 YOLO 动态 DAG，并实现 CUDA/TensorRT `ConditionalDispatchBackend`；空间路由优先做
    token/window 分组，避免 batch union 覆盖全专家。
-5. GPU 延迟只在真正条件执行 backend 正确性通过后测试，同时记录 provider、batch、warmup、重复次数、
+6. GPU 延迟只在真正条件执行 backend 正确性通过后测试，同时记录 provider、batch、warmup、重复次数、
    P50/P95、吞吐、显存和实际专家调用数。
-6. 动态 FP32 正确性和性能闭环前，不扩展 INT8、QAT 或更多混合精度实验。
+7. 动态 FP32 正确性和性能闭环前，不扩展 INT8、QAT 或更多混合精度实验。
 
 ## 9. GitHub 证据
 
@@ -142,4 +150,11 @@ SHA256 0B05BACB5FAB5A91ACABE4211A6CF6852ABD01B7C37588E04A874E7BAE18CC72
 
 mot_dynamic_route_margin_20260912_evidence.zip
 SHA256 818607439F165D63369A1839F365BCC3C266D8EBD5F828759073C4D78BD2C63D
+
+mot_dynamic_deterministic_topk_20260912_235511_evidence.zip
+SHA256 4A379E1FD07AA334442DE38F6F2D8128CB6CCEDA02D87F3BAA647AA326F9ABE6
 ```
+
+第三个包对应提交 `d7c0085` 的确定性 Top-K 真实复验；精简结果位于
+[`evidence/a3_dynamic_mot_20260912/deterministic_topk_full_val_summary.json`](evidence/a3_dynamic_mot_20260912/deterministic_topk_full_val_summary.json)。
+该包的最终状态为 `FAIL`，原因仅为严格路由门禁失败；精度和动态执行门禁均通过。

@@ -20,6 +20,11 @@
 本结果解决了此前“只有构造模块/单图、没有真实 checkpoint + VisDrone 全量证据”的限制，但尚未解决统一
 可部署动态 DAG、空间 token/window 级 GPU 调度和端到端加速三个工程问题。
 
+随后在提交 `d7c0085` 上使用统一策略 `max_deadband_then_lowest_expert_id`（deadband=`1e-6`）重新导出
+6 个块并复验同一批 548 张。该次运行的精度和动态执行门禁通过，但严格零漂移门禁失败，最终状态为
+`FAIL`：仍有 `196 / 3,945,600` 个位置漂移。新合同保证每个运行时内部的选择顺序确定，但不能让两个已经
+产生微小不同概率的数值后端在离散边界处必然作出相同选择。
+
 ## 证据身份
 
 | 项目 | 值 |
@@ -34,6 +39,10 @@
 | 裕量审计包 SHA256 | `818607439F165D63369A1839F365BCC3C266D8EBD5F828759073C4D78BD2C63D` |
 | 裕量审计本地归档 | `D:/YOLO_Master/P1_dynamic_runtime_20260912/mot_dynamic_route_margin_20260912_evidence.zip` |
 | 裕量审计安全解压目录 | `D:/YOLO_Master/P1_dynamic_runtime_20260912/evidence_margin_818607439F165D63` |
+| 确定性 Top-K 复验包 | `mot_dynamic_deterministic_topk_20260912_235511_evidence.zip` |
+| 确定性 Top-K 复验包大小 | `20,503 bytes` |
+| 确定性 Top-K 复验包 SHA256 | `4A379E1FD07AA334442DE38F6F2D8128CB6CCEDA02D87F3BAA647AA326F9ABE6` |
+| 确定性 Top-K 本地归档 | `D:/YOLO_Master/P1_dynamic_runtime_20260912/mot_dynamic_deterministic_topk_20260912_235511_evidence.zip` |
 | checkpoint SHA256 | `5f6ff684f74c773de5cdf0a2e4a51773317829bbeccc48c5c13f0ed3a2f3d417` |
 | 模型清单状态 | `VALIDATED` |
 | 图片数 | eager `548`；dynamic `548` |
@@ -117,8 +126,25 @@ ES-MoE 和 MoT 拆分 ONNX 本地回归均通过。
 NumPy 参考后端，用于冻结接口和验证“未选专家不执行”，尚不是完整 YOLO 单图、CUDA/TensorRT 或零拷贝
 实现。
 
-下一次需要云端时，只做新 Top-K 合同的真实 checkpoint + 548 张复验；通过后再开始 CUDA/TensorRT
-backend 的正确性与 P50/P95 性能验证。在此之前不扩展动态 INT8。
+### 真实 checkpoint 复验结果
+
+确定性合同的云端复验已经完成，不能判为严格通过：
+
+| 指标 | eager | 动态混合路径 | 门禁 |
+|---|---:|---:|---|
+| mAP50-95 | `0.0329293978` | `0.0329282729` | 差 `-0.0001124859` 个百分点，**通过** |
+| inference（诊断值） | `9.6072 ms/image` | `14.1175 ms/image` | 非部署 benchmark |
+| 动态块执行 | — | `6/6` | **通过** |
+| 路由漂移 | — | `196 / 3,945,600`（`0.00496756%`） | 严格零漂移，**失败** |
+
+漂移仍只出现在两个 Top-2 空间路由块：`model.14.m.0` 为 174 个，`model.20.m.0` 为 22 个；其余
+4 个块为 0。两块的 ORT 错位裕量范围分别为 `8.05e-7～1.19e-6` 和 `8.94e-7～1.19e-6`，正好包围
+`1e-6` deadband 边界。与旧策略下的 173 个漂移相比，固定 deadband 没有消除离散不连续性，而是把翻转
+位置迁移到新的阈值边界。因此不能继续增大容差并挑选一个数据集上恰好为零的值来宣称普适确定性。
+
+下一步应把“部署导出的路由结果”定义为唯一权威选择，或建立带误差预算的歧义等价门禁；若验收仍要求
+逐位置绝对相同，则 eager 对照和动态执行必须复用同一个路由后端/同一份路由输出。在此合同澄清前不扩展
+动态 INT8，也不进入 CUDA/TensorRT 性能宣称。
 
 ## 尚不可声明
 
@@ -126,4 +152,5 @@ backend 的正确性与 P50/P95 性能验证。在此之前不扩展动态 INT8�
 - 不可声明两个空间 Top-2 块获得了专家计算缩减。
 - 不可把 ORT CPU/PyTorch GPU 混合耗时写成部署延迟或加速结果。
 - 不可把 `PASS_WITH_ROUTE_DRIFT` 改写成严格路由一致。
+- 不可把确定性 Top-K 复验的 `FAIL` 改写成零漂移通过；它仅通过精度和动态执行门禁。
 - 在真动态 FP32 调度与性能闭环完成前，不继续扩展动态 INT8。

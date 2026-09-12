@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "source": "DYNAMIC_MOT_DETERMINISTIC_TOPK_FULL_VAL.json",
+  "source_archive": {
+    "name": "mot_dynamic_deterministic_topk_20260912_235511_evidence.zip",
+    "bytes": 20503,
+    "sha256": "4A379E1FD07AA334442DE38F6F2D8128CB6CCEDA02D87F3BAA647AA326F9ABE6"
+  },
+  "source_commit": "d7c0085f17b094fbff345dbaed92267fc8df4012",
+  "checkpoint_sha256": "5f6ff684f74c773de5cdf0a2e4a51773317829bbeccc48c5c13f0ed3a2f3d417",
+  "environment": {
+    "python": "3.12.13",
+    "torch": "2.13.0+cu130",
+    "gpu": "NVIDIA A10",
+    "onnxruntime": "1.23.2",
+    "router_provider": "CPUExecutionProvider"
+  },
+  "topk_policy": {
+    "name": "max_deadband_then_lowest_expert_id",
+    "tie_tolerance": 1e-06
+  },
+  "status": "FAIL",
+  "execution_semantics": "host_ort_router_conditional_pytorch_checkpoint_experts",
+  "eager_fp32": {
+    "images": 548,
+    "map50": 0.06633667076742955,
+    "map50_95": 0.03292939780203378,
+    "inference_ms_per_image": 9.607181921737256
+  },
+  "dynamic_hybrid_fp32": {
+    "images": 548,
+    "map50": 0.06633281672709068,
+    "map50_95": 0.03292827294320633,
+    "inference_ms_per_image": 14.11750052042686
+  },
+  "accuracy_gate": {
+    "absolute_difference_percentage_points": 0.00011248588274517801,
+    "tolerance_percentage_points": 0.5,
+    "passed": true
+  },
+  "route_gate": {
+    "exact_route_required": true,
+    "mismatched_locations": 196,
+    "total_locations": 3945600,
+    "mismatch_ratio": 4.967558799675588e-05,
+    "passed": false
+  },
+  "dynamic_execution_gate": {
+    "all_blocks_executed": true,
+    "at_least_one_block_observed_sample_pair_reduction": true,
+    "onnx_expert_sessions_loaded": 0,
+    "checkpoint_pytorch_experts_executed": true,
+    "passed": true
+  },
+  "blocks": [
+    {
+      "module_name": "model.14.m.0",
+      "route_location_mismatches": 174,
+      "route_locations": 876800,
+      "sample_pair_reduction_ratio": 0.0,
+      "dense_probability_max_abs_error": 2.682209014892578e-07,
+      "mismatch_ort_margin_range": [8.046627044677734e-07, 1.1920928955078125e-06]
+    },
+    {
+      "module_name": "model.14.m.1",
+      "route_location_mismatches": 0,
+      "route_locations": 876800,
+      "sample_pair_reduction_ratio": 0.33333333333333337
+    },
+    {
+      "module_name": "model.20.m.0",
+      "route_location_mismatches": 22,
+      "route_locations": 876800,
+      "sample_pair_reduction_ratio": 0.0,
+      "dense_probability_max_abs_error": 2.980232238769531e-07,
+      "mismatch_ort_margin_range": [8.940696716308594e-07, 1.1920928955078125e-06]
+    },
+    {
+      "module_name": "model.20.m.1",
+      "route_location_mismatches": 0,
+      "route_locations": 876800,
+      "sample_pair_reduction_ratio": 0.33333333333333337
+    },
+    {
+      "module_name": "model.23.m.0",
+      "route_location_mismatches": 0,
+      "route_locations": 219200,
+      "sample_pair_reduction_ratio": 0.6666666666666667
+    },
+    {
+      "module_name": "model.23.m.1",
+      "route_location_mismatches": 0,
+      "route_locations": 219200,
+      "sample_pair_reduction_ratio": 0.6666666666666667
+    }
+  ],
+  "claim_boundary": {
+    "full_export": false,
+    "tensorrt": false,
+    "latency_is_deployment_benchmark": false,
+    "strict_cross_backend_route_equivalence": false
+  }
+}

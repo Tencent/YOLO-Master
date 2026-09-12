@@ -25,8 +25,9 @@ P50/P95 性能数据。动态 INT8 在这些 FP32 基础设施闭环前继续冻
 旧 bundle 的 `probability_minus_expert_id_times_tolerance` 保留兼容回放。策略名和容差写入 manifest，运行时
 不根据环境猜测策略。
 
-这一改动针对本次 173 个 `1e-7` 量级边界翻转，但不能仅凭本地构造输入宣称真实数据漂移已经归零。必须
-用同一 checkpoint 和 548 张 VisDrone 重新运行完整路由门禁。
+这一改动针对首轮 173 个 `1e-7` 量级边界翻转。真实 checkpoint 和 548 张 VisDrone 复验已经完成：
+精度与动态执行门禁通过，但严格路由门禁仍以 `196 / 3,945,600` 个漂移失败。错位裕量集中在
+`1e-6` deadband 边界附近，说明确定的 tie 顺序不能消除两个数值后端先产生不同概率所导致的离散翻转。
 
 ## 动态 DAG 合同
 
@@ -65,10 +66,16 @@ dispatch 节点的实际专家 ID、样本/专家对数量和相对 dense 的缩
 - 系统默认 pytest 环境因 NumPy 2.3.4 与其 OpenCV 二进制不兼容而无法收集；项目 `yolo_env` 未安装
   pytest，因此本轮用相同环境直接运行等价断言。该环境限制不伪装成 pytest 全套通过。
 
-## 下一次云端验证触发点
+## 云端复验结果与下一触发点
 
-代码合并前需要一次 GPU 云端任务：重新导出真实 MoT checkpoint 的 6 个动态块，并对 VisDrone val 548 张
-运行 eager 与混合动态路径。门禁至少包括：mAP50-95 差值不超过 `0.5` 个百分点、路由漂移统计、6/6 块执行、
-未选专家调用缩减。此任务仍是“GPU PyTorch 专家 + CPU ORT 路由”；只有进入 CUDA/TensorRT backend 阶段
-才开始采集部署性能。可直接运行的 Notebook 单元见
-[`a3_deterministic_topk_cloud_revalidation_20260912.md`](a3_deterministic_topk_cloud_revalidation_20260912.md)。
+提交 `d7c0085` 的 GPU 云端任务已重新导出真实 MoT checkpoint 的 6 个动态块，并完成 VisDrone val 548 张
+eager/动态混合复验。mAP50-95 绝对差为 `0.0001124859` 个百分点，6/6 块执行且 4 个块观察到专家调用缩减；
+严格路由门禁因 196 个位置漂移失败。证据摘要见
+[`evidence/a3_dynamic_mot_20260912/deterministic_topk_full_val_summary.json`](evidence/a3_dynamic_mot_20260912/deterministic_topk_full_val_summary.json)。
+
+下一次云端 GPU 触发点不应是继续扫描 deadband，而应在路由权威语义确定之后验证以下二选一实现：
+
+1. eager 对照与动态执行复用同一导出路由输出，检查专家 dispatch 和最终 mAP；或
+2. 使用显式跨后端误差预算，把边界内候选视为同一歧义集合，同时继续单独报告实际专家 ID。
+
+只有路由正确性合同闭环后，才开始 CUDA/TensorRT backend 和 P50/P95 性能验证。
