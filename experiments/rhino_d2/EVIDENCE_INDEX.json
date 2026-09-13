@@ -1,0 +1,79 @@
+{
+  "schema_version": "d2-public-evidence-index-v1",
+  "integration_base": "3bd0a602be88336523eb9fdebfacdd2e92265756",
+  "scientific_identity": {
+    "scientific_anchor": "e3e11d0cfebcd0893f5cd5bae46cf7f48ba8429a",
+    "packaging_anchor": "781a6f148a46d59a89ea40806de8e10eb7b98941",
+    "published": false
+  },
+  "public_evidence": {
+    "type": "sanitized_derivative",
+    "commit": "fedc360e73cdbfeaed930b17365458f632b1abc8",
+    "history_inherited": false,
+    "repository": "https://github.com/gao-666/YOLO-Master",
+    "commit_url": "https://github.com/gao-666/YOLO-Master/commit/fedc360e73cdbfeaed930b17365458f632b1abc8",
+    "provenance_url": "https://github.com/gao-666/YOLO-Master/blob/fedc360e73cdbfeaed930b17365458f632b1abc8/PROVENANCE.json",
+    "scope": "Selected sanitized evidence, not the complete raw archive or original research Git history."
+  },
+  "hash_contract": "SHA-256 covers exact file bytes, including CRLF. Source/public hashes are recorded from the published PROVENANCE.json and verified against both local frozen source commits. Offline tests verify local integrity, not remote availability or private-source authenticity.",
+  "scientific_results_regenerated": false,
+  "final_results": {
+    "primary_decision": "No detectable change",
+    "metric": "late10_median_mAP50-95",
+    "route_terminal": true,
+    "new_experiments_allowed": false,
+    "files": [
+      {
+        "logical_role": "paired_detection_csv",
+        "local_path": "experiments/rhino_d2/results/p2_normalized_response_formal/paired_results.csv",
+        "sha256": "6ee3fc5345abd209f29b3f9df9135e1a28374427784bf2d4cbc311303648a030",
+        "source_sha256": "6ee3fc5345abd209f29b3f9df9135e1a28374427784bf2d4cbc311303648a030",
+        "public_sha256": "6ee3fc5345abd209f29b3f9df9135e1a28374427784bf2d4cbc311303648a030",
+        "bytes": 180,
+        "public_url": "https://github.com/gao-666/YOLO-Master/blob/fedc360e73cdbfeaed930b17365458f632b1abc8/experiments/rhino_d2/results/p2_normalized_response_formal/paired_results.csv",
+        "byte_identical_to_frozen_source": true,
+        "byte_preservation_required": true
+      },
+      {
+        "logical_role": "paired_detection_json",
+        "local_path": "experiments/rhino_d2/results/p2_normalized_response_formal/paired_results.json",
+        "sha256": "296fd237254bbc84b01f33227f9ab358c5d84bc05cd473d1a93467666e53401b",
+        "source_sha256": "296fd237254bbc84b01f33227f9ab358c5d84bc05cd473d1a93467666e53401b",
+        "public_sha256": "296fd237254bbc84b01f33227f9ab358c5d84bc05cd473d1a93467666e53401b",
+        "bytes": 785,
+        "public_url": "https://github.com/gao-666/YOLO-Master/blob/fedc360e73cdbfeaed930b17365458f632b1abc8/experiments/rhino_d2/results/p2_normalized_response_formal/paired_results.json",
+        "byte_identical_to_frozen_source": true,
+        "byte_preservation_required": true
+      },
+      {
+        "logical_role": "mechanism_summary",
+        "local_path": "experiments/rhino_d2/results/p2_normalized_response_formal/mechanism_summary.csv",
+        "sha256": "8c0c2fd984efd8764c4e4c753cde6b93aa77d4effaa249dad31eb3862da97c51",
+        "source_sha256": "8c0c2fd984efd8764c4e4c753cde6b93aa77d4effaa249dad31eb3862da97c51",
+        "public_sha256": "8c0c2fd984efd8764c4e4c753cde6b93aa77d4effaa249dad31eb3862da97c51",
+        "bytes": 347,
+        "public_url": "https://github.com/gao-666/YOLO-Master/blob/fedc360e73cdbfeaed930b17365458f632b1abc8/experiments/rhino_d2/results/p2_normalized_response_formal/mechanism_summary.csv",
+        "byte_identical_to_frozen_source": true,
+        "byte_preservation_required": true
+      },
+      {
+        "logical_role": "robustness_summary",
+        "local_path": "experiments/rhino_d2/results/p2_normalized_response_formal/robustness_summary.csv",
+        "sha256": "535e5a7de7befeb8650a8b7e2766540fa420f017fee29dd25feec4b21298bedf",
+        "source_sha256": "535e5a7de7befeb8650a8b7e2766540fa420f017fee29dd25feec4b21298bedf",
+        "public_sha256": "535e5a7de7befeb8650a8b7e2766540fa420f017fee29dd25feec4b21298bedf",
+        "bytes": 527,
+        "public_url": "https://github.com/gao-666/YOLO-Master/blob/fedc360e73cdbfeaed930b17365458f632b1abc8/experiments/rhino_d2/results/p2_normalized_response_formal/robustness_summary.csv",
+        "byte_identical_to_frozen_source": true,
+        "byte_preservation_required": true
+      }
+    ]
+  },
+  "recovery_disclosure": {
+    "b24_manual_interruption": true,
+    "retained_analysis_uses_fresh_epoch0_restart": true,
+    "local_path": "experiments/rhino_d2/P2_07_RECOVERY_DISCLOSURE.md",
+    "public_url": "https://github.com/gao-666/YOLO-Master/blob/fedc360e73cdbfeaed930b17365458f632b1abc8/experiments/rhino_d2/P2_07_RECOVERY_DISCLOSURE.md",
+    "limitation": "Matched compute refers to the six retained arms, not total project GPU usage. Archived records cannot independently exclude intermediate-metric influence on the recovery decision."
+  }
+}
