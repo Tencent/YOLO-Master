@@ -7,19 +7,38 @@ from ultralytics.utils.loss import v8DetectionLoss
 from ultralytics.utils.tal import TaskAlignedAssigner
 
 
-def _bare_loss(enabled: bool = True) -> v8DetectionLoss:
+class _TelemetryAssigner:
+    """Minimal assigner surface used by telemetry-only loss tests."""
+
+    def __init__(self, stage_counts=None):
+        self._stage_counts = stage_counts or {}
+
+    def assignment_stage_counts(self):
+        return self._stage_counts
+
+    def coverage_stats(self):
+        return {}
+
+
+def _bare_loss(enabled: bool = True, stage_counts=None) -> v8DetectionLoss:
     """Construct only the telemetry state without building a detection model."""
     loss = object.__new__(v8DetectionLoss)
     loss.assignment_stats_enabled = enabled
     loss.assignment_small_area = 32.0**2
     loss.assignment_medium_area = 96.0**2
+    loss.assigner = _TelemetryAssigner(stage_counts)
     loss._assignment_stats = torch.zeros(len(loss._ASSIGNMENT_STAT_NAMES), dtype=torch.long)
     return loss
 
 
 def test_assignment_stats_are_binned_and_reset_without_changing_inputs():
     """Counters should preserve inputs and report post-conflict positives by GT area."""
-    loss = _bare_loss()
+    loss = _bare_loss(
+        stage_counts={
+            "candidate": torch.tensor([[2, 1, 0, 3]]),
+            "preconflict": torch.tensor([[2, 1, 0, 2]]),
+        }
+    )
     gt_bboxes = torch.tensor(
         [[[0.0, 0.0, 10.0, 10.0], [0.0, 0.0, 40.0, 40.0], [0.0, 0.0, 100.0, 100.0], [0, 0, 120, 120]]]
     )
@@ -44,6 +63,33 @@ def test_assignment_stats_are_binned_and_reset_without_changing_inputs():
         "zero_small": 0,
         "zero_medium": 0,
         "zero_large": 1,
+        "candidate_total": 6,
+        "candidate_small": 2,
+        "candidate_medium": 1,
+        "candidate_large": 3,
+        "zero_candidate_gt": 1,
+        "zero_candidate_small": 0,
+        "zero_candidate_medium": 0,
+        "zero_candidate_large": 1,
+        "preconflict_pos_total": 5,
+        "preconflict_pos_small": 2,
+        "preconflict_pos_medium": 1,
+        "preconflict_pos_large": 2,
+        "zero_preconflict_gt": 1,
+        "zero_preconflict_small": 0,
+        "zero_preconflict_medium": 0,
+        "zero_preconflict_large": 1,
+        "coverage_gt_base0": 0,
+        "coverage_gt_base1": 0,
+        "coverage_gt_base2": 0,
+        "coverage_gt_base3plus": 0,
+        "coverage_gt_ordinary": 0,
+        "coverage_gt_elongated": 0,
+        "coverage_triggered_gt": 0,
+        "coverage_supplement_candidates": 0,
+        "coverage_supplement_topk": 0,
+        "coverage_supplement_conflict": 0,
+        "coverage_supplement_final": 0,
     }
     for actual, original in zip((gt_bboxes, mask_gt, fg_mask, target_gt_idx), originals):
         torch.testing.assert_close(actual, original)
@@ -84,3 +130,27 @@ def test_dynamic_topk_changes_only_small_gt_candidate_count():
     assert selected[0, 0].sum() == 4  # ceil(0.8 * 5)
     assert selected[0, 1].sum() == 3  # unchanged fixed K
     assert not selected.bool().logical_and(~candidates).any()
+
+
+def test_assigner_reports_candidate_topk_and_conflict_stages_without_changing_assignment():
+    """Two GTs competing for one anchor should be distinguishable from true zero-candidate GTs."""
+    assigner = TaskAlignedAssigner(
+        topk=1,
+        num_classes=1,
+        candidate_expand_0_8=-1,
+        collect_coverage_stats=True,
+    )
+    scores = torch.tensor([[[0.9], [0.1]]])
+    predicted_boxes = torch.tensor([[[0.0, 0.0, 10.0, 10.0], [10.0, 0.0, 20.0, 10.0]]])
+    anchor_points = torch.tensor([[5.0, 5.0], [15.0, 5.0]])
+    gt_labels = torch.zeros(1, 2, 1)
+    gt_boxes = torch.tensor([[[0.0, 0.0, 10.0, 10.0], [0.0, 0.0, 10.0, 10.0]]])
+    valid = torch.ones(1, 2, 1, dtype=torch.bool)
+
+    _, _, _, foreground, _ = assigner(scores, predicted_boxes, anchor_points, gt_labels, gt_boxes, valid)
+    stages = assigner.assignment_stage_counts()
+
+    assert stages["candidate"].tolist() == [[1, 1]]
+    assert stages["preconflict"].tolist() == [[1, 1]]
+    assert stages["final"].sum().item() == foreground.sum().item() == 1
+    assert stages["final"].eq(0).sum().item() == 1

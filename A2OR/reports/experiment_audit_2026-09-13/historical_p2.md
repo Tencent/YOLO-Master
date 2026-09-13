@@ -1,3 +1,5 @@
+> 来源：git HEAD (`cea362b`) 中的 `A2/docs/P2_FIRST10_CHECKPOINTS_APS_EVALUATION.md`。仅复制历史文档，未恢复原实验目录。
+
 # P2 Head 实验：前 10 个 Checkpoint 的 APs 评估
 
 ## 结论

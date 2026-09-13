@@ -1,3 +1,5 @@
+> 来源：git HEAD (`cea362b`) 中的 `A2/runs/p1_fixedk10_baseline_vd10pct_s42_b2_w0/DYNAMIC_TOPK_COMPARISON.md`。仅复制历史文档，未恢复原实验目录。
+
 # Matched 10% VisDrone: Fixed K=10 vs Dynamic TopK
 
 All variants use seed=42, 648 training images, 55 validation images, 10 epochs, batch=2, imgsz=640, and workers=0.

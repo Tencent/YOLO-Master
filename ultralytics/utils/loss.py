@@ -371,6 +371,22 @@ class v8DetectionLoss:
         "zero_small",
         "zero_medium",
         "zero_large",
+        "candidate_total",
+        "candidate_small",
+        "candidate_medium",
+        "candidate_large",
+        "zero_candidate_gt",
+        "zero_candidate_small",
+        "zero_candidate_medium",
+        "zero_candidate_large",
+        "preconflict_pos_total",
+        "preconflict_pos_small",
+        "preconflict_pos_medium",
+        "preconflict_pos_large",
+        "zero_preconflict_gt",
+        "zero_preconflict_small",
+        "zero_preconflict_medium",
+        "zero_preconflict_large",
     ) + _COVERAGE_STAT_NAMES
 
     def __init__(
@@ -478,6 +494,14 @@ class v8DetectionLoss:
         positives_per_gt.scatter_add_(1, target_gt_idx.long(), fg_mask.long())
         zero_gt = valid_gt & positives_per_gt.eq(0)
         bins = (small, medium, large)
+        stage_counts_fn = getattr(self.assigner, "assignment_stage_counts", None)
+        stage_counts = stage_counts_fn() if callable(stage_counts_fn) else {}
+        candidate_counts = stage_counts.get("candidate", torch.zeros_like(positives_per_gt))
+        preconflict_counts = stage_counts.get("preconflict", torch.zeros_like(positives_per_gt))
+        candidate_counts = candidate_counts.to(device=areas.device, dtype=torch.long)
+        preconflict_counts = preconflict_counts.to(device=areas.device, dtype=torch.long)
+        zero_candidate = valid_gt & candidate_counts.eq(0)
+        zero_preconflict = valid_gt & preconflict_counts.eq(0)
         coverage_stats = self.assigner.coverage_stats()
         values = (
             valid_gt.sum(),
@@ -486,6 +510,14 @@ class v8DetectionLoss:
             *(mask.sum() for mask in bins),
             *((positives_per_gt * mask).sum() for mask in bins),
             *((zero_gt & mask).sum() for mask in bins),
+            candidate_counts[valid_gt].sum(),
+            *((candidate_counts * mask).sum() for mask in bins),
+            zero_candidate.sum(),
+            *((zero_candidate & mask).sum() for mask in bins),
+            preconflict_counts[valid_gt].sum(),
+            *((preconflict_counts * mask).sum() for mask in bins),
+            zero_preconflict.sum(),
+            *((zero_preconflict & mask).sum() for mask in bins),
             *(
                 coverage_stats.get(name, areas.new_zeros((), dtype=torch.long))
                 for name in self._COVERAGE_STAT_NAMES

@@ -1,3 +1,5 @@
+> 来源：git HEAD (`cea362b`) 中的 `A2/runs/p0_y26n_vd640_s42_50e/P0_FINAL_REPORT.md`。仅复制历史文档，未恢复原实验目录。
+
 # A2 P0 实验报告：YOLO26n + 当前 STAL-style baseline
 
 ## 结论

@@ -1,8 +1,0 @@
-{
-  "seed": 42,
-  "fraction": 0.1,
-  "train_images": 648,
-  "val_images": 55,
-  "train_list": "D:\\coding\\YOLO-Master\\A2\\subsets\\visdrone_10pct_seed42\\train.txt",
-  "val_list": "D:\\coding\\YOLO-Master\\A2\\subsets\\visdrone_10pct_seed42\\val.txt"
-}

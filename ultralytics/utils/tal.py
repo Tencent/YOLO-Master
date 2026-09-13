@@ -118,6 +118,7 @@ class TaskAlignedAssigner(nn.Module):
         self.candidate_expand_strength = 1.0
         self._coverage_stats = {}
         self._coverage_added_mask = None
+        self._assignment_stage_counts = {}
         if self.dynamic_topk_small and not 0.0 <= self.dynamic_topk_lambda <= 1.0:
             raise ValueError("dynamic_topk_lambda must be within [0, 1]")
         if self.dynamic_topk_min < 0:
@@ -167,6 +168,10 @@ class TaskAlignedAssigner(nn.Module):
         """Return detached coverage counters from the most recent assignment batch."""
         return {name: value.detach().clone() for name, value in self._coverage_stats.items()}
 
+    def assignment_stage_counts(self) -> dict[str, torch.Tensor]:
+        """Return per-GT counts before TopK, before conflict resolution, and after conflict resolution."""
+        return {name: value.detach().clone() for name, value in self._assignment_stage_counts.items()}
+
     @torch.no_grad()
     def forward(self, pd_scores, pd_bboxes, anc_points, gt_labels, gt_bboxes, mask_gt, stride_tensor=None):
         """Compute the task-aligned assignment.
@@ -193,6 +198,7 @@ class TaskAlignedAssigner(nn.Module):
         self.bs = pd_scores.shape[0]
         self.n_max_boxes = gt_bboxes.shape[1]
         self._stride_tensor = stride_tensor
+        self._assignment_stage_counts = {}
         device = gt_bboxes.device
 
         if self.n_max_boxes == 0:
@@ -240,6 +246,8 @@ class TaskAlignedAssigner(nn.Module):
         target_gt_idx, fg_mask, mask_pos = self.select_highest_overlaps(
             mask_pos, overlaps, self.n_max_boxes, align_metric
         )
+        if self.collect_coverage_stats:
+            self._assignment_stage_counts["final"] = mask_pos.sum(-1).to(torch.long)
         if self.collect_coverage_stats and self._coverage_added_mask is not None:
             self._coverage_stats["coverage_supplement_final"] = (
                 mask_pos.bool() & self._coverage_added_mask
@@ -274,6 +282,8 @@ class TaskAlignedAssigner(nn.Module):
             overlaps (torch.Tensor): Overlaps between predicted vs ground truth boxes with shape (bs, max_num_obj, h*w).
         """
         mask_in_gts = self.select_candidates_in_gts(anc_points, gt_bboxes, mask_gt)
+        if self.collect_coverage_stats:
+            self._assignment_stage_counts["candidate"] = mask_in_gts.sum(-1).to(torch.long)
         # Get anchor_align metric, (b, max_num_obj, h*w)
         align_metric, overlaps = self.get_box_metrics(pd_scores, pd_bboxes, gt_labels, gt_bboxes, mask_in_gts * mask_gt)
         # Get topk_metric mask, (b, max_num_obj, h*w)
@@ -286,6 +296,8 @@ class TaskAlignedAssigner(nn.Module):
         )
         # Merge all mask to a final mask, (b, max_num_obj, h*w)
         mask_pos = mask_topk * mask_in_gts * mask_gt
+        if self.collect_coverage_stats:
+            self._assignment_stage_counts["preconflict"] = mask_pos.sum(-1).to(torch.long)
         if self.collect_coverage_stats and self._coverage_added_mask is not None:
             added_selected = mask_pos.bool() & self._coverage_added_mask
             multi_gt_anchor = mask_pos.sum(-2) > 1

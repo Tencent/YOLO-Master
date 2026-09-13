@@ -1,0 +1,1622 @@
+{
+  "evidence_level": "Historical user-returned cloud outputs; not a live remote re-evaluation",
+  "retrieved_date": "2026-09-13",
+  "units": "AP points",
+  "messages": [
+    {
+      "source": "rollout-2026-09-04T21-56-54-01a06cb5-453e-7360-9b58-be283ff5c20e.jsonl",
+      "line": 9,
+      "timestamp": "2026-09-04T13:57:26.478Z",
+      "role": "user",
+      "text": "metric       baseline       DTK       delta\r\nAP           20.075     19.826     -0.249\r\nAP50         34.684     34.318     -0.367\r\nAPs          11.806     11.774     -0.033\r\nAPm          29.384     28.898     -0.485\r\nAPl          38.672     37.218     -1.454我尝试了让8-16的扩展到24，结果120e实验是这样的，但是在30e试验下表现是更好的，为什么会这样\n"
+    },
+    {
+      "source": "rollout-2026-09-04T21-56-54-01a06cb5-453e-7360-9b58-be283ff5c20e.jsonl",
+      "line": 122,
+      "timestamp": "2026-09-04T14:03:10.325Z",
+      "role": "user",
+      "text": "后续应该是交叉微差，因为last.pt的APs是实验组领先0.007\n"
+    },
+    {
+      "source": "rollout-2026-09-04T22-07-38-01a06cbf-18cd-76b3-b2cd-959774747c41.jsonl",
+      "line": 48,
+      "timestamp": "2026-09-04T14:12:12.580Z",
+      "role": "user",
+      "text": "\n# Files pasted by the user:\n\n## \"===== Comparing epoch 101 ===== Evaluating baseline: /home/ubuntu/yuanlei/YOLO-…\": C:\\Users\\yqy\\.codex/attachments/2fa37909-f7cd-478f-b851-acb0d08b8989/pasted-text.txt\n\n## My request:\n刚刚磁盘容量满了剩下的没跑完，从这里可以看出：我的策略其实在最后和原方案基本收敛到一个地方了\n"
+    },
+    {
+      "source": "rollout-2026-09-05T09-42-15-01a06f3b-0a1b-7391-a7fd-d87746d83a3d.jsonl",
+      "line": 122,
+      "timestamp": "2026-09-05T01:51:42.956Z",
+      "role": "user",
+      "text": "不对，我试验的时候  \"tal_candidate_expand_linear_decay\": false,也被覆盖了\n"
+    },
+    {
+      "source": "rollout-2026-09-05T09-42-15-01a06f3b-0a1b-7391-a7fd-d87746d83a3d.jsonl",
+      "line": 312,
+      "timestamp": "2026-09-05T01:58:38.052Z",
+      "role": "user",
+      "text": " python train_explicit.py --name /infinite/common/yqy/YOLO-Master/A2OR/runs/axis_decay_cloud_120e_b16 --resume  /infinite/common/yqy/YOLO-Master/A2OR/runs/axis_decay_cloud_120e_b16/weights/last_healthy.pt --print-config\r\n\\=== Explicit YOLO-Master training configuration ===\r\nmodel=/infinite/common/yqy/YOLO-Master/ultralytics/cfg/models/master/v0_1/det/yolo-master-n.yaml (pretrained=False; resume=True)\r\ndata_yaml=/infinite/common/yqy/YOLO-Master/A2OR/.runtime_data/visdrone_full_0764528ce5ce.yaml\r\ndata_root=/infinite/datasets/yqy (dataset=/infinite/datasets/yqy/VisDrone)\r\ndataset=VisDrone\r\nrun_dir=/infinite/common/yqy/YOLO-Master/A2OR/runs/axis_decay_cloud_120e_b16\r\n{\r\n  \"data\": \"/infinite/common/yqy/YOLO-Master/A2OR/.runtime_data/visdrone_full_0764528ce5ce.yaml\",\r\n  \"epochs\": 120,\r\n  \"patience\": 0,\r\n  \"batch\": 16,\r\n  \"nbs\": 64,\r\n  \"workers\": 0,\r\n  \"imgsz\": 800,\r\n  \"device\": \"0\",\r\n  \"seed\": 0,\r\n  \"deterministic\": true,\r\n  \"optimizer\": \"auto\",\r\n  \"amp\": true,\r\n  \"verbose\": true,\r\n  \"single_cls\": false,\r\n  \"rect\": false,\r\n  \"cos_lr\": false,\r\n  \"multi_scale\": 0.0,\r\n  \"compile\": false,\r\n  \"cache\": false,\r\n  \"val\": true,\r\n  \"split\": \"val\",\r\n  \"fraction\": 1.0,\r\n  \"close_mosaic\": 10,\r\n  \"tal_topk\": 10,\r\n  \"lr0\": 0.01,\r\n  \"lrf\": 0.01,\r\n  \"momentum\": 0.937,\r\n  \"weight_decay\": 0.0005,\r\n  \"warmup_epochs\": 3.0,\r\n  \"warmup_momentum\": 0.8,\r\n  \"warmup_bias_lr\": 0.1,\r\n  \"box\": 7.5,\r\n  \"cls\": 0.5,\r\n  \"cls_pw\": 0.0,\r\n  \"dfl\": 1.5,\r\n  \"hsv_h\": 0.015,\r\n  \"hsv_s\": 0.7,\r\n  \"hsv_v\": 0.4,\r\n  \"degrees\": 0.0,\r\n  \"translate\": 0.1,\r\n  \"scale\": 0.5,\r\n  \"shear\": 0.0,\r\n  \"perspective\": 0.0,\r\n  \"flipud\": 0.0,\r\n  \"fliplr\": 0.5,\r\n  \"bgr\": 0.0,\r\n  \"mosaic\": 1.0,\r\n  \"mixup\": 0.0,\r\n  \"cutmix\": 0.0,\r\n  \"tal_alpha\": 0.5,\r\n  \"tal_beta\": 6.0,\r\n  \"tal_dynamic_topk_small\": false,\r\n  \"tal_dynamic_topk_lambda\": 0.0,\r\n  \"tal_dynamic_topk_cap\": false,\r\n  \"tal_dynamic_topk_min\": 0,\r\n  \"tal_dynamic_topk_max\": 0,\r\n  \"assignment_stats\": true,\r\n  \"assignment_small_area\": 1024.0,\r\n  \"assignment_medium_area\": 9216.0,\r\n  \"tal_candidate_expand_0_8\": 16.0,\r\n  \"tal_candidate_expand_8_16\": -1.0,\r\n  \"tal_candidate_expand_linear_decay\": false,\r\n  \"tal_candidate_expand_full_epochs\": 0,\r\n  \"tal_candidate_expand_decay_epochs\": 0,\r\n  \"save\": true,\r\n  \"save_period\": 1,\r\n  \"plots\": true,\r\n  \"project\": \"/infinite/common/yqy/YOLO-Master/A2OR/runs\",\r\n  \"name\": \"/infinite/common/yqy/YOLO-Master/A2OR/runs/axis_decay_cloud_120e_b16\",\r\n  \"exist_ok\": false,\r\n  \"pretrained\": false,\r\n  \"resume\": \"/infinite/common/yqy/YOLO-Master/A2OR/runs/axis_decay_cloud_120e_b16/weights/last_healthy.pt\"\r\n}参数是错的，你自己看，更新的也不对\n"
+    },
+    {
+      "source": "rollout-2026-09-08T19-01-20-01a080ad-f72e-7403-a7cf-6c3a30935e03.jsonl",
+      "line": 9,
+      "timestamp": "2026-09-08T11:02:01.733Z",
+      "role": "user",
+      "text": "给我个使用compareaps比较这两个预实验结果的命令c1_coverage_b16_s0_30e  full_baseline_b16_auto_30e_s0\n"
+    },
+    {
+      "source": "rollout-2026-09-08T19-01-20-01a080ad-f72e-7403-a7cf-6c3a30935e03.jsonl",
+      "line": 134,
+      "timestamp": "2026-09-08T15:36:27.654Z",
+      "role": "user",
+      "text": "跑完120e实验了，给一个比较指令\n"
+    },
+    {
+      "source": "rollout-2026-09-09T00-25-55-01a081d7-21c1-7b41-993e-d2e1ad111a97.jsonl",
+      "line": 9,
+      "timestamp": "2026-09-08T16:26:55.906Z",
+      "role": "user",
+      "text": "又到了我们最喜欢的分析环节。请你调用之前的baseline，分析C1实验和baseline的结果，shape                                  GT    APs(pt)  AP50s(pt)  ARs(pt)  hit@0.5(%)\r\n8_16px_x_0_8px                          240    0.0761     0.2499    3.7872     31.6667\r\n16_32px_x_0_8px                          54    0.0791     0.3739    5.8918     22.2222\r\n0_8px_x_0_8px                          1025    0.0835     0.2697    2.4668     21.0732\r\n0_8px_x_32_64px                          16    0.4813     3.2256   11.2500     56.2500\r\n0_8px_x_8_16px                         3053    0.5148     1.6294   11.6008     35.0147\r\n16_32px_x_8_16px                       1788    1.6089     2.3558   12.0720     59.2282\r\n8_16px_x_8_16px                        2489    1.6857     2.9830   14.8540     56.0064\r\n0_8px_x_16_32px                        1994    1.8116     3.3745   18.4051     46.2889\r\n32_64px_x_8_16px                        365    2.4561     2.4785   17.1146     69.0411\r\n8_16px_x_32_64px                       1203    3.5403     7.1593   25.1199     76.0599\r\n32_64px_x_16_32px                      1471    5.4992     5.9752   23.5423     74.0313\r\n8_16px_x_16_32px                       5116    6.6467     9.6123   27.8696     64.4449\r\n16_32px_x_16_32px                      5526   11.4854    14.1074   30.2785     71.4622\r\n16_32px_x_32_64px                      2245   16.7543    16.5630   42.2830     78.7973\r\n64_infpx_x_8_16px                         1   20.0000    25.0000   20.0000    100.0000\r\n0_8px_x_64_infpx                          0       nan        nan       nan         nan\r\n8_16px_x_64_infpx                         0       nan        nan       nan         nan\r\n16_32px_x_64_infpx                        0       nan        nan       nan         nan\r\n32_64px_x_0_8px                           0       nan        nan       nan         nan\r\n32_64px_x_32_64px                         0       nan        nan       nan         nan\r\n32_64px_x_64_infpx                        0       nan        nan       nan         nan\r\n64_infpx_x_0_8px                          0       nan        nan       nan         nan\r\n64_infpx_x_16_32px                        0       nan        nan       nan         nan\r\n64_infpx_x_32_64px                        0       nan        nan       nan         nan\r\n64_infpx_x_64_infpx                       0       nan        nan       nan         nan这是C1实验的数据\nshape                                  GT    APs(pt)  AP50s(pt)  ARs(pt)  hit@0.5(%)\r\n16_32px_x_0_8px                          54    0.0530     0.2573    4.2441     29.6296\r\n8_16px_x_0_8px                          240    0.0632     0.2052    3.4487     29.1667\r\n0_8px_x_0_8px                          1025    0.0795     0.2473    2.7084     21.0732\r\n0_8px_x_32_64px                          16    0.4436     2.7301   13.1250     62.5000\r\n0_8px_x_8_16px                         3053    0.4538     1.4193   11.0300     34.9492\r\n16_32px_x_8_16px                       1788    1.6398     2.3811   11.2731     59.1723\r\n8_16px_x_8_16px                        2489    1.6409     2.7879   14.4048     55.5645\r\n32_64px_x_8_16px                        365    1.7888     1.9707   16.2539     65.7534\r\n8_16px_x_32_64px                       1203    2.7915     6.1472   13.4339     76.4755\r\n0_8px_x_16_32px                        1994    3.6569     3.6645   19.2406     46.5898\r\n32_64px_x_16_32px                      1471    5.7926     6.1485   23.5576     73.6914\r\n8_16px_x_16_32px                       5116    6.4614     9.6019   29.4400     64.9726\r\n16_32px_x_16_32px                      5526   11.9703    14.2709   30.3859     71.1907\r\n16_32px_x_32_64px                      2245   16.5092    16.1615   41.2146     79.2873\r\n64_infpx_x_8_16px                         1   70.0000    20.0000   70.0000    100.0000\r\n0_8px_x_64_infpx                          0       nan        nan       nan         nan\r\n8_16px_x_64_infpx                         0       nan        nan       nan         nan\r\n16_32px_x_64_infpx                        0       nan        nan       nan         nan\r\n32_64px_x_0_8px                           0       nan        nan       nan         nan\r\n32_64px_x_32_64px                         0       nan        nan       nan         nan\r\n32_64px_x_64_infpx                        0       nan        nan       nan         nan\r\n64_infpx_x_0_8px                          0       nan        nan       nan         nan\r\n64_infpx_x_16_32px                        0       nan        nan       nan         nan\r\n64_infpx_x_32_64px                        0       nan        nan       nan         nan\r\n64_infpx_x_64_infpx                       0       nan        nan       nan         nan\r\n这是baseline的数据\n"
+    },
+    {
+      "source": "rollout-2026-09-09T00-25-55-01a081d7-21c1-7b41-993e-d2e1ad111a97.jsonl",
+      "line": 105,
+      "timestamp": "2026-09-08T16:34:05.140Z",
+      "role": "user",
+      "text": "为什么c1在小样本进步很多，总体APs还是不如baseline\n"
+    },
+    {
+      "source": "rollout-2026-09-09T11-59-34-01a08452-2fef-7f01-a37e-1043eefa445d.jsonl",
+      "line": 224,
+      "timestamp": "2026-09-09T04:13:13.805Z",
+      "role": "user",
+      "text": "\\--- runs/c2_tiered_vd100pct_s0_120e_b4_w0/args.yaml     2026-09-09 01:05:25.638594537 +0800\r\n+++ runs/baseline_b16_adamw_120e_s0_w6/args.yaml        2026-09-04 01:47:48.925778234 +0800\r\n@@ -1,7 +1,7 @@\r\n task: detect\r\n mode: train\r\n-model: /infinite/common/yqy/YOLO-Master/ultralytics/cfg/models/master/v0_1/det/yolo-master-n.yaml\r\n-data: /infinite/common/yqy/YOLO-Master/A2OR/.runtime_data/visdrone_full_0764528ce5ce.yaml\r\n+model: /home/ubuntu/yuanlei/YOLO-Master/A2OR/runs/baseline_b16_adamw_120e_s0_w6-2/weights/last_healthy.pt\r\n+data: /home/ubuntu/yuanlei/YOLO-Master/A2OR/visdrone_full.yaml\r\n epochs: 120\r\n time: null\r\n patience: 0\r\n@@ -11,13 +11,13 @@\r\n save_period: 1\r\n cache: false\r\n device: '0'\r\n-workers: 8\r\n-project: /infinite/common/yqy/YOLO-Master/A2OR/runs\r\n-name: c2_tiered_vd100pct_s0_120e_b4_w0\r\n+workers: 6\r\n+project: /home/ubuntu/yuanlei/YOLO-Master/A2OR/runs\r\n+name: baseline_b16_adamw_120e_s0_w6-2\r\n exist_ok: false\r\n pretrained: false\r\n cls_remap: true\r\n-optimizer: auto\r\n+optimizer: AdamW\r\n verbose: true\r\n seed: 0\r\n deterministic: true\r\n@@ -25,7 +25,7 @@\r\n rect: false\r\n cos_lr: false\r\n close_mosaic: 10\r\n-resume: false\r\n+resume: /home/ubuntu/yuanlei/YOLO-Master/A2OR/runs/baseline_b16_adamw_120e_s0_w6-2/weights/last_healthy.pt\r\n amp: true\r\n fraction: 1.0\r\n profile: false\r\n@@ -82,7 +82,7 @@\r\n weight_decay: 0.0005\r\n warmup_epochs: 3.0\r\n warmup_momentum: 0.8\r\n-warmup_bias_lr: 0.0\r\n+warmup_bias_lr: 0.1\r\n distill_model: null\r\n dis: 6.0\r\n foundation_enabled: false\r\n@@ -141,27 +141,14 @@\r\n cls: 0.5\r\n cls_pw: 0.0\r\n dfl: 1.5\r\n-assignment_stats: true\r\n+assignment_stats: false\r\n assignment_small_area: 1024.0\r\n assignment_medium_area: 9216.0\r\n-tal_candidate_expand_0_8: 16.0\r\n-tal_candidate_expand_8_16: -1.0\r\n-tal_candidate_expand_linear_decay: false\r\n-tal_candidate_expand_full_epochs: 0\r\n-tal_candidate_expand_decay_epochs: 0\r\n-tal_candidate_expand_coverage_triggered: false\r\n-tal_candidate_expand_coverage_tiered: true\r\n-tal_candidate_expand_coverage_min: 3\r\n-tal_candidate_expand_coverage_target: 20.0\r\n-tal_candidate_expand_coverage_long_side: 32.0\r\n tal_topk: 10\r\n tal_alpha: 0.5\r\n tal_beta: 6.0\r\n tal_dynamic_topk_small: false\r\n-tal_dynamic_topk_lambda: 0.0\r\n-tal_dynamic_topk_cap: false\r\n-tal_dynamic_topk_min: 0\r\n-tal_dynamic_topk_max: 0\r\n+tal_dynamic_topk_lambda: 0.8\r\n pose: 12.0\r\n kobj: 1.0\r\n rle: 1.0\r\n@@ -350,18 +337,11 @@\r\n moe_map_saturation_threshold: 0.001\r\n moe_map_saturation_decay_factor: 0.8\r\n moe_map_saturation_min_scale: 0.1\r\n-save_dir: /infinite/common/yqy/YOLO-Master/A2OR/runs/c2_tiered_vd100pct_s0_120e_b4_w0\r\n-effective_optimizer: MuSGD\r\n+save_dir: /home/ubuntu/yuanlei/YOLO-Master/A2OR/runs/baseline_b16_adamw_120e_s0_w6-2\r\n+effective_optimizer: AdamW\r\n effective_optimizer_lrs:\r\n\\-- 0.03\r\n \\- 0.01\r\n\\-- 0.03\r\n \\- 0.01\r\n\\-- 0.03\r\n \\- 0.01\r\n\\-- 0.03\r\n\\-- 0.01\r\n\\-- 0.015\r\n \\- 0.005\r\n\\-- 0.06\r\n \\- 0.02帮我看看\n"
+    },
+    {
+      "source": "rollout-2026-09-09T11-59-34-01a08452-2fef-7f01-a37e-1043eefa445d.jsonl",
+      "line": 357,
+      "timestamp": "2026-09-09T04:31:31.203Z",
+      "role": "assistant",
+      "text": "下面两条是严格配对的新实验命令。两者都从模型 YAML 全新训练；除运行名称和 C2 开关外，其余参数完全一致。\n\n### 1. 新 baseline\n\n```bash\npython A2OR/train_explicit.py \\\n  --name baseline_matched_vd100pct_s0_120e_b16_adamw_w8 \\\n  --model ultralytics/cfg/models/master/v0_1/det/yolo-master-n.yaml \\\n  --data A2OR/visdrone_full.yaml \\\n  --project A2OR/runs \\\n  --epochs 120 \\\n  --patience 0 \\\n  --batch 16 \\\n  --nbs 64 \\\n  --workers 8 \\\n  --imgsz 800 \\\n  --device 0 \\\n  --seed 0 \\\n  --optimizer AdamW \\\n  --lr0 0.01 \\\n  --lrf 0.01 \\\n  --momentum 0.937 \\\n  --weight-decay 0.0005 \\\n  --warmup-epochs 3.0 \\\n  --warmup-momentum 0.8 \\\n  --warmup-bias-lr 0.1 \\\n  --box 7.5 \\\n  --cls 0.5 \\\n  --cls-pw 0.0 \\\n  --dfl 1.5 \\\n  --hsv-h 0.015 \\\n  --hsv-s 0.7 \\\n  --hsv-v 0.4 \\\n  --degrees 0.0 \\\n  --translate 0.1 \\\n  --scale 0.5 \\\n  --shear 0.0 \\\n  --perspective 0.0 \\\n  --flipud 0.0 \\\n  --fliplr 0.5 \\\n  --bgr 0.0 \\\n  --mosaic 1.0 \\\n  --mixup 0.0 \\\n  --cutmix 0.0 \\\n  --close-mosaic 10 \\\n  --tal-topk 10 \\\n  --tal-alpha 0.5 \\\n  --tal-beta 6.0 \\\n  --expand-0-8 16.0 \\\n  --expand-8-16 -1.0 \\\n  --coverage-min-candidates 3 \\\n  --coverage-expand-target 20.0 \\\n  --coverage-long-side 32.0 \\\n  --no-dynamic-topk \\\n  --no-candidate-expand \\\n  --no-expand-linear-decay \\\n  --no-coverage-triggered \\\n  --no-coverage-tiered \\\n  --no-single-cls \\\n  --no-rect \\\n  --no-cos-lr \\\n  --no-compile \\\n  --amp \\\n  --verbose \\\n  --save-period 1 \\\n  --assignment-stats \\\n  --no-pretrained\n```\n\n这里通过以下参数明确保证它是 baseline：\n\n```bash\n--no-dynamic-topk\n--no-candidate-expand\n--no-coverage-triggered\n--no-coverage-tiered\n```\n\n### 2. 新 C2\n\n```bash\npython A2OR/train_explicit.py \\\n  --name c2_tiered_vd100pct_s0_120e_b16_adamww8 \\\n  --model ultralytics/cfg/models/master/v0_1/det/yolo-master-n.yaml \\\n  --data A2OR/visdrone_full.yaml \\\n  --project A2OR/runs \\\n  --epochs 120 \\\n  --patience 0 \\\n  --batch 16 \\\n  --nbs 64 \\\n  --workers 8 \\\n  --imgsz 800 \\\n  --device 0 \\\n  --seed 0 \\\n  --optimizer AdamW \\\n  --lr0 0.01 \\\n  --lrf 0.01 \\\n  --momentum 0.937 \\\n  --weight-decay 0.0005 \\\n  --warmup-epochs 3.0 \\\n  --warmup-momentum 0.8 \\\n  --warmup-bias-lr 0.1 \\\n  --box 7.5 \\\n  --cls 0.5 \\\n  --cls-pw 0.0 \\\n  --dfl 1.5 \\\n  --hsv-h 0.015 \\\n  --hsv-s 0.7 \\\n  --hsv-v 0.4 \\\n  --degrees 0.0 \\\n  --translate 0.1 \\\n  --scale 0.5 \\\n  --shear 0.0 \\\n  --perspective 0.0 \\\n  --flipud 0.0 \\\n  --fliplr 0.5 \\\n  --bgr 0.0 \\\n  --mosaic 1.0 \\\n  --mixup 0.0 \\\n  --cutmix 0.0 \\\n  --close-mosaic 10 \\\n  --tal-topk 10 \\\n  --tal-alpha 0.5 \\\n  --tal-beta 6.0 \\\n  --expand-0-8 16.0 \\\n  --expand-8-16 -1.0 \\\n  --coverage-min-candidates 3 \\\n  --coverage-expand-target 20.0 \\\n  --coverage-long-side 32.0 \\\n  --no-dynamic-topk \\\n  --no-candidate-expand \\\n  --no-expand-linear-decay \\\n  --no-coverage-triggered \\\n  --coverage-tiered \\\n  --no-single-cls \\\n  --no-rect \\\n  --no-cos-lr \\\n  --no-compile \\\n  --amp \\\n  --verbose \\\n  --save-period 1 \\\n  --assignment-stats \\\n  --no-pretrained\n```\n\n### 两者现在的参数差异\n\n真正影响实验方法的差异只有这一项：\n\n| 参数 | baseline | C2 |\n|---|---:|---:|\n| `tal_candidate_expand_coverage_tiered` | `false` | `true` |\n\n下面三个参数两边相同：\n\n```yaml\ntal_candidate_expand_coverage_min: 3\ntal_candidate_expand_coverage_target: 20.0\ntal_candidate_expand_coverage_long_side: 32.0\n```\n\n但它们在 baseline 中不生效，因为：\n\n```yaml\ntal_candidate_expand_coverage_tiered: false\n```\n\n它们只在 C2 中生效。\n\n另外，YAML 对比时还会看到两个无关差异：\n\n```text\nname\nsave_dir\n```\n\n这是两个独立运行目录造成的正常差异。\n\n正式启动前，可以分别在命令末尾加：\n\n```bash\n--print-config\n```\n\n先生成配置预览。预览无误后删除 `--print-config`，再依次正式运行。不要同时启动两次训练。"
+    },
+    {
+      "source": "rollout-2026-09-09T11-59-34-01a08452-2fef-7f01-a37e-1043eefa445d.jsonl",
+      "line": 364,
+      "timestamp": "2026-09-09T08:50:23.908Z",
+      "role": "user",
+      "text": "现在两个都跑完了，给我个比较指令\n"
+    },
+    {
+      "source": "rollout-2026-09-09T11-59-34-01a08452-2fef-7f01-a37e-1043eefa445d.jsonl",
+      "line": 443,
+      "timestamp": "2026-09-09T09:02:23.608Z",
+      "role": "user",
+      "text": "COCO maxDets=100 (percentage points)\r\ncheckpoint       metric       baseline       exp       delta\r\nbest.pt          AP             20.111     20.173     +0.061\r\nbest.pt          AP50           34.720     34.562     -0.158\r\nbest.pt          APs            11.802     11.672     -0.130\r\nbest.pt          APm            29.507     30.256     +0.749\r\nbest.pt          APl            38.063     36.368     -1.695挂了呀……\n"
+    },
+    {
+      "source": "rollout-2026-09-09T11-59-34-01a08452-2fef-7f01-a37e-1043eefa445d.jsonl",
+      "line": 457,
+      "timestamp": "2026-09-09T09:05:35.607Z",
+      "role": "user",
+      "text": "checkpoint       metric       baseline       exp       delta\r\nlast.pt          AP             19.982     20.102     +0.121\r\nlast.pt          AP50           34.445     34.601     +0.157\r\nlast.pt          APs            11.579     11.694     +0.116\r\nlast.pt          APm            29.410     30.171     +0.762\r\nlast.pt          APl            38.263     35.131     -3.132领先太少也没啥意义啊\n"
+    },
+    {
+      "source": "rollout-2026-09-09T11-59-34-01a08452-2fef-7f01-a37e-1043eefa445d.jsonl",
+      "line": 469,
+      "timestamp": "2026-09-09T09:07:41.755Z",
+      "role": "user",
+      "text": "有没有啥靠谱一点的方案，感觉这个方向也不太成立，因为已经收窄到了精细化的跳调参，但是其实更宽松的C1也基本上趋近于baseline。我们需要一个更大的变动\n"
+    },
+    {
+      "source": "rollout-2026-09-09T11-59-34-01a08452-2fef-7f01-a37e-1043eefa445d.jsonl",
+      "line": 718,
+      "timestamp": "2026-09-09T14:11:20.012Z",
+      "role": "user",
+      "text": "我现在觉得D1有些太复杂了，和这个问题本身需要的有所偏差，有没有简单点的方法，专注于框选\n"
+    },
+    {
+      "source": "rollout-2026-09-09T11-59-34-01a08452-2fef-7f01-a37e-1043eefa445d.jsonl",
+      "line": 792,
+      "timestamp": "2026-09-10T01:22:44.357Z",
+      "role": "user",
+      "text": "你确定给边长小的分配更少的k是对的吗，我之前的DTK尝试就没成功，你这个和那个有什么区别\n"
+    }
+  ],
+  "attachments": [
+    {
+      "id": "36f41a02-88bd-496b-b489-0865a0c0181c",
+      "sha256": "6921daefcb7f354ee1f33b12f2fc8d298b7550b7056682166a4323209290638b"
+    },
+    {
+      "id": "2fa37909-f7cd-478f-b851-acb0d08b8989",
+      "sha256": "a133985e4d351e238bee060dd7bbfec51f810aa72ad108ee61b5aa76d3331b7b"
+    },
+    {
+      "id": "bd92aa02-9abd-4ad9-a3a4-4dee4ab7e6f1",
+      "sha256": "bbdd39b34fe2260d1726c7d26e6235131e3d4e9b899491dee4adf299d0fe737a"
+    }
+  ],
+  "cloud_shapes": {
+    "baseline_b16_adamw_120e_s0_w6": {
+      "16_32px_x_0_8px": {
+        "gt": 54,
+        "APs": 0.053,
+        "AP50s": 0.2573,
+        "ARs": 4.2441,
+        "hit50": 29.6296
+      },
+      "8_16px_x_0_8px": {
+        "gt": 240,
+        "APs": 0.0632,
+        "AP50s": 0.2052,
+        "ARs": 3.4487,
+        "hit50": 29.1667
+      },
+      "0_8px_x_0_8px": {
+        "gt": 1025,
+        "APs": 0.0795,
+        "AP50s": 0.2473,
+        "ARs": 2.7084,
+        "hit50": 21.0732
+      },
+      "0_8px_x_32_64px": {
+        "gt": 16,
+        "APs": 0.4436,
+        "AP50s": 2.7301,
+        "ARs": 13.125,
+        "hit50": 62.5
+      },
+      "0_8px_x_8_16px": {
+        "gt": 3053,
+        "APs": 0.4538,
+        "AP50s": 1.4193,
+        "ARs": 11.03,
+        "hit50": 34.9492
+      },
+      "16_32px_x_8_16px": {
+        "gt": 1788,
+        "APs": 1.6398,
+        "AP50s": 2.3811,
+        "ARs": 11.2731,
+        "hit50": 59.1723
+      },
+      "8_16px_x_8_16px": {
+        "gt": 2489,
+        "APs": 1.6409,
+        "AP50s": 2.7879,
+        "ARs": 14.4048,
+        "hit50": 55.5645
+      },
+      "32_64px_x_8_16px": {
+        "gt": 365,
+        "APs": 1.7888,
+        "AP50s": 1.9707,
+        "ARs": 16.2539,
+        "hit50": 65.7534
+      },
+      "8_16px_x_32_64px": {
+        "gt": 1203,
+        "APs": 2.7915,
+        "AP50s": 6.1472,
+        "ARs": 13.4339,
+        "hit50": 76.4755
+      },
+      "0_8px_x_16_32px": {
+        "gt": 1994,
+        "APs": 3.6569,
+        "AP50s": 3.6645,
+        "ARs": 19.2406,
+        "hit50": 46.5898
+      },
+      "32_64px_x_16_32px": {
+        "gt": 1471,
+        "APs": 5.7926,
+        "AP50s": 6.1485,
+        "ARs": 23.5576,
+        "hit50": 73.6914
+      },
+      "8_16px_x_16_32px": {
+        "gt": 5116,
+        "APs": 6.4614,
+        "AP50s": 9.6019,
+        "ARs": 29.44,
+        "hit50": 64.9726
+      },
+      "16_32px_x_16_32px": {
+        "gt": 5526,
+        "APs": 11.9703,
+        "AP50s": 14.2709,
+        "ARs": 30.3859,
+        "hit50": 71.1907
+      },
+      "16_32px_x_32_64px": {
+        "gt": 2245,
+        "APs": 16.5092,
+        "AP50s": 16.1615,
+        "ARs": 41.2146,
+        "hit50": 79.2873
+      },
+      "64_infpx_x_8_16px": {
+        "gt": 1,
+        "APs": 70.0,
+        "AP50s": 20.0,
+        "ARs": 70.0,
+        "hit50": 100.0
+      },
+      "0_8px_x_64_infpx": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "8_16px_x_64_infpx": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "16_32px_x_64_infpx": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "32_64px_x_0_8px": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "32_64px_x_32_64px": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "32_64px_x_64_infpx": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "64_infpx_x_0_8px": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "64_infpx_x_16_32px": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "64_infpx_x_32_64px": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "64_infpx_x_64_infpx": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      }
+    },
+    "axis_decay_cloud_120e_b16": {
+      "16_32px_x_0_8px": {
+        "gt": 54,
+        "APs": 0.0369,
+        "AP50s": 0.2059,
+        "ARs": 3.5452,
+        "hit50": 24.0741
+      },
+      "8_16px_x_0_8px": {
+        "gt": 240,
+        "APs": 0.0659,
+        "AP50s": 0.2395,
+        "ARs": 3.9915,
+        "hit50": 27.0833
+      },
+      "0_8px_x_0_8px": {
+        "gt": 1025,
+        "APs": 0.069,
+        "AP50s": 0.2173,
+        "ARs": 2.1372,
+        "hit50": 19.4146
+      },
+      "0_8px_x_8_16px": {
+        "gt": 3053,
+        "APs": 0.4156,
+        "AP50s": 1.3579,
+        "ARs": 10.226,
+        "hit50": 33.8356
+      },
+      "0_8px_x_32_64px": {
+        "gt": 16,
+        "APs": 1.2696,
+        "AP50s": 8.5435,
+        "ARs": 15.0,
+        "hit50": 68.75
+      },
+      "8_16px_x_8_16px": {
+        "gt": 2489,
+        "APs": 1.6327,
+        "AP50s": 2.8816,
+        "ARs": 15.5914,
+        "hit50": 54.8413
+      },
+      "16_32px_x_8_16px": {
+        "gt": 1788,
+        "APs": 1.6997,
+        "AP50s": 2.5842,
+        "ARs": 12.4415,
+        "hit50": 60.4586
+      },
+      "32_64px_x_8_16px": {
+        "gt": 365,
+        "APs": 1.9073,
+        "AP50s": 2.424,
+        "ARs": 16.8398,
+        "hit50": 67.9452
+      },
+      "0_8px_x_16_32px": {
+        "gt": 1994,
+        "APs": 2.0777,
+        "AP50s": 3.0367,
+        "ARs": 18.8371,
+        "hit50": 46.3892
+      },
+      "8_16px_x_32_64px": {
+        "gt": 1203,
+        "APs": 4.7426,
+        "AP50s": 7.4244,
+        "ARs": 21.9769,
+        "hit50": 78.2211
+      },
+      "32_64px_x_16_32px": {
+        "gt": 1471,
+        "APs": 5.4137,
+        "AP50s": 5.8596,
+        "ARs": 22.9849,
+        "hit50": 73.7593
+      },
+      "8_16px_x_16_32px": {
+        "gt": 5116,
+        "APs": 6.6434,
+        "AP50s": 9.9566,
+        "ARs": 29.7015,
+        "hit50": 64.3471
+      },
+      "16_32px_x_16_32px": {
+        "gt": 5526,
+        "APs": 11.7563,
+        "AP50s": 14.5319,
+        "ARs": 31.0552,
+        "hit50": 72.0775
+      },
+      "16_32px_x_32_64px": {
+        "gt": 2245,
+        "APs": 15.9513,
+        "AP50s": 16.5769,
+        "ARs": 42.2013,
+        "hit50": 79.02
+      },
+      "64_infpx_x_8_16px": {
+        "gt": 1,
+        "APs": 70.0,
+        "AP50s": 20.0,
+        "ARs": 70.0,
+        "hit50": 100.0
+      },
+      "0_8px_x_64_infpx": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "8_16px_x_64_infpx": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "16_32px_x_64_infpx": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "32_64px_x_0_8px": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "32_64px_x_32_64px": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "32_64px_x_64_infpx": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "64_infpx_x_0_8px": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "64_infpx_x_16_32px": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "64_infpx_x_32_64px": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "64_infpx_x_64_infpx": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      }
+    },
+    "full_dtk_l080_kmin3_kmax10-2": {
+      "16_32px_x_0_8px": {
+        "gt": 54,
+        "APs": 0.0054,
+        "AP50s": 0.0237,
+        "ARs": 0.914,
+        "hit50": 12.963
+      },
+      "0_8px_x_0_8px": {
+        "gt": 1025,
+        "APs": 0.0141,
+        "AP50s": 0.0496,
+        "ARs": 0.9391,
+        "hit50": 10.3415
+      },
+      "8_16px_x_0_8px": {
+        "gt": 240,
+        "APs": 0.0198,
+        "AP50s": 0.0532,
+        "ARs": 3.0644,
+        "hit50": 18.75
+      },
+      "0_8px_x_32_64px": {
+        "gt": 16,
+        "APs": 0.0594,
+        "AP50s": 0.3929,
+        "ARs": 5.625,
+        "hit50": 31.25
+      },
+      "0_8px_x_8_16px": {
+        "gt": 3053,
+        "APs": 0.1513,
+        "AP50s": 0.487,
+        "ARs": 4.6439,
+        "hit50": 19.4563
+      },
+      "0_8px_x_16_32px": {
+        "gt": 1994,
+        "APs": 0.2346,
+        "AP50s": 0.6164,
+        "ARs": 13.9926,
+        "hit50": 27.5326
+      },
+      "32_64px_x_8_16px": {
+        "gt": 365,
+        "APs": 0.3574,
+        "AP50s": 0.6549,
+        "ARs": 8.2591,
+        "hit50": 57.2603
+      },
+      "16_32px_x_8_16px": {
+        "gt": 1788,
+        "APs": 0.6787,
+        "AP50s": 1.0863,
+        "ARs": 5.8991,
+        "hit50": 47.4832
+      },
+      "8_16px_x_8_16px": {
+        "gt": 2489,
+        "APs": 0.717,
+        "AP50s": 1.2843,
+        "ARs": 8.5443,
+        "hit50": 42.1454
+      },
+      "8_16px_x_32_64px": {
+        "gt": 1203,
+        "APs": 1.4177,
+        "AP50s": 3.0401,
+        "ARs": 10.5643,
+        "hit50": 62.7598
+      },
+      "32_64px_x_16_32px": {
+        "gt": 1471,
+        "APs": 2.3038,
+        "AP50s": 2.3071,
+        "ARs": 14.8672,
+        "hit50": 60.0272
+      },
+      "8_16px_x_16_32px": {
+        "gt": 5116,
+        "APs": 2.7802,
+        "AP50s": 4.4352,
+        "ARs": 17.8172,
+        "hit50": 48.0649
+      },
+      "16_32px_x_16_32px": {
+        "gt": 5526,
+        "APs": 5.2749,
+        "AP50s": 6.7654,
+        "ARs": 18.5394,
+        "hit50": 59.3739
+      },
+      "16_32px_x_32_64px": {
+        "gt": 2245,
+        "APs": 7.3347,
+        "AP50s": 7.5822,
+        "ARs": 29.3103,
+        "hit50": 67.9733
+      },
+      "64_infpx_x_8_16px": {
+        "gt": 1,
+        "APs": 10.0,
+        "AP50s": 33.3333,
+        "ARs": 10.0,
+        "hit50": 100.0
+      },
+      "0_8px_x_64_infpx": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "8_16px_x_64_infpx": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "16_32px_x_64_infpx": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "32_64px_x_0_8px": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "32_64px_x_32_64px": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "32_64px_x_64_infpx": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "64_infpx_x_0_8px": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "64_infpx_x_16_32px": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "64_infpx_x_32_64px": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "64_infpx_x_64_infpx": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      }
+    },
+    "stal_axis_expand_0_8to16_8_16to24_120e": {
+      "16_32px_x_0_8px": {
+        "gt": 54,
+        "APs": 0.0607,
+        "AP50s": 0.2564,
+        "ARs": 5.7284,
+        "hit50": 29.6296
+      },
+      "0_8px_x_0_8px": {
+        "gt": 1025,
+        "APs": 0.0717,
+        "AP50s": 0.2367,
+        "ARs": 2.9947,
+        "hit50": 20.7805
+      },
+      "8_16px_x_0_8px": {
+        "gt": 240,
+        "APs": 0.0757,
+        "AP50s": 0.218,
+        "ARs": 3.5932,
+        "hit50": 27.9167
+      },
+      "0_8px_x_8_16px": {
+        "gt": 3053,
+        "APs": 0.4786,
+        "AP50s": 1.4852,
+        "ARs": 10.6234,
+        "hit50": 33.9011
+      },
+      "0_8px_x_32_64px": {
+        "gt": 16,
+        "APs": 0.7091,
+        "AP50s": 5.5578,
+        "ARs": 11.875,
+        "hit50": 68.75
+      },
+      "0_8px_x_16_32px": {
+        "gt": 1994,
+        "APs": 1.448,
+        "AP50s": 2.9247,
+        "ARs": 18.196,
+        "hit50": 46.5898
+      },
+      "32_64px_x_8_16px": {
+        "gt": 365,
+        "APs": 1.4511,
+        "AP50s": 2.1256,
+        "ARs": 16.9688,
+        "hit50": 69.589
+      },
+      "16_32px_x_8_16px": {
+        "gt": 1788,
+        "APs": 1.5923,
+        "AP50s": 2.4732,
+        "ARs": 12.774,
+        "hit50": 60.3468
+      },
+      "8_16px_x_8_16px": {
+        "gt": 2489,
+        "APs": 1.6872,
+        "AP50s": 2.8921,
+        "ARs": 14.5834,
+        "hit50": 55.0422
+      },
+      "8_16px_x_32_64px": {
+        "gt": 1203,
+        "APs": 3.3131,
+        "AP50s": 6.5147,
+        "ARs": 17.3833,
+        "hit50": 76.143
+      },
+      "32_64px_x_16_32px": {
+        "gt": 1471,
+        "APs": 5.4513,
+        "AP50s": 5.7271,
+        "ARs": 23.3886,
+        "hit50": 73.1475
+      },
+      "8_16px_x_16_32px": {
+        "gt": 5116,
+        "APs": 6.6449,
+        "AP50s": 10.0935,
+        "ARs": 28.8456,
+        "hit50": 64.3471
+      },
+      "16_32px_x_16_32px": {
+        "gt": 5526,
+        "APs": 11.9247,
+        "AP50s": 14.4457,
+        "ARs": 30.5279,
+        "hit50": 71.625
+      },
+      "16_32px_x_32_64px": {
+        "gt": 2245,
+        "APs": 15.3653,
+        "AP50s": 16.2088,
+        "ARs": 40.7355,
+        "hit50": 79.3318
+      },
+      "64_infpx_x_8_16px": {
+        "gt": 1,
+        "APs": 20.0,
+        "AP50s": 25.0,
+        "ARs": 20.0,
+        "hit50": 100.0
+      },
+      "0_8px_x_64_infpx": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "8_16px_x_64_infpx": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "16_32px_x_64_infpx": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "32_64px_x_0_8px": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "32_64px_x_32_64px": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "32_64px_x_64_infpx": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "64_infpx_x_0_8px": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "64_infpx_x_16_32px": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "64_infpx_x_32_64px": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "64_infpx_x_64_infpx": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      }
+    },
+    "dtk_explicit_120e_b16": {
+      "16_32px_x_0_8px": {
+        "gt": 54,
+        "APs": 0.0396,
+        "AP50s": 0.1994,
+        "ARs": 5.8476,
+        "hit50": 27.7778
+      },
+      "8_16px_x_0_8px": {
+        "gt": 240,
+        "APs": 0.0712,
+        "AP50s": 0.2422,
+        "ARs": 3.4354,
+        "hit50": 31.25
+      },
+      "0_8px_x_0_8px": {
+        "gt": 1025,
+        "APs": 0.0766,
+        "AP50s": 0.2269,
+        "ARs": 3.4326,
+        "hit50": 19.7073
+      },
+      "0_8px_x_32_64px": {
+        "gt": 16,
+        "APs": 0.4026,
+        "AP50s": 2.7836,
+        "ARs": 8.75,
+        "hit50": 50.0
+      },
+      "0_8px_x_8_16px": {
+        "gt": 3053,
+        "APs": 0.4702,
+        "AP50s": 1.4962,
+        "ARs": 10.8423,
+        "hit50": 34.6544
+      },
+      "0_8px_x_16_32px": {
+        "gt": 1994,
+        "APs": 1.1525,
+        "AP50s": 2.9263,
+        "ARs": 18.9447,
+        "hit50": 46.7904
+      },
+      "32_64px_x_8_16px": {
+        "gt": 365,
+        "APs": 1.5695,
+        "AP50s": 2.147,
+        "ARs": 18.6797,
+        "hit50": 71.2329
+      },
+      "8_16px_x_8_16px": {
+        "gt": 2489,
+        "APs": 1.6553,
+        "AP50s": 2.8522,
+        "ARs": 15.6109,
+        "hit50": 55.9261
+      },
+      "16_32px_x_8_16px": {
+        "gt": 1788,
+        "APs": 1.6711,
+        "AP50s": 2.5242,
+        "ARs": 14.9647,
+        "hit50": 62.3602
+      },
+      "8_16px_x_32_64px": {
+        "gt": 1203,
+        "APs": 3.3966,
+        "AP50s": 6.5501,
+        "ARs": 19.4952,
+        "hit50": 75.478
+      },
+      "32_64px_x_16_32px": {
+        "gt": 1471,
+        "APs": 5.5735,
+        "AP50s": 5.9788,
+        "ARs": 26.8319,
+        "hit50": 74.4392
+      },
+      "8_16px_x_16_32px": {
+        "gt": 5116,
+        "APs": 5.904,
+        "AP50s": 9.5304,
+        "ARs": 29.2602,
+        "hit50": 64.2299
+      },
+      "16_32px_x_16_32px": {
+        "gt": 5526,
+        "APs": 11.2436,
+        "AP50s": 14.0451,
+        "ARs": 30.0647,
+        "hit50": 72.1498
+      },
+      "16_32px_x_32_64px": {
+        "gt": 2245,
+        "APs": 14.9808,
+        "AP50s": 15.7828,
+        "ARs": 42.6455,
+        "hit50": 80.0445
+      },
+      "64_infpx_x_8_16px": {
+        "gt": 1,
+        "APs": 70.0,
+        "AP50s": 9.0909,
+        "ARs": 70.0,
+        "hit50": 100.0
+      },
+      "0_8px_x_64_infpx": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "8_16px_x_64_infpx": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "16_32px_x_64_infpx": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "32_64px_x_0_8px": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "32_64px_x_32_64px": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "32_64px_x_64_infpx": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "64_infpx_x_0_8px": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "64_infpx_x_16_32px": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "64_infpx_x_32_64px": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "64_infpx_x_64_infpx": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      }
+    },
+    "c1_coverage_120e_user_table": {
+      "8_16px_x_0_8px": {
+        "gt": 240,
+        "APs": 0.0761,
+        "AP50s": 0.2499,
+        "ARs": 3.7872,
+        "hit50": 31.6667
+      },
+      "16_32px_x_0_8px": {
+        "gt": 54,
+        "APs": 0.0791,
+        "AP50s": 0.3739,
+        "ARs": 5.8918,
+        "hit50": 22.2222
+      },
+      "0_8px_x_0_8px": {
+        "gt": 1025,
+        "APs": 0.0835,
+        "AP50s": 0.2697,
+        "ARs": 2.4668,
+        "hit50": 21.0732
+      },
+      "0_8px_x_32_64px": {
+        "gt": 16,
+        "APs": 0.4813,
+        "AP50s": 3.2256,
+        "ARs": 11.25,
+        "hit50": 56.25
+      },
+      "0_8px_x_8_16px": {
+        "gt": 3053,
+        "APs": 0.5148,
+        "AP50s": 1.6294,
+        "ARs": 11.6008,
+        "hit50": 35.0147
+      },
+      "16_32px_x_8_16px": {
+        "gt": 1788,
+        "APs": 1.6089,
+        "AP50s": 2.3558,
+        "ARs": 12.072,
+        "hit50": 59.2282
+      },
+      "8_16px_x_8_16px": {
+        "gt": 2489,
+        "APs": 1.6857,
+        "AP50s": 2.983,
+        "ARs": 14.854,
+        "hit50": 56.0064
+      },
+      "0_8px_x_16_32px": {
+        "gt": 1994,
+        "APs": 1.8116,
+        "AP50s": 3.3745,
+        "ARs": 18.4051,
+        "hit50": 46.2889
+      },
+      "32_64px_x_8_16px": {
+        "gt": 365,
+        "APs": 2.4561,
+        "AP50s": 2.4785,
+        "ARs": 17.1146,
+        "hit50": 69.0411
+      },
+      "8_16px_x_32_64px": {
+        "gt": 1203,
+        "APs": 3.5403,
+        "AP50s": 7.1593,
+        "ARs": 25.1199,
+        "hit50": 76.0599
+      },
+      "32_64px_x_16_32px": {
+        "gt": 1471,
+        "APs": 5.4992,
+        "AP50s": 5.9752,
+        "ARs": 23.5423,
+        "hit50": 74.0313
+      },
+      "8_16px_x_16_32px": {
+        "gt": 5116,
+        "APs": 6.6467,
+        "AP50s": 9.6123,
+        "ARs": 27.8696,
+        "hit50": 64.4449
+      },
+      "16_32px_x_16_32px": {
+        "gt": 5526,
+        "APs": 11.4854,
+        "AP50s": 14.1074,
+        "ARs": 30.2785,
+        "hit50": 71.4622
+      },
+      "16_32px_x_32_64px": {
+        "gt": 2245,
+        "APs": 16.7543,
+        "AP50s": 16.563,
+        "ARs": 42.283,
+        "hit50": 78.7973
+      },
+      "64_infpx_x_8_16px": {
+        "gt": 1,
+        "APs": 20.0,
+        "AP50s": 25.0,
+        "ARs": 20.0,
+        "hit50": 100.0
+      },
+      "0_8px_x_64_infpx": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "8_16px_x_64_infpx": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "16_32px_x_64_infpx": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "32_64px_x_0_8px": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "32_64px_x_32_64px": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "32_64px_x_64_infpx": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "64_infpx_x_0_8px": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "64_infpx_x_16_32px": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "64_infpx_x_32_64px": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      },
+      "64_infpx_x_64_infpx": {
+        "gt": 0,
+        "APs": null,
+        "AP50s": null,
+        "ARs": null,
+        "hit50": null
+      }
+    }
+  },
+  "fixed_axis_epochs": [
+    {
+      "epoch": 101,
+      "metrics": [
+        {
+          "metric": "AP",
+          "baseline": 19.885,
+          "experiment": 19.643,
+          "reported_delta": -0.242
+        },
+        {
+          "metric": "AP50",
+          "baseline": 34.447,
+          "experiment": 33.979,
+          "reported_delta": -0.468
+        },
+        {
+          "metric": "APs",
+          "baseline": 11.576,
+          "experiment": 11.687,
+          "reported_delta": 0.111
+        },
+        {
+          "metric": "APm",
+          "baseline": 29.116,
+          "experiment": 28.591,
+          "reported_delta": -0.525
+        },
+        {
+          "metric": "APl",
+          "baseline": 37.841,
+          "experiment": 36.945,
+          "reported_delta": -0.896
+        }
+      ]
+    },
+    {
+      "epoch": 102,
+      "metrics": [
+        {
+          "metric": "AP",
+          "baseline": 19.831,
+          "experiment": 19.674,
+          "reported_delta": -0.157
+        },
+        {
+          "metric": "AP50",
+          "baseline": 34.382,
+          "experiment": 33.993,
+          "reported_delta": -0.389
+        },
+        {
+          "metric": "APs",
+          "baseline": 11.629,
+          "experiment": 11.741,
+          "reported_delta": 0.112
+        },
+        {
+          "metric": "APm",
+          "baseline": 29.026,
+          "experiment": 28.602,
+          "reported_delta": -0.423
+        },
+        {
+          "metric": "APl",
+          "baseline": 37.969,
+          "experiment": 36.72,
+          "reported_delta": -1.25
+        }
+      ]
+    },
+    {
+      "epoch": 103,
+      "metrics": [
+        {
+          "metric": "AP",
+          "baseline": 19.847,
+          "experiment": 19.738,
+          "reported_delta": -0.109
+        },
+        {
+          "metric": "AP50",
+          "baseline": 34.477,
+          "experiment": 34.077,
+          "reported_delta": -0.4
+        },
+        {
+          "metric": "APs",
+          "baseline": 11.697,
+          "experiment": 11.748,
+          "reported_delta": 0.05
+        },
+        {
+          "metric": "APm",
+          "baseline": 29.118,
+          "experiment": 28.738,
+          "reported_delta": -0.38
+        },
+        {
+          "metric": "APl",
+          "baseline": 37.997,
+          "experiment": 37.116,
+          "reported_delta": -0.881
+        }
+      ]
+    },
+    {
+      "epoch": 104,
+      "metrics": [
+        {
+          "metric": "AP",
+          "baseline": 19.915,
+          "experiment": 19.743,
+          "reported_delta": -0.172
+        },
+        {
+          "metric": "AP50",
+          "baseline": 34.489,
+          "experiment": 34.132,
+          "reported_delta": -0.357
+        },
+        {
+          "metric": "APs",
+          "baseline": 11.752,
+          "experiment": 11.719,
+          "reported_delta": -0.033
+        },
+        {
+          "metric": "APm",
+          "baseline": 29.133,
+          "experiment": 28.769,
+          "reported_delta": -0.364
+        },
+        {
+          "metric": "APl",
+          "baseline": 38.321,
+          "experiment": 35.766,
+          "reported_delta": -2.554
+        }
+      ]
+    },
+    {
+      "epoch": 105,
+      "metrics": [
+        {
+          "metric": "AP",
+          "baseline": 19.949,
+          "experiment": 19.744,
+          "reported_delta": -0.206
+        },
+        {
+          "metric": "AP50",
+          "baseline": 34.5,
+          "experiment": 34.138,
+          "reported_delta": -0.362
+        },
+        {
+          "metric": "APs",
+          "baseline": 11.796,
+          "experiment": 11.784,
+          "reported_delta": -0.012
+        },
+        {
+          "metric": "APm",
+          "baseline": 29.171,
+          "experiment": 28.766,
+          "reported_delta": -0.405
+        },
+        {
+          "metric": "APl",
+          "baseline": 38.339,
+          "experiment": 36.246,
+          "reported_delta": -2.093
+        }
+      ]
+    },
+    {
+      "epoch": 106,
+      "metrics": [
+        {
+          "metric": "AP",
+          "baseline": 20.019,
+          "experiment": 19.747,
+          "reported_delta": -0.272
+        },
+        {
+          "metric": "AP50",
+          "baseline": 34.631,
+          "experiment": 34.161,
+          "reported_delta": -0.47
+        },
+        {
+          "metric": "APs",
+          "baseline": 11.818,
+          "experiment": 11.73,
+          "reported_delta": -0.088
+        },
+        {
+          "metric": "APm",
+          "baseline": 29.284,
+          "experiment": 28.739,
+          "reported_delta": -0.545
+        },
+        {
+          "metric": "APl",
+          "baseline": 38.519,
+          "experiment": 36.754,
+          "reported_delta": -1.764
+        }
+      ]
+    },
+    {
+      "epoch": 107,
+      "metrics": [
+        {
+          "metric": "AP",
+          "baseline": 20.011,
+          "experiment": 19.799,
+          "reported_delta": -0.212
+        },
+        {
+          "metric": "AP50",
+          "baseline": 34.567,
+          "experiment": 34.282,
+          "reported_delta": -0.285
+        },
+        {
+          "metric": "APs",
+          "baseline": 11.795,
+          "experiment": 11.757,
+          "reported_delta": -0.039
+        },
+        {
+          "metric": "APm",
+          "baseline": 29.269,
+          "experiment": 28.849,
+          "reported_delta": -0.421
+        },
+        {
+          "metric": "APl",
+          "baseline": 38.83,
+          "experiment": 37.061,
+          "reported_delta": -1.769
+        }
+      ]
+    },
+    {
+      "epoch": 108,
+      "metrics": [
+        {
+          "metric": "AP",
+          "baseline": 20.056,
+          "experiment": 19.795,
+          "reported_delta": -0.261
+        },
+        {
+          "metric": "AP50",
+          "baseline": 34.65,
+          "experiment": 34.265,
+          "reported_delta": -0.385
+        },
+        {
+          "metric": "APs",
+          "baseline": 11.78,
+          "experiment": 11.759,
+          "reported_delta": -0.021
+        },
+        {
+          "metric": "APm",
+          "baseline": 29.343,
+          "experiment": 28.872,
+          "reported_delta": -0.471
+        },
+        {
+          "metric": "APl",
+          "baseline": 38.535,
+          "experiment": 36.155,
+          "reported_delta": -2.38
+        }
+      ]
+    },
+    {
+      "epoch": 109,
+      "metrics": [
+        {
+          "metric": "AP",
+          "baseline": 20.075,
+          "experiment": 19.826,
+          "reported_delta": -0.249
+        },
+        {
+          "metric": "AP50",
+          "baseline": 34.684,
+          "experiment": 34.318,
+          "reported_delta": -0.367
+        },
+        {
+          "metric": "APs",
+          "baseline": 11.806,
+          "experiment": 11.774,
+          "reported_delta": -0.033
+        },
+        {
+          "metric": "APm",
+          "baseline": 29.384,
+          "experiment": 28.898,
+          "reported_delta": -0.485
+        },
+        {
+          "metric": "APl",
+          "baseline": 38.672,
+          "experiment": 37.218,
+          "reported_delta": -1.454
+        }
+      ]
+    },
+    {
+      "epoch": 110,
+      "metrics": [
+        {
+          "metric": "AP",
+          "baseline": 20.053,
+          "experiment": 19.803,
+          "reported_delta": -0.249
+        },
+        {
+          "metric": "AP50",
+          "baseline": 34.674,
+          "experiment": 34.25,
+          "reported_delta": -0.424
+        },
+        {
+          "metric": "APs",
+          "baseline": 11.775,
+          "experiment": 11.774,
+          "reported_delta": -0.001
+        },
+        {
+          "metric": "APm",
+          "baseline": 29.371,
+          "experiment": 28.846,
+          "reported_delta": -0.525
+        },
+        {
+          "metric": "APl",
+          "baseline": 38.872,
+          "experiment": 35.934,
+          "reported_delta": -2.938
+        }
+      ]
+    }
+  ],
+  "c2_matched": {
+    "best.pt": [
+      {
+        "metric": "AP",
+        "baseline": 20.111,
+        "experiment": 20.173,
+        "reported_delta": 0.061
+      },
+      {
+        "metric": "AP50",
+        "baseline": 34.72,
+        "experiment": 34.562,
+        "reported_delta": -0.158
+      },
+      {
+        "metric": "APs",
+        "baseline": 11.802,
+        "experiment": 11.672,
+        "reported_delta": -0.13
+      },
+      {
+        "metric": "APm",
+        "baseline": 29.507,
+        "experiment": 30.256,
+        "reported_delta": 0.749
+      },
+      {
+        "metric": "APl",
+        "baseline": 38.063,
+        "experiment": 36.368,
+        "reported_delta": -1.695
+      }
+    ],
+    "last.pt": [
+      {
+        "metric": "AP",
+        "baseline": 19.982,
+        "experiment": 20.102,
+        "reported_delta": 0.121
+      },
+      {
+        "metric": "AP50",
+        "baseline": 34.445,
+        "experiment": 34.601,
+        "reported_delta": 0.157
+      },
+      {
+        "metric": "APs",
+        "baseline": 11.579,
+        "experiment": 11.694,
+        "reported_delta": 0.116
+      },
+      {
+        "metric": "APm",
+        "baseline": 29.41,
+        "experiment": 30.171,
+        "reported_delta": 0.762
+      },
+      {
+        "metric": "APl",
+        "baseline": 38.263,
+        "experiment": 35.131,
+        "reported_delta": -3.132
+      }
+    ]
+  }
+}

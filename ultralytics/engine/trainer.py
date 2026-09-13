@@ -1349,19 +1349,35 @@ class BaseTrainer:
 
         metrics = dict(reduced)
         branches = {key.split("/")[1] for key in reduced if key.count("/") >= 2}
-        for branch in sorted(branches):
-            base = f"assign/{branch}"
+        bases = (["assign"] if "assign/gt_total" in reduced else []) + [f"assign/{branch}" for branch in sorted(branches)]
+        for base in bases:
             gt_total = reduced.get(f"{base}/gt_total", 0.0)
             pos_total = reduced.get(f"{base}/pos_total", 0.0)
             zero_gt = reduced.get(f"{base}/zero_gt", 0.0)
             metrics[f"{base}/pos_per_gt"] = pos_total / max(gt_total, 1.0)
             metrics[f"{base}/zero_gt_rate"] = zero_gt / max(gt_total, 1.0)
+            for stage, total_key, zero_key in (
+                ("candidate", "candidate_total", "zero_candidate_gt"),
+                ("preconflict", "preconflict_pos_total", "zero_preconflict_gt"),
+            ):
+                total = reduced.get(f"{base}/{total_key}", 0.0)
+                zero = reduced.get(f"{base}/{zero_key}", 0.0)
+                metrics[f"{base}/{stage}_per_gt"] = total / max(gt_total, 1.0)
+                metrics[f"{base}/zero_{stage}_rate"] = zero / max(gt_total, 1.0)
             for size in ("small", "medium", "large"):
                 gt = reduced.get(f"{base}/gt_{size}", 0.0)
                 pos = reduced.get(f"{base}/pos_{size}", 0.0)
                 zero = reduced.get(f"{base}/zero_{size}", 0.0)
                 metrics[f"{base}/pos_per_gt_{size}"] = pos / max(gt, 1.0)
                 metrics[f"{base}/zero_gt_rate_{size}"] = zero / max(gt, 1.0)
+                for stage, total_key, zero_key in (
+                    ("candidate", f"candidate_{size}", f"zero_candidate_{size}"),
+                    ("preconflict", f"preconflict_pos_{size}", f"zero_preconflict_{size}"),
+                ):
+                    total = reduced.get(f"{base}/{total_key}", 0.0)
+                    zero = reduced.get(f"{base}/{zero_key}", 0.0)
+                    metrics[f"{base}/{stage}_per_gt_{size}"] = total / max(gt, 1.0)
+                    metrics[f"{base}/zero_{stage}_rate_{size}"] = zero / max(gt, 1.0)
         return metrics
 
     def set_model_attributes(self):
