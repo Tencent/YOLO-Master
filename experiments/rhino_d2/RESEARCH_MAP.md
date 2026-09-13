@@ -36,7 +36,7 @@ Mean delta **-0.000475**; paired 95% t CI (df=2) **[-0.008120910, +0.007170910]*
 
 Secondary pooled ResponseGap delta **-0.007060625**, image-cluster bootstrap CI **[-0.010139964, -0.003883837]**, meets pooled plus at-least-2/3-seed support. Seed 25's interval includes zero. This interval uses 128 training-diagnostic images and fixed models, not the primary training-seed t interval or a causal mediation test.
 
-Sources: [paired results](https://github.com/gao-666/YOLO-Master/blob/fedc360e73cdbfeaed930b17365458f632b1abc8/experiments/rhino_d2/results/p2_normalized_response_formal/paired_results.json), [mechanism summary](https://github.com/gao-666/YOLO-Master/blob/fedc360e73cdbfeaed930b17365458f632b1abc8/experiments/rhino_d2/results/p2_normalized_response_formal/mechanism_summary.csv). They remain remote evidence, not local Commit 3 artifacts.
+Sources: [paired results](https://github.com/gao-666/YOLO-Master/blob/fedc360e73cdbfeaed930b17365458f632b1abc8/experiments/rhino_d2/results/p2_normalized_response_formal/paired_results.json), [mechanism summary](https://github.com/gao-666/YOLO-Master/blob/fedc360e73cdbfeaed930b17365458f632b1abc8/experiments/rhino_d2/results/p2_normalized_response_formal/mechanism_summary.csv). The four compact final-result tables included in this integration branch are byte-identical copies of the frozen scientific outputs. They were not recomputed by the integration work; Commit 3 only added those frozen bytes and their provenance index.
 
 ## Interpretation and recommendation
 

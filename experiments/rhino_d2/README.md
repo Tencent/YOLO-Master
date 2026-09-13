@@ -29,7 +29,7 @@ A selected sanitized derivative is publicly available at [`fedc360e73cdbfeaed930
 
 This is selected evidence, not the complete raw archive. Per-batch JSONL, earlier-stage archives, scripts and figures not included in the package remain local-only references in the historical documents below. The package's README/audit wording describes its pre-publication build stage; anonymous fixed-SHA access was subsequently verified on 2026-09-12. This integration commit records that later publication state without changing the evidence commit.
 
-The compact local tables and machine-readable integration evidence index remain reserved for a separately reviewed Commit 3.
+The compact integration checkout now includes the final four result tables and [EVIDENCE_INDEX.json](EVIDENCE_INDEX.json). Larger logs, epoch traces, recovery records and other supporting evidence remain in the pinned public sanitized evidence package.
 
 ## Safe local verification
 
