@@ -550,12 +550,14 @@ def test_response_field_blur_is_autocast_invariant_and_fp32():
     }
 
     expected, expected_records = apply_response_field_condition_batch(clean, paths, **kwargs)
-    with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
-        actual, actual_records = apply_response_field_condition_batch(clean, paths, **kwargs)
+    autocast = getattr(torch, "autocast", None)
+    if callable(autocast):
+        with autocast(device_type="cpu", dtype=torch.bfloat16):
+            actual, actual_records = apply_response_field_condition_batch(clean, paths, **kwargs)
 
-    assert actual.dtype == torch.float32
-    assert torch.equal(actual, expected)
-    assert actual_records == expected_records
+        assert actual.dtype == torch.float32
+        assert torch.equal(actual, expected)
+        assert actual_records == expected_records
 
     # Tensor factories must ignore a process-wide non-CPU default device.
     if hasattr(torch, "set_default_device") and hasattr(torch, "get_default_device"):
