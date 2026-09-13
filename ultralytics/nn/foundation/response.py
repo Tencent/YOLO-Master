@@ -1,4 +1,20 @@
-"""Fail-closed primitives for paired-view Foundation response distillation."""
+"""Fail-closed primitives for paired-view Foundation response distillation.
+
+Examples:
+    >>> images = torch.zeros((1, 3, 16, 16), dtype=torch.float32)
+    >>> perturbed, records = build_response_field_paired_view(
+    ...     images,
+    ...     [Path("train2017") / "image.jpg"],
+    ...     seed=1,
+    ...     epoch_index=0,
+    ...     batch_index_within_epoch=0,
+    ...     num_batches_per_epoch=1,
+    ... )
+    >>> tuple(perturbed.shape)
+    (1, 3, 16, 16)
+    >>> records[0]["image_id"]
+    'train2017/image.jpg'
+"""
 
 from __future__ import annotations
 
@@ -39,7 +55,12 @@ def _validate_nonnegative_integer(name: str, value: int) -> int:
 
 
 def logical_global_batch_index(epoch_index: int, batch_index_within_epoch: int, num_batches_per_epoch: int) -> int:
-    """Return the resume-stable zero-based logical batch position."""
+    """Return the resume-stable zero-based logical batch position.
+
+    Examples:
+        >>> logical_global_batch_index(2, 3, 10)
+        23
+    """
     epoch_index = _validate_nonnegative_integer("epoch_index", epoch_index)
     batch_index_within_epoch = _validate_nonnegative_integer("batch_index_within_epoch", batch_index_within_epoch)
     if (
@@ -58,7 +79,10 @@ def logical_global_batch_index(epoch_index: int, batch_index_within_epoch: int, 
 
 def _validated_normalized_path(path: str | Path) -> str:
     """Validate an already-normalized portable image path used by the digest contract."""
-    value = str(path)
+    if not isinstance(path, (str, Path)):
+        raise TypeError(f"normalized_image_path must be str or Path, got {type(path).__name__}.")
+
+    value = path.as_posix() if isinstance(path, Path) else path
     parts = value.split("/")
     drive_qualified = bool(parts and len(parts[0]) >= 2 and parts[0][0].isalpha() and parts[0][1] == ":")
 
@@ -178,7 +202,7 @@ def tensor_sha256(tensor: torch.Tensor) -> str:
 
 def build_response_field_paired_view(
     clean_images: torch.Tensor,
-    normalized_image_paths: list[str],
+    normalized_image_paths: list[str | Path],
     *,
     seed: int,
     epoch_index: int,
@@ -227,7 +251,7 @@ def build_response_field_paired_view(
 
 def apply_response_field_condition_batch(
     clean_images: torch.Tensor,
-    normalized_image_paths: list[str],
+    normalized_image_paths: list[str | Path],
     *,
     family: str,
     value: float,

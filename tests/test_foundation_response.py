@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+from pathlib import Path
 
 import pytest
 import torch
@@ -400,6 +401,48 @@ def test_pair_generation_rejects_noncanonical_portable_paths(path):
             batch_index_within_epoch=0,
             num_batches_per_epoch=2,
         )
+
+
+@pytest.mark.parametrize("path", [None, 123])
+def test_pair_generation_rejects_non_path_identifiers(path):
+    """Image identifiers must fail closed unless they are str or Path."""
+    clean = torch.rand((1, 3, 16, 16))
+
+    with pytest.raises(TypeError, match="must be str or Path"):
+        build_response_field_paired_view(
+            clean,
+            [path],
+            seed=1,
+            epoch_index=0,
+            batch_index_within_epoch=0,
+            num_batches_per_epoch=2,
+        )
+
+
+def test_pair_generation_accepts_relative_path_objects_portably():
+    """Relative pathlib paths must serialize to the same POSIX identifier as strings."""
+    clean = torch.rand((1, 3, 16, 16))
+
+    from_path_images, from_path_records = build_response_field_paired_view(
+        clean,
+        [Path("train2017") / "image.jpg"],
+        seed=1,
+        epoch_index=0,
+        batch_index_within_epoch=0,
+        num_batches_per_epoch=2,
+    )
+    from_string_images, from_string_records = build_response_field_paired_view(
+        clean,
+        ["train2017/image.jpg"],
+        seed=1,
+        epoch_index=0,
+        batch_index_within_epoch=0,
+        num_batches_per_epoch=2,
+    )
+
+    assert torch.equal(from_path_images, from_string_images)
+    assert from_path_records == from_string_records
+    assert from_path_records[0]["image_id"] == "train2017/image.jpg"
 
 
 @pytest.mark.parametrize(

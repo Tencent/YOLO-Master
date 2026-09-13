@@ -39,7 +39,7 @@ From the repository root, with project/test dependencies installed:
 python -m pytest tests/test_foundation_response.py --override-ini addopts= -q
 ```
 
-These are CPU synthetic contracts, not a formal experiment; no Teacher weights or dataset download is required. If user settings are inaccessible, point `YOLO_CONFIG_DIR` to a writable temporary directory. Validated on Python 3.11.15 / torch 2.11.0+cu128 using CPU: **27 response tests**, or **68** including upstream projector/protocol/loss contracts. This is not the historical evidence suite's 59-test count or full upstream CI.
+These are CPU synthetic contracts, not a formal experiment; no Teacher weights or dataset download is required. If user settings are inaccessible, point `YOLO_CONFIG_DIR` to a writable temporary directory. Validated on Python 3.11.15 / torch 2.11.0+cu128 using CPU: **41 response tests**. This is not the historical evidence suite's 59-test count or full upstream CI.
 
 The new response implementation and synthetic test are Ruff-clean. Formatting passes for all three Commit 1 files. Unfiltered Ruff reports `I001` and `RUF022` in the initializer; the frozen upstream base reports the same ordering findings. The patch intentionally preserves existing import/export order. Actual upstream CI acceptance remains to be checked; inherited findings can still make CI fail.
 
