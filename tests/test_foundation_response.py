@@ -82,7 +82,7 @@ def test_optional_training_still_rejects_mode_changes_and_restores_buffers():
     with pytest.raises(RuntimeError, match="training flags changed"), context as snapshot:
         bn.running_mean.add_(7)
         bn.train()
-    assert snapshot.matches()
+    assert snapshot.matches() and not bn.training
 
 
 def test_optional_training_restores_buffers_when_branch_raises():
@@ -356,6 +356,7 @@ def test_batchnorm_restore_fails_closed_on_buffer_metadata_or_mode_mismatch():
     student = TinyStudent().train()
     with pytest.raises(RuntimeError, match="training flags changed"), preserve_batchnorm_buffers({"student": student}):
         student.eval()
+    assert student.bn.training
 
 
 def test_pair_generation_fails_closed_on_ambiguous_position_or_nonportable_path():
@@ -379,6 +380,30 @@ def test_pair_generation_fails_closed_on_ambiguous_position_or_nonportable_path(
             batch_index_within_epoch=0,
             num_batches_per_epoch=2,
         )
+
+    clean_two = torch.rand((2, 3, 16, 16))
+    for scalar_paths in ("ab", Path("ab")):
+        with pytest.raises(TypeError, match="must be a list"):
+            build_response_field_paired_view(
+                clean_two,
+                scalar_paths,
+                seed=1,
+                epoch_index=0,
+                batch_index_within_epoch=0,
+                num_batches_per_epoch=2,
+            )
+        with pytest.raises(TypeError, match="must be a list"):
+            apply_response_field_condition_batch(
+                clean_two,
+                scalar_paths,
+                family="brightness",
+                value=0.8,
+                condition_id="brightness:0.8",
+                seed=1,
+                epoch_index=0,
+                batch_index_within_epoch=0,
+                num_batches_per_epoch=2,
+            )
 
 
 @pytest.mark.parametrize(

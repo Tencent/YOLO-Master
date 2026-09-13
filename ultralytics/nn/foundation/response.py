@@ -275,6 +275,8 @@ def build_response_field_paired_view(
         raise ValueError("clean_images contains NaN or Inf.")
     if (clean_images < 0).any() or (clean_images > 1).any():
         raise ValueError("clean_images must be scaled to the frozen [0, 1] range.")
+    if not isinstance(normalized_image_paths, list):
+        raise TypeError("normalized_image_paths must be a list of str or Path entries.")
     if len(normalized_image_paths) != clean_images.shape[0]:
         raise ValueError("normalized_image_paths must contain exactly one path per image.")
     global_index = logical_global_batch_index(epoch_index, batch_index_within_epoch, num_batches_per_epoch)
@@ -347,6 +349,8 @@ def apply_response_field_condition_batch(
         raise ValueError("response-field perturbations require a CPU FP32 clean tensor.")
     if not torch.isfinite(clean_images).all() or (clean_images < 0).any() or (clean_images > 1).any():
         raise ValueError("clean_images must be finite and scaled to the frozen [0, 1] range.")
+    if not isinstance(normalized_image_paths, list):
+        raise TypeError("normalized_image_paths must be a list of str or Path entries.")
     if len(normalized_image_paths) != clean_images.shape[0]:
         raise ValueError("normalized_image_paths must contain exactly one path per image.")
     frozen = {(item[0], item[1], item[2]): index for index, item in enumerate(RESPONSE_FIELD_CONDITIONS)}
@@ -468,6 +472,11 @@ class BatchNormBufferSnapshot:
                         f"BatchNorm buffer restore was not bitwise exact for {module_name}.{buffer_name}."
                     )
 
+    def _restore_training_flags(self) -> None:
+        """Restore captured BatchNorm train/eval flags without touching non-BN modules."""
+        for module_name, module in self._modules.items():
+            module.training = self.training_flags[module_name]
+
     def assert_training_flags_unchanged(self) -> None:
         """Reject mode changes; eval is allowed when admitted by require_training=False."""
         current_modules = _batchnorm_modules(self._roots)
@@ -525,7 +534,10 @@ def preserve_batchnorm_buffers(
         try:
             snapshot.assert_training_flags_unchanged()
         finally:
-            snapshot.restore()
+            try:
+                snapshot._restore_training_flags()
+            finally:
+                snapshot.restore()
 
 
 def _strict_token_cosine_loss(student: torch.Tensor, teacher: torch.Tensor, *, eps: float) -> torch.Tensor:
