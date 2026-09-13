@@ -341,7 +341,11 @@ DDP 在首次训练和恢复时先进行三次无 optimizer 更新的前反向�
 | VisDrone | BN64（冻结） | 5.276 ± 0.006 | 10.688 ± 0.338 | 0.604 ± 0.002 | 3.624 ± 0.012 |
 | VisDrone | Scratch | 13.702 ± 0.051 | 18.076 ± 0.194 | 1.383 ± 0.012 | 8.301 ± 0.073 |
 
-单次运行显存先对全部训练 epoch 和六个 rank 取峰值，再汇总三 seed；GiB = bytes / 2^30。allocated 为活跃张量显存，reserved 为分配器保留池。训练作业时间包含启动、训练、数据等待、轮内验证及保存，GPU-hours = 六张卡 × 作业小时。VisDrone Scratch seed 0 的 40+80 轮合并计时且只计一次；BN64 seed 0 的接管结束时间保留 10 秒轮询误差。Teacher 抽取和训练后独立评测分列。
+**显存统计口径：** allocated（张量显存）表示 PyTorch 张量实际占用的显存，包括模型参数、梯度、优化器状态、EMA、输入和中间特征；reserved（显存池）表示 PyTorch 缓存分配器管理的显存总量，包括正在使用和暂未使用的空间。两项峰值分别对应 torch.cuda.max_memory_allocated() 和 torch.cuda.max_memory_reserved()。本文以 allocated 为显存对照主指标，reserved 为补充指标。
+
+每次运行先取全部训练 epoch、六张 GPU 中的单卡最大值，再报告三个 seed 的均值与样本标准差；不是六张卡显存之和。GiB = bytes / 2^30。两项峰值可能出现在不同时间，差值不能直接解释为同一时刻的空闲显存。reserved 较大本身不等于显存泄漏；CUDA 上下文等分配器外占用也可能使 nvidia-smi 的数值与上述指标不同。
+
+训练作业时间包含启动、训练、数据等待、轮内验证及保存，GPU-hours = 六张卡 × 作业小时。VisDrone Scratch seed 0 的 40+80 轮合并计时且只计一次；BN64 seed 0 的接管结束时间保留 10 秒轮询误差。Teacher 抽取和训练后独立评测分列。
 
 辅助指标的三 seed 均值：COCO BN64 / Scratch 的 APs 为 **12.542 / 11.202**、APm 为 **31.417 / 28.005**、APl 为 **42.060 / 39.724**；VisDrone AR500 为 **21.404 / 22.998**。完整辅助指标与标准差见机器可读汇总。
 
