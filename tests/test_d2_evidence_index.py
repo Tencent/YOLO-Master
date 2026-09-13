@@ -30,7 +30,7 @@ def test_evidence_identity_contract():
     """Keep private freeze identities distinct from the independently published derivative."""
     index = read_index()
     assert index["schema_version"] == "d2-public-evidence-index-v1"
-    assert index["integration_base"] == "3bd0a602be88336523eb9fdebfacdd2e92265756"
+    assert index["integration_base"] == "d61cf5d87a4db8bd184c2241726778117ac7bddf"
     assert index["scientific_identity"] == {
         "scientific_anchor": "e3e11d0cfebcd0893f5cd5bae46cf7f48ba8429a",
         "packaging_anchor": "781a6f148a46d59a89ea40806de8e10eb7b98941",
