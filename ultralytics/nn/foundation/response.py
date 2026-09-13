@@ -170,7 +170,7 @@ def response_field_noise_seed(payload: bytes, condition_id: str) -> int:
 def _gaussian_kernel1d(sigma: float, *, dtype: torch.dtype) -> torch.Tensor:
     """Return the frozen CPU Gaussian kernel with radius ``ceil(3*sigma)``."""
     radius = math.ceil(3.0 * sigma)
-    coordinates = torch.arange(-radius, radius + 1, dtype=dtype)
+    coordinates = torch.arange(-radius, radius + 1, dtype=dtype, device="cpu")
     kernel = torch.exp(-(coordinates.square()) / (2.0 * sigma**2))
     return kernel / kernel.sum()
 
@@ -208,7 +208,9 @@ def _perturb_one(image: torch.Tensor, condition: ResponseFieldCondition) -> torc
                 raise RuntimeError("Gaussian-noise condition is missing its deterministic seed.")
             generator = torch.Generator(device="cpu")
             generator.manual_seed(condition.noise_seed)
-            output = image + value * torch.randn(image.shape, dtype=image.dtype, generator=generator)
+            output = image + value * torch.randn(
+                image.shape, dtype=image.dtype, device=image.device, generator=generator
+            )
         else:
             raise RuntimeError(f"Unsupported frozen response-field perturbation: {family!r}.")
 

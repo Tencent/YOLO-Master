@@ -557,6 +557,33 @@ def test_response_field_blur_is_autocast_invariant_and_fp32():
     assert torch.equal(actual, expected)
     assert actual_records == expected_records
 
+    # Tensor factories must ignore a process-wide non-CPU default device.
+    if hasattr(torch, "set_default_device") and hasattr(torch, "get_default_device"):
+        noise_kwargs = {
+            "family": "gaussian_noise",
+            "value": 0.03,
+            "condition_id": "gaussian_noise:0.03",
+            "seed": 1,
+            "epoch_index": 0,
+            "batch_index_within_epoch": 0,
+            "num_batches_per_epoch": 1,
+        }
+        noise_expected, noise_expected_records = apply_response_field_condition_batch(clean, paths, **noise_kwargs)
+        previous_default = torch.get_default_device()
+        try:
+            torch.set_default_device("meta")
+            default_blur, default_blur_records = apply_response_field_condition_batch(clean, paths, **kwargs)
+            default_noise, default_noise_records = apply_response_field_condition_batch(clean, paths, **noise_kwargs)
+        finally:
+            torch.set_default_device(previous_default)
+
+        assert default_blur.device.type == "cpu" and default_blur.dtype == torch.float32
+        assert torch.equal(default_blur, expected)
+        assert default_blur_records == expected_records
+        assert default_noise.device.type == "cpu" and default_noise.dtype == torch.float32
+        assert torch.equal(default_noise, noise_expected)
+        assert default_noise_records == noise_expected_records
+
 
 def test_response_field_builders_reject_nonpositive_bchw_dimensions():
     """Both public builders must reject empty batch/channel/spatial dimensions."""
