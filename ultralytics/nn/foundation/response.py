@@ -389,10 +389,6 @@ class BatchNormBufferSnapshot:
                 return False
             for buffer_name, saved in self._buffers[module_name].items():
                 current = getattr(module, buffer_name, None)
-                if not isinstance(current, torch.Tensor) or not torch.equal(current, saved):
-                    return False
-            for buffer_name, saved in self._buffers[module_name].items():
-                current = getattr(module, buffer_name, None)
                 if (
                     not isinstance(current, torch.Tensor)
                     or current.shape != saved.shape
