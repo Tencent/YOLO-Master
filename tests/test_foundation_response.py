@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 
 import pytest
 import torch
@@ -21,6 +22,7 @@ from ultralytics.nn.foundation import (
     response_field_condition,
     response_field_kd_loss,
     strict_cosine_kd_loss,
+    tensor_sha256,
 )
 
 
@@ -372,6 +374,67 @@ def test_pair_generation_fails_closed_on_ambiguous_position_or_nonportable_path(
             batch_index_within_epoch=0,
             num_batches_per_epoch=2,
         )
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/mnt/x.jpg",
+        "a/../b",
+        "a/./b",
+        "a//b",
+        "a/b/",
+        "C:/data/x.jpg",
+        r"train\image.jpg",
+    ],
+)
+def test_pair_generation_rejects_noncanonical_portable_paths(path):
+    """Digest identifiers must be canonical relative POSIX paths."""
+    clean = torch.rand((1, 3, 16, 16))
+    with pytest.raises(ValueError, match="canonical relative POSIX-style"):
+        build_response_field_paired_view(
+            clean,
+            [path],
+            seed=1,
+            epoch_index=0,
+            batch_index_within_epoch=0,
+            num_batches_per_epoch=2,
+        )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        torch.tensor([1.0, -2.0, 3.5], dtype=torch.bfloat16),
+        torch.tensor(1.5, dtype=torch.bfloat16),
+    ],
+)
+def test_tensor_sha256_supports_bfloat16(value):
+    """Finite BF16 audit tensors must produce deterministic digests."""
+    first = tensor_sha256(value)
+    second = tensor_sha256(value.clone())
+    assert first == second
+    assert len(first) == 64
+
+
+def test_tensor_sha256_preserves_fp32_byte_contract():
+    """The BF16 fix must not change the existing FP32 digest contract."""
+    value = torch.tensor([1.0, -2.0, 3.5], dtype=torch.float32)
+    header = f"{tuple(value.shape)}|{value.dtype}|".encode()
+    expected = hashlib.sha256(header + value.numpy().tobytes()).hexdigest()
+    assert tensor_sha256(value) == expected
+
+
+def test_batchnorm_snapshot_matches_rejects_dtype_drift():
+    """Bitwise buffer matching also requires identical tensor metadata."""
+    bn = nn.BatchNorm2d(2)
+    snapshot = BatchNormBufferSnapshot({"bn": bn}, require_training=False)
+
+    assert snapshot.matches()
+
+    bn.running_mean = bn.running_mean.to(torch.float64)
+
+    assert not snapshot.matches()
 
 
 @pytest.mark.parametrize("family,value,condition_id", RESPONSE_FIELD_CONDITIONS)

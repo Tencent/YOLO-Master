@@ -8,7 +8,7 @@ Public access: [public derivative of this document](https://github.com/gao-666/Y
 
 本页是事后整理，不冒充事前注册或当时的授权记录；不改写最终科学锚点 e3e11d0。
 
-原始隔离目录：`E:/2026YOLO/P2-07-interrupted-B24-20260909-224418`。
+原始隔离目录：`<WORKSPACE>/P2-07-interrupted-B24-20260909-224418`。
 本次保留原目录未动，复制非权重日志/配置/CSV/逐批证据到
 `results/p2_terminal_freeze/recovery/`（本地原始归档，未收入公开包：`781a6f148a46d59a89ea40806de8e10eb7b98941:experiments/rhino_d2/results/p2_terminal_freeze/recovery/`），每一项复制前后 SHA-256 一致。
 权重不重复入Git，仅在 audit.json（本地原始归档，未收入公开包：`781a6f148a46d59a89ea40806de8e10eb7b98941:experiments/rhino_d2/results/p2_terminal_freeze/audit.json`） 中记录完整相对路径、大小与SHA-256。

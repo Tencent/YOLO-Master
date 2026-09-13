@@ -59,8 +59,20 @@ def logical_global_batch_index(epoch_index: int, batch_index_within_epoch: int, 
 def _validated_normalized_path(path: str | Path) -> str:
     """Validate an already-normalized portable image path used by the digest contract."""
     value = str(path)
-    if not value or "\0" in value or "\\" in value:
-        raise ValueError(f"normalized_image_path must be a non-empty POSIX-style path, got {value!r}.")
+    parts = value.split("/")
+    drive_qualified = bool(parts and len(parts[0]) >= 2 and parts[0][0].isalpha() and parts[0][1] == ":")
+
+    if (
+        not value
+        or "\0" in value
+        or "\\" in value
+        or value.startswith("/")
+        or drive_qualified
+        or any(part in {"", ".", ".."} for part in parts)
+    ):
+        raise ValueError(
+            f"normalized_image_path must be a non-empty canonical relative POSIX-style path, got {value!r}."
+        )
     return value
 
 
@@ -160,7 +172,8 @@ def tensor_sha256(tensor: torch.Tensor) -> str:
         raise ValueError("tensor_sha256 requires a finite torch.Tensor.")
     value = tensor.detach().contiguous().cpu()
     header = f"{tuple(value.shape)}|{value.dtype}|".encode()
-    return hashlib.sha256(header + value.numpy().tobytes()).hexdigest()
+    raw_bytes = value.reshape(-1).view(torch.uint8).numpy().tobytes()
+    return hashlib.sha256(header + raw_bytes).hexdigest()
 
 
 def build_response_field_paired_view(
@@ -377,6 +390,16 @@ class BatchNormBufferSnapshot:
             for buffer_name, saved in self._buffers[module_name].items():
                 current = getattr(module, buffer_name, None)
                 if not isinstance(current, torch.Tensor) or not torch.equal(current, saved):
+                    return False
+            for buffer_name, saved in self._buffers[module_name].items():
+                current = getattr(module, buffer_name, None)
+                if (
+                    not isinstance(current, torch.Tensor)
+                    or current.shape != saved.shape
+                    or current.dtype != saved.dtype
+                    or current.device != saved.device
+                    or not torch.equal(current, saved)
+                ):
                     return False
         return True
 
