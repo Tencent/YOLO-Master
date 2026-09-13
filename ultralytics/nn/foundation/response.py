@@ -127,7 +127,18 @@ class ResponseFieldCondition:
 def response_field_condition(
     *, seed: int, epoch_index: int, global_batch_index: int, normalized_image_path: str | Path
 ) -> ResponseFieldCondition:
-    """Resolve the frozen condition and optional Gaussian-noise seed for one sample."""
+    """Resolve the frozen condition and optional Gaussian-noise seed for one sample.
+
+    Examples:
+        >>> condition = response_field_condition(
+        ...     seed=1,
+        ...     epoch_index=0,
+        ...     global_batch_index=0,
+        ...     normalized_image_path="train2017/image.jpg",
+        ... )
+        >>> condition.condition_id in {item[2] for item in RESPONSE_FIELD_CONDITIONS}
+        True
+    """
     payload = _response_field_payload(
         seed=seed,
         epoch_index=epoch_index,
@@ -141,7 +152,13 @@ def response_field_condition(
 
 
 def response_field_noise_seed(payload: bytes, condition_id: str) -> int:
-    """Return the frozen Gaussian-noise seed for one payload and condition ID."""
+    """Return the frozen Gaussian-noise seed for one payload and condition ID.
+
+    Examples:
+        >>> value = response_field_noise_seed(b"payload", "gaussian_noise:0.03")
+        >>> isinstance(value, int) and 0 <= value < 2**63
+        True
+    """
     if not isinstance(payload, bytes) or not payload:
         raise ValueError("payload must be non-empty bytes.")
     if not isinstance(condition_id, str) or not condition_id:
@@ -161,37 +178,59 @@ def _gaussian_kernel1d(sigma: float, *, dtype: torch.dtype) -> torch.Tensor:
 def _perturb_one(image: torch.Tensor, condition: ResponseFieldCondition) -> torch.Tensor:
     """Apply one frozen perturbation to a CPU FP32 CHW image."""
     family, value = condition.family, condition.value
-    if family == "brightness":
-        output = image * value
-    elif family == "contrast":
-        mean = image.mean(dim=(-2, -1), keepdim=True)
-        output = mean + value * (image - mean)
-    elif family == "gaussian_blur":
-        kernel = _gaussian_kernel1d(value, dtype=image.dtype)
-        radius = kernel.numel() // 2
-        if image.shape[-2] <= radius or image.shape[-1] <= radius:
-            raise ValueError(f"image spatial size {tuple(image.shape[-2:])} is too small for blur radius {radius}.")
-        channels = image.shape[0]
-        horizontal = kernel.view(1, 1, 1, -1).expand(channels, 1, 1, -1)
-        vertical = kernel.view(1, 1, -1, 1).expand(channels, 1, -1, 1)
-        output = F.conv2d(F.pad(image[None], (radius, radius, 0, 0), mode="reflect"), horizontal, groups=channels)
-        output = F.conv2d(F.pad(output, (0, 0, radius, radius), mode="reflect"), vertical, groups=channels)[0]
-    elif family == "gaussian_noise":
-        if condition.noise_seed is None:
-            raise RuntimeError("Gaussian-noise condition is missing its deterministic seed.")
-        generator = torch.Generator(device="cpu")
-        generator.manual_seed(condition.noise_seed)
-        output = image + value * torch.randn(image.shape, dtype=image.dtype, generator=generator)
-    else:
-        raise RuntimeError(f"Unsupported frozen response-field perturbation: {family!r}.")
-    output = output.clamp(0.0, 1.0)
+
+    with disabled_autocast(image.device.type):
+        if family == "brightness":
+            output = image * value
+        elif family == "contrast":
+            mean = image.mean(dim=(-2, -1), keepdim=True)
+            output = mean + value * (image - mean)
+        elif family == "gaussian_blur":
+            kernel = _gaussian_kernel1d(value, dtype=image.dtype)
+            radius = kernel.numel() // 2
+            if image.shape[-2] <= radius or image.shape[-1] <= radius:
+                raise ValueError(f"image spatial size {tuple(image.shape[-2:])} is too small for blur radius {radius}.")
+            channels = image.shape[0]
+            horizontal = kernel.view(1, 1, 1, -1).expand(channels, 1, 1, -1)
+            vertical = kernel.view(1, 1, -1, 1).expand(channels, 1, -1, 1)
+            output = F.conv2d(
+                F.pad(image[None], (radius, radius, 0, 0), mode="reflect"),
+                horizontal,
+                groups=channels,
+            )
+            output = F.conv2d(
+                F.pad(output, (0, 0, radius, radius), mode="reflect"),
+                vertical,
+                groups=channels,
+            )[0]
+        elif family == "gaussian_noise":
+            if condition.noise_seed is None:
+                raise RuntimeError("Gaussian-noise condition is missing its deterministic seed.")
+            generator = torch.Generator(device="cpu")
+            generator.manual_seed(condition.noise_seed)
+            output = image + value * torch.randn(image.shape, dtype=image.dtype, generator=generator)
+        else:
+            raise RuntimeError(f"Unsupported frozen response-field perturbation: {family!r}.")
+
+        output = output.clamp(0.0, 1.0)
+
+    if output.device.type != "cpu" or output.dtype != torch.float32:
+        raise RuntimeError(
+            f"Response-field perturbation must remain CPU FP32, got device={output.device}, dtype={output.dtype}."
+        )
     if not torch.isfinite(output).all():
         raise ValueError(f"Perturbation {condition.condition_id!r} produced NaN or Inf.")
     return output
 
 
 def tensor_sha256(tensor: torch.Tensor) -> str:
-    """Hash one finite contiguous CPU tensor including shape and dtype metadata."""
+    """Hash one finite contiguous CPU tensor including shape and dtype metadata.
+
+    Examples:
+        >>> digest = tensor_sha256(torch.zeros(1, dtype=torch.float32))
+        >>> len(digest) == 64
+        True
+    """
     if not isinstance(tensor, torch.Tensor) or not torch.isfinite(tensor).all():
         raise ValueError("tensor_sha256 requires a finite torch.Tensor.")
     value = tensor.detach().contiguous().cpu()
@@ -209,9 +248,27 @@ def build_response_field_paired_view(
     batch_index_within_epoch: int,
     num_batches_per_epoch: int,
 ) -> tuple[torch.Tensor, list[dict[str, object]]]:
-    """Build deterministic perturbed views and per-image rolling-manifest records."""
+    """Build deterministic perturbed views and per-image rolling-manifest records.
+
+    Examples:
+        >>> images = torch.zeros((1, 3, 16, 16), dtype=torch.float32)
+        >>> perturbed, records = build_response_field_paired_view(
+        ...     images,
+        ...     ["train2017/image.jpg"],
+        ...     seed=1,
+        ...     epoch_index=0,
+        ...     batch_index_within_epoch=0,
+        ...     num_batches_per_epoch=1,
+        ... )
+        >>> perturbed.shape == images.shape
+        True
+        >>> records[0]["image_id"] == "train2017/image.jpg"
+        True
+    """
     if not isinstance(clean_images, torch.Tensor) or clean_images.ndim != 4:
         raise ValueError("clean_images must be a BCHW torch.Tensor.")
+    if any(size <= 0 for size in clean_images.shape):
+        raise ValueError("clean_images must have positive BCHW dimensions.")
     if clean_images.device.type != "cpu" or clean_images.dtype != torch.float32:
         raise ValueError("response-field perturbations require a CPU FP32 clean tensor.")
     if not torch.isfinite(clean_images).all():
@@ -242,6 +299,7 @@ def build_response_field_paired_view(
                 "num_batches_per_epoch": num_batches_per_epoch,
                 "global_batch_index": global_index,
                 "global_batch_index_version": GLOBAL_BATCH_INDEX_VERSION,
+                "response_field_payload_version": RESPONSE_FIELD_PAYLOAD_VERSION,
                 "clean_tensor_sha256": tensor_sha256(image),
                 "perturbed_tensor_sha256": tensor_sha256(perturbed),
             }
@@ -261,9 +319,30 @@ def apply_response_field_condition_batch(
     batch_index_within_epoch: int,
     num_batches_per_epoch: int,
 ) -> tuple[torch.Tensor, list[dict[str, object]]]:
-    """Apply one explicitly selected frozen condition to a complete calibration batch."""
+    """Apply one explicitly selected frozen condition to a complete calibration batch.
+
+    Examples:
+        >>> images = torch.ones((1, 3, 4, 4), dtype=torch.float32)
+        >>> perturbed, records = apply_response_field_condition_batch(
+        ...     images,
+        ...     ["train2017/image.jpg"],
+        ...     family="brightness",
+        ...     value=0.8,
+        ...     condition_id="brightness:0.8",
+        ...     seed=1,
+        ...     epoch_index=0,
+        ...     batch_index_within_epoch=0,
+        ...     num_batches_per_epoch=1,
+        ... )
+        >>> torch.allclose(perturbed, torch.full_like(perturbed, 0.8))
+        True
+        >>> records[0]["condition_id"]
+        'brightness:0.8'
+    """
     if not isinstance(clean_images, torch.Tensor) or clean_images.ndim != 4:
         raise ValueError("clean_images must be a BCHW torch.Tensor.")
+    if any(size <= 0 for size in clean_images.shape):
+        raise ValueError("clean_images must have positive BCHW dimensions.")
     if clean_images.device.type != "cpu" or clean_images.dtype != torch.float32:
         raise ValueError("response-field perturbations require a CPU FP32 clean tensor.")
     if not torch.isfinite(clean_images).all() or (clean_images < 0).any() or (clean_images > 1).any():
@@ -298,6 +377,7 @@ def apply_response_field_condition_batch(
                 "num_batches_per_epoch": num_batches_per_epoch,
                 "global_batch_index": global_index,
                 "global_batch_index_version": GLOBAL_BATCH_INDEX_VERSION,
+                "response_field_payload_version": RESPONSE_FIELD_PAYLOAD_VERSION,
                 "clean_tensor_sha256": tensor_sha256(image),
                 "perturbed_tensor_sha256": tensor_sha256(perturbed),
             }
@@ -345,9 +425,7 @@ class BatchNormBufferSnapshot:
         self._modules = _batchnorm_modules(self._roots)
         self.training_flags = {name: module.training for name, module in self._modules.items()}
         if require_training and not all(self.training_flags.values()):
-            raise RuntimeError(
-                f"Response-field Student BatchNorm modules must all be in train mode: {self.training_flags}"
-            )
+            raise RuntimeError(f"Response-field BatchNorm modules must all be in train mode: {self.training_flags}")
         self._buffers: dict[str, dict[str, torch.Tensor]] = {}
         for module_name, module in self._modules.items():
             values: dict[str, torch.Tensor] = {}
@@ -431,6 +509,14 @@ def preserve_batchnorm_buffers(
     """Restore buffers while preserving modes; require_training=False also admits eval BN.
 
     Modes must remain unchanged inside the context. Buffers are restored even if the branch raises.
+
+    Examples:
+        >>> bn = nn.BatchNorm2d(2)
+        >>> before = bn.running_mean.clone()
+        >>> with preserve_batchnorm_buffers({"bn": bn}):
+        ...     _ = bn.running_mean.add_(1)
+        >>> torch.equal(bn.running_mean, before)
+        True
     """
     snapshot = BatchNormBufferSnapshot(roots, require_training=require_training)
     try:
@@ -480,7 +566,13 @@ def _strict_token_cosine_loss(student: torch.Tensor, teacher: torch.Tensor, *, e
 def strict_cosine_kd_loss(
     student_feature: torch.Tensor, teacher_feature: torch.Tensor, *, eps: float = 1e-6
 ) -> torch.Tensor:
-    """Return the P2 strict static token-cosine loss with detached teacher features."""
+    """Return the P2 strict static token-cosine loss with detached teacher features.
+
+    Examples:
+        >>> feature = torch.ones((1, 2, 1, 1))
+        >>> torch.allclose(strict_cosine_kd_loss(feature, feature), torch.zeros(()), atol=1e-6)
+        True
+    """
     return _strict_token_cosine_loss(student_feature, teacher_feature, eps=eps)
 
 
@@ -492,7 +584,15 @@ def response_field_kd_loss(
     *,
     eps: float = 1e-6,
 ) -> torch.Tensor:
-    """Match finite-difference Student and detached Teacher responses with strict token cosine."""
+    """Match finite-difference Student and detached Teacher responses with strict token cosine.
+
+    Examples:
+        >>> clean = torch.zeros((1, 2, 1, 1))
+        >>> perturbed = torch.ones_like(clean)
+        >>> loss = response_field_kd_loss(clean, perturbed, clean, perturbed)
+        >>> torch.allclose(loss, torch.zeros(()), atol=1e-6)
+        True
+    """
     if not all(
         isinstance(feature, torch.Tensor)
         for feature in (student_clean, student_perturbed, teacher_clean, teacher_perturbed)

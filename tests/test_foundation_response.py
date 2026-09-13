@@ -14,6 +14,7 @@ from torch.nn.modules.batchnorm import _BatchNorm
 
 from ultralytics.nn.foundation import (
     RESPONSE_FIELD_CONDITIONS,
+    RESPONSE_FIELD_PAYLOAD_VERSION,
     BatchNormBufferSnapshot,
     P4AlignmentProjector,
     apply_response_field_condition_batch,
@@ -213,6 +214,9 @@ def test_resume_stable_index_and_paired_digest_ignore_process_local_counter():
     assert process_local_counter_after_resume == 0
     assert torch.equal(uninterrupted, resumed)
     assert uninterrupted_records == resumed_records
+    assert all(
+        record["response_field_payload_version"] == RESPONSE_FIELD_PAYLOAD_VERSION for record in uninterrupted_records
+    )
 
 
 @pytest.mark.parametrize("arm", ["b", "c"])
@@ -347,7 +351,7 @@ def test_batchnorm_restore_fails_closed_on_buffer_metadata_or_mode_mismatch():
     with pytest.raises(TypeError, match="missing during restore"):
         snapshot.restore()
     student = TinyStudent().eval()
-    with pytest.raises(RuntimeError, match="must all be in train mode"):
+    with pytest.raises(RuntimeError, match="Response-field BatchNorm modules must all be in train mode"):
         BatchNormBufferSnapshot({"student": student})
     student = TinyStudent().train()
     with pytest.raises(RuntimeError, match="training flags changed"), preserve_batchnorm_buffers({"student": student}):
@@ -501,5 +505,59 @@ def test_exhaustive_calibration_conditions_are_deterministic_and_frozen(family, 
     )
     assert torch.equal(first, second)
     assert first_records == second_records
+    assert all(record["response_field_payload_version"] == RESPONSE_FIELD_PAYLOAD_VERSION for record in first_records)
     assert {record["condition_id"] for record in first_records} == {condition_id}
     assert {record["global_batch_index"] for record in first_records} == {49 * 16 + 3}
+
+
+def test_response_field_blur_is_autocast_invariant_and_fp32():
+    """Caller autocast state must not alter the frozen CPU-FP32 perturbation contract."""
+    clean = torch.rand((1, 3, 16, 16), generator=torch.Generator().manual_seed(17))
+    paths = ["train2017/image.jpg"]
+    kwargs = {
+        "family": "gaussian_blur",
+        "value": 1.0,
+        "condition_id": "gaussian_blur:1.0",
+        "seed": 1,
+        "epoch_index": 0,
+        "batch_index_within_epoch": 0,
+        "num_batches_per_epoch": 1,
+    }
+
+    expected, expected_records = apply_response_field_condition_batch(clean, paths, **kwargs)
+    with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
+        actual, actual_records = apply_response_field_condition_batch(clean, paths, **kwargs)
+
+    assert actual.dtype == torch.float32
+    assert torch.equal(actual, expected)
+    assert actual_records == expected_records
+
+
+def test_response_field_builders_reject_nonpositive_bchw_dimensions():
+    """Both public builders must reject empty batch/channel/spatial dimensions."""
+    for shape in ((0, 3, 16, 16), (1, 0, 16, 16), (1, 3, 0, 16), (1, 3, 16, 0)):
+        clean = torch.empty(shape, dtype=torch.float32)
+        paths = ["train2017/image.jpg"] * shape[0]
+
+        with pytest.raises(ValueError, match="positive BCHW dimensions"):
+            build_response_field_paired_view(
+                clean,
+                paths,
+                seed=1,
+                epoch_index=0,
+                batch_index_within_epoch=0,
+                num_batches_per_epoch=1,
+            )
+
+        with pytest.raises(ValueError, match="positive BCHW dimensions"):
+            apply_response_field_condition_batch(
+                clean,
+                paths,
+                family="brightness",
+                value=0.8,
+                condition_id="brightness:0.8",
+                seed=1,
+                epoch_index=0,
+                batch_index_within_epoch=0,
+                num_batches_per_epoch=1,
+            )

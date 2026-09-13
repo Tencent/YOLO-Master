@@ -143,9 +143,9 @@ audit any interruption and preserve original evidence before further action.
 
 ## 12. Cost and deadlines
 
-Six runs=300 epochs, plus64 total pilot batches; no A or raw Response arm.
+Six runs = 300 epochs, plus 64 total pilot batches; no A or raw Response arm.
 Estimate runtime from the non-efficacy pilot. Decide/start before
-2026-09-11T00:00:00+08:00; no new design from2026-09-13T00:00:00+08:00.
+2026-09-11T00:00:00+08:00; no new design from 2026-09-13T00:00:00+08:00.
 Insufficient resources or missed cutoff means stop and report, not shorten runs.
 
 ## 13. Claim boundary
