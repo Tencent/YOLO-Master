@@ -1,0 +1,62 @@
+{
+  "archive_sha256": "af4aea7b5b35353819cffd1586a2e51cb0abfb5b1ce74697480cda97dc07dbf6",
+  "commit": "005445782213e20cb91bc50a597db3dd949e749a",
+  "files": [
+    {
+      "bytes": 1720,
+      "path": "evalDET.m",
+      "sha256": "10e88f1a8b45002bf5ca3e27cdc7fc870c59aef83ba806d74b60738cfecb2d61"
+    },
+    {
+      "bytes": 7845,
+      "path": "README.md",
+      "sha256": "d2de211602633bdbd008f912b2d73e253a9c39970bb3823430fe6cbb6f07b562"
+    },
+    {
+      "bytes": 2367,
+      "path": "utils/calcAccuracy.m",
+      "sha256": "285508f54903acd75eeda346c11c8e53267e72facd648f2e22bce121d4f55d7f"
+    },
+    {
+      "bytes": 1507,
+      "path": "utils/compOas.m",
+      "sha256": "3e5c2d473c07bf2ddbe0d902284af98ef7104c609e867b2ed59083d31f3ed2af"
+    },
+    {
+      "bytes": 375,
+      "path": "utils/createIntImg.m",
+      "sha256": "7ce3de4fc105be4f088cae5d1fcfc8f4383f3d7ffd4a551bf1afe711eff09f72"
+    },
+    {
+      "bytes": 1482,
+      "path": "utils/displayImage.m",
+      "sha256": "dd5c24c2b824f1a9c884eff4f61bc9bfeef635cd6a46d3dab0071c48a67667b2"
+    },
+    {
+      "bytes": 1842,
+      "path": "utils/dropObjectsInIgr.m",
+      "sha256": "30dee2713d76a537f5c98ec5d0804e17cfd3993d83d8a80a70b90ef9461fa4de"
+    },
+    {
+      "bytes": 3843,
+      "path": "utils/evalRes.m",
+      "sha256": "610f0d078f1af8d7987e360e6e88665c0290587191d5542b469a9792402f539b"
+    },
+    {
+      "bytes": 131,
+      "path": "utils/findImageList.m",
+      "sha256": "42af8763b4a271e32de9a2509a3103bc839d752cf86c7ac42a4be2c67e5abb68"
+    },
+    {
+      "bytes": 718,
+      "path": "utils/saveAnnoRes.m",
+      "sha256": "3210fb8fd98aed19cab61c996e0daf1dbfdb23fd5eb2fafff29afc71bb45876d"
+    },
+    {
+      "bytes": 263,
+      "path": "utils/VOCap.m",
+      "sha256": "95dd1e02c956124e777caf6f44b50b0986a2a37785bd11982ef775e696c17945"
+    }
+  ],
+  "source": "https://github.com/VisDrone/VisDrone2018-DET-toolkit"
+}

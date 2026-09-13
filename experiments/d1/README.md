@@ -2,7 +2,7 @@
 
 负责人：冯焱琦（[@Frank95zz](https://github.com/Frank95zz)）。冻结 DINOv3，只训练多尺度 Adapter、LatentMixture 和检测头，研究检测精度保留率与训练成本。
 
-阅读顺序：先看完成状态与方法，再看数据/缓存/训练复现，随后阅读已完成消融及最终对照，最后核对测试、版本归属与局限。本 README 是唯一的 D1 文档入口；三个 manifest 是程序直接读取的校验输入，数据、Teacher 权重、缓存、checkpoint 和完整日志均放在仓库外。
+阅读顺序：先看完成状态与方法，再看数据/缓存/训练复现，随后阅读已完成消融及最终对照，最后核对测试、版本归属与局限。本 README 是唯一的 D1 文档入口；四个 manifest 提供数据、权重、合同与官方评分工具校验，数据、Teacher 权重、缓存、checkpoint 和完整日志均放在仓库外。
 
 ## 课题目标与完成状态
 
@@ -221,7 +221,35 @@ coco-local.yaml 使用仓库常规检测 YAML，指定 path、train、val 与 80
 
 评测严格重载 checkpoint，输出 evaluation.json、predictions.json 和 checkpoint SHA256。COCO 只有提供 --annotations 才报告标准 AP，使用 faster-coco-eval 1.8.0、完整 5,000 张验证图、maxDets=[1,10,100]；最多导出 300 个预测框不改变标准 AP 的 maxDets=100。
 
-VisDrone 评测完整 548 张验证图并导出官方 TXT，每图最多 500 框；坐标还原到原图，序列化后宽或高不大于零的框被剔除并计数，非有限值报错。官方 ignore 语义和评分使用固定 MATLAB DET toolkit，不能用轮内 COCO-style 指标代替；该 MATLAB 调度器不在本 PR 中。
+VisDrone 评测完整 548 张验证图并导出官方 TXT，每图最多 500 框；坐标还原到原图，序列化后宽或高不大于零的框被剔除并计数，非有限值报错。官方 ignore 语义和评分使用固定 MATLAB DET toolkit。公开的 evaluate_visdrone_official.m 复用本次实验的评分包装器，调用原版匹配/AP 函数；随附工具文件 SHA256 清单和缺少 Image Processing Toolbox 时使用的 mean2 兼容函数。
+
+### VisDrone 官方评分复现
+
+先运行 train evaluate 导出预测，再调用 MATLAB。以下命令从仓库根目录执行；VISDRONE_VAL 必须指向包含原始 images/annotations 的 VisDrone2019-DET-val，不能使用转换后的 YOLO 标签。D1_OUTPUT 为该次训练目录，D1_EVAL 必须为新的评测输出目录。
+
+~~~bash
+export VISDRONE_VAL="$D1_WORK/visdrone-original/VisDrone2019-DET-val"
+export D1_OUTPUT="$D1_WORK/runs/visdrone-BN64"
+export D1_EVAL="$D1_WORK/evaluations/visdrone-BN64-last"
+python -m scripts.d1.train evaluate --variant BN64 --dataset visdrone \
+  --data "$D1_WORK/visdrone-prepared/dataset.yaml" \
+  --val-cache "$D1_WORK/visdrone-npy/visdrone-val" \
+  --checkpoint "$D1_OUTPUT/weights/last.pt" \
+  --output "$D1_EVAL" --device 0 --batch 16 --workers 4
+
+git -c core.autocrlf=false clone https://github.com/VisDrone/VisDrone2018-DET-toolkit.git "$D1_WORK/visdrone-toolkit"
+git -C "$D1_WORK/visdrone-toolkit" checkout --detach 005445782213e20cb91bc50a597db3dd949e749a
+export VISDRONE_TOOLKIT="$D1_WORK/visdrone-toolkit"
+export VISDRONE_PREDICTIONS="$D1_EVAL/visdrone-txt"
+export VISDRONE_REPORT="$D1_EVAL/official-matlab.json"
+matlab -batch "addpath('scripts/d1'); evaluate_visdrone_official(getenv('VISDRONE_TOOLKIT'), getenv('VISDRONE_VAL'), getenv('VISDRONE_PREDICTIONS'), getenv('VISDRONE_REPORT'), 'experiments/d1/manifests/visdrone-toolkit.json');"
+python -m scripts.d1.evaluate_visdrone check --report "$VISDRONE_REPORT"
+~~~
+
+验证环境为 MATLAB R2026a，需启用 JVM；MATLAB 可在另一台机器上运行，只需复制原始 val、包含 export.json 的完整 visdrone-txt、固定 toolkit 与本仓库三个评分文件，并设置相应路径。Windows PowerShell 使用 $env:变量名 设置相同变量，再执行 & "$env:MATLAB_ROOT/bin/matlab.exe" -batch "...相同 MATLAB 表达式..."。非零退出视为失败。请使用新的报告路径，保留原始评分。
+
+包装器校验固定工具文件 SHA256、GT/预测文件名完整一致、类别 1..10、排序后的每图 top500 与有限值，将空 TXT 规范化为 0×8 数组；按原图尺寸应用官方 ignore 处理。输出官方 AP/AP50/AP75/AR1/10/100/500、MATLAB 版本、toolkit 与 export 摘要。正式 val 应为 548 张，image_count 需与该样本数一致；小型 fixture 仅用于测试。
+
 
 ## 已完成的消融与研究结果
 
@@ -446,6 +474,10 @@ VisDrone 历史准备记录为 430.581 秒，但对应脚本可跳过已有缓�
 
 ## 测试与兼容性
 
+最终提交前在同一代码基础上重新运行上述完整回归：687 passed、56 skipped、2 deselected、1 warning，179.99 秒；六个复现 CLI 的 --help 均通过。新增 MATLAB 包装器的完整 548 图复评验证见官方评分说明。
+
+公开 MATLAB 评分入口已在完整 VisDrone val 548 张上复评 BN64 seed 0 第 40 轮：AP=7.923179115437879，全部七项 AP/AR 与原报告的绝对差 <1e-10，MATLAB R2026a 正常退出。该复核使用公开包装器、固定 toolkit 摘要及原始预测，不改匹配/AP 算法。
+
 测试按功能组织：test_d1_contracts/cache/cache_cli/adapter/model/pipeline/training/visdrone，公共 Teacher 测试并入已有的 test_foundation_dinov3.py。覆盖非法输入、缓存校验与续写、九条分支梯度、aux 标量组合、Teacher 隔离、checkpoint 严格重载、默认 Attention 行为、AMP 有限值及恢复协议。
 
 普通 CI 使用合成数据并跳过未配置的真实 Teacher/CUDA 测试，不自动下载模型。真实输入通过 D1_DINOV3_WEIGHTS、D1_WP2_CACHE、D1_COCO_ROOT、D1_NPY_CACHE 显式指定；保留这些环境变量以兼容已有使用方式，启用 CUDA 验收时不要清空 CUDA_VISIBLE_DEVICES。
@@ -500,7 +532,7 @@ git diff --check
 
 1. **划清归属**：把公共基线之后其他作者已经合入的代码，与本 PR 自有增量分开，避免把上游 172 个文件的变化计为 D1。
 2. **固定质量比较对象**：记录 D1 加入前已有的行为、测试问题和 lint 告警；例如后续上游 b69acc4 已修复 aux 标量组合，本 PR 只认领在其上的新增。
-3. **解释 PR 集成来源**：说明这 58 个交付文件接在哪个较新上游版本上，并给出 merge-base 与两段 diff，便于维护者复核兼容性和来源。
+3. **解释 PR 集成来源**：说明这 61 个交付文件接在哪个较新上游版本上，并给出 merge-base 与两段 diff，便于维护者复核兼容性和来源。
 
 复现训练使用 RUN_REF/FINAL_REF；UPSTREAM_REF 用于区分后续上游同步与 D1 增量，固定质量检查对象并追溯集成来源，因此保留在文末的版本审计中。
 
@@ -541,7 +573,7 @@ git diff "$UPSTREAM_REF" "$FINAL_REF"
 git log --reverse --format=fuller "$UPSTREAM_REF..$FINAL_REF"
 ~~~
 
-公共基线到上游快照包含 104 个可达提交、172 个变更文件；D1 交付相对上游快照为 58 个文件（38 新增、20 修改）。两段有 8 个重叠文件，合并后的公共基线到 PR 总 diff 为 222 个文件，其中 D1 交付范围按 UPSTREAM_REF → FINAL_REF 单独列示。重叠文件是 .gitignore、tests/test_ddp_lifecycle_ema_nan.py、tests/test_mixture_loss_composition.py、ultralytics/engine/extensions/recovery.py、ultralytics/engine/trainer.py、ultralytics/nn/foundation/__init__.py、ultralytics/nn/mixture_loss.py、ultralytics/nn/tasks.py；这些文件通过两段 diff 核对归属。固定 BASE_REF 审计与 GitHub 基于目标 main 的合并差异一并提供。
+公共基线到上游快照包含 104 个可达提交、172 个变更文件；D1 交付相对上游快照为 61 个文件（41 新增、20 修改）。两段有 8 个重叠文件，合并后的公共基线到 PR 总 diff 为 225 个文件，其中 D1 交付范围按 UPSTREAM_REF → FINAL_REF 单独列示。重叠文件是 .gitignore、tests/test_ddp_lifecycle_ema_nan.py、tests/test_mixture_loss_composition.py、ultralytics/engine/extensions/recovery.py、ultralytics/engine/trainer.py、ultralytics/nn/foundation/__init__.py、ultralytics/nn/mixture_loss.py、ultralytics/nn/tasks.py；这些文件通过两段 diff 核对归属。固定 BASE_REF 审计与 GitHub 基于目标 main 的合并差异一并提供。
 
 ### 已有能力与本轮增量
 
