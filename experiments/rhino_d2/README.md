@@ -1,6 +1,6 @@
 # Foundation response diagnostics: compact research companion
 
-Can intermediate Foundation features help a small detector, and why might learnable feature matching fail to improve detection? This DINOv3-S â†?YOLO-Master-N study motivates the response utilities in this PR. It does **not** establish a detection improvement or recommend a new default training strategy.
+Can intermediate Foundation features help a small detector, and why might learnable feature matching fail to improve detection? This DINOv3-S â†’ YOLO-Master-N study motivates the response utilities in this PR. It does **not** establish a detection improvement or recommend a new default training strategy.
 
 ## Start here
 
