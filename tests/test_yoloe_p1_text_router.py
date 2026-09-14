@@ -103,6 +103,30 @@ def test_disabled_adapter_preserves_other_routed_aux_criterion():
     assert isinstance(model.init_criterion(), CompositeCriterion)
 
 
+def test_omitted_router_text_matches_native_bypass(monkeypatch):
+    model = _model().eval()
+    images = torch.rand(1, 3, 64, 64)
+    tpe = torch.randn(1, NUM_CLASSES, TEXT_DIM)
+    with torch.no_grad():
+        omitted = model.predict(images, tpe=tpe)
+        explicit_none = model.predict(images, tpe=tpe, router_condition=None)
+        monkeypatch.setattr(model, "_apply_p5_text_router", lambda features, condition: features)
+        native_bypass = model.predict(images, tpe=tpe)
+    for candidate in (explicit_none, native_bypass):
+        assert len(_leaves(omitted)) == len(_leaves(candidate))
+        for left, right in zip(_leaves(omitted), _leaves(candidate)):
+            assert torch.equal(left, right)
+
+
+def test_enabled_router_without_text_uses_zero_condition():
+    router = TextConditionedMoT(8, 8, text_dim=TEXT_DIM).eval()
+    features = torch.randn(2, 8, 4, 4)
+    with torch.no_grad():
+        omitted = router(features)
+        explicit_zero = router(features, condition=torch.zeros(TEXT_DIM))
+    assert torch.equal(omitted, explicit_zero)
+
+
 def test_disabled_adapter_preserves_segmentation_criterion():
     model = YOLOESegModel("yoloe-26n-seg.yaml", ch=3, nc=NUM_CLASSES, verbose=False)
     model.args = IterableSimpleNamespace(**DEFAULT_CFG_DICT)

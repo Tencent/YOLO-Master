@@ -80,6 +80,9 @@ dependencies = [
 
 # Optional dependencies ------------------------------------------------------------------------------------------------
 [project.optional-dependencies]
+clip = [
+    "clip @ git+https://github.com/ultralytics/CLIP.git",
+]
 dev = [
     "ipython",
     "pytest",
