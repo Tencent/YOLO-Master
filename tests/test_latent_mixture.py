@@ -1,3 +1,4 @@
+from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
 
@@ -12,7 +13,6 @@ from ultralytics.nn.modules.routing_protocol import (
     clear_aux_records,
     collect_aux_loss,
     iter_aux_records,
-    reset_routing_runtime_state,
 )
 from ultralytics.nn.tasks import DetectionModel
 from ultralytics.utils.torch_utils import ModelEMA
@@ -193,14 +193,21 @@ def test_yolo26_latent_yaml_builds_and_runs():
     assert output is not None
 
 
-def test_yolo26_latent_runtime_reset_allows_ema_deepcopy():
+def test_yolo26_latent_owns_ema_deepcopy_cleanup():
     model = DetectionModel(
         ROOT / "ultralytics/cfg/models/26/yolo26-master-latent-n.yaml", ch=3, nc=80, verbose=False
     ).train()
+    latent = next(module for module in model.modules() if isinstance(module, LatentMixture))
+    original_logits = latent.routing_logits
 
-    reset_routing_runtime_state(model)
+    copied = deepcopy(model)
     ema = ModelEMA(model)
 
+    copied_latent = next(module for module in copied.modules() if isinstance(module, LatentMixture))
+    assert original_logits is not None and latent.routing_logits is original_logits
+    assert copied_latent.routing_logits is None
+    assert copied_latent.routing_probs is None
+    assert copied_latent.routing_summary is None
     assert isinstance(ema.ema, DetectionModel)
 
 

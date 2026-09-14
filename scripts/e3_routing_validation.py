@@ -53,7 +53,11 @@ def _training_signature(run_dir: Path) -> list[dict[str, str]]:
     """Return deterministic training values while excluding elapsed wall time."""
     with (run_dir / "results.csv").open(newline="", encoding="utf-8") as file:
         return [
-            {key.strip(): value for key, value in row.items() if key.strip() not in {"epoch", "time"}}
+            {
+                key.strip(): value
+                for key, value in row.items()
+                if key is not None and key.strip() not in {"epoch", "time"}
+            }
             for row in csv.DictReader(file)
         ]
 

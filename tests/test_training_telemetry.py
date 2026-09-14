@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from collections import defaultdict
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -166,21 +167,67 @@ def test_tensorboard_scalars_use_stable_family_and_layer_paths():
     assert scalars[f"{prefix}/aux_status_code"] == 0.0
 
 
-def test_tensorboard_callback_logs_e3_scalars_without_a_second_writer(monkeypatch):
-    from ultralytics.utils.callbacks import tensorboard
+def test_routing_callback_exposes_scalars_through_standard_metrics():
+    from ultralytics.utils.callbacks.routing import on_fit_epoch_end, on_fit_epoch_end_restore
 
-    writer = SimpleNamespace(calls=[])
-    writer.add_scalar = lambda key, value, step: writer.calls.append((key, value, step))
-    monkeypatch.setattr(tensorboard, "WRITER", writer, raising=False)
+    original = {"metrics/mAP50(B)": 0.5}
     trainer = SimpleNamespace(
-        epoch=1,
-        tloss=torch.tensor([1.0]),
-        lr={"lr/pg0": 0.01},
-        training_telemetry=SimpleNamespace(tensorboard_scalars=lambda: {"routing/global/routed_layers": 3.0}),
-        label_loss_items=lambda _loss, prefix: {f"{prefix}/box_loss": 1.0},
+        metrics=original,
+        training_telemetry=SimpleNamespace(
+            enabled=True, tensorboard_scalars=lambda: {"routing/global/routed_layers": 3.0}
+        ),
     )
-    tensorboard.on_train_epoch_end(trainer)
-    assert ("routing/global/routed_layers", 3.0, 2) in writer.calls
+    on_fit_epoch_end(trainer)
+    assert trainer.metrics == {"metrics/mAP50(B)": 0.5, "routing/global/routed_layers": 3.0}
+    on_fit_epoch_end_restore(trainer)
+    assert trainer.metrics is original
+    assert not hasattr(trainer, "_routing_callback_original_metrics")
+
+
+def test_routing_callback_is_safe_for_disabled_missing_and_invalid_telemetry():
+    from ultralytics.utils.callbacks.routing import on_fit_epoch_end
+
+    disabled = SimpleNamespace(metrics={"kept": 1}, training_telemetry=SimpleNamespace(enabled=False))
+    missing = SimpleNamespace(metrics={"kept": 1}, training_telemetry=SimpleNamespace(enabled=True))
+    invalid = SimpleNamespace(
+        metrics={"kept": 1},
+        training_telemetry=SimpleNamespace(
+            enabled=True, tensorboard_scalars=lambda: (_ for _ in ()).throw(ValueError("bad"))
+        ),
+    )
+    for trainer in (disabled, missing, invalid):
+        on_fit_epoch_end(trainer)
+        assert trainer.metrics == {"kept": 1}
+    assert invalid._routing_callback_error == "ValueError: bad"
+
+
+def test_routing_callback_registration_is_opt_in_and_precedes_tensorboard(monkeypatch):
+    from ultralytics.utils import callbacks as callback_package
+    from ultralytics.utils.callbacks import routing, tensorboard
+
+    route_callback = lambda _trainer: None
+    tensorboard_callback = lambda _trainer: None
+    monkeypatch.setattr(routing, "callbacks", {"on_fit_epoch_end": route_callback})
+    monkeypatch.setattr(tensorboard, "callbacks", {"on_fit_epoch_end": tensorboard_callback})
+
+    class CallbackTestTrainer:
+        def __init__(self, enabled):
+            self.callbacks = defaultdict(list)
+            self.training_telemetry = SimpleNamespace(enabled=enabled)
+
+    enabled = CallbackTestTrainer(True)
+    callback_package.add_integration_callbacks(enabled)
+    callbacks = enabled.callbacks["on_fit_epoch_end"]
+    assert route_callback in callbacks
+    assert callbacks.index(route_callback) < callbacks.index(tensorboard_callback)
+    restore_callback = callbacks[-1]
+    assert restore_callback.__name__ == "on_fit_epoch_end_restore"
+    assert callbacks.index(tensorboard_callback) < callbacks.index(restore_callback)
+
+    disabled = CallbackTestTrainer(False)
+    callback_package.add_integration_callbacks(disabled)
+    assert route_callback not in disabled.callbacks["on_fit_epoch_end"]
+    assert tensorboard_callback in disabled.callbacks["on_fit_epoch_end"]
 
 
 def test_disabled_telemetry_exposes_no_tensorboard_metrics():
