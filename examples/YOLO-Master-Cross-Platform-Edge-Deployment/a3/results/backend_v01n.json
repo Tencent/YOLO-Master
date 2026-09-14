@@ -1,0 +1,32 @@
+{
+  "model": "/data/YOLO-Master/YOLO-Master-v0.1-N.pt",
+  "onnx": "runs/a3/v01n/YOLO-Master-v0.1-N.onnx",
+  "protocol": "ultralytics .val imgsz=640 batch=1 split=val (a3/config/coco-a3.yaml)",
+  "repairs": {
+    "add_residual_forced_false": 3,
+    "esmoe_dense_forced": false
+  },
+  "pytorch": {
+    "mAP50": 0.59047,
+    "mAP50_95": 0.42504,
+    "val_s": 124.5
+  },
+  "onnxruntime": {
+    "version": "1.20.2",
+    "providers_available": [
+      "TensorrtExecutionProvider",
+      "CUDAExecutionProvider",
+      "CPUExecutionProvider"
+    ],
+    "providers_loaded": [
+      "CUDAExecutionProvider",
+      "CPUExecutionProvider"
+    ]
+  },
+  "ort": {
+    "mAP50": 0.58907,
+    "mAP50_95": 0.42452,
+    "val_s": 59.3,
+    "delta_mAP50_95": -0.00052
+  }
+}
