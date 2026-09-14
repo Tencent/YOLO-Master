@@ -1,6 +1,6 @@
 # Routing Interpretability Toolkit
 
-YOLO-Master provides a shared diagnostic API for MoE, MoA, MoT, and MoLoRA routing. The toolkit observes existing router outputs and `last_routing_snapshot` state through temporary hooks; it does not add model parameters, checkpoint fields, or deployment behavior.
+YOLO-Master provides a shared diagnostic API for MoE, MoA, MoT, Latent, and MoLoRA routing. The toolkit observes existing router outputs and `last_routing_snapshot` state through temporary hooks; it does not add model parameters, checkpoint fields, or deployment behavior.
 
 ## Python API
 
@@ -23,6 +23,9 @@ visualizations = interpreter.save_routing_visualizations(
 # Read normalized usage, entropy, Gini, dominant expert, and dead experts.
 summaries = interpreter.collect_layer_summaries(heatmaps=heatmaps)
 collapse = interpreter.detect_routing_collapse(heatmaps=heatmaps)
+
+# Export one versioned, JSON-safe record per observed routed layer.
+records = interpreter.routing_snapshot_records(heatmaps=heatmaps, step=0, mode="eval")
 
 # Aggregate which input characteristics activate each expert.
 specialization = interpreter.analyze_expert_specialization(dataloader, num_samples=1000)
@@ -51,6 +54,12 @@ python tools/routing_interpreter.py \
 
 The command writes spatial `*_confidence_heatmap.png`, `*_expert_<n>_heatmap.png`, and `*_assignment_map.png` overlays for spatial routers. Global routers write `*_routing_distribution.png` instead. It also writes a dashboard and a `routing_report.json` containing shapes, mean usage, visualization artifact paths, collapse metrics, and layer summaries. Use an exact layer name to narrow the capture and optionally measure a counterfactual:
 
+Single-image mode also writes `routing_snapshot.jsonl`. Each `yolo_master.routing_snapshot.v1` row contains the family, layer, execution context, expert count, top-k, normalized usage, optional probability shape, spatial capability, entropy, Gini, dominant share, dead experts, collapse status, and auxiliary-loss availability. Consumers should reject unsupported schema versions instead of guessing field meanings.
+
+## E3 demonstration
+
+The [two-minute E3 routing-lens demonstration](../assets/e3-routing-lens/e3-p2-demo.zh-CN.mp4) shows real UI state changes for trained MOT/MOA spatial maps, appearance sensitivity, layer attribution, absolute probability error, scatter analysis, and per-layer expert usage. Its Chinese captions are burned with a CJK-capable font; the [sidecar](../assets/e3-routing-lens/e3-p2-demo.zh-CN.srt), [artifact manifest](../assets/e3-routing-lens/e3-p2-demo.json), and [three-frame proof](../assets/e3-routing-lens/e3-p2-caption-proof.png) make the media auditable. The demo is evidence for the observer and visualization path; it is not a detector-accuracy benchmark.
+
 ```bash
 python tools/routing_interpreter.py best.pt image.jpg \
   --layer model.4.m.0 \
@@ -65,3 +74,4 @@ python tools/routing_interpreter.py best.pt image.jpg \
 - A collapse flag combines dominant share, normalized Gini, normalized entropy, and dead-expert checks. Thresholds should be calibrated for dense MoA and sparse top-k routers separately.
 - Image-level routers produce expert distributions (`[B, E]`), not image heatmaps; without spatial evidence, assigning colors to pixels would be misleading.
 - Spatial routers produce continuous confidence and per-expert activation heatmaps plus a categorical top-1 assignment map (`[B, E, H, W]`). Values are upsampled from the router grid into the actual model-input geometry before being overlaid.
+
