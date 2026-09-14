@@ -16,7 +16,7 @@ C3 最终交付 PR 正文（分支 c3-vpeft-smoke → base Tencent:main，**新�
 - 可恢复的矩阵调度：只挑显存 <1.5G 且利用率 <30% 的卡、按矩阵状态续跑、已完成单元不重跑，逐单元原始产物落盘。
 - planner 决策审计：3 策略 × 2 数据集 × 3 seed 全部 ACCEPT，记录 target 数、rank、容量排除层与检测头解冻参数。
 - seed 稳定性判定：3 个异常单元经补跑区分为「偶发 seed」与「该 (seed, 配置) 下的确定性行为」。
-- 一个真实上游缺陷的定位与修复：容量约束缺失导致 V-PEFT 静默降级 legacy planner，源码修复（2 commit / 8 文件 + 8 个单测）可另行提交 PR，不占用本 PR。
+- 两个真实上游缺陷的定位与修复，已随本 PR 提交：V-PEFT 求解器 rank 投影与层容量校验不对齐导致硬抛 `ValueError`，以及显式 target list 下遗漏层未被冻结。共 2 个 commit，改 `ultralytics/` 5 个文件，新增 14 个单测；性质是 bug fix + 护栏加固，不触碰 PEFT 算法本身，`nn/peft/molora/` 一行未动。
 
 结论是有限定的：参数效率的优势是数量级的（vpeft 只训练 116,736 个参数，全参的 4.15%，显存低约 1.15G），代价是 NEU 上 mAP50 低 0.073、DeepPCB 低 0.108，且 seed 稳健性明显不如全量微调（sd 0.052 / 0.072 对 0.014 / 0.000）。同样 100 轮，三种策略墙钟时长接近（45–55 分钟/单元），没有取得训练加速，瓶颈在数据管线。因此本轮不主张「PEFT 全面优于全量微调」，只主张受限参数/显存预算下的数量级参数效率。
 
@@ -24,7 +24,7 @@ C3 最终交付 PR 正文（分支 c3-vpeft-smoke → base Tencent:main，**新�
 |---|---|---|
 | P0 | 环境重建、两个数据集准备、服务器化 runner 与三策略冒烟、planner 源码笔记 | 两个数据集都跑通 V-PEFT，planner 决策与护栏日志可查 |
 | P1 | 3 策略 × 3 seed × 2 数据集同预算矩阵、统计与配对差 | 参数效率数量级成立（4.15%）；精度与 seed 稳健性有代价；时长无差异 |
-| P2 | 小样本曲线（未做）+ planner 真实缺陷定位与修复 | 走任务书允许的「发现并修复真实 bug」一支，源码修复另开 PR |
+| P2 | 小样本曲线（未做）+ planner 真实缺陷定位与修复 | 走任务书允许的「发现并修复真实 bug」一支，修复已随本 PR 提交（2 commit / 5 文件 / 14 单测） |
 
 ## P0：打通 V-PEFT 与规划日志
 
@@ -90,17 +90,17 @@ NEU 的 0.694 是剔除偶发 seed 2024 后的稳健口径；不剔除时 3 seed
 - 统计与审计：`stage4_analysis/comparison_tables.md`、`planner_audit_summary.md`、`analysis_stats.py`、`p2/`
 - 复现包（命令模板 / 路径模板 / 结果快照 / 局限）：`stage5_pr_delivery/reproduction/`
 - 汇报材料：`stage5_pr_delivery/C3_结项汇报_初稿.pptx|.pdf` 与生成脚本 `gen_slides.py`
-- 上游修复的说明文案（如需另开源码 PR）：`stage5_pr_delivery/pr_body_capacity_guard.md`
+- 源码修复的独立说明文案（因已并入本 PR 而未启用）：`stage5_pr_delivery/pr_body_capacity_guard.md`
 
 原始 `runs/`（逐 epoch 曲线、checkpoint）、数据集二进制与缓存不入库（见 `scripts/c3_vpeft/.gitignore`），入库的是脚本 + 汇总表 + 文档；需要逐 epoch 曲线时按 `reproduction/configs/train_commands_example.sh` 重跑。
 
 ## VALIDATION
 
-本 PR 只新增文档与脚本（`smoke/c3/` 5 个文件 + `scripts/c3_vpeft/` 50 个文件），不改动 `ultralytics/` 源码与 `tests/`，因此不涉及仓库测试集的增删。可复查的是训练与汇总链路本身：
+本 PR 的主体是文档与脚本（`smoke/c3/` 5 个文件 + `scripts/c3_vpeft/` 50 个文件），另含验证过程中定位到的两处 `ultralytics/` 修复（5 个文件）与其单测（`tests/` 新增 2 个文件、适配改 1 个）。可复查的有两部分：训练与汇总链路，以及源码修复本身是否成立：
 
 - 逐单元汇总 `stage3_matrix/evidence_summary.csv|json` 记录每个单元的 exit_code、best_epoch、mAP50(best)、mAP50-95(best)、显存峰值、planner 开关与预算，矩阵定义在 `matrix.json`；`collect_evidence.py` 从本地原始日志重算这两份表。
 - `stage4_analysis/analysis_stats.py` 从 `evidence_summary.json` 重算 mean / sd / 95%CI 与配对差，产物为 `comparison_tables.md`。
-- 源码级验证在源码修复 PR（8 个新增单测 + 相关回归用例），不在本 PR 范围。
+- 源码级验证随本 PR 提交：`tests/test_vpeft_capacity_guard.py`（8 个用例，覆盖容量护栏的降级、过滤与报错路径）与 `tests/test_lora_fallback_effective_config.py`（6 个用例，覆盖显式 target list 下遗漏层的冻结），`tests/test_vpeft.py` 同步做了一处适配修改。
 
 ## 已知局限与结论边界
 
@@ -112,7 +112,7 @@ NEU 的 0.694 是剔除偶发 seed 2024 后的稳健口径；不剔除时 3 seed
 
 ## 说明
 
-本 PR 不改动 `ultralytics/` 源码与 `tests/`，新增 `smoke/c3/`（阶段一准入冒烟与数据准备，5 个文件）与 `scripts/c3_vpeft/`（阶段一至五交付物，50 个文件）。分支基线为 `ba7e4b8`（早于当前 main `af961b9`），合并前按需 rebase 到最新 main。源码修复另开 PR 提交，不影响本 PR 的交付内容。
+本 PR 新增 `smoke/c3/`（阶段一准入冒烟与数据准备，5 个文件）、`scripts/c3_vpeft/`（阶段一至五交付物，50 个文件），并纳入验证过程中定位到的两处 ultralytics 修复（`vpeft/placement_plan.py`、`vpeft/constraints.py`、`vpeft/__init__.py`、`utils/lora/api.py`、`utils/lora/fallback.py`，共 5 个文件）与 `tests/` 新增的 2 个测试文件（14 个用例）。修复性质为 bug fix + 护栏加固，**不涉及 PEFT 算法本身**，`ultralytics/nn/peft/molora/` 一行未动。合并前按需 rebase 到最新 main。
 
 ## PPT
 
