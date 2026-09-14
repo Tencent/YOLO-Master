@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Archive finished training runs into the D2 evidence directory and summarize them into one comparable table.
 
@@ -23,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -42,6 +42,10 @@ DEFAULT_AXIS_KEYS = {
     "foundation_target_levels",
     "foundation_multiscale",
 }
+
+# Within one named arm only run identity may vary. This catches an accidental weight or model change between seeds,
+# even though those fields are valid axes when different arms are compared.
+WITHIN_ARM_AXIS_KEYS = {"name", "seed", "save_dir"}
 
 # Columns worth putting in the summary, mapped to the short headers used in the table.
 SUMMARY_COLUMNS = {
@@ -131,6 +135,31 @@ def find_confounds(runs: list[dict], axis_keys: set[str]) -> list[str]:
     return problems
 
 
+def find_within_arm_confounds(runs: list[dict]) -> list[str]:
+    """Report resolved-arg differences between seeds assigned to the same arm.
+
+    A run name ending in ``-s<seed>`` identifies its arm. Runs without that suffix remain independent and are not
+    compared as a group.
+
+    Args:
+        runs (list[dict]): Collected run records, each carrying a run name and an ``args`` mapping.
+
+    Returns:
+        (list[str]): Arm-prefixed descriptions of fields that drifted between seeds.
+    """
+    groups: dict[str, list[dict]] = {}
+    for run in runs:
+        arm = re.sub(r"-s\d+(?:-\d+)?$", "", run["run"])
+        groups.setdefault(arm, []).append(run)
+
+    problems = []
+    for arm, arm_runs in sorted(groups.items()):
+        if len(arm_runs) < 2:
+            continue
+        problems.extend(f"{arm}.{problem}" for problem in find_confounds(arm_runs, WITHIN_ARM_AXIS_KEYS))
+    return problems
+
+
 def collect(run_dir: Path, label: str | None) -> dict:
     """Archive one run's evidence files and extract its final-epoch numbers."""
     results_csv = run_dir / "results.csv"
@@ -198,6 +227,7 @@ def main() -> int:
 
     table = render_table(runs)
     confounds = find_confounds(runs, DEFAULT_AXIS_KEYS | set(args.axis))
+    confounds += find_within_arm_confounds(runs)
 
     body = [f"# {args.label or 'D2'} run summary", "", table, "", "## 事后无混杂核查", ""]
     if confounds:
@@ -208,9 +238,7 @@ def main() -> int:
         body.append("**在解释上表任何差异之前，必须先解释这些字段为何不同。**")
     else:
         body.append("各 run 的 resolved args 仅在声明的对照轴内不同。")
-    body += ["", "## 归档", ""] + [
-        f"- `{run['run']}` → `{run['archived'].relative_to(HERE)}/`" for run in runs
-    ]
+    body += ["", "## 归档", ""] + [f"- `{run['run']}` → `{run['archived'].relative_to(HERE)}/`" for run in runs]
 
     out = Path(args.out) if args.out else RESULTS / f"{args.label or 'runs'}_summary.md"
     out.parent.mkdir(parents=True, exist_ok=True)

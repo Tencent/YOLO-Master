@@ -69,7 +69,7 @@ def main() -> None:
         default=None,
         help="run just these run_ids, comma-separated (e.g. off-s17,a-s17) -- for the staged pilot",
     )
-    parser.add_argument("--project", default="d2/p1_voc", help="must match `project` in the configs")
+    parser.add_argument("--project", default="d2/p1voc", help="must match `project` in the configs")
     parser.add_argument(
         "--matrix",
         default=str(HERE / "p1_voc_matrix.csv"),
@@ -77,7 +77,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--configs",
-        default=".",
+        default="p1_voc",
         help="sub-directory of experiments/d2/configs holding this matrix's arms (e.g. p1_coco)",
     )
     args = parser.parse_args()

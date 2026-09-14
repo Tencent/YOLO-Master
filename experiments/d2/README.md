@@ -8,9 +8,9 @@
 | **教师** | `facebook/dinov3-vits16-pretrain-lvd1689m`（冻结，仅训练期） |
 | **学生** | `yolo26-master-n`，蒸馏 P4（第 19 层） |
 | **P0 状态** | ✅ 已闭环（2026-08-25，CUDA）；证据 [`results/p0_train_ok/`](results/p0_train_ok/) |
-| **权重标定** | ✅ 已闭环。§5.5 扫描的准则因**梯度正交**而结构上无法收敛（诊断见 [`kd_gradient_analysis.md §6.5.2`](docs/p1/kd_gradient_analysis.md)）；改用梯度比，实测 **`w* = 3.90`**，建议锁 **`w = 4.0`** |
+| **权重标定** | ✅ 已闭环。最终 VOC 权重为 A `3.34277`、B `3.00161`、C `3.11066`；完整精度见 [`findings.md`](docs/p1/findings.md) |
 | **可学性验证** | ✅ 探针 B 通过：KD 目标留出集降 **59.4%**，backbone 贡献 53%，不是投影器把戏（[`results/probe_b_learnability.json`](results/probe_b_learnability.json)） |
-| **P1 状态** | 🟢 **已解除阻塞**，可按 `foundation_loss_weight: 4.0` 开跑。两项需在报告中声明的未决事项见 [`kd_gradient_analysis.md §6.7`](docs/p1/kd_gradient_analysis.md) |
+| **P1 状态** | ✅ **已完成**：VOC A/B/C/off × 3 seeds，共 12 次 400-epoch 运行；结论见 [`findings.md`](docs/p1/findings.md) |
 | **Owner** | *待定（尚未正式组队）* |
 
 ## 目录结构
@@ -23,11 +23,12 @@ experiments/d2/
 │   ├── design.md          跨阶段设计文档、判读线、归因顺序
 │   ├── limitations.md     已知局限与降级方案
 │   ├── p0/                P0：跑通链路（✅ 已闭环）
-│   ├── p1/                P1：2×2 对照矩阵 + 权重标定（🟢 已解除阻塞）
+│   ├── p1/                P1：2×2 对照矩阵 + 权重标定（✅ 已完成）
 │   └── p2/                P2：消融（未开始）
-├── scripts/               四个脚本，见下方「脚本」表
-├── configs/               P1 五份配置
-├── experiment_matrix.csv  P1 矩阵
+├── scripts/               五个脚本，见下方「脚本」表
+├── configs/p1_voc/        P1 VOC 五份配置
+├── env/                   训练依赖与硬件快照
+├── p1_voc_matrix.csv      P1 VOC 矩阵
 └── results/               归档证据
 ```
 
@@ -36,7 +37,7 @@ experiments/d2/
 | 阶段 | 状态 | 入口 |
 |---|---|---|
 | P0 | ✅ 已闭环 | [`docs/p0/`](docs/p0/README.md) |
-| P1 | 🟢 已解除阻塞，未开跑 | [`docs/p1/`](docs/p1/README.md) |
+| P1 | ✅ 已完成 | [`docs/p1/findings.md`](docs/p1/findings.md) |
 | P2 | ⬜ 未开始 | [`docs/p2/`](docs/p2/README.md) |
 
 ## 文档
@@ -45,8 +46,8 @@ experiments/d2/
 |---|---|
 | [`kd_explained.md`](docs/kd_explained.md) | **先读这份**：蒸馏机制的白话讲解，不假设 YOLO / DINOv3 / KD 背景 |
 | [`design.md`](docs/design.md) | HEAD 能力地图、设计选择与依据、P0 定义、**判读线**、负结果归因顺序 |
-| [`experiment_matrix.csv`](experiment_matrix.csv) | P1 完整 2×2 矩阵：4 格 + 共享基线 × 3 seed = 15 次运行 |
-| [`configs/`](configs/) | P1 五份配置；除 `name` 与"唯一变量"区块外逐字相同，由 `validate_pair.py` 机械校验 |
+| [`p1_voc_matrix.csv`](p1_voc_matrix.csv) | P1 VOC 完整 2×2 矩阵；本轮完成 A/B/C + 共享基线 × 3 seed = 12 次运行 |
+| [`configs/p1_voc/`](configs/p1_voc/) | P1 VOC 五份配置；由 `validate_pair.py` 机械校验预算与对照轴 |
 | [`kd_gradient_analysis.md`](docs/p1/kd_gradient_analysis.md) | **权重标定为什么失败**：预注册准则的判读结果、KD 项未被优化的证据、`task_ratio` 作为影响力代理无效的机制，以及改用梯度比的标定方案 |
 | [`limitations.md`](docs/limitations.md) | 已知局限、环境限制、风险触发与降级方案 |
 | [`results/`](results/) | 归档证据。仓库根 `.gitignore` 忽略 `results.csv` / `args.yaml` / `*.log`，故归档时改名为 `metrics.csv` / `resolved_args.yaml` |
@@ -59,8 +60,9 @@ experiments/d2/
 | [`validate_pair.py`](scripts/validate_pair.py) | **配置有没有混杂**——五份配置除对照轴外是否逐字相同 | 改完配置后 |
 | [`collect_runs.py`](scripts/collect_runs.py) | **跑出了什么**——归档 + 跨 run 指标对比 + **事后**混杂核查 | 每批实验**跑完后** |
 | [`kd_gradient_probe.py`](scripts/kd_gradient_probe.py) | **KD 到底推动了学生多少**——各损失形式的梯度尺度（`--mode kd`，无需 GPU）；`w` 该取多大（`--mode ratio`，需教师权重） | 锁定 `foundation_loss_weight` 之前 |
+| [`plot_p1_findings.py`](scripts/plot_p1_findings.py) | **结果趋势是什么**——从归档 CSV 重建学习曲线、配对差值和最终 seed 图 | 更新 P1 归档后 |
 
-三者的分工是刻意的：`validate_pair.py` 看的是配置文件，`collect_runs.py` 看的是跑完的
+两个检查的分工是刻意的：`validate_pair.py` 看的是配置文件，`collect_runs.py` 看的是跑完的
 `args.yaml`——后者才记录了 trainer 真正解析出的值（`optimizer: auto` 展开成什么、
 命令行覆盖了什么、没写的字段取了哪个默认值）。**配置一致不等于实际跑的一致**，
 所以两道检查都要过。

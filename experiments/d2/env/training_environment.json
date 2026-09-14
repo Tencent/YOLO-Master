@@ -1,0 +1,24 @@
+{
+  "dataset": "VOC",
+  "ultralytics": "8.4.101",
+  "python": "3.12.14",
+  "pytorch": "2.11.0+cu128",
+  "cuda_device": 0,
+  "gpu": "NVIDIA GeForce RTX 3090",
+  "gpu_memory_mib": 24124,
+  "amp": false,
+  "deterministic": true,
+  "workers": 32,
+  "teachers": {
+    "dinov3": {
+      "model": "facebook/dinov3-vits16-pretrain-lvd1689m",
+      "revision": "114c1379950215c8b35dfcd4e90a5c251dde0d32"
+    },
+    "siglip2": {
+      "model": "google/siglip2-base-patch16-256",
+      "revision": "3f9f96cb90da5dbc758b01813f2f6f1aee24c1ab"
+    }
+  },
+  "source": "Ultralytics startup banner and frozen P1 VOC matrix",
+  "training_git_sha": null
+}
