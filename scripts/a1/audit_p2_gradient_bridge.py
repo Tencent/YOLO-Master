@@ -14,6 +14,9 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 
 
+from scripts.a1.diagnostic_hooks import capture_head_inputs
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, required=True)
@@ -74,79 +77,77 @@ def main():
         before = {n: t.clone() for n, t in model.state_dict().items()}
         names, parameters = zip(*[(n, p) for n, p in model.named_parameters() if p.requires_grad])
         head = model.model[-1]
-        inputs = []
-
-        def capture(_module, hook_inputs, captured=inputs):
-            captured[:] = hook_inputs[0]
-
-        handle = head.register_forward_pre_hook(capture)
-        criterion = model.init_criterion()
-        native = getattr(criterion, "native_criterion", criterion)
-        assert (native.one2one.assigner.topk, native.one2one.assigner.topk2) == (7, 1)
-        for i in range(args.images):
-            image_index = args.offset + i
-            torch.manual_seed(260829 + image_index)
-            batch = dataset.collate_fn([dataset[image_index]])
-            batch["img"] = batch["img"].float() / 255
-            preds = model(batch["img"])
-            baseline_grads = {}
-            row = {
-                "cell": cell,
-                "image_index": image_index,
-                "image": dataset.im_files[image_index],
-                "image_sha256": hashlib.sha256(Path(dataset.im_files[image_index]).read_bytes()).hexdigest(),
-                "gt": len(batch["cls"]),
-                "branches": {},
-            }
-            for tag, branch_preds, loss_fn in (
-                ("one2many", preds["one2many"], native.one2many),
-                ("native_one2one", preds["one2one"], native.one2one),
-                (
-                    "bridge_one2one",
-                    head.forward_head([x.detach() + 0.1 * (x - x.detach()) for x in inputs], **head.one2one),
-                    native.one2one,
-                ),
-            ):
-                total, _ = loss_fn.loss(branch_preds, batch)
-                grads = torch.autograd.grad(total.sum(), parameters, retain_graph=True, allow_unused=True)
-                groups = {}
-                for group, select in {
-                    "factor": lambda n: int(n.split(".")[1]) in {4, 6, 8},
-                    "router": lambda n: "routing" in n or "router" in n,
-                    "one2one_head": lambda n: "one2one_" in n,
-                }.items():
-                    vector = (
-                        torch.cat(
-                            [
-                                g.reshape(-1) if g is not None else torch.zeros_like(p).reshape(-1)
-                                for n, p, g in zip(names, parameters, grads)
-                                if select(n)
-                            ]
+        with capture_head_inputs(head) as inputs:
+            criterion = model.init_criterion()
+            native = getattr(criterion, "native_criterion", criterion)
+            assert (native.one2one.assigner.topk, native.one2one.assigner.topk2) == (7, 1)
+            for i in range(args.images):
+                image_index = args.offset + i
+                torch.manual_seed(260829 + image_index)
+                batch = dataset.collate_fn([dataset[image_index]])
+                batch["img"] = batch["img"].float() / 255
+                preds = model(batch["img"])
+                baseline_grads = {}
+                row = {
+                    "cell": cell,
+                    "image_index": image_index,
+                    "image": dataset.im_files[image_index],
+                    "image_sha256": hashlib.sha256(Path(dataset.im_files[image_index]).read_bytes()).hexdigest(),
+                    "gt": len(batch["cls"]),
+                    "branches": {},
+                }
+                for tag, branch_preds, loss_fn in (
+                    ("one2many", preds["one2many"], native.one2many),
+                    ("native_one2one", preds["one2one"], native.one2one),
+                    (
+                        "bridge_one2one",
+                        head.forward_head([x.detach() + 0.1 * (x - x.detach()) for x in inputs], **head.one2one),
+                        native.one2one,
+                    ),
+                ):
+                    total, _ = loss_fn.loss(branch_preds, batch)
+                    grads = torch.autograd.grad(total.sum(), parameters, retain_graph=True, allow_unused=True)
+                    groups = {}
+                    for group, select in {
+                        "factor": lambda n: int(n.split(".")[1]) in {4, 6, 8},
+                        "router": lambda n: "routing" in n or "router" in n,
+                        "one2one_head": lambda n: "one2one_" in n,
+                    }.items():
+                        vector = (
+                            torch.cat(
+                                [
+                                    g.reshape(-1) if g is not None else torch.zeros_like(p).reshape(-1)
+                                    for n, p, g in zip(names, parameters, grads)
+                                    if select(n)
+                                ]
+                            )
+                            if any(select(n) for n in names)
+                            else torch.zeros(1)
                         )
-                        if any(select(n) for n in names)
-                        else torch.zeros(1)
-                    )
-                    groups[group] = {"l1": float(vector.abs().sum()), "l2": float(vector.norm())}
-                    if tag == "one2many":
-                        baseline_grads[group] = vector.detach().clone()
+                        groups[group] = {"l1": float(vector.abs().sum()), "l2": float(vector.norm())}
+                        if tag == "one2many":
+                            baseline_grads[group] = vector.detach().clone()
+                        if tag == "bridge_one2one":
+                            reference = baseline_grads[group]
+                            norm = float(vector.norm() * reference.norm())
+                            groups[group]["cosine_with_one2many"] = (
+                                float(vector.dot(reference)) / norm if norm else None
+                            )
+                    row["branches"][tag] = {"loss": float(total.detach().sum()), "gradients": groups}
                     if tag == "bridge_one2one":
-                        reference = baseline_grads[group]
-                        norm = float(vector.norm() * reference.norm())
-                        groups[group]["cosine_with_one2many"] = float(vector.dot(reference)) / norm if norm else None
-                row["branches"][tag] = {"loss": float(total.detach().sum()), "gradients": groups}
-                if tag == "bridge_one2one":
-                    row["forward_max_error"] = max(
-                        float((branch_preds[k] - preds["one2one"][k]).detach().abs().max()) for k in ("boxes", "scores")
-                    )
-                    assert row["forward_max_error"] == 0.0
-                del grads, total
-            evidence["rows"].append(row)
-            del preds, baseline_grads
-            inputs.clear()
-            if (i + 1) % 8 == 0:
-                save()
-                print(f"{cell}: {i + 1}/{args.images}", flush=True)
-        handle.remove()
+                        row["forward_max_error"] = max(
+                            float((branch_preds[k] - preds["one2one"][k]).detach().abs().max())
+                            for k in ("boxes", "scores")
+                        )
+                        assert row["forward_max_error"] == 0.0
+                    del grads, total
+                evidence["rows"].append(row)
+                del preds, baseline_grads
+                inputs.clear()
+                if (i + 1) % 8 == 0:
+                    save()
+                    print(f"{cell}: {i + 1}/{args.images}", flush=True)
+
         changed = [n for n, t in model.state_dict().items() if not torch.equal(t, before[n])]
         evidence["checkpoints"][cell]["state_changed_keys"] = changed
         # Routing counters may advance in train mode. Parameters and frozen BN/base may not.

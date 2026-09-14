@@ -7,10 +7,14 @@ import hashlib
 import json
 import os
 import sys
+from contextlib import ExitStack
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
+
+
+from scripts.a1.diagnostic_hooks import install_first_forward_check
 
 
 def sha256(path):
@@ -161,16 +165,7 @@ def main():
         )
         print("P2_BRIDGE_RUNTIME " + json.dumps(payload), flush=True)
 
-        def first_forward(module, inputs, outputs):
-            flags = [t.requires_grad for t in outputs["one2one"]["feats"]]
-            if any(flags) != bool(alpha):
-                raise RuntimeError(f"first-batch intervention inactive: alpha={alpha}, flags={flags}")
-            (Path(trainer.save_dir) / "p2_first_forward.json").write_text(
-                json.dumps({"alpha": alpha, "one2one_feature_requires_grad": flags, "training": module.training}) + "\n"
-            )
-            handle.remove()
-
-        handle = head.register_forward_hook(first_forward)
+        install_first_forward_check(head, alpha, Path(trainer.save_dir) / "p2_first_forward.json", hook_cleanup)
 
     def check_batch(trainer):
         validate_batch_budget(trainer, request)
@@ -196,6 +191,7 @@ def main():
             raise RuntimeError("frozen parameters or BatchNorm state changed")
         verify_sources(request)
 
+    hook_cleanup = ExitStack()
     model.add_callback("on_pretrain_routine_end", prepare)
     model.add_callback("on_train_batch_start", check_batch)
     model.add_callback("on_train_epoch_end", check_epoch)

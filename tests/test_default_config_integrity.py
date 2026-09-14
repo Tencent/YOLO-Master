@@ -7,17 +7,16 @@ import yaml
 from ultralytics.cfg import check_cfg, get_cfg
 from ultralytics.nn.peft.molora import MoLoRAConfig
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def _yaml_keys(path: Path):
-    values = yaml.safe_load(path.read_text())
+    values = yaml.safe_load(path.read_text(encoding="utf-8"))
     return values
 
 
 def test_default_yaml_has_unique_top_level_keys():
-    text = (ROOT / "ultralytics/cfg/default.yaml").read_text().splitlines()
+    text = (ROOT / "ultralytics/cfg/default.yaml").read_text(encoding="utf-8").splitlines()
     keys = []
     for line in text:
         stripped = line.strip()
