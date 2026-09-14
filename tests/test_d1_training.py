@@ -1044,3 +1044,33 @@ def test_runtime_overflow_records_failure_without_skipping_silently(tmp_path):
     report = json.loads((trainer.run_output / "failed-update-rank-0.json").read_text())
     assert report["gradient_nonfinite"] and not report["updated"]
     assert report["optimizer_steps"] == report["actual_steps"] == report["ema_updates"] == [0, 0]
+
+
+def test_runtime_fp32_export_preserves_live_routing_state(tmp_path, monkeypatch):
+    from types import MethodType
+
+    from ultralytics.models.yolo.detect.foundation_train import D1FoundationDetectionTrainer
+
+    trainer = _runtime_trainer(tmp_path / "routing-export")
+    trainer.epoch = 4
+    trainer.best_fitness = 1.0
+    trainer.checkpoint_copy_context = MethodType(D1FoundationDetectionTrainer.checkpoint_copy_context, trainer)
+    saved = []
+    for model in (trainer.model, trainer.ema.ema):
+        model._last_routing_logits = model.weight * 2
+        saved.append(model._last_routing_logits)
+
+    def shared_save(self):
+        self.wdir.mkdir(parents=True, exist_ok=True)
+        torch.save({"epoch": self.epoch}, self.last)
+        return True
+
+    monkeypatch.setattr(_RuntimeBase, "save_model", shared_save)
+    trainer.save_model()
+    for model, original in zip((trainer.model, trainer.ema.ema), saved):
+        assert model._last_routing_logits is original
+    for path in (trainer.last, trainer.wdir / "epoch-005.pt"):
+        checkpoint = torch.load(path, weights_only=False)
+        for key, source in (("model", trainer.model), ("ema", trainer.ema.ema)):
+            assert checkpoint[key]._last_routing_logits is None
+            assert torch.equal(checkpoint[key].weight, source.weight)

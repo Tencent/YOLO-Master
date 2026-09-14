@@ -6,6 +6,7 @@ import io
 import math
 import os
 import pickle
+from contextlib import nullcontext
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
@@ -219,12 +220,11 @@ class TrainingRecoveryController:
             adapter_controller.sync_ema_treatment()
         buffer = io.BytesIO()
         source_model = unwrap_model(trainer.model)
-        self.reset_runtime(source_model)
         ema_source = unwrap_model(trainer.ema.ema) if getattr(trainer, "ema", None) else None
-        if ema_source is not None:
-            self.reset_runtime(ema_source)
-        model = deepcopy(source_model) if include_online_model else None
-        ema = deepcopy(ema_source) if ema_source is not None else None
+        copy_context = getattr(trainer, "checkpoint_copy_context", nullcontext)
+        with copy_context():
+            model = deepcopy(source_model) if include_online_model else None
+            ema = deepcopy(ema_source) if ema_source is not None else None
         if ema is not None:
             self.replace_nonfinite_tensors(ema, source_model)
         for snapshot in (model, ema):

@@ -10,6 +10,7 @@ import pickle
 import random
 import time
 import uuid
+from contextlib import nullcontext
 from copy import deepcopy
 from pathlib import Path
 
@@ -200,6 +201,12 @@ class RunMixin:
         if not getattr(self, "_run_enabled", False):
             return super().check_amp_compatibility()
         return self.device.type == "cuda" and torch.cuda.is_bf16_supported()
+
+    def _optimizer_step_cursor_before_epoch(self, epoch, num_batches):
+        """Keep the measured epoch-boundary policy local to D1 runs."""
+        if not getattr(self, "_run_enabled", False):
+            return super()._optimizer_step_cursor_before_epoch(epoch, num_batches)
+        return epoch * num_batches - 1
 
     def training_autocast(self):
         """Keep BF16 local to this run; model parameters and optimizer state stay FP32."""
@@ -691,13 +698,15 @@ class RunMixin:
         if result:
             path = Path(self.wdir) / f"epoch-{self.epoch + 1:03d}.pt" if (self.epoch + 1) % 5 == 0 else None
             checkpoint = torch.load(self.last, map_location="cpu", weights_only=False)
-            for key, source in (("model", unwrap_model(self.model)), ("ema", getattr(self.ema, "ema", None))):
-                checkpoint[key] = None
-                if source is not None:
-                    if any("teacher" in name.lower() for name in source.state_dict()):
-                        raise ValueError("Teacher state is forbidden in D1 checkpoints")
-                    checkpoint[key] = deepcopy(source).cpu().float()
-                    checkpoint[key].criterion = None
+            copy_context = getattr(self, "checkpoint_copy_context", nullcontext)
+            with copy_context():
+                for key, source in (("model", unwrap_model(self.model)), ("ema", getattr(self.ema, "ema", None))):
+                    checkpoint[key] = None
+                    if source is not None:
+                        if any("teacher" in name.lower() for name in source.state_dict()):
+                            raise ValueError("Teacher state is forbidden in D1 checkpoints")
+                        checkpoint[key] = deepcopy(source).cpu().float()
+                        checkpoint[key].criterion = None
             if path is not None and path.exists():
                 previous = torch.load(path, map_location="cpu", weights_only=False)
                 for key in ("model", "ema"):

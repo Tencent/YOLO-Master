@@ -204,12 +204,36 @@ def test_train_destroys_group_on_error():
     destroy.assert_called_once_with()
 
 
-def test_restarted_epoch_optimizer_cursor_allows_first_batch_step():
-    epoch, num_batches = 7, 4
+@pytest.mark.parametrize("epoch", [0, 7])
+@pytest.mark.parametrize("accumulate", [1, 4])
+def test_ordinary_resume_cursor_matches_upstream(epoch, accumulate):
+    num_batches = 10
     cursor = BaseTrainer._optimizer_step_cursor_before_epoch(epoch, num_batches)
+    assert cursor == -1
+    actual, expected = [], []
+    legacy = -1
+    for index in range(num_batches):
+        ni = epoch * num_batches + index
+        if ni - cursor >= accumulate or index == num_batches - 1:
+            actual.append(index)
+            cursor = ni
+        if ni - legacy >= accumulate or index == num_batches - 1:
+            expected.append(index)
+            legacy = ni
+    assert actual == expected
 
-    assert cursor == epoch * num_batches - 1
-    assert epoch * num_batches - cursor == 1
+
+def test_d1_resume_cursor_is_opt_in():
+    from scripts.d1.runtime import RunMixin
+
+    class Measured(RunMixin, BaseTrainer):
+        pass
+
+    trainer = object.__new__(Measured)
+    trainer._run_enabled = False
+    assert trainer._optimizer_step_cursor_before_epoch(7, 10) == -1
+    trainer._run_enabled = True
+    assert trainer._optimizer_step_cursor_before_epoch(7, 10) == 69
 
 
 def test_nonfinite_without_checkpoint_fails(tmp_path):
@@ -754,3 +778,54 @@ def test_bootstrap_broadcasts_rank0_health_to_all_ddp_ranks(tmp_path):
         t._bootstrap_healthy_checkpoint()
     broadcast.assert_called_once()
     assert not t.healthy.exists()
+
+
+def test_ordinary_save_preserves_routing_state(tmp_path, monkeypatch):
+    trainer = bootstrap_trainer(tmp_path)
+    marker = {"observed": 7}
+    trainer.model.last_routing_snapshot = marker
+    monkeypatch.setattr(
+        TrainingRecoveryController, "reset_runtime", lambda *a: pytest.fail("Ordinary save cleared routing")
+    )
+    trainer._serialize_checkpoint(include_online_model=True)
+    assert trainer.model.last_routing_snapshot is marker
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_d1_copy_context_preserves_live_state(fail, monkeypatch):
+    from copy import deepcopy
+    from ultralytics.models.yolo.detect.foundation_train import D1FoundationDetectionTrainer
+    from ultralytics.nn.modules.moe import _common
+
+    trainer = object.__new__(D1FoundationDetectionTrainer)
+    trainer.model = nn.Linear(2, 2)
+    trainer.ema = SimpleNamespace(ema=deepcopy(trainer.model))
+    registry = {"other_model": object()}
+    monkeypatch.setattr(_common, "MOE_LOSS_REGISTRY", registry)
+    saved = []
+    for model in (trainer.model, trainer.ema.ema):
+        model.last_aux_loss = model.weight.sum()
+        model.last_routing_snapshot = {"logits": model.weight * 2}
+        saved.append((model.last_aux_loss, model.last_routing_snapshot))
+    try:
+        with trainer.checkpoint_copy_context():
+            deepcopy(trainer.model)
+            deepcopy(trainer.ema.ema)
+            if fail:
+                raise RuntimeError("copy failed")
+    except RuntimeError as error:
+        assert fail and str(error) == "copy failed"
+    for model, (aux, snapshot) in zip((trainer.model, trainer.ema.ema), saved):
+        assert model.last_aux_loss is aux
+        assert model.last_routing_snapshot is snapshot
+    assert _common.MOE_LOSS_REGISTRY is registry and len(registry) == 1
+
+
+@pytest.mark.parametrize("compile_enabled", [False, True])
+def test_default_ddp_policy_delegates(compile_enabled):
+    trainer = object.__new__(BaseTrainer)
+    trainer.args = SimpleNamespace(compile=compile_enabled)
+    resolve = MagicMock(return_value=(True, False))
+    trainer.mixture_controller = SimpleNamespace(resolve_ddp_policy=resolve)
+    assert trainer.resolve_ddp_policy() == (True, False)
+    resolve.assert_called_once_with(compile_enabled=compile_enabled)

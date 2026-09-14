@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from contextlib import contextmanager
 from copy import copy
 from pathlib import Path
 from typing import Any
@@ -235,6 +236,43 @@ class D1FoundationDetectionTrainer(DetectionTrainer):
     def plot_training_samples(self, batch: dict[str, Any], ni: int) -> None:
         """Feature batches intentionally have no RGB pixels to plot."""
         return
+
+    @contextmanager
+    def checkpoint_copy_context(self):
+        """Temporarily exclude D1 forward references without touching global registries."""
+        saved = []
+        sources = [unwrap_model(self.model)]
+        ema = getattr(self, "ema", None)
+        if ema is not None:
+            sources.append(unwrap_model(ema.ema))
+        try:
+            for model in sources:
+                for module in model.modules():
+                    for name in (
+                        "last_aux_loss",
+                        "_last_aux_loss",
+                        "last_routing_snapshot",
+                        "last_routing_diagnostics",
+                        "_last_routing_stats",
+                        "_last_routing_logits",
+                        "_last_routing_probs",
+                        "_last_routing_summary",
+                    ):
+                        if not hasattr(module, name):
+                            continue
+                        value = getattr(module, name)
+                        if name in {"last_aux_loss", "_last_aux_loss"}:
+                            if not isinstance(value, torch.Tensor) or value.grad_fn is None:
+                                continue
+                            replacement = value.detach().new_zeros(())
+                        else:
+                            replacement = {} if name in {"last_routing_snapshot", "last_routing_diagnostics"} else None
+                        saved.append((module, name, value))
+                        setattr(module, name, replacement)
+            yield
+        finally:
+            for module, name, value in reversed(saved):
+                setattr(module, name, value)
 
     def checkpoint_smoke_inputs(self, model: D1FoundationDetectionModel) -> tuple[dict[str, torch.Tensor], ...]:
         """Build deterministic cached-feature inputs for recovery checkpoint health checks."""

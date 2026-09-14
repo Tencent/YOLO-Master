@@ -474,7 +474,7 @@ VisDrone 历史准备记录为 430.581 秒，但对应脚本可跳过已有缓�
 
 ## 测试与兼容性
 
-最终提交前在同一代码基础上重新运行上述完整回归：687 passed、56 skipped、2 deselected、1 warning，179.99 秒；六个复现 CLI 的 --help 均通过。新增 MATLAB 包装器的完整 548 图复评验证见官方评分说明。
+2026-09-14 在本轮 DDP 隔离修复后重新运行上述完整回归：697 passed、56 skipped、2 deselected、1 warning，170.72 秒；六个复现 CLI 的 --help 均通过。新增 MATLAB 包装器的完整 548 图复评验证见官方评分说明。
 
 公开 MATLAB 评分入口已在完整 VisDrone val 548 张上复评 BN64 seed 0 第 40 轮：AP=7.923179115437879，全部七项 AP/AR 与原报告的绝对差 <1e-10，MATLAB R2026a 正常退出。该复核使用公开包装器、固定 toolkit 摘要及原始预测，不改匹配/AP 算法。
 
@@ -523,6 +523,28 @@ git diff --check
 提交前使用 Ruff 0.11.13 复核 45 个相关 Python 文件，ruff check、ruff format --check 以及支持文件的 codespell 检查均通过；以下完整变更质量命令退出码为 0。
 
 此前整理版本已验证 BN64/Scratch 在 10/80 类、固定初始化和 640 输入下的 CPU 状态及前向摘要一致。本轮新增显式 BF16 训练上下文、FP32 损失与验证策略；普通 Trainer 保持原精度行为。恢复身份包含精度策略、总预算和代码提交，完整测试与运行记录保存在外部工作区。
+
+### DDP 隔离与兼容性复核（2026-09-14）
+
+针对公共 Trainer 的影响范围，本轮将 D1 专用行为收敛到显式入口：
+
+- 普通 Trainer 的 DDP policy、AMP 检查与 autocast 继续调用原有实现；恢复时的梯度累积游标保持上游的 -1。
+- D1 的 epoch 边界游标、reducer 预热及精确恢复由启用运行记录的 RunMixin 显式选择；直接使用普通 DetectionTrainer 不会进入这些分支。
+- 公共 checkpoint 保存默认直接复制模型；D1 使用 checkpoint_copy_context 临时移除本模型及其 EMA 的前向图引用，复制后在 finally 中恢复。复制失败时同样恢复，不清空全局 MoE/aux 注册表。
+- D1 的 FP32 last/best/周期 checkpoint 导出复用该上下文，保持模型参数和持久 buffer；旧实验 checkpoint 与运行身份保留原样。
+
+真实双卡使用两张 A40、PyTorch 2.6.0+cu124，分别验证普通 YOLO 与 D1：
+
+| 验证 | 配置与比较对象 | 结果 |
+|---|---|---|
+| 普通 YOLO26n，无梯度累积 | seed 0；合成 train/val=20/4；128 输入；全局 batch 4；SGD、FP32、无增强；固定 3 轮调度，先跑 1 轮，再原生恢复 2 轮 | 对比 UPSTREAM_REF=af961b99b8ef80491e58cb5fd16e25ebaf3741eb，两个 rank 的全部 15 批损失与模型 tensor SHA256、更新次数及 EMA 计数一致 |
+| 普通 YOLO26n，累积 4 批 | 同上，nbs=16；每轮 5 批，覆盖末批 flush | 新训和恢复均一致；新训累计 2 次更新，恢复完成累计 6 次，两版本一致 |
+| D1 BN64 精确恢复 | COCO 实际 8 张训练图、4 张验证图及既有缓存；640 输入；全局 batch 4；seed 0；BF16 前向、FP32 损失/验证；workers=0 | 连续 2 轮与 1+1 恢复的 model、EMA、optimizer、scaler、scheduler、criterion、更新计数及两 rank 状态逐项完全一致；4 次 optimizer/EMA 更新；last.pt 严格重载通过 |
+| D1 Scratch 精确恢复 | 相同 8/4 图片和运行合同，RGB 输入 | 同上，状态差异为零，4 次 optimizer/EMA 更新，last.pt 严格重载通过 |
+
+普通 YOLO 比较的是修改前后同一 rank 的行为，不要求不同 rank 的 BatchNorm 统计相同；D1 则比较连续运行与精确恢复。以上为工程兼容性验收，精度/成本结论仍采用上文的正式实验。相关回归覆盖默认策略委托、恢复累积节奏、普通保存的状态保持、D1 成功/异常复制后的状态恢复以及 FP32 周期导出。
+
+补充的非 D1 路由模型 yolo26-master-latent-n 在当前分支完成双卡 1+2 轮训练/恢复，参数保持有限；其在线模型健康副本刷新出现非叶子 Tensor deepcopy 告警，保留上一份健康副本，last.pt 仍可用于本次原生恢复。原始 UPSTREAM_REF 的同一模型在 EMA 初始化已遇到非叶子 Tensor 复制错误，因此该模型单列为边界诊断，跨版本数值等价结论限于上表的普通 YOLO26n。D1 与普通 YOLO26n 的上述验收没有该告警。
 
 ## 基线与新增贡献
 

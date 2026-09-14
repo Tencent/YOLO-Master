@@ -685,8 +685,8 @@ class BaseTrainer:
 
     @staticmethod
     def _optimizer_step_cursor_before_epoch(epoch: int, num_batches: int) -> int:
-        """Return the global batch index immediately before an epoch starts."""
-        return epoch * num_batches - 1
+        """Preserve the upstream accumulation cursor for ordinary training/resume."""
+        return -1
 
     def _do_train(self):
         """Perform the full training loop including setup, epoch iteration, validation, and final evaluation."""
