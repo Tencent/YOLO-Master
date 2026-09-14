@@ -1,0 +1,72 @@
+{
+  "family": "MoT",
+  "checkpoint": "/mnt/workspace/YOLO-Master/examples/artifacts/mot_v10_visdrone_50e/best_for_quantization.pt",
+  "onnx": "/mnt/workspace/YOLO-Master/examples/exports/mot_v10_visdrone_fp32/mot_v10_masked_topk_fp32.onnx",
+  "routing": "dynamic masked Top-K",
+  "images": [
+    {
+      "image": "0000001_02999_d_0000005.jpg",
+      "shape": [
+        1,
+        14,
+        8400
+      ],
+      "box_mae": 0.004261776339262724,
+      "box_max": 0.332183837890625,
+      "score_mae": 8.851252459862735e-07,
+      "score_max": 0.0006387829780578613,
+      "raw_mae": 0.0012182823847979307,
+      "raw_max": 0.332183837890625,
+      "pytorch_finite": true,
+      "onnx_finite": true,
+      "pytorch_nonzero": true,
+      "onnx_nonzero": true
+    },
+    {
+      "image": "0000001_03499_d_0000006.jpg",
+      "shape": [
+        1,
+        14,
+        8400
+      ],
+      "box_mae": 0.004821124020963907,
+      "box_max": 0.2007598876953125,
+      "score_mae": 9.537706091578002e-07,
+      "score_max": 0.0009646415710449219,
+      "raw_mae": 0.0013781451852992177,
+      "raw_max": 0.2007598876953125,
+      "pytorch_finite": true,
+      "onnx_finite": true,
+      "pytorch_nonzero": true,
+      "onnx_nonzero": true
+    },
+    {
+      "image": "0000001_03999_d_0000007.jpg",
+      "shape": [
+        1,
+        14,
+        8400
+      ],
+      "box_mae": 0.0048655071295797825,
+      "box_max": 0.1304779052734375,
+      "score_mae": 5.581347863881092e-07,
+      "score_max": 0.0015329420566558838,
+      "raw_mae": 0.001390543533489108,
+      "raw_max": 0.1304779052734375,
+      "pytorch_finite": true,
+      "onnx_finite": true,
+      "pytorch_nonzero": true,
+      "onnx_nonzero": true
+    }
+  ],
+  "aggregate": {
+    "mean_box_mae": 0.0046494691632688046,
+    "mean_score_mae": 7.99010213844061e-07,
+    "max_score_diff": 0.0015329420566558838,
+    "finite_pass": true,
+    "nonzero_pass": true,
+    "box_pass": true,
+    "score_pass": true,
+    "final_pass": true
+  }
+}

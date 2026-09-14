@@ -66,9 +66,20 @@ def decode_and_nms(raw: np.ndarray, cfg: NmsConfig) -> Tuple[np.ndarray, np.ndar
     Applies area-adaptive confidence filtering then per-class NMS, all in
     letterboxed-image pixel space (scale back to original coords separately).
     """
-    arr = raw.reshape(-1, raw.shape[-1]) if raw.ndim == 3 else raw
-    # arr: (4+nc, N) -> (N, 4+nc)
-    arr = arr.T
+    arr = np.asarray(raw)
+    if arr.ndim == 3:
+        if arr.shape[0] != 1:
+            raise ValueError(f"expected batch size 1, got output shape {arr.shape}")
+        arr = arr[0]
+    if arr.ndim != 2:
+        raise ValueError(f"expected a 2D/3D detector output, got shape {arr.shape}")
+
+    # Accept both common layouts: (4+nc, N) and (N, 4+nc).
+    channels = 4 + cfg.num_classes
+    if arr.shape[0] == channels:
+        arr = arr.T
+    elif arr.shape[1] != channels:
+        raise ValueError(f"cannot locate {channels} detection channels in output shape {arr.shape}")
     boxes_xywh = arr[:, :4]
     class_scores = arr[:, 4:4 + cfg.num_classes]
     cls_idx = class_scores.argmax(axis=1)

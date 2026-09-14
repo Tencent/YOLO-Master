@@ -1,0 +1,102 @@
+{
+  "classification": "MNN INT8 PTQ attempt for sparse-to-dense fallback",
+  "true_dynamic_sparse_dispatch": false,
+  "mnn_version": "3.6.1",
+  "quantizer": [
+    "/usr/local/bin/mnnquant"
+  ],
+  "fp32_model": "/mnt/workspace/YOLO-Master/examples/exports/mnn_dense_fallback/best_for_export_dense_fallback_fp32.mnn",
+  "calibration_directory": "/mnt/workspace/YOLO-Master/examples/exports/mnn_dense_fallback/calib_visdrone_train_seed20260831_n300_letterbox640",
+  "calibration_dataset": "VisDrone train, deterministic 300-image letterbox set",
+  "previous_failed_run": "/mnt/workspace/YOLO-Master/examples/exports/mnn_dense_fallback/ptq_runs/20260831_113537",
+  "previous_failed_log": "/mnt/workspace/YOLO-Master/examples/exports/mnn_dense_fallback/ptq_runs/20260831_113537/mnn_int8_ptq.log",
+  "attempts": [
+    {
+      "tag": "smoke_kl_n10",
+      "method": "KL",
+      "image_count": 10,
+      "command": [
+        "/usr/local/bin/mnnquant",
+        "/mnt/workspace/YOLO-Master/examples/exports/mnn_dense_fallback/best_for_export_dense_fallback_fp32.mnn",
+        "/mnt/workspace/YOLO-Master/examples/exports/mnn_dense_fallback/ptq_runs/retry_20260831_114127/smoke_kl_n10/dense_fallback_kl_n10_int8.mnn",
+        "/mnt/workspace/YOLO-Master/examples/exports/mnn_dense_fallback/ptq_runs/retry_20260831_114127/smoke_kl_n10/quant_config.json"
+      ],
+      "config": {
+        "format": "RGB",
+        "mean": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "normal": [
+          0.00392156862745098,
+          0.00392156862745098,
+          0.00392156862745098
+        ],
+        "width": 640,
+        "height": 640,
+        "path": "/mnt/workspace/YOLO-Master/examples/exports/mnn_dense_fallback/calib_visdrone_train_seed20260831_n300_letterbox640/",
+        "used_image_num": 10,
+        "feature_quantize_method": "KL",
+        "weight_quantize_method": "MAX_ABS",
+        "quant_bits": 8,
+        "debug": false
+      },
+      "config_path": "/mnt/workspace/YOLO-Master/examples/exports/mnn_dense_fallback/ptq_runs/retry_20260831_114127/smoke_kl_n10/quant_config.json",
+      "log_path": "/mnt/workspace/YOLO-Master/examples/exports/mnn_dense_fallback/ptq_runs/retry_20260831_114127/smoke_kl_n10/quant.log",
+      "return_code": -6,
+      "output_model": "/mnt/workspace/YOLO-Master/examples/exports/mnn_dense_fallback/ptq_runs/retry_20260831_114127/smoke_kl_n10/dense_fallback_kl_n10_int8.mnn",
+      "output_exists": false,
+      "output_size_bytes": 0,
+      "runnable": false,
+      "runtime_info": null,
+      "success": false
+    },
+    {
+      "tag": "smoke_ema_n10",
+      "method": "EMA",
+      "image_count": 10,
+      "command": [
+        "/usr/local/bin/mnnquant",
+        "/mnt/workspace/YOLO-Master/examples/exports/mnn_dense_fallback/best_for_export_dense_fallback_fp32.mnn",
+        "/mnt/workspace/YOLO-Master/examples/exports/mnn_dense_fallback/ptq_runs/retry_20260831_114127/smoke_ema_n10/dense_fallback_ema_n10_int8.mnn",
+        "/mnt/workspace/YOLO-Master/examples/exports/mnn_dense_fallback/ptq_runs/retry_20260831_114127/smoke_ema_n10/quant_config.json"
+      ],
+      "config": {
+        "format": "RGB",
+        "mean": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "normal": [
+          0.00392156862745098,
+          0.00392156862745098,
+          0.00392156862745098
+        ],
+        "width": 640,
+        "height": 640,
+        "path": "/mnt/workspace/YOLO-Master/examples/exports/mnn_dense_fallback/calib_visdrone_train_seed20260831_n300_letterbox640/",
+        "used_image_num": 10,
+        "feature_quantize_method": "EMA",
+        "weight_quantize_method": "MAX_ABS",
+        "quant_bits": 8,
+        "debug": false
+      },
+      "config_path": "/mnt/workspace/YOLO-Master/examples/exports/mnn_dense_fallback/ptq_runs/retry_20260831_114127/smoke_ema_n10/quant_config.json",
+      "log_path": "/mnt/workspace/YOLO-Master/examples/exports/mnn_dense_fallback/ptq_runs/retry_20260831_114127/smoke_ema_n10/quant.log",
+      "return_code": -6,
+      "output_model": "/mnt/workspace/YOLO-Master/examples/exports/mnn_dense_fallback/ptq_runs/retry_20260831_114127/smoke_ema_n10/dense_fallback_ema_n10_int8.mnn",
+      "output_exists": false,
+      "output_size_bytes": 0,
+      "runnable": false,
+      "runtime_info": null,
+      "success": false
+    }
+  ],
+  "selected_method": null,
+  "selected_int8_model": null,
+  "success": false,
+  "accuracy_evaluated": false,
+  "npu_evaluated": false
+}

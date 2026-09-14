@@ -1,0 +1,131 @@
+{
+  "schema_version": 1,
+  "date": "2026-08-31",
+  "status": "P1_CONDITIONALLY_COMPLETE",
+  "scope": "ES-MoE and MoT INT8 PTQ or equivalent quantization experiments",
+  "dataset": {
+    "name": "VisDrone",
+    "train_images": 6471,
+    "val_images": 548,
+    "imgsz": 640,
+    "calibration_images": 300,
+    "calibration_seed": 42
+  },
+  "esmoe": {
+    "standard_pytorch": {
+      "mAP50": 0.078959,
+      "mAP50-95": 0.040964
+    },
+    "fp32_onnx": {
+      "mAP50": 0.058628,
+      "mAP50-95": 0.033058,
+      "latency_ms_cpu": 63.242,
+      "size_mb": 11.033
+    },
+    "candidates": {
+      "qdq_s8s8": {
+        "mAP50": 0.056872,
+        "mAP50-95": 0.031632,
+        "delta_percentage_points": -0.1426,
+        "latency_ms_cpu": 128.851,
+        "size_mb": 3.62,
+        "selected": false
+      },
+      "qoperator_u8s8": {
+        "mAP50": 0.058503,
+        "mAP50-95": 0.032613,
+        "delta_percentage_points": -0.0445,
+        "latency_ms_cpu": 67.329,
+        "latency_change_percent": 6.46,
+        "size_mb": 3.374,
+        "size_reduction_percent": 69.42,
+        "selected": true
+      }
+    },
+    "failures": [
+      {
+        "backend": "MNN native PTQ KL/EMA",
+        "error": "std::length_error: cannot create std::vector larger than max_size()",
+        "return_code": -6
+      },
+      {
+        "backend": "ORT QOperator to MNN",
+        "error": "MNNConverter does not support ONNX::QLinearConv"
+      }
+    ],
+    "cloud_artifact": "/mnt/workspace/YOLO-Master/examples/artifacts/esmoe_ort_int8_qoperator_u8s8/esmoe_qoperator_u8s8_int8.onnx"
+  },
+  "mot": {
+    "training": {
+      "model": "YOLO-Master-v0.10-MoT-N",
+      "epochs": 50,
+      "parameters": 4013099,
+      "gflops": 10.9,
+      "standard_mAP50_console_rounded": 0.0678,
+      "standard_mAP50-95_console_rounded": 0.0337
+    },
+    "pytorch_custom_evaluator": {
+      "mAP50": 0.055154,
+      "mAP50-95": 0.030617
+    },
+    "fp32_onnx": {
+      "routing_semantics": "input-dependent masked Top-K with dense expert execution",
+      "mAP50": 0.055107,
+      "mAP50-95": 0.030589,
+      "pytorch_delta_percentage_points": -0.0028,
+      "latency_ms_cpu": 143.421,
+      "size_mb": 17.493
+    },
+    "int8_qdq_s8s8": {
+      "mixed_precision": true,
+      "quantized_ops": ["Conv"],
+      "kept_fp32": ["TopK", "Softmax", "MatMul", "Transformer attention", "routing control"],
+      "mAP50": 0.056099,
+      "mAP50-95": 0.030532,
+      "delta_percentage_points": -0.0057,
+      "latency_ms_cpu": 188.12,
+      "latency_change_percent": 31.17,
+      "size_mb": 8.51,
+      "size_reduction_percent": 51.35,
+      "selected": true
+    },
+    "failures": [
+      {
+        "backend": "ONNX Runtime QOperator U8S8 quantizer",
+        "error": "AttributeError: 'NoneType' object has no attribute 'data_type'",
+        "context": "non-standard bias type inference"
+      }
+    ],
+    "cloud_artifact": "/mnt/workspace/YOLO-Master/examples/artifacts/mot_v10_ort_int8_qdq_s8s8/mot_v10_qdq_s8s8_int8.onnx"
+  },
+  "local_archive": {
+    "zip_path": "D:\\YOLO_Master\\P1_cloud_artifacts_20260831\\A3_P1_cloud_artifacts_20260831.zip",
+    "zip_sha256": "fe36df96f7f1a0e187bf5081de04a6a4a36830dddc7fe3fc60ab0e9b8379a6cc",
+    "extracted_path": "D:\\YOLO_Master\\P1_cloud_artifacts_20260831\\bundle",
+    "manifest_in_repository": "reports/evidence/a3_p1_20260831/bundle_manifest.json",
+    "file_count": 37,
+    "total_bytes": 80585611,
+    "missing_files": 0,
+    "hash_mismatches": 0,
+    "verified": true,
+    "core_binary_sha256": {
+      "esmoe_fp32_onnx": "c5b25ae666c352eb050aa29b9897f8265bbb17a371e65a85aa4acc1127469397",
+      "esmoe_int8_qoperator_u8s8_onnx": "c2308774af0121154921ea211c89bc26b2f495c2fbb81d0aeae3aba64f1721f9",
+      "mot_quantization_source_pt": "5f6ff684f74c773de5cdf0a2e4a51773317829bbeccc48c5c13f0ed3a2f3d417",
+      "mot_fp32_onnx": "ef8344b88801bd7216dd9bfa75f7b65d0d114671694bb2041372bc9a46a6a023",
+      "mot_int8_qdq_s8s8_onnx": "463ce6aeb9b573cd46d5cfdc9646d7fd96d75aba5768d433c408e78f8cebbb73"
+    }
+  },
+  "acceptance": {
+    "accuracy_target_max_absolute_percentage_points": 0.5,
+    "esmoe_accuracy_pass": true,
+    "mot_accuracy_pass": true,
+    "esmoe_size_benefit": true,
+    "mot_size_benefit": true,
+    "esmoe_latency_benefit": false,
+    "mot_latency_benefit": false,
+    "true_conditional_dynamic_expert_execution": false
+  },
+  "claim_boundary": "P1 completes two real equivalent quantization experiments. It does not demonstrate INT8 speedup or conditional sparse expert execution.",
+  "next_direction": "Pause additional INT8 work if true dynamic expert execution is mandatory; develop a custom TensorRT plugin or ORT custom operator for Top-K gather/dispatch/scatter, validate FP32/FP16 dynamic execution, then resume mixed INT8."
+}

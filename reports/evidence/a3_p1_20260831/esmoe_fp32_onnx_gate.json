@@ -1,0 +1,21 @@
+{
+  "stage": "ONNX_FP32_SPARSE_TOPK",
+  "pytorch_standard_map50_95": 0.040964,
+  "pytorch_custom_map50": 0.058621895345322125,
+  "pytorch_custom_map50_95": 0.03306351701917552,
+  "onnx_map50": 0.058627836083218116,
+  "onnx_map50_95": 0.0330577689818787,
+  "delta_map50_95": -5.748037296825215e-06,
+  "delta_percentage_points": -0.0005748037296825215,
+  "absolute_delta_percentage_points": 0.0005748037296825215,
+  "target_percentage_points": 0.5,
+  "pytorch_latency_ms": 23.649117545680188,
+  "onnx_latency_ms": 54.39971641970485,
+  "pytorch_fps": 42.284875876168265,
+  "onnx_fps": 18.382448766548652,
+  "onnx_sha256": "c5b25ae666c352eb050aa29b9897f8265bbb17a371e65a85aa4acc1127469397",
+  "pytorch_baseline_valid": true,
+  "onnx_map_valid": true,
+  "delta_valid": true,
+  "pass": true
+}
