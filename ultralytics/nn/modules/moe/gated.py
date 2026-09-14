@@ -162,6 +162,8 @@ class DualStreamGateRouter(FP32RouterMixin, nn.Module):
                 "router_logits": logits,
                 "topk_indices": topk_indices,
                 "expert_usage": expert_usage,
+                # F11 路由 KD: 学生侧图像级摘要(Stream A 输入的 mean+std 拼接, [B, 2C])
+                "routing_summary": stats,
             }
 
         return routing_weights, routing_indices, routing_stats
@@ -260,6 +262,8 @@ class DualStreamGateRouterV2(DualStreamGateRouter):
                 "router_logits": logits,
                 "topk_indices": topk_indices,
                 "expert_usage": expert_usage,
+                # F11 路由 KD: 学生侧图像级摘要(归一化 mean+std 拼接, [B, 2C])
+                "routing_summary": stats,
             }
 
         return routing_weights, routing_indices, routing_stats
@@ -386,6 +390,9 @@ class AdaptiveGateMoE(nn.Module):
         self.register_buffer("training_step", torch.tensor(0), persistent=False)
         self._training_step_value = 0
         self.last_routing_snapshot: dict = {}
+        # F11 路由 KD: 最近一次前向的路由 logits 与学生摘要(训练时由 forward 写入)
+        self._last_routing_logits: torch.Tensor | None = None
+        self._last_routing_summary: torch.Tensor | None = None
 
         if router_hooks is not None:
             self.configure_router_hooks(
@@ -509,6 +516,16 @@ class AdaptiveGateMoE(nn.Module):
         current_temp = self.final_temperature + (self.initial_temperature - self.final_temperature) * cos_val
         self.routing.temperature = max(current_temp, 0.1)
 
+    @property
+    def routing_logits(self) -> torch.Tensor | None:
+        """F11 路由 KD 接口: 最近一次训练前向的图像级路由 logits [B, E]。"""
+        return self._last_routing_logits
+
+    @property
+    def routing_summary(self) -> torch.Tensor | None:
+        """F11 路由 KD 接口: 最近一次训练前向的学生图像级摘要 [B, 2C]。"""
+        return self._last_routing_summary
+
     def forward(self, x):
         B, C, H, W = x.shape
 
@@ -542,6 +559,9 @@ class AdaptiveGateMoE(nn.Module):
         routing_weights, routing_indices, routing_stats, adaptive_top_k = self._apply_complexity_gate(
             routing_weights, routing_indices, routing_stats, complexity
         )
+        # F11 路由 KD: 保留本轮路由 logits/摘要(非训练时 routing_stats 无 logits → 置 None)
+        self._last_routing_logits = routing_stats.get("router_logits")
+        self._last_routing_summary = routing_stats.get("routing_summary")
 
         # ── 5. Fused Expert Computation ──
         out_dynamic = self.fused_experts(x_dynamic, routing_weights, routing_indices, adaptive_top_k)
@@ -1360,6 +1380,9 @@ class HybridAdaptiveGateMoE(AdaptiveGateMoE):
         routing_weights, routing_indices, routing_stats, adaptive_top_k = self._apply_complexity_gate(
             routing_weights, routing_indices, routing_stats, complexity
         )
+        # F11 路由 KD: 保留本轮路由 logits/摘要(非训练时 routing_stats 无 logits → 置 None)
+        self._last_routing_logits = routing_stats.get("router_logits")
+        self._last_routing_summary = routing_stats.get("routing_summary")
 
         out_dynamic = self.fused_experts(x_dynamic, routing_weights, routing_indices, adaptive_top_k)
 
@@ -1981,6 +2004,9 @@ class OptimalHybridGateMoE(HybridAdaptiveGateMoEv2):
         routing_weights, routing_indices, routing_stats, adaptive_top_k = self._apply_complexity_gate(
             routing_weights, routing_indices, routing_stats, complexity
         )
+        # F11 路由 KD: 保留本轮路由 logits/摘要(非训练时 routing_stats 无 logits → 置 None)
+        self._last_routing_logits = routing_stats.get("router_logits")
+        self._last_routing_summary = routing_stats.get("routing_summary")
 
         # ── 5. Hybrid Expert Computation ──
         out_dynamic = self.fused_experts(x_dynamic, routing_weights, routing_indices, adaptive_top_k)
@@ -2198,6 +2224,8 @@ class MultiHeadRouterV3(nn.Module):
                 "router_logits": logits,
                 "topk_indices": topk_indices,
                 "expert_usage": expert_usage,
+                # F11 路由 KD: 学生侧图像级摘要(归一化 mean+std 拼接, [B, 2C])
+                "routing_summary": stats,
             }
 
         return routing_weights, routing_indices, routing_stats
@@ -2654,6 +2682,9 @@ class GatedFusionMoE(OptimalHybridGateMoE):
         routing_weights, routing_indices, routing_stats, adaptive_top_k = self._apply_complexity_gate(
             routing_weights, routing_indices, routing_stats, complexity
         )
+        # F11 路由 KD: 保留本轮路由 logits/摘要(非训练时 routing_stats 无 logits → 置 None)
+        self._last_routing_logits = routing_stats.get("router_logits")
+        self._last_routing_summary = routing_stats.get("routing_summary")
 
         # 5. Hybrid Expert Computation
         out_dynamic = self.fused_experts(x_dynamic, routing_weights, routing_indices, adaptive_top_k)

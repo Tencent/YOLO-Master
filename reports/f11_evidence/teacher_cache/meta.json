@@ -1,0 +1,6 @@
+{
+  "teacher_model": "dinov2_vitb14",
+  "num_cached": 12,
+  "cache_dir": "G:\\Codes\\OpenSource\\Rhino-bird\\Practice\\Code\\YOLO-Master\\runs\\f11_teacher_cache",
+  "patches_dir": "G:\\Codes\\OpenSource\\Rhino-bird\\Practice\\Code\\YOLO-Master\\runs\\f11_teacher_cache\\patches"
+}

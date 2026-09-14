@@ -1488,7 +1488,16 @@ class BaseTrainer:
                         raise
                     LOGGER.warning("[PEFT] Resume optimizer state is incompatible; using the initialized optimizer.")
         if ckpt.get("scaler") is not None:
-            self.scaler.load_state_dict(ckpt["scaler"])
+            try:
+                self.scaler.load_state_dict(ckpt["scaler"])
+            except RuntimeError as e:
+                # F11 patch (2026-08-29): ckpt 里 scaler 字段为空时不要让它崩,
+                # 退一步创建新 GradScaler 接续。这是 Ultralytics 8.4.101 + AMP 边缘 case 的兜底。
+                if 'empty' in str(e) or 'disabled' in str(e):
+                    LOGGER.warning(f"[F11 patch] skip scaler load_state_dict (empty/disabled), use fresh GradScaler: {e}")
+                    self.scaler = torch.amp.GradScaler('cuda', enabled=self.amp)
+                else:
+                    raise
         self.optimizer_steps = int(ckpt.get("optimizer_steps", getattr(self, "optimizer_steps", 0)))
         if self.ema and ckpt.get("ema"):
             from ultralytics.nn.mixture_loss import initialize_mixture_loss_ema_buffer

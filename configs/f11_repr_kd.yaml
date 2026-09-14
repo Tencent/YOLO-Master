@@ -1,0 +1,14 @@
+# F11 T4 三方同预算对照 · B 组 表征 KD(SigLIP2 特征对齐)
+# 通过官方 FoundationDistillationModel 包装:backbone 中间层特征对齐 SigLIP2 教师。
+# 教师: siglip2(transformers 后端,开源免认证),教师冻结,仅训练学生。
+# 注:DINOv3 是 gated repo,本地无条件访问,改用 SigLIP2 作为同等量级的开源替代。
+model: ultralytics/cfg/models/master/v0_8/det/yolo-master-n.yaml
+label: B-repr-kd
+description: 表征 KD(cosine_kd_loss, SigLIP2 特征 → backbone/投影层)
+foundation:
+  enabled: true
+  teacher: siglip2
+  model: google/siglip2-base-patch16-512
+  backend: transformers
+  loss_weight: 0.1
+  router_distill: false

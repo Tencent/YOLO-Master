@@ -1,0 +1,8 @@
+# F11 T4 三方同预算对照 · A 组 baseline(无 KD)
+# 稀疏路由学生,无任何教师蒸馏,仅普通检测训练。
+# 对照脚本: scripts/compare_f11_ablation.py
+model: ultralytics/cfg/models/master/v0_8/det/yolo-master-n.yaml
+label: A-baseline
+description: baseline 无 KD(稀疏路由学生)
+foundation:
+  enabled: false

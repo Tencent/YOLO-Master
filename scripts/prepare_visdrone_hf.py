@@ -28,8 +28,8 @@ VISDRONE_NAMES = {
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--snapshot-dir", type=Path, required=True)
-    parser.add_argument("--out-dir", type=Path, default=Path("/jpfs/huangyidan3/datasets/VisDrone"))
-    parser.add_argument("--yaml-out", type=Path, default=Path("/jpfs/huangyidan3/datasets/VisDrone-hf.yaml"))
+    parser.add_argument("--out-dir", type=Path, default=Path("G:/Codes/OpenSource/Rhino-bird/DATASETS/VisDrone"))
+    parser.add_argument("--yaml-out", type=Path, default=Path("G:/Codes/OpenSource/Rhino-bird/DATASETS/VisDrone-hf.yaml"))
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
 

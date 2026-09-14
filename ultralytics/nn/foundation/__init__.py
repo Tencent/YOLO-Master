@@ -2,13 +2,15 @@
 
 from .projectors import P4AlignmentProjector
 from .protocol import FoundationFeatures, FoundationTeacher
-from .losses import cosine_kd_loss, foreground_token_weights, hybrid_kd_loss, relational_kd_loss
+from .losses import RouterKDLoss, cosine_kd_loss, foreground_token_weights, hybrid_kd_loss, relational_kd_loss
 from .offline import extract_foundation_cache, load_foundation_batch, load_foundation_features, save_foundation_features
 from .taps import StudentFeatureTap
 from .teachers import (
+    DEFAULT_DINOV2_MODEL,
     DEFAULT_DINOV3_MODEL,
     DEFAULT_SAM3_IMAGE_SIZE,
     DEFAULT_SIGLIP2_MODEL,
+    DINOv2Teacher,
     DINOv3Teacher,
     MultiFoundationTeacher,
     SAM3Teacher,
@@ -29,6 +31,8 @@ from .semantic import (
 )
 
 __all__ = [
+    "DEFAULT_DINOV2_MODEL",
+    "DINOv2Teacher",
     "DEFAULT_DINOV3_MODEL",
     "DINOv3Teacher",
     "DEFAULT_SIGLIP2_MODEL",
@@ -48,6 +52,7 @@ __all__ = [
     "foreground_token_weights",
     "hybrid_kd_loss",
     "relational_kd_loss",
+    "RouterKDLoss",
     "FoundationTeacherRouter",
     "foundation_multiteacher_summary",
     "foundation_teacher_summary",
