@@ -1,7 +1,7 @@
 {
   "schema_version": "e3.training_smoke.v1",
   "git": {
-    "commit": "93447754366983497bf01e7e7a9c098ec877df9e",
+    "commit": "92a2b2f9440abc77468b841873061bd854ddb46a",
     "dirty": false,
     "task_baseline": "e9ac08b2bd135c379206b8f77df9714b8800cbe0",
     "pr_base": "af961b99b8ef80491e58cb5fd16e25ebaf3741eb"

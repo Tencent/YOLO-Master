@@ -4,6 +4,11 @@ This package completes the Rhino-Bird E3 P0/P1 scope: it normalizes the existing
 snapshots, records them during training, writes JSON and TensorBoard scalars, and presents the same evidence in a
 read-only local dashboard. It does not change routing algorithms or model `forward` methods.
 
+Routing metrics are exposed by an opt-in callback registered ahead of the existing logger callbacks. The callback
+temporarily extends `trainer.metrics` for one `on_fit_epoch_end` dispatch, then restores the original mapping after the
+loggers run. The training loop and TensorBoard implementation remain unchanged, and disabled telemetry registers no
+routing callback.
+
 ## Dashboard
 
 ```bash
@@ -76,7 +81,7 @@ Environment contract:
 
 - `schema.md` defines `e3.routing_snapshot.v1`, aux states, and TensorBoard keys.
 - `results/route_stats.json` and three PNGs provide the P0 three-family example.
-- `results/live_training_summary.json` records the clean RTX 4060 online logging gate.
+- `results/live_training_summary.json` records the clean RTX 4060 callback-based online logging gate.
 - `results/overhead_summary.json` retains 30 runs with mean, median, p95, throughput, memory, pair deltas, and 95% CI.
 - `results/dataset_provenance.json` records the formal dataset source and split fingerprints.
 - `results/checksums.sha256` covers every committed evidence file.
@@ -95,3 +100,5 @@ treated as measurement noise, not acceleration. The complete 50-epoch package re
 - The committed P0 figures use the admission MPS snapshot; current CUDA training evidence is machine-readable.
 - MoT CUDA kernels warn that a fixed seed does not guarantee bitwise determinism.
 - The dashboard is a local evidence viewer, not a remote job-control service.
+- Latent modules clear graph-connected routing tensors only in their deepcopy result so EMA/checkpoint copies remain
+  safe without changing the live tensors used by routing KD and auxiliary losses.
