@@ -86,7 +86,7 @@ Environment contract:
 - `results/dataset_provenance.json` records the formal dataset source and split fingerprints.
 - `results/checksums.sha256` covers every committed evidence file.
 
-The admission baseline is `e9ac08b2`. The PR is based on Tencent `main` at `af961b9`. The formal overhead result is
+The admission baseline is `e9ac08b2`. The PR is based on Tencent `main` at `f91c0a5`. The formal overhead result is
 attributed to its actual clean commit, `bad5b33`: mean overhead is -1.821% (MoE), 0.074% (MoT), and 2.671% (Latent),
 with a highest paired-bootstrap 95% CI upper bound of 5.618%; all pass the predefined 10% gate. Negative overhead is
 treated as measurement noise, not acceleration. The complete 50-epoch package remains on

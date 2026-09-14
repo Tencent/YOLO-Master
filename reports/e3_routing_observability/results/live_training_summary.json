@@ -1,10 +1,10 @@
 {
   "schema_version": "e3.training_smoke.v1",
   "git": {
-    "commit": "92a2b2f9440abc77468b841873061bd854ddb46a",
+    "commit": "b3bf67ada8afdc88ebe88674c93ed7d31454b984",
     "dirty": false,
     "task_baseline": "e9ac08b2bd135c379206b8f77df9714b8800cbe0",
-    "pr_base": "af961b99b8ef80491e58cb5fd16e25ebaf3741eb"
+    "pr_base": "f91c0a56238dc2e3f05f5c104dd627abae9fb87f"
   },
   "environment": {
     "device": "NVIDIA GeForce RTX 4060",
