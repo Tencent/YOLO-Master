@@ -1,0 +1,32 @@
+# C1 8.24 准入 / 冲 P2 复现依赖清单
+# 环境：Windows 11 + MS Store Python 3.11.9 + NVIDIA RTX 4060 Laptop GPU (8GB)
+# 安装命令：
+#   PIP_USER=0 python -m pip install --no-user --target D:/torch_cuda_pkg -r requirements_smoke.txt
+# 运行时：
+#   PYTHONPATH=D:/YOLO-Master python D:/smoke/<script>.py
+# 注意：ultralytics 不通过 pip 安装，来自仓库本体（锁定 commit 43d40117c30811204fb9347efeabddce15f11a62 / tag YOLO-Master-v26.08）。
+#       cv2 / thop 由 Python 3.11 基础环境提供（无需单独安装）。
+
+# ---- CUDA torch（离线环境核心）----
+# 需手动下载对应 cu118 的 wheel，或用官方命令：
+#   pip install torch==2.3.1+cu118 torchvision==0.18.1+cu118 --index-url https://download.pytorch.org/whl/cu118
+torch==2.3.1+cu118
+torchvision==0.18.1+cu118
+
+# ---- 数值 / 科学计算 ----
+numpy<2            # 1.26.4（torch 2.3 要求 numpy<2）
+sympy<1.14         # 1.13.x，避免 1.14 与 torch 冲突
+mpmath==1.3.0
+mkl<=2021.4.0,>=2021.1.1   # 2021.4.0，CPU 端 MKL
+
+# ---- 训练 / 推理支撑 ----
+filelock==3.29.0
+typing-extensions==4.15.0
+networkx==3.6.1
+jinja2>=2.11        # 3.1.6
+MarkupSafe>=2.0     # 3.0.3
+fsspec==2026.4.0
+pillow==12.2.0
+matplotlib==3.10.9  # 曲线/结果图
+pandas==3.0.3       # summary.csv 汇总
+pyyaml==6.0.3
