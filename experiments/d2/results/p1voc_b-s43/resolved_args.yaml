@@ -103,7 +103,7 @@ foundation_align_dim: 256
 foundation_loss: relational
 foundation_relation_mode: sampled
 foundation_relation_samples: 256
-foundation_loss_weight: 2.709494649459239
+foundation_loss_weight: 3.0016106154954567
 foundation_weight_schedule: constant
 foundation_gate_cosine: 1.0
 foundation_gate_cosine_low: 0.9

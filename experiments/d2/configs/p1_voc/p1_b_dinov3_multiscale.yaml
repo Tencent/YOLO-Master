@@ -36,7 +36,7 @@ foundation_teacher: dinov3
 foundation_model: facebook/dinov3-vits16-pretrain-lvd1689m
 # 教师 revision（2026-08-26 的 main）: 114c1379950215c8b35dfcd4e90a5c251dde0d32
 # 记录用；本仓库无 foundation_revision 配置项，见 limitations.md 2.3
-foundation_loss_weight: 2.709494649459239
+foundation_loss_weight: 3.0016106154954567
 foundation_backend: transformers
 foundation_target_levels: [p3, p4, p5]
 foundation_multiscale: true

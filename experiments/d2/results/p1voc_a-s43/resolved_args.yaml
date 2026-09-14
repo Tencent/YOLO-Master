@@ -13,7 +13,7 @@ cache: false
 device: '0'
 workers: 32
 project: d2/p1voc
-name: a-s43-2
+name: a-s43
 exist_ok: false
 pretrained: false
 cls_remap: true
@@ -101,7 +101,7 @@ foundation_align_dim: 256
 foundation_loss: relational
 foundation_relation_mode: sampled
 foundation_relation_samples: 256
-foundation_loss_weight: 3.685930711929122
+foundation_loss_weight: 3.3427745950933323
 foundation_weight_schedule: constant
 foundation_gate_cosine: 1.0
 foundation_gate_cosine_low: 0.9
@@ -329,7 +329,7 @@ moe_map_saturation_window_size: 5
 moe_map_saturation_threshold: 0.001
 moe_map_saturation_decay_factor: 0.8
 moe_map_saturation_min_scale: 0.1
-save_dir: /workspace/YOLO-Master/runs/detect/d2/p1voc/a-s43-2
+save_dir: /workspace/YOLO-Master/runs/detect/d2/p1voc/a-s43
 effective_optimizer: SGD
 effective_optimizer_lrs:
 - 0.01

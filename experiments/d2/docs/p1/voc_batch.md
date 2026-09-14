@@ -1,6 +1,6 @@
 # P1-VOC｜把对照矩阵从 COCO 换到 VOC
 
-**状态：🟢 配置就绪，未开跑**
+**状态：✅ A/B/C/off × 3 seeds 已完成**
 
 矩阵 [`../../p1_voc_matrix.csv`](../../p1_voc_matrix.csv)、
 配置 [`../../configs/p1_voc/`](../../configs/p1_voc/)。判读线不变，见 [`../design.md`](../design.md) §6。
@@ -43,35 +43,32 @@ KD 让单次训练贵 **+48%**。按这个单价补完 15 格：
 > 45 s 的验证开销是估计值，不是实测——COCO 的 `results.csv` 只记录累计墙钟，
 > 拆不出 train/val。整表误差按 ±30% 读。第一格 `off-s17` 跑完即可用实测值校准。
 
-## 2. 这批的预算
+## 2. 最终批次预算
 
 五份配置除 Foundation 区块外逐字相同，由
 `validate_pair.py --configs experiments/d2/configs/p1_voc --matrix experiments/d2/p1_voc_matrix.csv`
 机械校验（已 PASS）。
 
 ```
-data VOC.yaml · epochs 50 · imgsz 256 · batch 64 · workers 32
+data VOC.yaml · epochs 400 · imgsz 256 · batch 64 · workers 32
 SGD lr0 0.01 lrf 0.01 warmup 3.0 · pretrained false · amp false · deterministic true
 seed 17 / 29 / 43（由 run_p1.py 从矩阵覆盖）
 ```
 
-`epochs 50 / imgsz 256 / batch 64` 照抄 COCO 试跑，**只换 `data`**。这样 VOC 批次
-内部自洽的同时，两个 COCO run 仍是同一配方下的参照点。
+最初的预算估算使用 50 epochs；正式运行扩展为 400 epochs。VOC 批次内部保持相同预算，
+但训练长度与早期 COCO 试跑不同，因此两批结果不作直接精度比较。
 
 `workers: 32` 是跑 COCO 试跑那台机器的值。换机器时**五份一起改**，
 否则 `validate_pair.py` 会当场报出漂移。
 
 ## 3. 与 COCO 试跑的两处差异（必须在报告里声明）
 
-1. **`foundation_loss_weight`**：`p1coco/a-s17/args.yaml` 记录的是 **3.0**，
-   而标定结论与本仓库配置锁的是 **4.0**（`kd_gradient_analysis.md`，commit `2bfc1e5`）。
-   COCO 那次 A 跑在一个未经标定的权重上。**VOC 批次用 4.0**，
-   因此 COCO 的 Δ 与 VOC 的 Δ 不可直接相减。
+1. **`foundation_loss_weight`**：`p1coco/a-s17/args.yaml` 记录的是 **3.0**；正式 VOC
+   批次按实验格锁定为 A `3.3427745950933323`、B `3.0016106154954567`、
+   C `3.1106560298222616`。因此 COCO 的 Δ 与 VOC 的 Δ 不可直接相减。
 
-   注意 `collect_runs.py` 对这两个 run 判 **PASS**——`foundation_loss_weight`
-   本就在声明的对照轴上（`DEFAULT_AXIS_KEYS`），事后核查只问"是否只在轴内不同"，
-   不问"轴上的取值是不是标定出来的那个"。这类偏差只能靠矩阵与配置比对发现，
-   自动核查兜不住。
+   `collect_runs.py` 同时检查跨实验格的声明轴和同一实验格内的 seed 一致性，避免把
+   不同权重的运行错误合并成同一组三 seed 统计。
 2. **数据集**：VOC 20 类、目标普遍更大，同预算下 mAP 会明显高于 COCO 的 0.19。
    判读线 `|Δ mAP50-95| < 0.003` 是绝对刻度，换数据集后**不移动**——
    见 `design.md` §6，结果模糊时只加 seed。
@@ -112,9 +109,10 @@ python experiments/d2/scripts/run_p1.py --device 0 \
   --matrix experiments/d2/p1_voc_matrix.csv --configs p1_voc \
   --project d2/p1voc --only off-s17,a-s17
 
-# 3b. 预估站得住再补完其余 13 格（已完成的会自动跳过）
+# 3b. 运行本轮验收所需的 12 格（已完成的会自动跳过）
 python experiments/d2/scripts/run_p1.py --device 0 \
-  --matrix experiments/d2/p1_voc_matrix.csv --configs p1_voc --project d2/p1voc
+  --matrix experiments/d2/p1_voc_matrix.csv --configs p1_voc --project d2/p1voc \
+  --only off-s17,off-s29,off-s43,a-s17,a-s29,a-s43,b-s17,b-s29,b-s43,c-s17,c-s29,c-s43
 
 # 4. 跑完后：归档 + 汇总 + 事后混杂核查
 python experiments/d2/scripts/collect_runs.py runs/detect/d2/p1voc/* --label p1voc
