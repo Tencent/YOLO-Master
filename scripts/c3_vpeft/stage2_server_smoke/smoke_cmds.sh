@@ -5,7 +5,7 @@ set -euo pipefail
 
 ENV_PY=/mnt/pfs/zitao_team/baiyouheng/conda_envs/yolo_master/bin/python
 REPO=/mnt/pfs/zitao_team/baiyouheng/research/TX_yolo/YOLO-Master
-SR=$REPO/c3_work/stage2_server_smoke/server_run.py
+SR=$REPO/scripts/c3_vpeft/stage2_server_smoke/server_run.py
 NEU=/mnt/pfs/zitao_team/baiyouheng/datasets/NEU-DET-yolo/neu_det_yolo_v3/neu_det.yaml
 MODEL=$REPO/YOLO-Master-EsMoE-N.pt
 
@@ -24,5 +24,5 @@ for s in full_sft frozen_backbone; do
 done
 
 echo "== 3. 证据提取提示 =="
-echo "grep '[V-PEFT]' c3_work/stage2_server_smoke/runs/*/command.sh 运行日志; "
-echo "cat c3_work/stage2_server_smoke/runs/<name>/train/<strategy>/args.yaml"
+echo "grep '[V-PEFT]' scripts/c3_vpeft/stage2_server_smoke/runs/*/command.sh 运行日志; "
+echo "cat scripts/c3_vpeft/stage2_server_smoke/runs/<name>/train/<strategy>/args.yaml"

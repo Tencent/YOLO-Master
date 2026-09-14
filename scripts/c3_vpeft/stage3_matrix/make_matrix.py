@@ -9,7 +9,7 @@ import argparse
 import json
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]  # scripts/c3_vpeft/stage3_matrix/ -> repo root
 RUNS_ROOT = Path(__file__).resolve().parent / "runs"
 
 DATASETS = {

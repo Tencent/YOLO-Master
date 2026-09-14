@@ -495,7 +495,7 @@ for i, t in enumerate([
     "补充单元: run_supplement.py 自愈调度",
 ]):
     text(s, rx + 0.25, 4.6 + i * 0.5, 3.9, 0.45, [P(t, 10, INK, True)])
-footer(s, 8, "git ls-files c3_work/ 全量证据 + stage5_pr_delivery/reproduction/")
+footer(s, 8, "git ls-files scripts/c3_vpeft/ 全量证据 + stage5_pr_delivery/reproduction/")
 
 # =====================================================================
 # Slide 9  边界声明

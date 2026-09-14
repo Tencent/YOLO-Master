@@ -35,7 +35,7 @@ DeepPCB frozen 的 0.769 含 seed824 确定性震荡(0.639, best@ep9, 重跑复�
 
 | 数据集 | 证据项 | 落点 |
 |---|---|---|
-| NEU/PCB | 21 单元 best mAP50(逐 epoch 曲线)、显存峰值(日志 GpuMem)、时长 | stage3_matrix/runs + stage4/comparison_tables.md |
+| NEU/PCB | 21 单元 best mAP50、显存峰值(日志 GpuMem)、时长（逐单元汇总） | stage3_matrix/evidence_summary.csv|json + stage4/comparison_tables.md（原始 runs/ 与 training.log 体积原因未入库） |
 | 两数据 | 每策略 3+seed mean/sd/95%CI + 配对差 + 稳健口径 | stage4/README.md 表 1-3 |
 | 稳定性 | seed2025 补跑(偶发排除)+ seed824 重跑(确定性复现) | stage3_matrix/README + stage4 README |
 | 参数 | 由 best.pt state_dict 实测(adapter/freeze/total) | stage4 README §表3 |
@@ -63,7 +63,8 @@ DeepPCB frozen 的 0.769 含 seed824 确定性震荡(0.639, best@ep9, 重跑复�
   → PR-4 stage4 统计与审计 → PR-5 stage5 复现包/本报告。
 - **独立源码 PR（对齐官方 main）**：分支 `fix/vpeft-capacity-guard`（基线 `af961b9`，2 commit）= `C_cap` 容量硬约束 +
   未适配层冻结对齐；文案见 `stage5_pr_delivery/pr_body_capacity_guard.md`，PR 编号待创建，链接见 PPT 末页①。
-- **整体交付 PR（本课题全部工作）**：复用仓库 PR `#279`（head 分支换成 `c3-vpeft-smoke`），标题
-  `[犀牛鸟-C3]：V-PEFT 小样本工业缺陷检测结项交付`，文案见 `stage5_pr_delivery/pr_body_c3_overall.md`。
-- 分支状态：`fix/vpeft-capacity-guard` 已在 fork（源码修复，tip `daed306`）；`c3-vpeft-smoke`（证据包，20 条提交已统一为
-  Conventional Commits 风格，本地历史重写过）待 `--force-with-lease` 推回 fork。
+- **最终交付 PR（本课题全部工作，唯一必做）**：从 `c3-vpeft-smoke` → `Tencent:main` **新建**。不复用 `#279`：它的 head 是
+  `fix/vpeft-capacity-guard`，而 GitHub 不允许改已有 PR 的 head 分支。标题 `[犀牛鸟-C3]：V-PEFT 小样本工业缺陷检测结项交付`，
+  文案见 `stage5_pr_delivery/pr_body_c3_overall.md`。
+- 分支状态：`fix/vpeft-capacity-guard` 已在 fork（源码修复，tip `daed306`；源码 PR 可选提交，编号待创建，链接见 PPT 末页①）；
+  `c3-vpeft-smoke` 已在 fork（证据包，tip `456ae92`；PR 正文重写后又多了 1 条本地文档提交，未推送）。

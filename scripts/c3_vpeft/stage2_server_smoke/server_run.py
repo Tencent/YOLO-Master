@@ -11,7 +11,7 @@ C3 stage2 · run_smoke.py 的服务器化运行器(单训练单元)
   - --epochs 段式训练由外部(queue_runner/调度)用新 --name 的 resume 实现
 
 用法(示例,从仓库根调用):
-  python c3_work/stage2_server_smoke/server_run.py \
+  python scripts/c3_vpeft/stage2_server_smoke/server_run.py \
       --strategy vpeft \
       --data <abs neu_det.yaml> \
       --name neuk10_vpeft_824 \
@@ -33,7 +33,7 @@ from pathlib import Path
 
 import yaml
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]  # scripts/c3_vpeft/stage2_server_smoke/ -> repo root
 SCRIPT_DIR = Path(__file__).resolve().parent
 # 关键:必须用当前解释器所在 env 的 yolo,而不是 PATH 上裸 yolo
 # (本机 PATH 的 yolo 命中 base miniconda/他人项目,会加载错误的 ultralytics)

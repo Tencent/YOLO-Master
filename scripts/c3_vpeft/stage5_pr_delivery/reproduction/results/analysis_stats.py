@@ -38,8 +38,9 @@ def ci95(x):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--evidence", default="../stage3_matrix/evidence_summary.json")
-    ap.add_argument("--supplement", default="../stage3_matrix/runs",
+    # 复现包内结果与脚本同目录，因此默认取 SCRIPT_DIR 下的快照
+    ap.add_argument("--evidence", default=str(Path(__file__).resolve().parent / "evidence_summary.json"))
+    ap.add_argument("--supplement", default=str(Path(__file__).resolve().parent / "runs"),
                     help="补充单元目录(自动发现 *_s2025 / *_s824b)")
     args = ap.parse_args()
     ev = json.loads(Path(args.evidence).read_text())

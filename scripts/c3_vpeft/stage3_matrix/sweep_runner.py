@@ -159,6 +159,7 @@ def main():
             logf = open(LOG_DIR / f"{u['id']}.log", "a", encoding="utf-8")
             logf.write(f"\n=== {datetime.now().isoformat()} launch card {card} ===\n")
             logf.flush()
+            # cmd 内均使用绝对路径，cwd 取交付根目录（scripts/c3_vpeft）
             procs[u["id"]] = subprocess.Popen(cmd, cwd=str(SCRIPT_DIR.parents[1]), stdout=logf,
                                               stderr=subprocess.STDOUT, text=True, env=CLEAN_ENV)
             started += 1
