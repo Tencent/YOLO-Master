@@ -735,12 +735,16 @@ class FoundationDistillationModel(nn.Module):
         raw = preds
         if isinstance(raw, tuple):
             raw = raw[1] if len(raw) > 1 and isinstance(raw[1], dict) else raw[0]
-        if isinstance(raw, dict) and "one2many" in raw:
-            raw = raw["one2many"]
         criterion = getattr(student_model, "criterion", None)
         for candidate in (criterion, getattr(criterion, "native_criterion", None)):
             if candidate is None:
                 continue
+            for branch in ("one2many", "one2one"):
+                nested = getattr(candidate, branch, None)
+                fn = getattr(nested, "get_assigned_targets_and_loss", None)
+                if callable(fn) and isinstance(raw, dict) and branch in raw:
+                    assigned = fn(raw[branch], batch)
+                    return assigned[0][0], assigned[0][1], raw[branch].get("feats", [])
             for attr in ("get_assigned_targets_and_loss",):
                 fn = getattr(candidate, attr, None)
                 if callable(fn) and isinstance(raw, dict) and "feats" in raw:
@@ -749,9 +753,9 @@ class FoundationDistillationModel(nn.Module):
             for branch in ("one2many", "one2one"):
                 nested = getattr(candidate, branch, None)
                 fn = getattr(nested, "get_assigned_targets_and_loss", None)
-                if callable(fn) and isinstance(raw, dict) and branch in raw:
-                    assigned = fn(raw[branch], batch)
-                    return assigned[0][0], assigned[0][1], raw[branch].get("feats", [])
+                if callable(fn) and isinstance(raw, dict) and "feats" in raw:
+                    assigned = fn(raw, batch)
+                    return assigned[0][0], assigned[0][1], raw.get("feats", [])
             vp_criterion = getattr(candidate, "vp_criterion", None)
             fn = getattr(vp_criterion, "get_assigned_targets_and_loss", None)
             if callable(fn) and isinstance(raw, dict) and "feats" in raw:

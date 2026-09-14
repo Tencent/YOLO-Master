@@ -108,15 +108,16 @@ def check():
         print(f"PASS {arm}")
 
 
-def calibration(path):
+def calibration(path, arms=None):
     """Reject stale or incomplete calibration before launching a treatment."""
     if not path.is_file():
         raise FileNotFoundError(f"Missing {path}; run --stage probe on the training machine before formal training")
     data = json.loads(path.read_text())
     if data.get("fingerprint") != fingerprint() or data.get("status") != "passed":
         raise ValueError("Calibration is stale or did not pass; run a new probe in a new directory")
-    for arm in WEIGHTS:
-        weight = data["weights"][arm]
+    check_arms = [arm for arm in WEIGHTS if arms is None or arm in arms]
+    for arm in check_arms:
+        weight = data["weights"].get(arm)
         if not isinstance(weight, (float, int)) or not math.isfinite(weight) or weight <= 0:
             raise ValueError(f"Invalid calibrated weight for {arm}")
     return data
@@ -142,7 +143,7 @@ def command(arm, seed, device, output, weights):
     return cmd
 
 
-def probe(output, device):
+def probe(output, device, arms=None, seeds=None):
     """Measure real training-only gradients at initialization, with no optimizer updates."""
     import torch
 
@@ -154,6 +155,10 @@ def probe(output, device):
     if target.exists():
         raise FileExistsError(f"Refusing to overwrite {target}")
     output.mkdir(parents=True, exist_ok=True)
+    probe_arms = [arm for arm in WEIGHTS if arms is None or arm in arms]
+    if not probe_arms:
+        raise ValueError(f"No calibration-eligible arms in {arms}; need one of {list(WEIGHTS)}")
+    probe_seeds = list(SEEDS) if seeds is None else seeds
     record = {
         "status": "failed",
         "fingerprint": fingerprint(),
@@ -163,9 +168,9 @@ def probe(output, device):
         "weights": {},
         "arms": {},
     }
-    for arm in WEIGHTS:
+    for arm in probe_arms:
         observations = []
-        for seed in SEEDS:
+        for seed in probe_seeds:
             cfg = configs()[arm].copy()
             # The diagnostic uses real training labels, no validation metrics and deterministic unaugmented views.
             cfg.update(
@@ -257,7 +262,7 @@ def probe(output, device):
             del iterator, trainer, model, before, params
         median = statistics.median(row["ratio"] for row in observations)
         weight = TARGET_RATIO / median
-        medians = [weight * statistics.median(r["ratio"] for r in observations if r["seed"] == s) for s in SEEDS]
+        medians = [weight * statistics.median(r["ratio"] for r in observations if r["seed"] == s) for s in probe_seeds]
         if not 1e-6 <= weight <= 100 or not all(0.05 <= value <= 0.20 for value in medians):
             raise RuntimeError(f"{arm}: calibration outside frozen bounds; do not tune using validation mAP")
         record["weights"][arm] = weight
@@ -275,6 +280,7 @@ def main():
     parser.add_argument("--device", default="0")
     parser.add_argument("--output", type=Path, default=ROOT / "runs/detect/d2/p2voc")
     parser.add_argument("--arms", nargs="+", choices=ARMS, default=list(ARMS))
+    parser.add_argument("--seeds", nargs="+", type=int, default=list(SEEDS))
     args = parser.parse_args()
     args.output = args.output.resolve()
     configs()
@@ -282,14 +288,14 @@ def main():
         check()
         return
     if args.stage == "probe":
-        probe(args.output, args.device)
+        probe(args.output, args.device, arms=args.arms, seeds=args.seeds)
         return
     weights = {arm: "CALIBRATION_REQUIRED" for arm in WEIGHTS}
     if args.stage == "train":
         check()
         if any(arm in WEIGHTS for arm in args.arms):
-            weights = calibration(args.output / "calibration.json")["weights"]
-    for seed in SEEDS:
+            weights = calibration(args.output / "calibration.json", arms=args.arms)["weights"]
+    for seed in args.seeds:
         for arm in dict.fromkeys(args.arms):
             cmd = command(arm, seed, args.device, args.output, weights)
             print(shlex.join(cmd), flush=True)
