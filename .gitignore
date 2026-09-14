@@ -167,6 +167,7 @@ dmypy.json
 runs/
 wandb/
 .DS_Store
+.workbuddy/
 
 # Neural Network weights -----------------------------------------------------------------------------------------------
 weights/
