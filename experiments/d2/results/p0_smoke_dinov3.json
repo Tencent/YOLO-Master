@@ -89,7 +89,7 @@
     "kd_weight": 0.05,
     "seed": 17,
     "device": "cuda:0",
-    "results": "/workspace/YOLO-Master/experiments/d2/results/p0_smoke_dinov3.json"
+    "results": "experiments/d2/results/p0_smoke_dinov3.json"
   },
   "loss_history": {
     "kd": [

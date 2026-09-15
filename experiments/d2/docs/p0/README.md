@@ -1,19 +1,33 @@
-# P0｜跑通现有 foundation distill 路径
+# P0｜Foundation 蒸馏链路验证
 
-**状态：✅ 已闭环**（2026-08-25，CUDA；2026-08-29 在 RTX 3090 上复现）
+**状态：完成**（CUDA；RTX 3090 复现）
 
-P0 = 用配置驱动仓库自身的训练路径跑通一次真实训练，并核对
-teacher / tap / projector / loss 与日志。
+P0 验证仓库现有 teacher、student feature tap、projector 和 relational KD loss 能通过真实训练入口运行，并且 KD 项进入反向传播目标。
 
-| | |
-|---|---|
-| 定义与实测 | [`../design.md §5`](../design.md) |
-| 复现命令与证据解读 | [`../../README.md`](../../README.md)「复现 P0」 |
-| 证据 | [`../../results/p0_train_ok/`](../../results/p0_train_ok/) |
+## 结果
 
-> **P0 不构成任何精度主张。** 3 epoch、`pretrained=False`、mAP50-95 全程为 0。
-> 它只证明链路接通且 KD 项进入了被反传的目标。
+- Foundation 指标列成功写入逐 epoch CSV。
+- raw KD 在三个 epoch 中均为有限非零值。
+- `foundation_relational_raw × loss_weight × batch` 与记录的加权 Foundation loss 一致。
+- smoke probe 确认梯度到达 student 和 projector，teacher 保持冻结且不进入 optimizer。
 
-P0 暴露的三个问题（权重过小、MoE 辅助损失压倒 KD、optimizer 不一致）见
-[`../design.md`](../design.md) §5.4。其中权重问题的处置构成了整个 P1 前置工作，
-见 [`../p1/`](../p1/README.md)。
+这是链路证据。该运行只有 3 epochs、`pretrained=false`，mAP50-95 全程为 0，不构成精度结论。
+
+## 复现
+
+```bash
+yolo train model=ultralytics/cfg/models/26/yolo26-master-n.yaml \
+  data=coco128.yaml epochs=3 imgsz=256 batch=4 workers=0 device=0 \
+  seed=17 deterministic=true pretrained=false amp=false plots=false \
+  foundation_enabled=true foundation_teacher=dinov3 \
+  foundation_model=facebook/dinov3-vits16-pretrain-lvd1689m \
+  foundation_target_levels=p4 foundation_loss=relational \
+  foundation_loss_weight=0.05 project=d2/p0 name=train_ok
+```
+
+## 证据
+
+- 真实训练指标：[`../../results/p0_train_ok/metrics.csv`](../../results/p0_train_ok/metrics.csv)
+- 实际参数与源文件哈希：[`../../results/p0_manifest.csv`](../../results/p0_manifest.csv)
+- 梯度和冻结检查：[`../../results/p0_smoke_dinov3.json`](../../results/p0_smoke_dinov3.json)
+- 后续权重标定：[`../p1/kd_gradient_analysis.md`](../p1/kd_gradient_analysis.md)

@@ -115,6 +115,7 @@ experiments/d2/
 关键证据：
 
 - P0 真实训练：[`results/p0_train_ok/`](results/p0_train_ok/)
+- P0 实际参数与证据哈希：[`results/p0_manifest.csv`](results/p0_manifest.csv)
 - A/B/C/D Probe A：[`results/probe_a_voc_3090/`](results/probe_a_voc_3090/)
 - P1 实际参数与证据哈希：[`results/p1voc_manifest.csv`](results/p1voc_manifest.csv)
 - P1 汇总：[`results/p1voc_summary.md`](results/p1voc_summary.md)
