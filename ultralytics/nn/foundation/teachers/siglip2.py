@@ -134,7 +134,7 @@ class SigLIP2Teacher(nn.Module):
             from transformers import AutoModel
         except (ImportError, ModuleNotFoundError) as exc:
             raise ImportError(
-                "F12 SigLIP2 backend requires optional dependency 'transformers>=4.56.0,<6'. "
+                "F12 SigLIP2 backend requires optional dependency 'transformers>=5,<6'. "
                 "Install with: pip install -e '.[foundation]'"
             ) from exc
         source = self.weights_path if self.weights_path and Path(self.weights_path).is_dir() else self.model_id
@@ -165,7 +165,7 @@ class SigLIP2Teacher(nn.Module):
         try:
             from transformers import AutoProcessor
         except (ImportError, ModuleNotFoundError) as exc:
-            raise ImportError("F12 SigLIP2 processor requires optional dependency 'transformers>=4.56.0,<6'.") from exc
+            raise ImportError("F12 SigLIP2 processor requires optional dependency 'transformers>=5,<6'.") from exc
         source = self.weights_path if self.weights_path and Path(self.weights_path).is_dir() else self.model_id
         kwargs = {"local_files_only": self.local_files_only}
         try:

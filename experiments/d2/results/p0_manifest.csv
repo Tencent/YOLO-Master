@@ -1,0 +1,2 @@
+run,epochs,seed,data,model,imgsz,batch,optimizer,lr0,lrf,pretrained,amp,deterministic,foundation_teacher,foundation_model,foundation_target_levels,foundation_loss,foundation_loss_weight,metrics_sha256,resolved_args_sha256
+train_ok,3,17,coco128.yaml,yolo26-master-n.yaml,256,4,auto,0.01,0.01,False,False,True,dinov3,facebook/dinov3-vits16-pretrain-lvd1689m,p4,relational,0.05,47022df88067463f8558dbc448fc845f9f238709faf7b1269fc66df162259731,d4b807fae184503844ae345d137c97a0f90c1811222d3c70d6b89075e8246657
