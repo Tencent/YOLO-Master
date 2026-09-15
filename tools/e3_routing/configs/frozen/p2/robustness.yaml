@@ -1,0 +1,30 @@
+run_id: p2r-20260905-cpu-resolution-flip-v4
+require_committed_source: true
+
+runtime_root: ../YOLO-Master-main-07d3303
+official_locked_base_ref: acce839c7e895d6b179de7f7093fa879e237cc7b
+official_runtime_ref: 07d330325b5a26b75aabfc75389f9bcbc0d40245
+official_runtime_tree: e4a900338bd6679d5ad9f8673e466b250ba2c711
+
+device: cpu
+seeds: [0, 1, 2]
+dataset: coco8.yaml
+dataset_split: val
+sample_indices: [0, 1, 2, 3]
+resolutions: [64, 128, 256]
+reference_resolution: 64
+transformations: [identity, horizontal_flip]
+
+spatial_profiles:
+  mot:
+    model_config: ultralytics/cfg/models/26/yolo26-master-mot-n.yaml
+    router_class: _MoTRouter
+  moa:
+    model_config: ultralytics/cfg/models/26/yolo26-master-moa-n.yaml
+    router_class: _MoARouter
+
+source_fingerprints:
+  ultralytics/nn/modules/mot/router.py: 0fab250d4b472c979e28c76258768ce9c6e414fdc016dd3a29559ddcefd75fc1
+  ultralytics/nn/modules/moa/router.py: ad753404db8b740c909b38d4f74dc4912527ce931ea76f48609ae7dbeb8f517f
+  ultralytics/cfg/models/26/yolo26-master-mot-n.yaml: 739aca4279cd2ae7813f4b0b5a16211efd68c74a1beaacc71d2431101dca6fda
+  ultralytics/cfg/models/26/yolo26-master-moa-n.yaml: 20a57222cd4a51b11b39d51ca959a2d250e46c5e42b4ecf9fe6a9808e3147310

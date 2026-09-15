@@ -1,0 +1,23 @@
+run_id: p2x-20260908-blur-residual-v1
+require_committed_source: true
+holdout_run_dir: artifacts/p2/p2h-20260907-dose-holdout-v1
+expected_holdout_run_id: p2h-20260907-dose-holdout-v1
+expected_holdout_manifest_sha256: 1beeb20bf31d2ad153ecfde466cbd8f66e9e45dd322f13c6c66e57eae82b2b2e
+image_source_run_dir: artifacts/p2/p2q-20260906-dose-response-v1
+expected_image_source_manifest_sha256: c1917ad0d254b01d33ce9883c33d7d085c3147633915c2cab6213dde95ecaafe
+expected_selected_image_and_label_set_sha256: 80020696759bd2b6a6e68bb645c9c748e90c4b6425489563a746f72fbd161c4f
+expected_image_count: 32
+canvas_size: 128
+family: gaussian_blur
+endpoint: probability_mae
+features:
+  - letterbox_content_fraction
+  - luminance_mean_0_255
+  - edge_total_variation_0_1
+bootstrap_draws: 10000
+bootstrap_seed: 20260908
+permutation_draws: 20000
+permutation_seed: 20261908
+alpha: 0.05
+top_k: 6
+max_evidence_bytes: 8388608
