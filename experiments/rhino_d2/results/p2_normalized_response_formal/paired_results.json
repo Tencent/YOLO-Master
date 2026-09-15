@@ -1,0 +1,34 @@
+{
+  "metric": "late10_median_mAP50-95",
+  "rows": [
+    {
+      "seed": 20260824,
+      "B": 0.052434999999999996,
+      "Cnorm": 0.050625,
+      "delta": -0.0018099999999999922
+    },
+    {
+      "seed": 20260825,
+      "B": 0.04766,
+      "Cnorm": 0.050705,
+      "delta": 0.003044999999999999
+    },
+    {
+      "seed": 20260826,
+      "B": 0.05134,
+      "Cnorm": 0.04868,
+      "delta": -0.0026599999999999957
+    }
+  ],
+  "status": "No detectable change",
+  "mean_delta": -0.00047499999999999626,
+  "sample_sd": 0.0030778929481058916,
+  "paired_95_t_ci": [
+    -0.008120909945120245,
+    0.007170909945120253
+  ],
+  "route_terminal": true,
+  "new_experiments_allowed": false,
+  "secondary_evaluation_pending": false,
+  "mechanism_support": true
+}
