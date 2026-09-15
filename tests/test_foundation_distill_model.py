@@ -131,6 +131,9 @@ def test_training_adds_foundation_loss_and_only_student_projector_receive_gradie
     assert teacher.training is False
     assert all(not parameter.requires_grad for parameter in teacher.parameters())
     assert all("teacher_model" not in key for key in wrapper.state_dict())
+    optimizer = torch.optim.AdamW(wrapper.parameters(), lr=1e-3)
+    optimizer_parameter_ids = {id(parameter) for group in optimizer.param_groups for parameter in group["params"]}
+    assert optimizer_parameter_ids.isdisjoint(id(parameter) for parameter in teacher.parameters())
 
     wrapper.train()
     batch = {"img": torch.rand(2, 3, 64, 64)}

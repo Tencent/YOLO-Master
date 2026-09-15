@@ -93,6 +93,7 @@ dev = [
     "minijinja>=2.0.0", # render docs macros without mkdocs-macros-plugin
 ]
 foundation = [
+    "safetensors>=0.4.3",
     "transformers>=4.56.0,<6; python_version >= '3.10'",
 ]
 export-base = [
