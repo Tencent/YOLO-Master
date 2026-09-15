@@ -13,8 +13,8 @@ python experiments/d2/scripts/validate_pair.py \
 # PASS: config and matrix budgets; no-confound check
 
 pytest -q tests/test_foundation_dinov3.py tests/test_foundation_siglip2.py \
-  tests/test_foundation_distill_model.py tests/test_foundation_config.py
-# 55 passed
+  tests/test_foundation_distill_model.py
+# 27 passed
 
 ruff check experiments/d2/scripts/
 ruff format --check experiments/d2/scripts/

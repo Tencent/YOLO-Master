@@ -238,7 +238,7 @@ def write_manifest(runs: list[dict], path: Path) -> None:
     """Write a compact audit manifest so full resolved args need not be committed for every run."""
     fields = ["run", "epochs", *MANIFEST_ARG_KEYS, "metrics_sha256", "resolved_args_sha256"]
     with path.open("w", encoding="utf-8", newline="") as file:
-        writer = csv.DictWriter(file, fieldnames=fields)
+        writer = csv.DictWriter(file, fieldnames=fields, lineterminator="\n")
         writer.writeheader()
         for run in runs:
             row = {"run": run["run"], "epochs": run["epochs"]}
