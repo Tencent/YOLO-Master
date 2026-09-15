@@ -13,12 +13,15 @@ static cv::Mat letterbox(
     int& pad_h) {
     const int original_h = image.rows;
     const int original_w = image.cols;
+    if (original_h <= 0 || original_w <= 0 || target_h <= 0 || target_w <= 0) {
+        throw std::invalid_argument("image and target dimensions must be positive");
+    }
     ratio = std::min(
         static_cast<float>(target_h) / static_cast<float>(original_h),
         static_cast<float>(target_w) / static_cast<float>(original_w));
 
-    const int resized_w = static_cast<int>(std::round(static_cast<float>(original_w) * ratio));
-    const int resized_h = static_cast<int>(std::round(static_cast<float>(original_h) * ratio));
+    const int resized_w = std::max(1, static_cast<int>(std::round(static_cast<float>(original_w) * ratio)));
+    const int resized_h = std::max(1, static_cast<int>(std::round(static_cast<float>(original_h) * ratio)));
     pad_w = target_w - resized_w;
     pad_h = target_h - resized_h;
 

@@ -16,7 +16,9 @@ SliceOutput sliced_candidates(Backend& be, const cv::Mat& bgr, const Config& cfg
     Config g = cfg;
     g.conf_thresh = std::min(cfg.conf_thresh, conf_floor);
     be.infer(bgr, g);
+    out.pre_ms += be.pre_ms;
     out.infer_ms += be.infer_ms;
+    out.post_ms += be.post_ms;
     // Snapshot immediately: every subsequent infer() overwrites the backend's cached state.
     std::vector<RawDet> global_cands = be.candidates;
     const LetterboxInfo global_lb = be.cand_lb;
@@ -101,7 +103,9 @@ SliceOutput sliced_candidates(Backend& be, const cv::Mat& bgr, const Config& cfg
         cv::Mat canvas(tile, tile, CV_8UC3, cv::Scalar(114, 114, 114));
         bgr(cv::Rect(t.x, t.y, t.w, t.h)).copyTo(canvas(cv::Rect(0, 0, t.w, t.h)));
         be.infer(canvas, tg);
+        out.pre_ms += be.pre_ms;
         out.infer_ms += be.infer_ms;
+        out.post_ms += be.post_ms;
         out.tiles_run += 1;
         for (const RawDet& d : be.candidates) {
             // Clip to real crop content (upstream lets boxes live on the gray padding),
@@ -117,8 +121,14 @@ SliceOutput sliced_candidates(Backend& be, const cv::Mat& bgr, const Config& cfg
             pool.push_back(std::move(r));
         }
     }
-    std::sort(pool.begin(), pool.end(),
-              [](const RawDet& a, const RawDet& b) { return a.score > b.score; });
+    std::sort(pool.begin(), pool.end(), [](const RawDet& a, const RawDet& b) {
+        if (a.score != b.score) return a.score > b.score;
+        if (a.cls != b.cls) return a.cls < b.cls;
+        if (a.box.x != b.box.x) return a.box.x < b.box.x;
+        if (a.box.y != b.box.y) return a.box.y < b.box.y;
+        if (a.box.width != b.box.width) return a.box.width < b.box.width;
+        return a.box.height < b.box.height;
+    });
 
     // ---- postcondition: the backend's cached state now describes the SLICED run ----
     be.candidates = pool;
@@ -131,7 +141,9 @@ SliceOutput sliced_candidates(Backend& be, const cv::Mat& bgr, const Config& cfg
         be.proto.clear();
         be.proto_c = be.proto_h = be.proto_w = 0;
     }
+    be.pre_ms = out.pre_ms;
     be.infer_ms = out.infer_ms;
+    be.post_ms = out.post_ms;
     return out;
 }
 

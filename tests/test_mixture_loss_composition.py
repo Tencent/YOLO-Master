@@ -1,12 +1,13 @@
 """Tests for composing native task criteria with routed auxiliary losses."""
 
+import pytest
 import torch
-import torch.nn as nn
+from torch import nn
 
-from ultralytics.nn.mixture_loss import CompositeCriterion, build_composite_criterion
+from ultralytics.nn.mixture_loss import CompositeCriterion, build_composite_criterion, compose_native_result
+from ultralytics.nn.modules.latent_mixture import LatentMixture
 from ultralytics.nn.modules.moa import C2fMoA
 from ultralytics.nn.modules.routing_protocol import clear_aux_records
-from ultralytics.nn.modules.latent_mixture import LatentMixture
 
 
 class NativeCriterion:
@@ -20,6 +21,40 @@ class NativeCriterion:
 
     def update(self):
         self.updates += 1
+
+
+@pytest.mark.parametrize("entrypoint", ["wrapper", "direct"])
+@pytest.mark.parametrize("shape", [(), (1,), (3,), (5,)])
+def test_vector_native_loss_counts_aux_once_with_correct_gradients(monkeypatch, entrypoint, shape):
+    """Trainer reduction must not multiply auxiliary regularization by the task's loss-item count."""
+    model = nn.Sequential(C2fMoA(16, 16, n=1, num_heads=3)).train()
+    native_loss = torch.ones(shape, requires_grad=True)
+    native_items = native_loss.detach().reshape(-1).clone()
+    aux = torch.tensor(2.0, requires_grad=True)
+    monkeypatch.setattr("ultralytics.nn.mixture_loss._collect_mixture_aux_loss", lambda *args, **kwargs: aux)
+
+    if entrypoint == "wrapper":
+        loss, items = CompositeCriterion(model, lambda *args: (native_loss, native_items))(None, {})
+    else:
+        loss, items = compose_native_result(model, native_loss, native_items)
+
+    torch.testing.assert_close(loss.sum(), native_loss.sum() + aux)
+    loss.sum().backward()
+    torch.testing.assert_close(native_loss.grad, torch.ones_like(native_loss))
+    torch.testing.assert_close(aux.grad, torch.ones_like(aux))
+    torch.testing.assert_close(items[:-1], native_items)
+    torch.testing.assert_close(items[-1], aux.detach())
+    assert not items.requires_grad
+
+
+def test_dense_direct_composition_preserves_native_vector():
+    """Dense models keep the native loss shape, tensors, and gradient path unchanged."""
+    model = nn.Linear(2, 2)
+    native_loss = torch.ones(3, requires_grad=True)
+    native_items = native_loss.detach()
+    loss, items = compose_native_result(model, native_loss, native_items)
+    assert loss is native_loss
+    assert items is native_items
 
 
 def test_dense_model_keeps_exact_native_criterion():

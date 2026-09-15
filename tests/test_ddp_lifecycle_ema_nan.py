@@ -7,7 +7,11 @@ from torch import nn
 
 from ultralytics.engine.extensions import AdapterRuntimeController
 from ultralytics.engine.extensions.recovery import TrainingRecoveryController
-from ultralytics.engine.trainer import BaseTrainer, validate_adapter_configuration
+from ultralytics.engine.trainer import (
+    BaseTrainer,
+    _reset_optimizer_accumulation_after_recovery,
+    validate_adapter_configuration,
+)
 from ultralytics.nn.peft.molora import MoLoRAConfig, MoLoRALayer, get_peft_molora_model
 from ultralytics.utils.errors import MoERouterError
 from ultralytics.utils.patches import torch_load
@@ -346,6 +350,18 @@ def test_nonfinite_amp_recovery_switches_to_fp32(tmp_path):
     assert t._handle_nan_recovery(0) is True
     assert t.amp is False
     assert t.scaler.is_enabled() is False
+
+
+def test_epoch_recovery_restarts_optimizer_accumulation_cursor():
+    """An epoch replay must not inherit the completed pass's last optimizer-step index."""
+    model = nn.Linear(1, 1)
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+    model(torch.ones(1, 1)).sum().backward()
+
+    last_opt_step = _reset_optimizer_accumulation_after_recovery(optimizer)
+
+    assert last_opt_step == -1
+    assert all(parameter.grad is None for parameter in model.parameters())
 
 
 def test_nonfinite_gradient_skips_optimizer_on_all_ranks():

@@ -90,16 +90,24 @@ def test_es_moe_preserves_router_failure_diagnostics():
 def test_routed_modules_declare_sparse_export_boundary():
     moa = MoABlock(24, num_heads=3).export_capabilities()
     mot = MoTBlock(24, num_heads=3, top_k=2).export_capabilities()
+    mot_dense = MoTBlock(24, num_heads=3, top_k=2, export_masked=False).export_capabilities()
     moe = ES_MOE(16, 16, num_experts=3, top_k=1).export_capabilities()
 
     assert moa["routing_kind"] == "moa"
     assert moa["eager_sparse_dispatch"] is False
-    for capabilities in (mot, moe):
-        assert capabilities["eager_sparse_dispatch"] is True
-        assert capabilities["onnx_sparse_dispatch"] is False
-        assert capabilities["torchscript_trace_sparse_dispatch"] is False
-        assert capabilities["exact_sparse_export"] is False
-        assert "dense" in capabilities["sparse_export_limitation"].lower()
+    assert mot["eager_sparse_dispatch"] is True
+    assert mot["onnx_sparse_dispatch"] is False
+    assert mot["torchscript_trace_sparse_dispatch"] is False
+    assert mot["exact_sparse_export"] is False
+    assert mot["export_router_weights"] == "masked_topk"
+    assert "masked" in mot["sparse_export_limitation"].lower()
+    assert mot_dense["export_router_weights"] == "dense_softmax"
+    assert "dense" in mot_dense["sparse_export_limitation"].lower()
+    assert moe["eager_sparse_dispatch"] is True
+    assert moe["onnx_sparse_dispatch"] is False
+    assert moe["torchscript_trace_sparse_dispatch"] is False
+    assert moe["exact_sparse_export"] is False
+    assert "dense" in moe["sparse_export_limitation"].lower()
 
 
 def test_global_routing_metrics_marks_local_usage_without_process_group():

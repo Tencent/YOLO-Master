@@ -1,0 +1,15 @@
+# Export/validation helpers (the C++ runtime itself only needs its CMake SDKs).
+numpy>=1.23
+torch>=2.0
+ultralytics>=8.0
+onnx>=1.14
+onnxruntime>=1.18
+onnxsim>=0.4
+opencv-python>=4.5
+Pillow>=9.0
+pytest>=7.0
+
+# Install separately when using the MNN scripts:
+# MNN>=3.0
+# Install the matching ncnn Python wheel when running the NCNN export smoke test.
+# ncnn>=2024.0

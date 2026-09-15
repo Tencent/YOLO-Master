@@ -19,4 +19,6 @@ std::vector<Detection> postprocess_yolo_output(
     int num_classes,
     float conf_threshold,
     float iou_threshold,
-    const PreprocessResult& prep);
+    const PreprocessResult& prep,
+    bool multi_label = true,
+    int max_det = 300);

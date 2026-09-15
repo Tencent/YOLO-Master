@@ -1,9 +1,8 @@
-"""Config-level regression: master MoT YAMLs must wire ``export_masked=True``.
+"""Config-level regression: master MoT YAMLs and module defaults enable ``export_masked``.
 
-The module-level ``export_masked`` path (masked Top-K router weights) makes
-traced/exported MoT graphs bit-exact with eager sparse dispatch. These tests
-pin the master configs so the bit-exact export semantics stay the product
-default rather than an opt-in module capability.
+Masked Top-K router weights make traced/exported MoT graphs bit-exact with
+eager sparse dispatch. These tests pin both the module constructor default
+and the master configs so bit-exact export stays the product default.
 """
 
 from pathlib import Path
@@ -12,7 +11,7 @@ import pytest
 import torch
 
 from ultralytics import YOLO
-from ultralytics.nn.modules.mot import C2fMoT
+from ultralytics.nn.modules.mot import C2fMoT, MoTBlock
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -27,6 +26,16 @@ MOT_MASTER_CONFIGS = [
     "ultralytics/cfg/models/master/v0_10/det/yolo-master-moa-mot-n.yaml",
     "ultralytics/cfg/models/master/v0_10/det/yolo-master-mot-scene-n.yaml",
 ]
+
+
+def test_mot_export_masked_defaults_true():
+    """Module constructors must enable masked export without a YAML last-arg True."""
+    block = MoTBlock(32, num_heads=2, top_k=1)
+    wrapper = C2fMoT(32, 32, n=1, num_heads=2, top_k=1)
+    assert block.router.export_masked is True
+    assert block.export_capabilities()["export_router_weights"] == "masked_topk"
+    assert wrapper.m[0].router.export_masked is True
+    assert wrapper.export_capabilities()["export_router_weights"] == "masked_topk"
 
 
 def _c2f_mot_modules(model):

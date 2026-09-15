@@ -23,6 +23,23 @@ def isolated_env_ids():
     )
 
 
+def _public_pypi_command(command):
+    """Remove the optional NVIDIA index arguments from an install command."""
+    skip_next = False
+    filtered = []
+    for token in command:
+        if skip_next:
+            skip_next = False
+            continue
+        if token in {"--extra-index-url", "--index-strategy"}:
+            skip_next = True
+            continue
+        if token in {"https://pypi.ngc.nvidia.com", "unsafe-best-match"}:
+            continue
+        filtered.append(token)
+    return filtered
+
+
 def build_env(env_id, root):
     """Build one export environment and run its smoke export commands."""
     recipe = EXPORT_ENVS[env_id]
@@ -35,25 +52,31 @@ def build_env(env_id, root):
     indexes = [token for flag, url in recipe["indexes"] for token in (flag, url)]
     index_strategy = ["--index-strategy", "unsafe-best-match"] if indexes else []
     torch = [f"torch{recipe['torch']}"] if recipe["torch"] else []
-    subprocess.run(
-        [
-            "uv",
-            "pip",
-            "install",
-            "--python",
-            str(python),
-            "-e",
-            package,
-            "pytest",
-            *torch,
-            *recipe["requirements"],
-            *indexes,
-            *index_strategy,
-            "--torch-backend",
-            "cpu",
-        ],
-        check=True,
-    )
+    install_command = [
+        "uv",
+        "pip",
+        "install",
+        "--python",
+        str(python),
+        "-e",
+        package,
+        "pytest",
+        *torch,
+        *recipe["requirements"],
+        *indexes,
+        *index_strategy,
+        "--torch-backend",
+        "cpu",
+    ]
+    try:
+        subprocess.run(install_command, check=True)
+    except subprocess.CalledProcessError:
+        # NVIDIA's index is supplemental for TensorFlow/GraphSurgeon. If its DNS
+        # endpoint is unavailable, retry against public PyPI so CI remains usable.
+        if "https://pypi.ngc.nvidia.com" not in indexes:
+            raise
+        print("Supplemental NVIDIA PyPI index unavailable; retrying with public PyPI", flush=True)
+        subprocess.run(_public_pypi_command(install_command), check=True)
 
     if recipe["env"]:
         site_packages = next(venv.glob("lib/python*/site-packages"))

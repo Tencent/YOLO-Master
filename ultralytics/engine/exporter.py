@@ -512,15 +512,17 @@ class Exporter:
         export_deepx: Export model to DEEPX format.
 
     Examples:
-        Export a YOLO26 model to TorchScript format
+        Export a randomly initialized YOLO26 architecture to TorchScript format
+        >>> from ultralytics import YOLO
         >>> from ultralytics.engine.exporter import Exporter
-        >>> exporter = Exporter()
-        >>> exporter(model="yolo26n.pt")  # exports to yolo26n.torchscript
+        >>> model = YOLO("yolo26n.yaml", verbose=False).model
+        >>> exporter = Exporter(overrides={"format": "torchscript", "imgsz": 32})
+        >>> exported_path = exporter(model=model)
 
         Export with specific arguments
-        >>> args = {"format": "onnx", "dynamic": True, "quantize": 8, "data": "coco8.yaml"}
+        >>> args = {"format": "torchscript", "imgsz": 64, "batch": 1}
         >>> exporter = Exporter(overrides=args)
-        >>> exporter(model="yolo26n.pt")
+        >>> exported_path = exporter(model=model)
     """
 
     def __init__(self, cfg=DEFAULT_CFG, overrides=None, _callbacks: dict | None = None):

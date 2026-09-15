@@ -1,59 +1,78 @@
-# Jetson Orin Nano — Deployment Log
+# Jetson deployment log template
 
-Deploying YOLO-Master-EsMoE-N to a Jetson Orin Nano (4 GB) via TensorRT: the deployment numbers,
-on-device accuracy, and the reproducible build issues on Orin / TensorRT 10.16.2.
+Use this file as the human-readable companion to an evidence manifest. It is a
+template, not a record of a run performed in this repository. Replace every
+`TBD` field from the target device and archive the unedited command output.
 
 ## Platform
-| | |
-|---|---|
-| Device | Jetson Orin Nano 4 GB (`Orin`, sm87, 4 SMs @ 0.624 GHz, ~3.4 GB usable) |
-| Software | JetPack 7 — Ubuntu 24.04, CUDA 13.2, TensorRT 10.16.2 |
-| Model | `esmoe_n_visdrone_sim.onnx` (opset 12, `images[1,3,640,640] → output0[1,14,8400]`) |
 
-## Result
+| Field | Value |
+| --- | --- |
+| Device and memory | TBD |
+| JetPack / Ubuntu | TBD |
+| CUDA / cuDNN / TensorRT | TBD |
+| Power mode and clocks | TBD |
+| CPU/GPU temperature during benchmark | TBD |
+| Runner commit | TBD |
+| Compiler and CMake version | TBD |
 
-Deployment engine: **clean FP16** (`trtexec --fp16 --builderOptimizationLevel=3`).
+## Model and engine
 
-| Engine | GPU compute | FPS | mAP50 | mAP50-95 |
-|---|---|---|---|---|
-| **FP16 (shipped)** | **27.8 ms** | **35.7** | **0.3488** | **0.2029** |
-| QDQ INT8 (+FP32 fallback) | 45.4 ms | 21.7 | 0.3202 | 0.1834 |
-| uncalibrated `--int8` | 31.4 ms | 31.6 | 0.128 | — |
+| Field | Value |
+| --- | --- |
+| Checkpoint path and SHA256 | TBD |
+| ONNX path and SHA256 | TBD |
+| Engine path and SHA256 | TBD |
+| Input shape and output shape | TBD |
+| Precision recipe | TBD (FP32 / FP16 / calibrated INT8) |
+| Calibration list digest and count | TBD / not applicable |
 
-mAP over the full 548 VisDrone val images (`eval_map_standalone.py`); FP16 is **−0.46% / −0.34%** vs the
-FP32 baseline (0.3504 / 0.2036) — near-lossless. Context: x86 CPU (ORT) 25 FPS · Orin FP16 35.7 FPS ·
-H200 CUDA 128 FPS.
+## Benchmark protocol
 
-**FP16, not INT8.** The mixed-precision recipe keeps the area-attention, head, and router out of INT8, so
-INT8 leaves the compute-heavy attention on FP32/FP16 kernels; combined with TensorRT's lossier INT8, the
-calibrated engine is both slower and less accurate than FP16. The `uncalibrated --int8` row is a trap:
-`--int8` on a plain FP32 ONNX (no calibration/QDQ) silently builds a broken INT8 engine that benchmarks
-fast but collapses to 0.128 mAP — a speed benchmark can't catch this, so validate mAP.
+| Parameter | Value |
+| --- | --- |
+| Ordered image-list digest | TBD |
+| Image count | TBD |
+| Input size | TBD |
+| Confidence / IoU / max detections | TBD |
+| Multi-label decoding | TBD |
+| Warm-up runs | TBD |
+| Timed runs | TBD |
+| Threads / execution provider | TBD |
 
-## Build issues (Orin / TensorRT 10.16.2)
+## Results
 
-**1. Pure-FP16 build fails at low opt levels.** At `--builderOptimizationLevel<=2` TensorRT's kernel timing
-model references an `sm80` FP16 conv shader with no `sm87` base and asserts, producing an empty engine
-(`KTM assertion failure: convolutionTimingModel.cpp:65 shader != nullptr` → `Created engine with size: 0 MiB`).
-Fix: **`--builderOptimizationLevel=3`** (profiles tactics on-device instead of estimating) — needed for any
-build that keeps FP16 layers (pure FP16 and mixed-precision QDQ INT8).
+Report device-side compute and end-to-end timing separately. Do not fill a
+metric cell until the corresponding prediction directory and reference JSON
+have been verified by `evidence_manifest.py verify`.
 
-**2. ORT-quantized QDQ won't parse in TensorRT.** An `onnxruntime.quantization` QDQ model needs three things
-the parser requires: (a) **symmetric** activations (ORT defaults to asymmetric → `Non-zero zero point is not
-supported`); (b) **no int32-bias DQ** (ORT quantizes bias to int32, TensorRT handles bias internally →
-`DequantizeLayer can only run in kINT8/…`); (c) **opset ≥ 13** for per-channel DQ. All handled by
-`scripts/quantize_int8.py --symmetric` (`ActivationSymmetric` + `QuantizeBias=False` + opset upgrade).
+| Engine | Compute mean (ms) | End-to-end P50 (ms) | P95 (ms) | P99 (ms) | FPS | mAP50 | mAP50-95 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| FP32 | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
+| FP16 | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
+| Calibrated INT8 | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
 
-**3. 4 GB build OOM.** The builder profiles tactics wanting 100s of MB each; on a 4 GB module it OOMs or
-skips every fast tactic. Fix for the *build* (inference itself needs ~20 MB): go headless
-(`sudo systemctl isolate multi-user.target`), add swap (`fallocate -l 8G /swapfile`), and cap
-`--memPoolSize=workspace:256 --maxAuxStreams=0`.
+An uncalibrated `trtexec --int8` run may be retained as a parser or throughput
+diagnostic, but it must be labelled diagnostic and must not be used as an
+accuracy result.
 
-## Reproduce
-```bash
-# on the Jetson (headless + 8 GB swap on the 4 GB Nano)
-trtexec --onnx=esmoe_n_visdrone_sim.onnx --fp16 \
-  --saveEngine=esmoe_n_fp16.engine \
-  --memPoolSize=workspace:256 --builderOptimizationLevel=3 --maxAuxStreams=0
-```
-Scripts: `jetson/{00_setup,10_trt_bench,21_build_trt_runner,30_package}.sh`. Power: `nvpmodel -m 0 && jetson_clocks`.
+## Build observations
+
+Record only observations reproduced on this device and software stack. For
+each failure include the exact command, exit status, relevant log excerpt and
+the change that resolved it.
+
+| Symptom | Reproduction command | Resolution | Evidence path |
+| --- | --- | --- | --- |
+| TBD | TBD | TBD | TBD |
+
+## Required attachments
+
+* raw `trtexec` and runner logs;
+* model/engine and image-list SHA256 records;
+* per-image predictions and the PyTorch/reference metric JSON;
+* the completed evidence manifest and its verification output;
+* the exact build and benchmark commands.
+
+Without these attachments, this log supports only a procedural description and
+not a cross-platform deployment claim.

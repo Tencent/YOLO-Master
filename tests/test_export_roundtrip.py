@@ -14,11 +14,12 @@ from ultralytics.utils.export_validation import validate_export_roundtrip
 def _export_semantics_reference(module: nn.Module) -> nn.Module | None:
     """Return an eager reference matching the module's documented export semantics.
 
-    MoT with ``top_k < NUM_EXPERTS`` runs sparse Top-K dispatch eagerly but
-    exports dense softmax blending (data-dependent expert selection cannot be
-    traced); the roundtrip must therefore compare against the dense eager path.
+    MoT with ``export_masked=False`` and ``top_k < NUM_EXPERTS`` exports dense
+    softmax blending; the roundtrip then compares against the dense eager path.
+    The default ``export_masked=True`` path is bit-exact with eager sparse
+    dispatch, so no reference override is needed.
     """
-    if isinstance(module, MoTBlock) and module.top_k < module.NUM_EXPERTS:
+    if isinstance(module, MoTBlock) and module.top_k < module.NUM_EXPERTS and not module.router.export_masked:
         reference = copy.deepcopy(module)
         reference.top_k = reference.NUM_EXPERTS
         return reference
@@ -31,6 +32,7 @@ def _export_semantics_reference(module: nn.Module) -> nn.Module | None:
         (MoABlock(32, num_heads=3), torch.randn(1, 32, 8, 8)),
         (OptimizedMOE(32, 32, num_experts=2, top_k=1), torch.randn(1, 32, 8, 8)),
         (MoTBlock(32, num_heads=2, top_k=1), torch.randn(1, 32, 8, 8)),
+        (MoTBlock(32, num_heads=2, top_k=1, export_masked=False), torch.randn(1, 32, 8, 8)),
         (MoLoRALayer(nn.Linear(32, 16), r=2, num_experts=2, top_k=1), torch.randn(2, 32)),
     ],
 )
@@ -46,6 +48,7 @@ def test_mixture_torchscript_roundtrip(module, sample):
         (MoABlock(32, num_heads=3), torch.randn(1, 32, 8, 8)),
         (OptimizedMOE(32, 32, num_experts=2, top_k=1), torch.randn(1, 32, 8, 8)),
         (MoTBlock(32, num_heads=2, top_k=1), torch.randn(1, 32, 8, 8)),
+        (MoTBlock(32, num_heads=2, top_k=1, export_masked=False), torch.randn(1, 32, 8, 8)),
         (MoLoRALayer(nn.Linear(32, 16), r=2, num_experts=2, top_k=1), torch.randn(2, 32)),
     ],
 )
@@ -65,7 +68,8 @@ def test_mot_export_masked_matches_sparse_eager():
     to eager sparse dispatch — no reference override needed.
     """
     torch.manual_seed(0)
-    block = MoTBlock(32, num_heads=2, top_k=1, export_masked=True).eval()
+    block = MoTBlock(32, num_heads=2, top_k=1).eval()
+    assert block.router.export_masked is True
     assert block.export_capabilities()["export_router_weights"] == "masked_topk"
     sample = torch.randn(1, 32, 8, 8)
     for fmt in ("torchscript", "onnx"):

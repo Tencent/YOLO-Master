@@ -138,6 +138,7 @@ foundation_foreground_weight: 1.5 # (float) weight for P4 tokens inside GT boxes
 foundation_boundary_weight: 1.0 # (float) weight for one-cell GT box boundary tokens
 foundation_background_weight: 0.25 # (float) weight for P4 background tokens
 foundation_cache_teacher_features: False # (bool) cache teacher features (future phase)
+foundation_cache_dir: # (str, optional) offline teacher feature cache directory (python -m ultralytics.nn.foundation.offline)
 foundation_teacher_dtype: auto # (str) teacher dtype: auto, fp32, fp16, or bf16
 foundation_teacher_device: auto # (str|int) teacher device selector, independent of student device
 foundation_router_distill: False # (bool) enable F11 LatentMixture teacher-to-student routing distillation
@@ -152,6 +153,9 @@ foundation_semantic_image_weight: 1.0 # (float) region-to-image embedding loss w
 foundation_semantic_temperature: 0.07 # (float) region-text contrastive temperature
 foundation_semantic_prompts: # (list[str], optional) explicit class prompts; defaults to model.names
 foundation_semantic_prompt_template: "a photo of a {class_name}" # (str) template for automatic class prompts
+foundation_response_distill: False # (bool) enable detection-level pseudo-label KD from the teacher response channel (boxes + logits)
+foundation_response_loss_weight: 0.0 # (float) response-channel pseudo-label loss weight
+foundation_response_score_threshold: 0.5 # (float) teacher score threshold for pseudo-label selection
 foundation_multitask: False # (bool) F15 explicit MultiTask Foundation representation-transfer diagnostics
 foundation_multitask_enabled: False # (bool, optional alias) backwards-compatible spelling for foundation_multitask
 foundation_multitask_tasks: # (list[str], optional) expected active tasks; empty means infer from the model head

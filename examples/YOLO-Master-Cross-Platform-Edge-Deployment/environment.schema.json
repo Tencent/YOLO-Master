@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Tencent/YOLO-Master/issue51-environment.schema.json",
+  "title": "YOLO-Master Issue #51 environment record",
+  "type": "object",
+  "required": ["schema_version", "captured_at_utc", "host", "tools", "sdk_roots", "gpu", "runtime_protocol", "repository"],
+  "properties": {
+    "schema_version": {"const": "issue51-environment/v1"},
+    "captured_at_utc": {"type": "string", "minLength": 1},
+    "host": {
+      "type": "object",
+      "required": ["system", "machine", "cpu_model", "logical_cpus"],
+      "properties": {
+        "system": {"type": ["string", "null"]},
+        "release": {"type": ["string", "null"]},
+        "version": {"type": ["string", "null"]},
+        "platform": {"type": ["string", "null"]},
+        "machine": {"type": ["string", "null"]},
+        "processor": {"type": ["string", "null"]},
+        "cpu_model": {"type": ["string", "null"]},
+        "logical_cpus": {"type": ["integer", "null"], "minimum": 1},
+        "physical_cpus": {"type": ["integer", "null"], "minimum": 1},
+        "memory_bytes": {"type": ["integer", "null"], "minimum": 0}
+      }
+    },
+    "tools": {"type": "object"},
+    "sdk_roots": {"type": "object"},
+    "gpu": {"type": "object"},
+    "runtime_protocol": {
+      "type": "object",
+      "properties": {
+        "backend": {"type": ["string", "null"]},
+        "execution_provider": {"type": ["string", "null"]},
+        "threads": {"type": ["integer", "null"], "minimum": 0},
+        "warmup": {"type": ["integer", "null"], "minimum": 0},
+        "runs": {"type": ["integer", "null"], "minimum": 0}
+      }
+    },
+    "repository": {"type": "object"}
+  }
+}

@@ -5,6 +5,8 @@ Extends DetectionTrainer for unified multi-task training with
 TaskRouter-contextualized features and combined multi-task loss.
 """
 
+from __future__ import annotations
+
 from copy import copy
 from pathlib import Path
 from typing import Any

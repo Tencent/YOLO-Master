@@ -67,7 +67,17 @@ def pytest_collection_modifyitems(config, items):
     if not export_env:
         return
 
-    from ultralytics.engine.exporter import export_formats
+    # Keep dependency-light contract tests runnable without the optional
+    # Ultralytics installation.  Export routing is only relevant when the
+    # caller explicitly requests --export-env, so defer the import until then
+    # and mark matching tests as skipped if the package is unavailable.
+    try:
+        from ultralytics.engine.exporter import export_formats
+    except ModuleNotFoundError:
+        for item in items:
+            if Path(str(item.fspath)).name == "test_exports.py":
+                item.add_marker(pytest.mark.skip(reason="Ultralytics is required for --export-env"))
+        return
 
     env_by_format = dict(zip(export_formats()["Argument"], export_formats()["Env"]))
     for item in items:
@@ -99,8 +109,13 @@ def pytest_sessionstart(session):
     Args:
         session: The pytest session object.
     """
-    from ultralytics.utils.torch_utils import init_seeds
-
+    # Ultralytics is an optional dependency for the edge-runtime contract
+    # tests.  Seed initialization is retained for the full suite, but must not
+    # prevent dependency-light tests from collecting and running.
+    try:
+        from ultralytics.utils.torch_utils import init_seeds
+    except ModuleNotFoundError:
+        return
     init_seeds()
 
 
@@ -128,7 +143,10 @@ def pytest_sessionfinish(session, exitstatus):
     if hasattr(session.config, "workerinput"):
         return
 
-    from ultralytics.utils import WEIGHTS_DIR
+    try:
+        from ultralytics.utils import WEIGHTS_DIR
+    except ModuleNotFoundError:
+        return
 
     # Remove files
     models = [path for x in {"*.onnx", "*.torchscript"} for path in WEIGHTS_DIR.rglob(x)]

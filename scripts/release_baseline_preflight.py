@@ -22,6 +22,8 @@ Usage:
     python scripts/release_baseline_preflight.py --json out.json
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import socket
@@ -132,6 +134,19 @@ def check_network(timeout: float = 3.0) -> list[dict]:
     return results
 
 
+def _resolved_install_paths(location: str, editable_source: str) -> list[Path]:
+    """Resolve metadata location strings to absolute paths."""
+    paths: list[Path] = []
+    if location:
+        path = Path(location).expanduser()
+        paths.append(path.resolve() if str(path) not in {".", ""} else Path.cwd().resolve())
+    if editable_source:
+        url = editable_source[7:] if editable_source.startswith("file://") else editable_source
+        if url:
+            paths.append(Path(url).expanduser().resolve())
+    return paths
+
+
 def check_cli_installation() -> dict:
     """Verify the ``yolo`` CLI resolves to THIS workspace, not a stale editable install.
 
@@ -147,7 +162,7 @@ def check_cli_installation() -> dict:
         version = result.stdout.strip() if result.returncode == 0 else None
     except (OSError, subprocess.TimeoutExpired):
         version = None
-    location, editable_source = "", ""
+    location, editable_source, import_path = "", "", ""
     try:
         dist = importlib.metadata.distribution("ultralytics")
         location = str(dist.locate_file(""))
@@ -156,12 +171,33 @@ def check_cli_installation() -> dict:
             editable_source = json.loads(direct).get("url", "")
     except Exception:
         pass
+    try:
+        import ultralytics
+
+        import_path = str(Path(ultralytics.__file__).resolve())
+    except Exception:
+        pass
+    root = ROOT.resolve()
+    metadata_ok = any(_is_this_repo(path, root) for path in _resolved_install_paths(location, editable_source))
+    import_ok = bool(import_path) and _is_this_repo(Path(import_path).resolve(), root)
     return {
         "yolo_version": version,
         "install_location": location,
         "editable_source": editable_source,
-        "points_to_this_repo": str(ROOT) in location or str(ROOT) in editable_source,
+        "import_path": import_path,
+        "import_points_to_this_repo": import_ok,
+        "metadata_points_to_this_repo": metadata_ok,
+        "points_to_this_repo": import_ok and (metadata_ok or not editable_source),
     }
+
+
+def _is_this_repo(path: Path, root: Path) -> bool:
+    """Return whether ``path`` is the repo root or a file under it."""
+    try:
+        path.resolve().relative_to(root)
+        return True
+    except ValueError:
+        return root == path.resolve() or str(root) in str(path)
 
 
 def run_blocked_tests(python: str) -> int:
@@ -200,7 +236,8 @@ def main() -> int:
         print(f"  CLI install: ok ({cli['yolo_version']})")
     else:
         print(
-            f"  CLI install: WARNING — global yolo CLI resolves outside this repo: {cli['editable_source'] or cli['install_location']}"
+            "  CLI install: WARNING — global yolo CLI resolves outside this repo: "
+            f"{cli.get('editable_source') or cli.get('import_path') or cli.get('install_location')}"
         )
         print("    test_cli subprocess results validate the installed package, not this workspace.")
 

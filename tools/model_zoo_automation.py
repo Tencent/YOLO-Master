@@ -77,7 +77,9 @@ def validate_submission(path: Path, changed_files: list[str] | None = None) -> d
             errors.append(f"benchmark.{key} must be an integer in [{low}, {high}]")
 
     if changed_files is not None:
-        submissions = [p for p in changed_files if p.startswith("model-zoo/submissions/") and p.endswith((".yaml", ".yml"))]
+        submissions = [
+            p for p in changed_files if p.startswith("model-zoo/submissions/") and p.endswith((".yaml", ".yml"))
+        ]
         forbidden = [p for p in changed_files if Path(p).suffix.lower() in {".pt", ".pth", ".ckpt", ".onnx", ".engine"}]
         if len(submissions) != 1:
             errors.append("PR must add or update exactly one model-zoo/submissions YAML file")
@@ -88,15 +90,36 @@ def validate_submission(path: Path, changed_files: list[str] | None = None) -> d
     return data
 
 
+def validate_download_url(url: str) -> None:
+    """Validate every URL before sending requests, including redirects."""
+    parsed = urlparse(url)
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname not in ALLOWED_HOSTS
+        or parsed.port not in (None, 443)
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        raise ValueError("weight download must use HTTPS on an allowlisted host and port without credentials")
+
+
+class CheckedRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Apply the download policy before urllib follows each Location header."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        validate_download_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 def download_weights(data: dict, destination: Path) -> Path:
     weights = data["weights"]
+    validate_download_url(weights["url"])
+    opener = urllib.request.build_opener(CheckedRedirectHandler())
     request = urllib.request.Request(weights["url"], headers={"User-Agent": "YOLO-Master-model-zoo/1"})
     hasher, total = hashlib.sha256(), 0
     destination.parent.mkdir(parents=True, exist_ok=True)
-    with urllib.request.urlopen(request, timeout=60) as response, destination.open("wb") as output:
-        final_host = urlparse(response.geturl()).hostname
-        if final_host not in ALLOWED_HOSTS:
-            raise ValueError(f"redirected to non-allowlisted host: {final_host}")
+    with opener.open(request, timeout=60) as response, destination.open("wb") as output:
+        validate_download_url(response.geturl())
         content_length = response.headers.get("Content-Length")
         if content_length and int(content_length) != weights["size_bytes"]:
             raise ValueError("Content-Length does not match declared size_bytes")
@@ -121,8 +144,15 @@ def run_benchmark(data: dict, output_dir: Path) -> dict:
     cfg = data["benchmark"]
     model = YOLO(str(weight_path), task="detect")
     metrics = model.val(
-        data=cfg["dataset"], imgsz=cfg["imgsz"], batch=cfg["batch"], device="cpu",
-        project=str(output_dir), name="validation", exist_ok=True, plots=False, verbose=False,
+        data=cfg["dataset"],
+        imgsz=cfg["imgsz"],
+        batch=cfg["batch"],
+        device="cpu",
+        project=str(output_dir),
+        name="validation",
+        exist_ok=True,
+        plots=False,
+        verbose=False,
     )
     results = {str(k): float(v) for k, v in getattr(metrics, "results_dict", {}).items() if isinstance(v, (int, float))}
     speed = {str(k): float(v) for k, v in getattr(metrics, "speed", {}).items() if isinstance(v, (int, float))}

@@ -856,9 +856,10 @@ class OptimizedMOE(nn.Module):
         flat_indices = routing_indices.view(B, self.top_k)  # [B, k]
         flat_weights = routing_weights.view(B, self.top_k)  # [B, k]
 
-        if torch.onnx.is_in_onnx_export():
-            # ONNX tracing cannot capture data-dependent ``if mask.any()``
-            # skips. Use a dense path: compute all experts, gather Top-K, sum.
+        if torch.onnx.is_in_onnx_export() or torch.jit.is_tracing():
+            # Neither ONNX export nor ``torch.jit.trace`` can capture data-dependent
+            # ``if mask.any()`` skips; both record this batch's routing as the graph.
+            # Use a dense path: compute all experts, gather Top-K, sum.
             all_outs = torch.stack([self.experts[i](x) for i in range(self.num_experts)], dim=1)  # [B, E, out_C, H, W]
             for k in range(self.top_k):
                 idx_k = flat_indices[:, k]  # [B]
@@ -1066,7 +1067,32 @@ class OptimizedMOEImproved(nn.Module):
         else:
             self._current_top_k = self.top_k
 
+    def _ensure_compat_attrs(self):
+        """Fill attributes added after some checkpoints were saved.
+
+        A module restored from an older checkpoint keeps only the attributes that
+        were pickled, so ``forward`` would raise ``AttributeError`` on anything
+        introduced later. Filling the defaults here (once, lazily) lets legacy
+        weights run without a crash.
+        """
+        if not hasattr(self, "add_residual"):
+            # A checkpoint that predates this attribute was trained without the
+            # residual; the __init__ default of True would add a tensor the block
+            # never saw and collapse classification confidence.
+            self.add_residual = False
+        for name, default in (
+            ("progressive_sparsity", False),
+            ("detach_routing", False),
+            ("_training_step", 0),
+            ("warmup_steps", 5000),
+        ):
+            if not hasattr(self, name):
+                setattr(self, name, default)
+        if not hasattr(self, "_current_top_k"):
+            self._current_top_k = getattr(self, "num_experts", getattr(self, "top_k", 1))
+
     def forward(self, x):
+        self._ensure_compat_attrs()
         B, C, H, W = x.shape
 
         if self.training and self.progressive_sparsity:
@@ -1114,8 +1140,9 @@ class OptimizedMOEImproved(nn.Module):
         if getattr(self, "detach_routing", False):
             weights_flat = weights_flat.detach()
 
-        if torch.onnx.is_in_onnx_export():
-            # ONNX tracing cannot capture ``if mask.any()`` skips.
+        if torch.onnx.is_in_onnx_export() or torch.jit.is_tracing():
+            # Neither ONNX export nor ``torch.jit.trace`` can capture ``if mask.any()``
+            # skips; both freeze this batch's routing into the graph.
             # Dense path: compute all experts, gather Top-K, weighted-sum.
             all_outs = torch.stack([self.experts[i](x) for i in range(self.num_experts)], dim=1)  # [B, E, out_C, H, W]
             for k in range(adaptive_top_k):

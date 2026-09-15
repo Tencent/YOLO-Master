@@ -2,10 +2,21 @@
 // Detector.maskPolygons (tracer), annotationInstances + the export orchestrators in
 // mac/Sources/YOLOMasterKit/AnnotationExport.swift (the sink replaces the Mac orchestrators
 // so three consumers - CLI, GUI folder, GUI video - share one emit path).
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#endif
 #include "annotate_export.hpp"
 #include "stb_image_write.h"
+#include <cstdio>
 #include <cmath>
+#include <filesystem>
 #include <fstream>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 namespace yolomaster {
 
@@ -90,8 +101,12 @@ std::vector<std::vector<float>> seg_polygons(
         }
         scored.emplace_back(std::abs(area) / 2, std::move(flat));
     }
-    std::sort(scored.begin(), scored.end(),
-              [](const auto& a, const auto& b) { return a.first > b.first; });
+    std::sort(scored.begin(), scored.end(), [](const auto& a, const auto& b) {
+        if (a.first != b.first) return a.first > b.first;
+        // Polygon areas can tie after quantisation.  A lexical coordinate
+        // tie-break prevents platform/library-dependent annotation order.
+        return a.second < b.second;
+    });
     for (auto& s : scored) {
         if (static_cast<int>(rings.size()) >= max_polygons) break;
         rings.push_back(std::move(s.second));
@@ -127,7 +142,9 @@ std::vector<annot::Instance> annotation_instances(
 }
 
 static bool write_text(const std::string& path, const std::string& body, std::string& err) {
-    std::ofstream f(path, std::ios::binary);
+    // u8path preserves UTF-8 destination names on Windows (where the narrow
+    // ofstream constructor otherwise follows the process ANSI code page).
+    std::ofstream f(std::filesystem::u8path(path), std::ios::binary);
     if (!f) { err = "cannot write " + path; return false; }
     f << body;
     if (!f) { err = "write failed: " + path; return false; }
@@ -181,11 +198,56 @@ AnnotationSink::Result AnnotationSink::finish() {
     return {images_, instances_, error_};
 }
 
+namespace {
+
+struct JpegFileContext {
+    FILE* file = nullptr;
+    bool ok = true;
+};
+
+void jpeg_file_write(void* opaque, void* data, int size) {
+    auto* context = static_cast<JpegFileContext*>(opaque);
+    if (!context || !context->file || !context->ok || size <= 0) return;
+    context->ok = std::fwrite(data, 1, static_cast<size_t>(size), context->file) ==
+                  static_cast<size_t>(size);
+}
+
+#ifdef _WIN32
+static std::wstring utf8_path(const std::string& value) {
+    if (value.empty()) return {};
+    const int needed = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                                           value.data(), static_cast<int>(value.size()),
+                                           nullptr, 0);
+    if (needed <= 0) return {};
+    std::wstring result(static_cast<size_t>(needed), L'\0');
+    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                            value.data(), static_cast<int>(value.size()),
+                            result.data(), needed) != needed)
+        return {};
+    return result;
+}
+#endif
+
+} // namespace
+
 bool write_jpg(const std::string& path, const cv::Mat& bgr) {
+    if (bgr.empty() || bgr.type() != CV_8UC3) return false;
     cv::Mat rgb;
     cv::cvtColor(bgr, rgb, cv::COLOR_BGR2RGB);
     if (!rgb.isContinuous()) rgb = rgb.clone();
-    return stbi_write_jpg(path.c_str(), rgb.cols, rgb.rows, 3, rgb.data, 90) != 0;
+#ifdef _WIN32
+    const std::wstring wide = utf8_path(path);
+    if (wide.empty()) return false;
+    FILE* file = _wfopen(wide.c_str(), L"wb");
+#else
+    FILE* file = std::fopen(path.c_str(), "wb");
+#endif
+    if (!file) return false;
+    JpegFileContext context{file, true};
+    const int encoded = stbi_write_jpg_to_func(jpeg_file_write, &context,
+                                               rgb.cols, rgb.rows, 3, rgb.data, 90);
+    const bool closed = std::fclose(file) == 0;
+    return encoded != 0 && context.ok && closed;
 }
 
 } // namespace yolomaster

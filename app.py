@@ -196,28 +196,24 @@ class YOLO_Master_WebUI:
         
         # 4.2 Data Extraction (Build DataFrame)
         data_list = []
-        if res.boxes:
-            for box in res.boxes:
-                try:
-                    # Compatibility handling: box.cls might be tensor or float
-                    cls_id = int(box.cls[0]) if box.cls.numel() > 0 else 0
-                    cls_name = model.names[cls_id]
-                    conf_val = float(box.conf[0]) if box.conf.numel() > 0 else 0.0
-                    coords = box.xyxy[0].tolist()
-                    
-                    row = {
-                        "Class ID": cls_id,
-                        "Class Name": cls_name,
-                        "Confidence": round(conf_val, 3),
-                        "x1": round(coords[0], 1),
-                        "y1": round(coords[1], 1),
-                        "x2": round(coords[2], 1),
-                        "y2": round(coords[3], 1)
-                    }
-                    data_list.append(row)
-                except Exception:
-                    pass
-        
+        detections = res.obb if res.obb is not None else res.boxes
+        if detections is not None:
+            for box in detections:
+                cls_id = int(box.cls[0])
+                row = {"Class ID": cls_id, "Class Name": model.names[cls_id], "Confidence": round(float(box.conf[0]), 3)}
+                if res.obb is not None:
+                    keys = ("cx", "cy", "width", "height", "angle (rad)")
+                    coordinates = box.xywhr[0].tolist()
+                else:
+                    keys = ("x1", "y1", "x2", "y2")
+                    coordinates = box.xyxy[0].tolist()
+                row.update({key: round(value, 3) for key, value in zip(keys, coordinates)})
+                data_list.append(row)
+        elif res.probs is not None:
+            for cls_id in res.probs.top5:
+                data_list.append({"Class ID": cls_id, "Class Name": model.names[cls_id],
+                                  "Confidence": round(float(res.probs.data[cls_id]), 3)})
+
         df = pd.DataFrame(data_list)
         
         # 4.3 Summary Info
@@ -229,7 +225,7 @@ class YOLO_Master_WebUI:
             f"### ✅ Inference Done\n"
             f"- **Model:** `{Path(self.model_manager.current_model_path).name}`\n"
             f"- **Time:** `{infer_time:.1f}ms`\n"
-            f"- **Objects:** {len(data_list)}\n"
+            f"- **{'Classes shown' if res.probs is not None else 'Objects'}:** {len(data_list)}\n"
             f"- **Device:** `{model_device}`"
         )
         

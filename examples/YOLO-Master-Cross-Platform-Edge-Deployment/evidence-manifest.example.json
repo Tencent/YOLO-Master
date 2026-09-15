@@ -1,0 +1,56 @@
+{
+  "schema_version": "issue51-evidence/v1",
+  "status": "template",
+  "dataset": {
+    "name": "visdrone",
+    "split": "val",
+    "image_count": 0,
+    "images": [],
+    "image_list_sha256": null
+  },
+  "protocol": {
+    "imgsz": 640,
+    "conf": 0.001,
+    "iou": 0.7,
+    "max_det": 300,
+    "multi_label": true,
+    "letterbox": true,
+    "small_conf": -1.0,
+    "small_area": 1024.0,
+    "color": "RGB",
+    "layout": "NCHW",
+    "normalization": "float32 / 255.0",
+    "routing_semantics": null
+  },
+  "training": null,
+  "artifacts": {
+    "checkpoint": null,
+    "models": {},
+    "reports": {},
+    "labels": null,
+    "predictions": null
+  },
+  "calibration": {
+    "enabled": false,
+    "image_count": 0,
+    "images": [],
+    "image_list_sha256": null,
+    "disjoint_from_validation": null
+  },
+  "environment": {
+    "python": null,
+    "platform": null,
+    "machine": null,
+    "processor": null,
+    "git_commit": null
+  },
+  "run": {
+    "command": null
+  },
+  "gates": {
+    "accuracy_min_images": 500,
+    "fp32_max_abs_delta_pp": 0.5,
+    "int8_max_abs_delta_pp": 1.0,
+    "calibration_min_images": 300
+  }
+}
