@@ -170,6 +170,15 @@ kobj: 1.0 # (float) keypoint objectness loss gain (pose tasks)
 rle: 1.0 # (float) rle loss gain (pose tasks)
 angle: 1.0 # (float) oriented angle loss gain (obb tasks)
 nbs: 64 # (int) nominal batch size used for loss normalization
+tal_topk: 10 # (int) base top-k candidates per GT for the task-aligned assigner
+tal_alpha: 0.5 # (float) task-aligned metric classification exponent (score^alpha)
+tal_beta: 6.0 # (float) task-aligned metric localization exponent (iou^beta)
+stal_mode: fixed # (str) STAL assignment mode: none=pure TAL (no tiny-box clamp), fixed=legacy stride clamp, adaptive=area-aware
+stal_min_positive: False # (bool) force at least one positive anchor per valid GT (fallback to best in-gt candidate)
+stal_area_small: 1024 # (int) training-pixel area threshold small/medium (32^2)
+stal_area_medium: 9216 # (int) training-pixel area threshold medium/large (96^2)
+stal_topk_small: 13 # (int) adaptive top-k for small GT (area < stal_area_small); used when stal_mode=adaptive
+stal_expand: 1.0 # (float) adaptive candidate-region expansion radius multiplier (in stride[0] units); used when stal_mode=adaptive
 hsv_h: 0.015 # (float) HSV hue augmentation fraction
 hsv_s: 0.7 # (float) HSV saturation augmentation fraction
 hsv_v: 0.4 # (float) HSV value (brightness) augmentation fraction
