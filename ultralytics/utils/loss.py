@@ -375,6 +375,14 @@ class v8DetectionLoss:
             beta=6.0,
             stride=self.stride.tolist(),
             topk2=tal_topk2,
+            stal_mode=getattr(h, "stal_mode", "fixed"),
+            stal_small_area=getattr(h, "stal_small_area", 32**2),
+            stal_medium_area=getattr(h, "stal_medium_area", 96**2),
+            stal_candidate_scale=getattr(h, "stal_candidate_scale", 1.5),
+            stal_min_candidates=getattr(h, "stal_min_candidates", 3),
+            stal_topk_small=getattr(h, "stal_topk_small", 13),
+            stal_topk_medium=getattr(h, "stal_topk_medium", 10),
+            stal_topk_large=getattr(h, "stal_topk_large", 10),
         )
         self.bbox_loss = BboxLoss(m.reg_max).to(device)
         self.proj = torch.arange(m.reg_max, dtype=torch.float, device=device)
