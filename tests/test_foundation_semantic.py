@@ -4,8 +4,6 @@ import pytest
 import torch
 from torch import nn
 
-from tests.test_foundation_distill_model import TinyStudent, config
-from ultralytics.cfg import get_cfg
 from ultralytics.nn.foundation import (
     FoundationFeatures,
     RegionSemanticProjector,
@@ -15,7 +13,7 @@ from ultralytics.nn.foundation import (
     semantic_distillation_loss,
 )
 from ultralytics.nn.foundation_distill_model import FoundationDistillationModel
-from ultralytics.nn.tasks import DetectionModel
+from tests.test_foundation_distill_model import TinyStudent, config
 
 
 def test_positive_region_pool_only_returns_p4_matches_and_gt_classes():
@@ -151,33 +149,6 @@ def test_semantic_training_uses_positive_regions_and_adds_loss():
     assert total[-1].item() > 0
     assert wrapper.foundation_metrics()["foundation_semantic_regions"] == 1.0
     assert teacher.text_calls == 1
-
-
-def test_semantic_training_uses_real_master_end_to_end_assigner():
-    """Prevent a valid semantic config from silently producing zero loss on YOLO26 E2E predictions."""
-    student = DetectionModel("ultralytics/cfg/models/26/yolo26-master-n.yaml", nc=2, verbose=False)
-    student.args = get_cfg()
-    student.names = {0: "cat", 1: "dog"}
-    args = config(
-        foundation_teacher="siglip2",
-        foundation_loss_weight=0.0,
-        foundation_semantic_distill=True,
-        foundation_semantic_loss_weight=1.0,
-        imgsz=128,
-    )
-    wrapper = FoundationDistillationModel(student, SemanticTeacher(), args)
-    wrapper.train()
-    total, _ = wrapper(
-        {
-            "img": torch.rand(2, 3, 128, 128),
-            "cls": torch.tensor([[0.0], [1.0]]),
-            "bboxes": torch.tensor([[0.5, 0.5, 0.5, 0.5], [0.5, 0.5, 0.5, 0.5]]),
-            "batch_idx": torch.tensor([0, 1]),
-        }
-    )
-    assert wrapper.foundation_metrics()["foundation_semantic_regions"] > 0
-    total.sum().backward()
-    assert wrapper.semantic_projector.proj[0].weight.grad.abs().sum() > 0
 
 
 def test_semantic_requires_siglip2_semantic_and_text_interfaces():

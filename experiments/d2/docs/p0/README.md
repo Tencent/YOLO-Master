@@ -10,7 +10,6 @@ teacher / tap / projector / loss 与日志。
 | 定义与实测 | [`../design.md §5`](../design.md) |
 | 复现命令与证据解读 | [`../../README.md`](../../README.md)「复现 P0」 |
 | 证据 | [`../../results/p0_train_ok/`](../../results/p0_train_ok/) |
-| 新机器复现 | [`../../results/repro_repro_newmachine/`](../../results/repro_repro_newmachine/) |
 
 > **P0 不构成任何精度主张。** 3 epoch、`pretrained=False`、mAP50-95 全程为 0。
 > 它只证明链路接通且 KD 项进入了被反传的目标。

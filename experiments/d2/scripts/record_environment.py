@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 """Record the identity of a D2 experiment run: code version, dependencies, teacher weights, config hashes.
 
@@ -41,8 +40,8 @@ ROOT = HERE.parents[1]
 
 # Paths whose modification changes what the experiment *is*, as opposed to leaving stray files around.
 EXPERIMENT_INPUT_PATHS = (
-    "experiments/d2/configs",
-    "experiments/d2/experiment_matrix.csv",
+    "experiments/d2/configs/p1_voc",
+    "experiments/d2/p1_voc_matrix.csv",
     "experiments/d2/scripts/validate_pair.py",
     "ultralytics/nn/foundation",
     "ultralytics/nn/foundation_distill_model.py",
@@ -117,9 +116,9 @@ def parse_porcelain(porcelain: str) -> set[str]:
         (set[str]): Repository-relative paths.
 
     Examples:
-        >>> sorted(parse_porcelain(' M a.py\\n?? b/c.yaml\\n'))
+        >>> sorted(parse_porcelain(" M a.py\\n?? b/c.yaml\\n"))
         ['a.py', 'b/c.yaml']
-        >>> sorted(parse_porcelain('R  old.py -> new.py\\n'))
+        >>> sorted(parse_porcelain("R  old.py -> new.py\\n"))
         ['new.py']
     """
     paths = set()
@@ -224,11 +223,9 @@ def teacher_state(model_id: str) -> dict:
 
 def config_hashes() -> dict:
     """Return SHA-256 of every file that defines the experiment protocol."""
-    targets = sorted((HERE / "configs").glob("p1_*.yaml"))
-    targets += [HERE / "experiment_matrix.csv", HERE / "validate_pair.py"]
-    return {
-        str(path.relative_to(ROOT)): sha256_file(path) for path in targets if path.is_file()
-    }
+    targets = sorted((HERE / "configs" / "p1_voc").glob("p1_*.yaml"))
+    targets += [HERE / "p1_voc_matrix.csv", HERE / "scripts" / "validate_pair.py"]
+    return {str(path.relative_to(ROOT)): sha256_file(path) for path in targets if path.is_file()}
 
 
 def main() -> int:

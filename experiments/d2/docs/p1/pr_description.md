@@ -28,6 +28,8 @@ codespell experiments/d2/README.md experiments/d2/docs/p1/ \
 
 归档校验确认 12 个运行均包含 400 epochs，且 seed、teacher、multiscale 和 loss weight 与矩阵一致。图表脚本已从归档 CSV 成功重建三张报告图片。
 
+正式训练权重由 VOC/RTX 3090 上的 Probe A 标定：A/B/C/D 各测量 50 batches，并求解 KD 梯度达到任务梯度 10% 时的权重。四格结果保存在 `experiments/d2/results/probe_a_voc_3090/`；D 仅完成探针，没有纳入正式精度统计。
+
 ## 消融数据
 
 VOC、400 epochs、`imgsz=256`、batch 64、SGD、三个配对 seed（17/29/43）；统计单位为每个 seed 的 `treatment - off`，95% CI 使用自由度 2 的双侧 t 区间。
@@ -44,6 +46,7 @@ VOC、400 epochs、`imgsz=256`、batch 64、SGD、三个配对 seed（17/29/43�
 ## 已知局限
 
 - 每格只有三个 seed，A/B 的置信区间很宽；A 的 seed 43 为负，不能声称稳定涨点。
+- A/B/C 使用不同的固定 KD 权重，因此只能比较完整配方，不能把 A−B 或 A−C 解释为纯尺度或纯教师效应。
 - B 的 P3/P5 需要相对教师 P4 网格插值，因此无法完全区分多尺度本身与插值带来的影响。
 - 未运行 SigLIP2 multiscale 的 D 格；现有结果不能估计完整的教师 × 尺度交互。
 - 未完成完整 COCO 三种子矩阵，VOC 结果不能直接外推到 COCO。

@@ -6,13 +6,13 @@ A same-budget comparison is worth nothing if some unrelated field drifted betwee
 YAML files is not a check. This asserts mechanically that every P1 config and every matrix row agrees on the
 shared budget, so "no confounding variables" is verified rather than claimed.
 
-Scope note: this checks the *shared* invariant -- everything outside the Foundation axis is identical everywhere.
-It does not yet check the per-comparison axis (when comparing teachers, multiscale must match; when comparing
-scales, the teacher must match). That axis-aware check is deferred; see design.md 7.2.
+Scope note: this checks the shared budget invariant. A/B/C intentionally use different fixed KD weights, so this
+script does not claim that their pairwise differences isolate a single teacher or scale effect; see design.md 3.3.
 
 Usage
     python experiments/d2/scripts/validate_pair.py
-    python experiments/d2/scripts/validate_pair.py --configs experiments/d2/configs --matrix experiments/d2/experiment_matrix.csv
+    python experiments/d2/scripts/validate_pair.py --configs experiments/d2/configs/p1_voc \
+        --matrix experiments/d2/p1_voc_matrix.csv
 """
 
 from __future__ import annotations
@@ -44,6 +44,8 @@ ALLOWED_MATRIX_KEYS = {
     "loss_weight",
     "native_grid_match",
     "axis_note",
+    "status",
+    "claim",
 }
 
 
@@ -116,8 +118,8 @@ def check_matrix(matrix_path: Path) -> list[str]:
 def main() -> int:
     """Validate the P1 configs and matrix, and report a single verdict."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--configs", default=str(HERE / "configs"))
-    parser.add_argument("--matrix", default=str(HERE / "experiment_matrix.csv"))
+    parser.add_argument("--configs", default=str(HERE / "configs" / "p1_voc"))
+    parser.add_argument("--matrix", default=str(HERE / "p1_voc_matrix.csv"))
     args = parser.parse_args()
 
     config_problems = check_configs(Path(args.configs))
@@ -135,7 +137,7 @@ def main() -> int:
 
     ok = not config_problems and not matrix_problems
     print(f"\nno-confound check: {'PASS' if ok else 'FAIL'}")
-    print("note: per-comparison axis check not implemented yet (design.md 7.2)\n")
+    print("note: A/B/C are complete-recipe comparisons, not single-factor effects (design.md 3.3)\n")
     return 0 if ok else 1
 
 
