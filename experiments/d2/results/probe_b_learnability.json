@@ -1,7 +1,7 @@
 {
   "probe": "B (learnability / projector absorption)",
-  "script": "experiments/d2/kd_gradient_probe.py --mode learnable --steps 300",
-  "machine": "RTX 3090 (see environment_newmachine.json)",
+  "script": "experiments/d2/scripts/kd_gradient_probe.py --mode learnable --steps 300",
+  "machine": "RTX 3090 (see experiments/d2/env/README.md)",
   "note": "KD-only: the task loss is not backwarded at all. Adam(lr=1e-3), 2 fit batches, 8 held out.",
   "raw_output": {
     "steps": 300,

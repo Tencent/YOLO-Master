@@ -13,7 +13,7 @@ P1 使用 VOC、400 epochs 和三个配对随机种子，对比共享 baseline �
 
 这些权重来自 VOC/RTX 3090 上每格 50 batches 的 Probe A。D 也完成了权重标定（`1.858231765126175`），但没有运行正式 400-epoch 训练。四格机器可读结果见 [`../../results/probe_a_voc_3090/`](../../results/probe_a_voc_3090/)。
 
-完整实验结论、配对置信区间和学习曲线见 [`findings.md`](findings.md)。矩阵见 [`../../p1_voc_matrix.csv`](../../p1_voc_matrix.csv)，运行配置见 [`../../configs/p1_voc/`](../../configs/p1_voc/)，逐 epoch 指标和实际解析参数见 [`../../results/`](../../results/)。
+完整实验结论、配对置信区间和学习曲线见 [`findings.md`](findings.md)。矩阵见 [`../../p1_voc_matrix.csv`](../../p1_voc_matrix.csv)，运行配置见 [`../../configs/p1_voc/`](../../configs/p1_voc/)，逐 epoch 指标见 [`../../results/`](../../results/)，实际参数审计见 [`../../results/p1voc_manifest.csv`](../../results/p1voc_manifest.csv)。
 
 ## 复现
 
@@ -39,5 +39,4 @@ python experiments/d2/scripts/plot_p1_findings.py
 ## 设计和前置证据
 
 - [`kd_gradient_analysis.md`](kd_gradient_analysis.md)：权重标定、梯度规模和可学性诊断。
-- [`voc_batch.md`](voc_batch.md)：从 COCO 切换到 VOC 的预算原因和运行记录。
 - [`../design.md`](../design.md)：实验轴、判读线和归因顺序。

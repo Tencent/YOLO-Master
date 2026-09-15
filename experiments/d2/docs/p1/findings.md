@@ -25,13 +25,13 @@ A/B/C 使用不同的固定 KD 权重，因此它们是完整配方比较。A/B 
 
 ## 实验可信度与证据
 
-重新归档后的 12 个 `resolved_args.yaml` 通过事后无混杂核查。同一实验格的三个 seed 使用相同的 teacher、蒸馏层级和 `foundation_loss_weight`；共享训练预算保持一致。每个 treatment 均与相同 seed 的 off 配对。
+12 个运行的原始 `args.yaml` 通过事后无混杂核查。同一实验格的三个 seed 使用相同的 teacher、蒸馏层级和 `foundation_loss_weight`；共享训练预算保持一致。每个 treatment 均与相同 seed 的 off 配对。
 
 证据位置：
 
 - 汇总表：`experiments/d2/results/p1voc_summary.md`
 - 原始逐 epoch 指标：`experiments/d2/results/p1voc_<arm>-s<seed>/metrics.csv`
-- 实际解析参数：`experiments/d2/results/p1voc_<arm>-s<seed>/resolved_args.yaml`
+- 实际参数审计与源文件哈希：[`../../results/p1voc_manifest.csv`](../../results/p1voc_manifest.csv)
 
 ## 最终精度
 

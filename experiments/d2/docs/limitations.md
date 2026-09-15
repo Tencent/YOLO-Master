@@ -52,7 +52,7 @@ Foundation extra 当前要求 `transformers>=5,<6`，与代码使用的 `DINOv3V
 
 ### 3.4 训练 Git SHA 缺失
 
-现存 P1 训练日志没有可靠保存精确 Git SHA。逐运行配置、resolved args、教师 revision、软件版本和硬件已归档，但无法严格证明训练代码与最终 PR HEAD 字节级一致。未来每批运行必须先执行 `record_environment.py`，并要求 `experiment_inputs_dirty=false`。
+现存 P1 训练日志没有可靠保存精确 Git SHA。逐运行配置、实际参数 manifest、教师 revision、软件版本和硬件已归档，但无法严格证明训练代码与最终 PR HEAD 字节级一致。manifest 保留了每份原始 `args.yaml` 的 SHA-256；完整文件不在 PR 中重复提交。未来每批运行必须先执行 `record_environment.py`，并要求 `experiment_inputs_dirty=false`。
 
 ## 4. 性能与部署 fallback
 

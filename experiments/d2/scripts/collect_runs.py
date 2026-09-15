@@ -6,7 +6,8 @@ committable as-is: the repository's root ``.gitignore`` filters both filenames, 
 in Git at all. Reading several runs also means opening several CSVs and eyeballing the last row of each, which is
 how transcription mistakes get into reports.
 
-This copies the two evidence files under names that survive ``.gitignore``, then writes a single summary table.
+This copies the per-epoch metrics, audits the resolved args, then writes a summary table and compact CSV manifest.
+Full resolved args remain useful as local audit inputs but are ignored by Git to avoid committing near-identical files.
 
 It also re-checks the no-confound constraint **after the fact**: ``validate_pair.py`` proves the configs agree,
 but only the ``args.yaml`` of a finished run shows what the trainer actually resolved -- defaults, ``optimizer:
@@ -14,14 +15,14 @@ auto``, CLI overrides and all. A field that differs across runs but is not the v
 as a confound, whatever the configs promised.
 
 Usage
-    python experiments/d2/scripts/collect_runs.py runs/detect/d2/p0/wsweep_*
-    python experiments/d2/scripts/collect_runs.py runs/detect/d2/p1/* --label p1 --axis foundation_loss_weight
+    python experiments/d2/scripts/collect_runs.py runs/detect/d2/p1voc/* --label p1voc
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import re
 import shutil
 import sys
@@ -60,6 +61,31 @@ SUMMARY_COLUMNS = {
     "time": "seconds",
 }
 
+MANIFEST_ARG_KEYS = (
+    "seed",
+    "data",
+    "model",
+    "imgsz",
+    "batch",
+    "optimizer",
+    "lr0",
+    "lrf",
+    "pretrained",
+    "amp",
+    "deterministic",
+    "foundation_enabled",
+    "foundation_teacher",
+    "foundation_model",
+    "foundation_target_levels",
+    "foundation_multiscale",
+    "foundation_loss_weight",
+)
+
+
+def sha256_file(path: Path) -> str:
+    """Return the SHA-256 digest of a file."""
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
 
 def read_flat_yaml(path: Path) -> dict[str, str]:
     """Parse the top-level ``key: value`` pairs of an Ultralytics ``args.yaml``.
@@ -83,12 +109,19 @@ def read_flat_yaml(path: Path) -> dict[str, str]:
         {'epochs': '3', 'name': 'a'}
     """
     fields: dict[str, str] = {}
+    active_list = None
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line or line[0].isspace() or line.lstrip().startswith("#"):
             continue
+        if line.startswith("- ") and active_list:
+            item = line[2:].split("#")[0].strip()
+            fields[active_list] = "+".join(filter(None, (fields[active_list], item)))
+            continue
         key, separator, value = line.partition(":")
         if separator:
-            fields[key.strip()] = value.split("#")[0].strip()
+            value = value.split("#")[0].strip()
+            fields[key.strip()] = value
+            active_list = key.strip() if not value else None
     return fields
 
 
@@ -181,6 +214,8 @@ def collect(run_dir: Path, label: str | None) -> dict:
         "epochs": row.get("epoch", "?"),
         "args": read_flat_yaml(args_yaml) if args_yaml.is_file() else {},
         "metrics": {short: as_float(row.get(column, "")) for column, short in SUMMARY_COLUMNS.items()},
+        "metrics_sha256": sha256_file(results_csv),
+        "resolved_args_sha256": sha256_file(args_yaml) if args_yaml.is_file() else "",
     }
 
 
@@ -197,6 +232,23 @@ def render_table(runs: list[dict]) -> str:
             cells.append("-" if value is None else (f"{value:.5g}" if abs(value) < 1000 else f"{value:.1f}"))
         lines.append(f"| {run['run']} | {run['epochs']} | " + " | ".join(cells) + " |")
     return "\n".join(lines)
+
+
+def write_manifest(runs: list[dict], path: Path) -> None:
+    """Write a compact audit manifest so full resolved args need not be committed for every run."""
+    fields = ["run", "epochs", *MANIFEST_ARG_KEYS, "metrics_sha256", "resolved_args_sha256"]
+    with path.open("w", encoding="utf-8", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=fields)
+        writer.writeheader()
+        for run in runs:
+            row = {"run": run["run"], "epochs": run["epochs"]}
+            row.update({key: run["args"].get(key, "") for key in MANIFEST_ARG_KEYS})
+            for key in ("data", "model"):
+                if row[key] and Path(row[key]).is_absolute():
+                    row[key] = Path(row[key]).name
+            row["metrics_sha256"] = run["metrics_sha256"]
+            row["resolved_args_sha256"] = run["resolved_args_sha256"]
+            writer.writerow(row)
 
 
 def main() -> int:
@@ -231,18 +283,20 @@ def main() -> int:
 
     body = [f"# {args.label or 'D2'} run summary", "", table, "", "## 事后无混杂核查", ""]
     if confounds:
-        body.append("以下字段在各 run 的 `resolved_args.yaml` 中不一致，且不在声明的对照轴内：")
+        body.append("以下字段在各 run 的源 `args.yaml` 中不一致，且不在声明的对照轴内：")
         body.append("")
         body += [f"- `{problem}`" for problem in confounds]
         body.append("")
         body.append("**在解释上表任何差异之前，必须先解释这些字段为何不同。**")
     else:
-        body.append("各 run 的 resolved args 仅在声明的对照轴内不同。")
+        body.append("各 run 的源 `args.yaml` 仅在声明的对照轴内不同；关键字段和哈希另存于 manifest。")
     body += ["", "## 归档", ""] + [f"- `{run['run']}` → `{run['archived'].relative_to(HERE)}/`" for run in runs]
 
     out = Path(args.out) if args.out else RESULTS / f"{args.label or 'runs'}_summary.md"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("\n".join(body) + "\n", encoding="utf-8")
+    manifest = RESULTS / f"{args.label or 'runs'}_manifest.csv"
+    write_manifest(runs, manifest)
 
     print(table)
     print()
@@ -253,6 +307,7 @@ def main() -> int:
     else:
         print("no-confound check: PASS")
     print(f"\nsummary -> {out}")
+    print(f"manifest -> {manifest}")
     return 0
 
 

@@ -16,13 +16,10 @@ pytest -q tests/test_foundation_dinov3.py tests/test_foundation_siglip2.py \
   tests/test_foundation_distill_model.py tests/test_foundation_config.py
 # 55 passed
 
-ruff check experiments/d2/scripts/collect_runs.py \
-  experiments/d2/scripts/plot_p1_findings.py experiments/d2/scripts/run_p1.py
-ruff format --check experiments/d2/scripts/collect_runs.py \
-  experiments/d2/scripts/plot_p1_findings.py experiments/d2/scripts/run_p1.py
+ruff check experiments/d2/scripts/
+ruff format --check experiments/d2/scripts/
 codespell experiments/d2/README.md experiments/d2/docs/p1/ \
-  experiments/d2/scripts/collect_runs.py experiments/d2/scripts/plot_p1_findings.py \
-  experiments/d2/scripts/run_p1.py experiments/d2/results/p1voc_summary.md
+  experiments/d2/scripts/ experiments/d2/results/p1voc_summary.md
 # PASS
 ```
 
@@ -51,6 +48,6 @@ VOC、400 epochs、`imgsz=256`、batch 64、SGD、三个配对 seed（17/29/43�
 - 未运行 SigLIP2 multiscale 的 D 格；现有结果不能估计完整的教师 × 尺度交互。
 - 未完成完整 COCO 三种子矩阵，VOC 结果不能直接外推到 COCO。
 - Foundation 教师只用于训练。部署 fallback 为导出 student-only 模型，不携带教师和投影器。
-- 训练日志未保存精确 Git SHA。模型 revision、解析参数和环境版本已归档，但代码身份仍需以最终 PR HEAD 为准。
+- 训练日志未保存精确 Git SHA。模型 revision、实际参数 manifest 和环境版本已归档，但代码身份仍需以最终 PR HEAD 为准。
 
 训练墙钟相对 off 平均增加约 21.8%（A）、22.0%（B）和 64.6%（C）。

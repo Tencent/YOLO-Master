@@ -178,15 +178,29 @@ def _summarize(values: list[float]) -> dict:
     """
     n = len(values)
     if n == 0:
-        return {"n": 0, "mean": float("nan"), "std": float("nan"), "sem": float("nan"),
-                "ci95_low": float("nan"), "ci95_high": float("nan"),
-                "min": float("nan"), "max": float("nan")}
+        return {
+            "n": 0,
+            "mean": float("nan"),
+            "std": float("nan"),
+            "sem": float("nan"),
+            "ci95_low": float("nan"),
+            "ci95_high": float("nan"),
+            "min": float("nan"),
+            "max": float("nan"),
+        }
     mean = sum(values) / n
     std = statistics.stdev(values) if n > 1 else 0.0
     sem = std / math.sqrt(n) if n > 1 else 0.0
-    return {"n": n, "mean": mean, "std": std, "sem": sem,
-            "ci95_low": mean - 1.96 * sem, "ci95_high": mean + 1.96 * sem,
-            "min": min(values), "max": max(values)}
+    return {
+        "n": n,
+        "mean": mean,
+        "std": std,
+        "sem": sem,
+        "ci95_low": mean - 1.96 * sem,
+        "ci95_high": mean + 1.96 * sem,
+        "min": min(values),
+        "max": max(values),
+    }
 
 
 def probe_gradient_ratio(args: argparse.Namespace) -> dict:
@@ -256,9 +270,7 @@ def probe_gradient_ratio(args: argparse.Namespace) -> dict:
         "w_star": {r: r * mean_task / max(mean_kd, 1e-12) for r in ratios},
         "target_ratio": args.target_ratio,
         "grad_cosine": cosine_stats,
-        "grad_cosine_mean_differs_from_zero": not (
-            cosine_stats["ci95_low"] <= 0.0 <= cosine_stats["ci95_high"]
-        ),
+        "grad_cosine_mean_differs_from_zero": not (cosine_stats["ci95_low"] <= 0.0 <= cosine_stats["ci95_high"]),
         "grad_conflict_fraction": sum(1 for c in cosines if c < 0) / max(len(cosines), 1),
         "per_batch_ratio": _summarize([k / max(t, 1e-12) for k, t in zip(kd_norms, task_norms)]),
         "per_batch_cosines": cosines,

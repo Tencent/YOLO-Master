@@ -17,7 +17,7 @@ D2 不重新实现蒸馏框架。仓库已经提供 teacher、student feature ta
 1. 用仓库真实训练入口验证链路完整性。
 2. 固定训练预算并建立可审计对照。
 3. 使用多个配对 seed 报告数字、区间和负结果。
-4. 保存配置、实际解析参数、逐 epoch 指标、环境和复现命令。
+4. 保存配置、实际参数审计、逐 epoch 指标、环境和复现命令。
 
 P0 只回答“链路是否真的接通”；P1 才回答“完整蒸馏配方在当前预算下是否有效”。
 
@@ -112,12 +112,13 @@ python experiments/d2/scripts/validate_pair.py
 
 ### 4.2 训练后检查
 
-[`../scripts/collect_runs.py`](../scripts/collect_runs.py) 读取每个完成运行的 `args.yaml`，归档为 `resolved_args.yaml`，并检查：
+[`../scripts/collect_runs.py`](../scripts/collect_runs.py) 读取每个完成运行的 `args.yaml`，执行检查并生成 compact manifest：
 
 - 跨配方只在声明的 Foundation 字段和运行身份上变化。
 - 同一配方的不同 seed 不得改变 teacher、层级、权重或其他实际解析参数。
 
 这一步防止配置文件正确、实际命令却覆盖了不同参数。当前 12 个 P1 运行通过检查。
+关键实际参数及原始 `args.yaml`、`metrics.csv` 的 SHA-256 见 [`../results/p1voc_manifest.csv`](../results/p1voc_manifest.csv)。完整 `args.yaml` 是本地审计输入，不作为重复的 PR 文件提交。
 
 ## 5. 统计与判读
 
@@ -157,7 +158,7 @@ A 的 seeds 17/29 为正，seed 43 为负。B 命中预设 no-go 规则。C 的�
 3. **多尺度插值**：教师产生 16×16 网格；B 的 P3 32×32 和 P5 8×8 需要插值，因此层级与插值影响耦合。
 4. **缺少 D**：无法估计完整的教师 × 尺度交互。
 5. **数据外推**：VOC 结果不能直接代表完整 COCO。
-6. **代码身份**：现存训练日志没有可靠保存精确 Git SHA；配置、解析参数、教师 revision 和环境版本已保存。
+6. **代码身份**：现存训练日志没有可靠保存精确 Git SHA；配置、实际参数 manifest、教师 revision 和环境版本已保存。
 
 训练平均墙钟相对 off 增加约 21.8%（A）、22.0%（B）和 64.6%（C）。部署 fallback 是 student-only 模型，教师和投影器不进入推理产物。
 
@@ -178,6 +179,7 @@ python experiments/d2/scripts/plot_p1_findings.py
 
 - P0 链路证据：[`../results/p0_train_ok/`](../results/p0_train_ok/)
 - A/B/C/D 梯度标定：[`../results/probe_a_voc_3090/`](../results/probe_a_voc_3090/)
+- P1 参数与证据哈希：[`../results/p1voc_manifest.csv`](../results/p1voc_manifest.csv)
 - P1 机器可读汇总：[`../results/p1voc_summary.md`](../results/p1voc_summary.md)
 - P1 完整报告：[`p1/findings.md`](p1/findings.md)
 - 训练环境：[`../env/README.md`](../env/README.md)

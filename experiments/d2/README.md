@@ -16,7 +16,7 @@ D2 验证冻结的 Foundation 教师特征能否在同一训练预算下改善�
 1. **P0 跑通真实训练链路**：确认配置能够注入 teacher、tap、projector 和 Foundation loss，且 KD 项确实进入反向传播目标。
 2. **诊断并标定 KD 强度**：原始损失值占比不能代表梯度影响，因此用梯度比探针确定各实验配方的固定权重。
 3. **完成 P1 VOC 对照**：off、A、B、C 四组各运行 seeds `17/29/43`，共 12 次 400-epoch 训练。
-4. **归档并审计证据**：保存每次运行的逐 epoch CSV、实际解析参数、环境信息，检查预算和同组 seed 配置一致性。
+4. **归档并审计证据**：保存每次运行的逐 epoch CSV，并把实际解析参数审计结果压缩到 manifest，检查预算和同组 seed 配置一致性。
 
 实验使用 VOC、`imgsz=256`、batch 64、SGD、`lr0=0.01`、`pretrained=false`、`amp=false`。训练教师仅在训练期使用，部署产物保留 student。
 
@@ -103,7 +103,7 @@ python experiments/d2/scripts/plot_p1_findings.py
 experiments/d2/
 ├── configs/p1_voc/       P1 训练配置
 ├── scripts/              验证、环境记录、运行、归档和绘图入口
-├── results/              逐 epoch 指标与 resolved args
+├── results/              逐 epoch 指标、compact manifest 与 probe JSON
 ├── env/                  训练依赖、教师 revision 与硬件快照
 ├── docs/design.md        最终实验设计与统计口径
 ├── docs/limitations.md   已知局限与 fallback
@@ -116,6 +116,7 @@ experiments/d2/
 
 - P0 真实训练：[`results/p0_train_ok/`](results/p0_train_ok/)
 - A/B/C/D Probe A：[`results/probe_a_voc_3090/`](results/probe_a_voc_3090/)
+- P1 实际参数与证据哈希：[`results/p1voc_manifest.csv`](results/p1voc_manifest.csv)
 - P1 汇总：[`results/p1voc_summary.md`](results/p1voc_summary.md)
 - P1 结论与曲线：[`docs/p1/findings.md`](docs/p1/findings.md)
 - 设计与判读线：[`docs/design.md`](docs/design.md)
@@ -128,6 +129,6 @@ experiments/d2/
 - B 的 P3/P5 必须与教师网格插值，尺度与插值影响无法分离。
 - D（SigLIP2 multiscale）未运行，不能估计完整的教师 × 尺度交互。
 - 完整三 seed 对照只在 VOC 上完成，不能直接外推到 COCO。
-- 训练日志没有可靠保存精确 Git SHA；教师 revision、配置、解析参数和环境版本已归档。
+- 训练日志没有可靠保存精确 Git SHA；教师 revision、配置、实际参数审计和环境版本已归档。
 
 训练平均墙钟相对 off 增加约 21.8%（A）、22.0%（B）和 64.6%（C）。更完整的限制与降级方案见 [`docs/limitations.md`](docs/limitations.md)。

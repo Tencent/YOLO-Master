@@ -17,7 +17,7 @@
 
 ## 事后无混杂核查
 
-各 run 的 resolved args 仅在声明的对照轴内不同。
+各 run 的源 `args.yaml` 仅在声明的对照轴内不同。关键实际参数和源文件哈希见 [`p1voc_manifest.csv`](p1voc_manifest.csv)。
 
 ## 归档
 
