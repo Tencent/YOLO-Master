@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Hexagon NPU via ONNX Runtime's QNN EP: the FastRPC client is a vendor library that
+             targetSdk 31+ processes must declare before dlopen. Declared here so every consumer of
+             the runtime (the app AND the instrumented-test APK) gets it; optional so non-Qualcomm
+             devices simply report hasQnn = false. -->
+        <uses-native-library android:name="libcdsprpc.so" android:required="false" />
+    </application>
+</manifest>

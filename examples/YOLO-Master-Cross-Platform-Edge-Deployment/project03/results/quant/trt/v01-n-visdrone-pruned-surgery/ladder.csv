@@ -1,0 +1,3 @@
+mode,lat_ms_median,lat_ms_p90,mAP50,mAP50_95,dmAP50_95,build_s,size_MB,n_pinned_fp16,speedup_vs_fp32,lat_cut_pct
+fp32,2.821,3.051,0.29809,0.17092,0.0,146.0,28.8,0,1.0,0.0
+int8,2.317,2.461,0.20675,0.11342,-0.0575,601.7,14.3,150,1.22,17.9

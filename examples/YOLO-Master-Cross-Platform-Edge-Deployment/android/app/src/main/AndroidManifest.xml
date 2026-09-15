@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Saving to Pictures/ on API 24-28 only; MediaStore inserts need nothing on 29+. -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+
+    <!-- The ORT/QNN native payload is bundled straight from the AARs' .so files (never their
+         manifests), so no INTERNET permission can reach us; removed defensively anyway. -->
+    <uses-permission android:name="android.permission.INTERNET" tools:node="remove" />
+
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+    <uses-feature android:name="android.hardware.vulkan.version" android:required="false" />
+
+    <application
+        android:name=".YoloMasterApp"
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="@string/app_name"
+        android:largeHeap="true"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.YOLOMaster"
+        tools:targetApi="34">
+
+        <!-- Hexagon NPU (ONNX Runtime QNN EP): the FastRPC client library is a vendor lib that
+             targetSdk 31+ apps must declare to dlopen. Optional: without it (or on a non-Qualcomm
+             SoC) the runtime reports hasQnn = false and ONNX runs on the CPU EP. -->
+        <uses-native-library android:name="libcdsprpc.so" android:required="false" />
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|keyboardHidden|uiMode"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.YOLOMaster">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Bench CSV share sheet. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+    </application>
+</manifest>

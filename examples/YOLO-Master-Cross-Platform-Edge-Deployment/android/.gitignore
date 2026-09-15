@@ -1,0 +1,21 @@
+# Gradle / AGP / NDK build output
+build/
+.gradle/
+.cxx/
+*.apk
+*.aar
+
+# Per-machine config (never commit)
+local.properties
+sdk-paths.properties
+
+# Staged model payloads and test images (ship as Release assets, not tracked)
+runtime/src/main/assets/models/*/
+runtime/src/main/assets/probe.jpg
+runtime/src/main/assets/probe_visdrone.jpg
+runtime/src/androidTest/assets/
+app/src/main/assets/models/*/
+app/release/
+app/debug/
+app/src/main/assets/probe.jpg
+app/src/main/assets/probe_visdrone.jpg
