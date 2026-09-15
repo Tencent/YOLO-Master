@@ -1,0 +1,33 @@
+.....................................................................    [100%]
+=============================== warnings summary ===============================
+tests/test_routing_aux_contract.py::test_wrapper_record_covers_children_without_double_counting
+  tests/test_routing_aux_contract.py:58: UserWarning: C2fMoA(num_heads=6) adjusted to 3 to maintain head_dim ≥ 16 (c//heads ≥ 16).
+    module = C2fMoA(32, 32, n=2, num_heads=6).train()
+
+tests/test_master_model_configs.py::test_master_config_builds_and_forwards[ultralytics/cfg/models/master/v0_10/det/yolo-master-moa-n.yaml]
+  ultralytics/nn/tasks.py:2500: UserWarning: C2fMoA(num_heads=6) adjusted to 3 to maintain head_dim ≥ 16 (c//heads ≥ 16).
+    m_ = torch.nn.Sequential(*(m(*args) for _ in range(n))) if n > 1 else m(*args)  # module
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+-------------- generated xml file: pytest.xml --------------
+============================= slowest 30 durations =============================
+1.92s call     tests/test_yoloe_p1_text_router.py::test_yoloe_adapter_reachability_gradients_aux_and_condition_separation
+0.17s call     tests/test_master_model_configs.py::test_shared_expert_config_reuses_pool_and_isolates_model_builds
+0.11s call     tests/test_master_model_configs.py::test_master_config_builds_and_forwards[ultralytics/cfg/models/master/v0_10/det/yolo-master-mot-n.yaml]
+0.11s call     tests/test_yoloe_p1_text_router.py::test_disabled_adapter_is_equivalent_and_does_not_change_module_list
+0.11s call     tests/test_master_model_configs.py::test_master_config_builds_and_forwards[ultralytics/cfg/models/26/yolo26-master-n.yaml]
+0.10s call     tests/test_yoloe_p1_text_router.py::test_released_load_then_enable_keeps_unfused_core_keys_additive
+0.09s call     tests/test_yoloe_p1_text_router.py::test_yoloe_controlled_condition_pair_changes_router_and_adapter_not_classifier_prompt
+0.09s call     tests/test_master_model_configs.py::test_master_config_builds_and_forwards[ultralytics/cfg/models/master/v0_10/det/yolo-master-moa-n.yaml]
+0.07s call     tests/test_master_model_configs.py::test_master_config_builds_and_forwards[ultralytics/cfg/models/master/v0_8/det/yolo-master-moe-mot-shared-n.yaml]
+0.07s call     tests/test_yoloe_p1_text_router.py::test_yoloe_task_and_aux_gradient_paths_are_separate
+0.05s call     tests/test_yoloe_p1_text_router.py::test_yoloe_loss_exception_clears_published_aux_record
+0.05s call     tests/test_yoloe_p1_text_router.py::test_yoloe_eval_adapter_publication_is_skipped
+0.04s call     tests/test_master_model_configs.py::test_master_config_builds_and_forwards[ultralytics/cfg/models/26/yolo26.yaml]
+0.04s call     tests/test_master_model_configs.py::test_master_config_builds_and_forwards[ultralytics/cfg/models/master/v0_15/det/yolo-master-tiny.yaml]
+0.01s call     tests/test_routing_aux_contract.py::test_training_publication_is_graph_connected_and_consumed_once
+0.01s call     tests/test_routing_aux_contract.py::test_canonical_state_does_not_break_deepcopy
+0.01s call     tests/test_yoloe_p1_text_router.py::test_text_router_hard_attempt_receipt_counts_are_measured_and_eval_is_empty
+
+(13 durations < 0.005s hidden.  Use -vv to show these durations.)
+69 passed, 2 warnings in 3.56s

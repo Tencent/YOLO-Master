@@ -1,0 +1,62 @@
+{
+  "model": {
+    "checkpoint": "yoloe-26n-seg.pt",
+    "config_path": "ultralytics/cfg/models/26/yoloe-26.yaml",
+    "evaluation_output": "bbox",
+    "adapter_feature": "P5",
+    "experts": 2
+  },
+  "software": {
+    "python": "3.11.15",
+    "pytorch": "2.7.1+cu126",
+    "ultralytics": "8.4.101",
+    "pycocotools": "2.0.11"
+  },
+  "hardware": {
+    "gpu_model": "NVIDIA GeForce RTX 4090",
+    "gpu_memory_class": "24 GB",
+    "gpus_per_training_job": 1,
+    "formal_evaluation": "single GPU, serial"
+  },
+  "training": {
+    "seeds": [
+      0,
+      1,
+      2
+    ],
+    "steps": 256,
+    "batch_size": 16,
+    "image_size": 640,
+    "optimizer": "AdamW",
+    "learning_rate": 0.001,
+    "weight_decay": 0,
+    "amp": false,
+    "gradient_clip_norm": 10,
+    "workers": 4,
+    "augmentation": "deterministic centered letterbox; no random augmentation",
+    "routing_mode": "hard Top-1"
+  },
+  "evaluation": {
+    "dataset": "COCO val2017",
+    "images": 5000,
+    "split": "Base48 / New17",
+    "image_size": 640,
+    "confidence_threshold": 0.001,
+    "nms_iou": 0.7,
+    "max_detections": 300,
+    "configured_batch_size": 1,
+    "source_type": "list of image paths",
+    "source_chunk_size": 500,
+    "effective_batch_size": 500,
+    "batches_per_condition": 10,
+    "loader": "LoadPilAndNumpy",
+    "batch_semantics": "历史完整评测每次传入 500 个路径组成的列表。check_source 将列表转为图像，LoadPilAndNumpy 以列表长度组成批次；该分支不使用配置 batch=1 拆分列表。",
+    "result_scope": "本文沿用历史完整评测预测及其修正后的统计；未并入后续逐图 batch=1 拓展实验结果。"
+  },
+  "statistics": {
+    "paired_bootstrap_replicates": 1000,
+    "interval": "per-comparison 95% percentile",
+    "multiple_comparison_correction": false,
+    "trace_images": 256
+  }
+}
