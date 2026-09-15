@@ -1023,7 +1023,10 @@ class FoundationDistillationModel(nn.Module):
         pred_distri = preds["boxes"].permute(0, 2, 1).contiguous()
         pred_scores_raw = preds["scores"].permute(0, 2, 1).contiguous()
         pred_feats = preds["feats"]
-        anchor_points, stride_tensor = make_anchors(pred_feats, self.student_model.stride, 0.5)
+        strides = self.student_model.stride
+        if len(strides) == 1 and len(pred_feats) > 1:
+            strides = strides.repeat(len(pred_feats))
+        anchor_points, stride_tensor = make_anchors(pred_feats, strides, 0.5)
         bs = pred_scores_raw.shape[0]
         nc = pred_scores_raw.shape[2]
         dtype = pred_scores_raw.dtype

@@ -236,6 +236,14 @@ wiki/repowiki/*/meta/repowiki-metadata.json
 !reports/issue52-figs/
 !reports/issue52-figs/*.png
 
+# A2 local data and experiment artifacts
+/dataset/
+/.tmp*
+/yolo26_stal.py
+/ultralytics/Arial.ttf
+/ultralytics/persistent_cache.json
+/ultralytics/settings.json
+
 # Local working artifacts (not for upstream)
 /images.zip
 /embeddings.npy
