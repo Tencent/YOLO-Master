@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -267,6 +268,13 @@ MIXTURE_FLOAT_KEYS = frozenset(
 CFG_FLOAT_KEYS = frozenset(
     {  # integer or float arguments, i.e. x=2 and x=2.0
         "warmup_epochs",
+        "stal_relaxation",
+        "stal_relaxation_min",
+        "stal_min_size_stride_ratio",
+        "stal_warmup_epochs",
+        "stal_crowded_relaxation",
+        "stal_rescue_floor_decay_epochs",
+        "stal_nwd_constant",
         "box",
         "cls",
         "dfl",
@@ -317,6 +325,15 @@ CFG_FRACTION_KEYS = frozenset(
         "iou",
         "fraction",
         "multi_scale",
+        "stal_area_threshold",
+        "stal_candidate_iou_floor",
+        "stal_expanded_quality_ratio",
+        "stal_expanded_score_floor",
+        "stal_rescue_score_floor",
+        "stal_nwd_weight",
+        "stal_nwd_target_weight",
+        "stal_nwd_zero_score_floor",
+        "stal_simd_weight",
     }
 )
 MIXTURE_INT_KEYS = frozenset(
@@ -372,6 +389,10 @@ CFG_INT_KEYS = frozenset(
         "line_width",
         "nbs",
         "save_period",
+        "stal_small_topk",
+        "stal_small_topk_min",
+        "stal_min_base_candidates",
+        "stal_max_extra_candidates",
     }
 ) | MIXTURE_INT_KEYS
 CFG_INT_MIN = {  # minimum valid values for integer arguments used as divisors, sizes or seeds
@@ -380,6 +401,9 @@ CFG_INT_MIN = {  # minimum valid values for integer arguments used as divisors, 
     "mask_ratio": 1,
     "vid_stride": 1,
     "seed": 0,
+    "stal_small_topk": 1,
+    "stal_small_topk_min": 1,
+    "stal_min_base_candidates": 0,
     "moe_prune_calibration_steps": 1,
     "mot_sparse_train_warmup_steps": 0,
     "mot_local_attn_window": 0,
@@ -474,6 +498,10 @@ CFG_BOOL_KEYS = frozenset(
         "foundation_semantic_distill",
         "foundation_multitask",
         "foundation_multitask_enabled",
+        "stal_enabled",
+        "stal_min_candidate_guarantee",
+        "stal_stats",
+        "stal_zero_positive_rescue",
     }
 ) | MIXTURE_BOOL_KEYS
 MIXTURE_STR_KEYS = frozenset(
@@ -499,6 +527,10 @@ CFG_STR_KEYS = frozenset(
     {
         "optimizer",
         "split",
+        "stal_candidate_mode",
+        "stal_crowding_mode",
+        "stal_relaxation_scale_mode",
+        "stal_nwd_target_mode",
         "copy_paste_mode",
         "auto_augment",
         "foundation_teacher",
@@ -519,6 +551,7 @@ FOUNDATION_LOSSES = frozenset({"cosine", "l2", "relational", "hybrid"})
 FOUNDATION_RELATION_MODES = frozenset({"sampled", "full"})
 FOUNDATION_DTYPES = frozenset({"auto", "fp32", "fp16", "bf16"})
 FOUNDATION_TARGET_LEVELS = frozenset({"p3", "p4", "p5"})
+STAL_CANDIDATE_MODES = frozenset({"pure", "fixed", "adaptive"})
 # fmt: on
 LORA_RUNTIME_METADATA_KEYS = frozenset(
     {
@@ -748,6 +781,106 @@ def check_cfg(cfg: dict, hard: bool = True) -> None:
                         )
                 else:
                     cfg[k] = scheme
+
+    validate_stal_config(cfg)
+
+
+def validate_stal_config(cfg: dict) -> None:
+    """Validate STAL candidate-policy values and backward-compatible parameter relationships."""
+    for key, value in cfg.items():
+        if key.startswith("stal_") and key in CFG_FLOAT_KEYS | CFG_FRACTION_KEYS | CFG_INT_KEYS:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise TypeError(f"'{key}' must be numeric, not {type(value).__name__}.")
+            if not math.isfinite(value):
+                raise ValueError(f"'{key}' must be finite.")
+
+    mode = cfg.get("stal_candidate_mode", DEFAULT_CFG_DICT["stal_candidate_mode"])
+    enabled = cfg.get("stal_enabled", DEFAULT_CFG_DICT["stal_enabled"])
+    threshold = cfg.get("stal_area_threshold", DEFAULT_CFG_DICT["stal_area_threshold"])
+    small_topk = cfg.get("stal_small_topk", DEFAULT_CFG_DICT["stal_small_topk"])
+    small_topk_min = cfg.get("stal_small_topk_min", DEFAULT_CFG_DICT["stal_small_topk_min"])
+    min_base_candidates = cfg.get("stal_min_base_candidates", DEFAULT_CFG_DICT["stal_min_base_candidates"])
+    max_extra_candidates = cfg.get("stal_max_extra_candidates", DEFAULT_CFG_DICT["stal_max_extra_candidates"])
+    crowding_mode = cfg.get("stal_crowding_mode", DEFAULT_CFG_DICT["stal_crowding_mode"])
+    crowded_relaxation = cfg.get("stal_crowded_relaxation", DEFAULT_CFG_DICT["stal_crowded_relaxation"])
+    candidate_floor = cfg.get("stal_candidate_iou_floor", DEFAULT_CFG_DICT["stal_candidate_iou_floor"])
+    if (
+        cfg.get("stal_min_candidate_guarantee", DEFAULT_CFG_DICT["stal_min_candidate_guarantee"])
+        and candidate_floor > 0
+    ):
+        raise ValueError("stal_min_candidate_guarantee cannot be combined with a positive stal_candidate_iou_floor")
+    expanded_quality_ratio = cfg.get("stal_expanded_quality_ratio", DEFAULT_CFG_DICT["stal_expanded_quality_ratio"])
+    expanded_score_floor = cfg.get("stal_expanded_score_floor", DEFAULT_CFG_DICT["stal_expanded_score_floor"])
+    relaxation = cfg.get("stal_relaxation", DEFAULT_CFG_DICT["stal_relaxation"])
+    relaxation_min = cfg.get("stal_relaxation_min", DEFAULT_CFG_DICT["stal_relaxation_min"])
+    min_size_stride_ratio = cfg.get("stal_min_size_stride_ratio", DEFAULT_CFG_DICT["stal_min_size_stride_ratio"])
+    relaxation_scale_mode = cfg.get("stal_relaxation_scale_mode", DEFAULT_CFG_DICT["stal_relaxation_scale_mode"])
+    warmup = cfg.get("stal_warmup_epochs", DEFAULT_CFG_DICT["stal_warmup_epochs"])
+    rescue = cfg.get("stal_zero_positive_rescue", DEFAULT_CFG_DICT["stal_zero_positive_rescue"])
+    rescue_floor = cfg.get("stal_rescue_score_floor", DEFAULT_CFG_DICT["stal_rescue_score_floor"])
+    rescue_decay = cfg.get("stal_rescue_floor_decay_epochs", DEFAULT_CFG_DICT["stal_rescue_floor_decay_epochs"])
+    nwd_weight = cfg.get("stal_nwd_weight", DEFAULT_CFG_DICT["stal_nwd_weight"])
+    nwd_constant = cfg.get("stal_nwd_constant", DEFAULT_CFG_DICT["stal_nwd_constant"])
+    nwd_target_mode = cfg.get("stal_nwd_target_mode", DEFAULT_CFG_DICT["stal_nwd_target_mode"])
+    nwd_target_weight = cfg.get("stal_nwd_target_weight", DEFAULT_CFG_DICT["stal_nwd_target_weight"])
+    nwd_zero_score_floor = cfg.get("stal_nwd_zero_score_floor", DEFAULT_CFG_DICT["stal_nwd_zero_score_floor"])
+    simd_weight = cfg.get("stal_simd_weight", DEFAULT_CFG_DICT["stal_simd_weight"])
+    if mode not in STAL_CANDIDATE_MODES:
+        raise ValueError(f"'stal_candidate_mode={mode}' is invalid. Use one of {sorted(STAL_CANDIDATE_MODES)}.")
+    if not 0.0 < threshold <= 1.0:
+        raise ValueError(f"'stal_area_threshold={threshold}' is invalid. Use a value in (0, 1].")
+    if small_topk < 1:
+        raise ValueError("'stal_small_topk' must be at least 1.")
+    if not 1 <= small_topk_min <= small_topk:
+        raise ValueError("'stal_small_topk_min' must be in [1, stal_small_topk].")
+    if min_base_candidates < 0:
+        raise ValueError("'stal_min_base_candidates' must be non-negative.")
+    if max_extra_candidates < 0:
+        raise ValueError("'stal_max_extra_candidates' must be non-negative.")
+    if crowding_mode not in {"none", "candidate_overlap"}:
+        raise ValueError("'stal_crowding_mode' must be 'none' or 'candidate_overlap'.")
+    if not 0.0 <= crowded_relaxation <= relaxation:
+        raise ValueError("'stal_crowded_relaxation' must be in [0, stal_relaxation].")
+    if not 0.0 <= candidate_floor <= 1.0:
+        raise ValueError("'stal_candidate_iou_floor' must be in [0, 1].")
+    if not 0.0 <= expanded_quality_ratio <= 1.0:
+        raise ValueError("'stal_expanded_quality_ratio' must be in [0, 1].")
+    if not 0.0 <= expanded_score_floor <= 1.0:
+        raise ValueError("'stal_expanded_score_floor' must be in [0, 1].")
+    if relaxation < 0.0:
+        raise ValueError(f"'stal_relaxation={relaxation}' must be non-negative.")
+    if relaxation_scale_mode not in {"constant", "sqrt_area"}:
+        raise ValueError("'stal_relaxation_scale_mode' must be 'constant' or 'sqrt_area'.")
+    if not 0.0 <= relaxation_min <= relaxation:
+        raise ValueError("'stal_relaxation_min' must be in [0, stal_relaxation].")
+    if min_size_stride_ratio < 0.0:
+        raise ValueError("'stal_min_size_stride_ratio' must be non-negative.")
+    if min_size_stride_ratio > 0.0 and relaxation > 0.0:
+        raise ValueError("'stal_min_size_stride_ratio>0' requires 'stal_relaxation=0' for an isolated strategy.")
+    if min_size_stride_ratio > 0.0 and relaxation_scale_mode != "constant":
+        raise ValueError("'stal_min_size_stride_ratio>0' requires 'stal_relaxation_scale_mode=constant'.")
+    if warmup < 0.0:
+        raise ValueError(f"'stal_warmup_epochs={warmup}' must be non-negative.")
+    if not 0.0 <= rescue_floor <= 1.0:
+        raise ValueError(f"'stal_rescue_score_floor={rescue_floor}' is invalid. Use a value in [0, 1].")
+    if rescue_decay < 0.0:
+        raise ValueError(f"'stal_rescue_floor_decay_epochs={rescue_decay}' must be non-negative.")
+    if not 0.0 <= nwd_weight <= 1.0:
+        raise ValueError(f"'stal_nwd_weight={nwd_weight}' is invalid. Use a value in [0, 1].")
+    if nwd_constant <= 0.0:
+        raise ValueError(f"'stal_nwd_constant={nwd_constant}' must be positive.")
+    if nwd_target_mode not in {"match", "ciou", "weighted"}:
+        raise ValueError("'stal_nwd_target_mode' must be 'match', 'ciou', or 'weighted'.")
+    if not 0.0 <= nwd_target_weight <= nwd_weight:
+        raise ValueError("'stal_nwd_target_weight' must be in [0, stal_nwd_weight].")
+    if not 0.0 <= nwd_zero_score_floor <= 1.0:
+        raise ValueError("'stal_nwd_zero_score_floor' must be in [0, 1].")
+    if not 0.0 <= simd_weight <= 1.0:
+        raise ValueError("'stal_simd_weight' must be in [0, 1].")
+    if enabled and mode == "pure":
+        raise ValueError("'stal_enabled=True' conflicts with 'stal_candidate_mode=pure'.")
+    if rescue_floor > 0.0 and not rescue:
+        raise ValueError("'stal_rescue_score_floor>0' requires 'stal_zero_positive_rescue=True'.")
 
 
 def _foundation_transformers_available() -> bool:

@@ -18,7 +18,9 @@ def test_task_aligned_assigner_box_metrics_match_expanded_reference():
 
     assigner = TaskAlignedAssigner(num_classes=classes)
     assigner.bs, assigner.n_max_boxes = batch_size, max_boxes
-    align_metric, overlaps = assigner.get_box_metrics(pd_scores, pd_bboxes, gt_labels, gt_bboxes, mask_gt)
+    align_metric, overlaps, target_overlaps = assigner.get_box_metrics(
+        pd_scores, pd_bboxes, gt_labels, gt_bboxes, mask_gt
+    )
 
     reference_scores = torch.zeros(batch_size, max_boxes, anchors)
     reference_overlaps = torch.zeros_like(reference_scores)
@@ -31,6 +33,7 @@ def test_task_aligned_assigner_box_metrics_match_expanded_reference():
     reference_align_metric = reference_scores.pow(assigner.alpha) * reference_overlaps.pow(assigner.beta)
 
     torch.testing.assert_close(overlaps, reference_overlaps)
+    torch.testing.assert_close(target_overlaps, reference_overlaps)
     torch.testing.assert_close(align_metric, reference_align_metric)
 
 
