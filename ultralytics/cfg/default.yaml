@@ -192,6 +192,18 @@ erasing: 0.4 # (float) random erasing probability for classification (0.0–1.0)
 # Custom config.yaml ---------------------------------------------------------------------------------------------------
 cfg: # (str, optional) path to a config.yaml that overrides defaults
 
+# A2 final acceptance configuration -------------------------------------------------------------------------------
+# The A2 runner consumes these settings as its fixed final acceptance protocol.
+stal_area_threshold: 16.0 # (float) final A2 AT-STAL bbox-area threshold in transformed pixels^2
+stal_min_candidates: 4 # (int) final A2 minimum one-to-many candidates for eligible GTs
+a2_model: v0.1-N # (str) final A2 model variant
+a2_epochs: 120 # (int) final A2 training epochs
+a2_imgsz: 800 # (int) final A2 training and validation image size
+a2_batch: 8 # (int) final A2 batch size
+a2_seed: 42 # (int) final A2 reproducibility seed
+a2_patience: 0 # (int) final A2 early-stopping patience
+a2_wandb_project: yolo-master-a2-0831 # (str) final A2 W&B project
+
 # Tracker settings ------------------------------------------------------------------------------------------------------
 tracker: tracktrack.yaml # (str) tracker config: botsort.yaml, bytetrack.yaml, ocsort.yaml, deepocsort.yaml, fasttrack.yaml, tracktrack.yaml
 

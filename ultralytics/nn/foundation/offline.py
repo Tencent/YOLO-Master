@@ -8,7 +8,7 @@ the training loop. The module stays dependency-free: image decoding is only impo
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator, Mapping, Sequence
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 import torch
@@ -311,7 +311,8 @@ def extract_foundation_cache(
     pending: list[tuple[str, torch.Tensor]] = []
     for key, image in samples:
         key = str(key)
-        if not key or any(part in ("..", "") for part in Path(key).parts) or Path(key).is_absolute():
+        portable_paths = (PurePosixPath(key), PureWindowsPath(key))
+        if not key or any(path.anchor or ".." in path.parts for path in portable_paths):
             raise ValueError(f"cache key {key!r} must be a relative, non-empty path fragment.")
         if not overwrite and (output_dir / f"{key}.pt").exists():
             summary["skipped"].append(key)

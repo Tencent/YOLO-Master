@@ -222,12 +222,9 @@ def test_response_kd_builds_pseudo_batch_from_cached_responses(tmp_path):
     metrics = wrapper.foundation_metrics()
     assert metrics["foundation_response_enabled"] == 1.0
     assert metrics["foundation_response_boxes"] == 4.0  # 2 high-score queries × 2 images
+    # Response KD matches decoded predictions directly and must not re-enter the task loss/TAL path.
     pseudo_calls = [call for call in student.loss_calls if call["bboxes"].shape[0] > 0]
-    assert len(pseudo_calls) == 1
-    pseudo = pseudo_calls[0]
-    assert pseudo["bboxes"].shape == (4, 4)
-    assert pseudo["cls"].reshape(-1).unique().tolist() == [0.0]  # prompt "zero" → class id 0
-    assert pseudo["batch_idx"].unique().tolist() == [0.0, 1.0]
+    assert pseudo_calls == []
 
 
 def test_response_kd_rejects_prompt_mismatch(tmp_path):
