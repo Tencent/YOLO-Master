@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -263,6 +264,7 @@ MIXTURE_FLOAT_KEYS = frozenset(
         "sigma",
     }
 )
+STAL_FLOAT_KEYS = frozenset({"stal_candidate_scale", "stal_medium_area", "stal_small_area"})
 # fmt: off
 CFG_FLOAT_KEYS = frozenset(
     {  # integer or float arguments, i.e. x=2 and x=2.0
@@ -290,7 +292,7 @@ CFG_FLOAT_KEYS = frozenset(
         "workspace",
         "batch",
     }
-) | MIXTURE_FLOAT_KEYS
+) | MIXTURE_FLOAT_KEYS | STAL_FLOAT_KEYS
 CFG_FRACTION_KEYS = frozenset(
     {  # fractional floats use [0.0, 1.0], except dataset fraction uses (0.0, 1.0]
         "dropout",
@@ -359,6 +361,7 @@ MIXTURE_INT_KEYS = frozenset(
         "slice_size",
     }
 )
+STAL_INT_KEYS = frozenset({"stal_min_candidates", "stal_topk_large", "stal_topk_medium", "stal_topk_small"})
 CFG_INT_KEYS = frozenset(
     {  # integer-only arguments
         "epochs",
@@ -373,7 +376,7 @@ CFG_INT_KEYS = frozenset(
         "nbs",
         "save_period",
     }
-) | MIXTURE_INT_KEYS
+) | MIXTURE_INT_KEYS | STAL_INT_KEYS
 CFG_INT_MIN = {  # minimum valid values for integer arguments used as divisors, sizes or seeds
     "nbs": 1,
     "max_det": 1,
@@ -495,6 +498,7 @@ MIXTURE_STR_KEYS = frozenset(
         "mot_scene_inference_mode",
     }
 )
+STAL_STR_KEYS = frozenset({"stal_mode"})
 CFG_STR_KEYS = frozenset(
     {
         "optimizer",
@@ -512,13 +516,14 @@ CFG_STR_KEYS = frozenset(
         "foundation_dinov3_weights",
         "foundation_siglip2_weights",
     }
-) | MIXTURE_STR_KEYS
+) | MIXTURE_STR_KEYS | STAL_STR_KEYS
 FOUNDATION_TEACHERS = frozenset({"none", "dinov3", "siglip2", "multi"})
 FOUNDATION_BACKENDS = frozenset({"transformers", "local"})
 FOUNDATION_LOSSES = frozenset({"cosine", "l2", "relational", "hybrid"})
 FOUNDATION_RELATION_MODES = frozenset({"sampled", "full"})
 FOUNDATION_DTYPES = frozenset({"auto", "fp32", "fp16", "bf16"})
 FOUNDATION_TARGET_LEVELS = frozenset({"p3", "p4", "p5"})
+STAL_MODES = frozenset({"tal", "fixed", "adaptive"})
 # fmt: on
 LORA_RUNTIME_METADATA_KEYS = frozenset(
     {
@@ -631,6 +636,7 @@ def get_cfg(
 
     # Type and Value checks
     check_cfg(cfg)
+    validate_stal_config(cfg)
     validate_foundation_config(cfg)
 
     # Return instance
@@ -748,6 +754,47 @@ def check_cfg(cfg: dict, hard: bool = True) -> None:
                         )
                 else:
                     cfg[k] = scheme
+
+
+def validate_stal_config(cfg: dict) -> None:
+    """Validate small-target adaptive label-assignment values and relationships."""
+    mode = cfg.get("stal_mode", DEFAULT_CFG_DICT["stal_mode"])
+    small_area = cfg.get("stal_small_area", DEFAULT_CFG_DICT["stal_small_area"])
+    medium_area = cfg.get("stal_medium_area", DEFAULT_CFG_DICT["stal_medium_area"])
+    candidate_scale = cfg.get("stal_candidate_scale", DEFAULT_CFG_DICT["stal_candidate_scale"])
+    min_candidates = cfg.get("stal_min_candidates", DEFAULT_CFG_DICT["stal_min_candidates"])
+    topks = {
+        name: cfg.get(name, DEFAULT_CFG_DICT[name])
+        for name in ("stal_topk_small", "stal_topk_medium", "stal_topk_large")
+    }
+
+    if not isinstance(mode, str):
+        raise TypeError(f"'stal_mode={mode}' is of invalid type {type(mode).__name__}. 'stal_mode' must be a str.")
+    if mode not in STAL_MODES:
+        raise ValueError(f"'stal_mode={mode}' is invalid. Valid values are {sorted(STAL_MODES)}.")
+
+    for name, value in {
+        "stal_small_area": small_area,
+        "stal_medium_area": medium_area,
+        "stal_candidate_scale": candidate_scale,
+    }.items():
+        if isinstance(value, bool) or not isinstance(value, FLOAT_OR_INT):
+            raise TypeError(f"'{name}={value}' must be an int or float.")
+        if not math.isfinite(value):
+            raise ValueError(f"'{name}={value}' must be finite.")
+    if small_area <= 0 or medium_area <= 0 or small_area >= medium_area:
+        raise ValueError("'stal_small_area' and 'stal_medium_area' must satisfy 0 < small < medium.")
+    if not 1.0 <= candidate_scale <= 4.0:
+        raise ValueError("'stal_candidate_scale' must be between 1.0 and 4.0.")
+
+    integer_values = {"stal_min_candidates": min_candidates, **topks}
+    for name, value in integer_values.items():
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise TypeError(f"'{name}={value}' must be an int.")
+        if not 1 <= value <= 64:
+            raise ValueError(f"'{name}={value}' is invalid. Use an integer between 1 and 64.")
+    if any(value < min_candidates for value in topks.values()):
+        raise ValueError("Every adaptive STAL top-k must be greater than or equal to 'stal_min_candidates'.")
 
 
 def _foundation_transformers_available() -> bool:
