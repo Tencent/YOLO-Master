@@ -1,0 +1,748 @@
+/usr/local/lib/python3.11/dist-packages/torch/cuda/__init__.py:58: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+[repair] add_residual forced False on 0 blocks; property shadows stripped 4; ES_MOE dense=True
+[repair] attached moe_loss_fn to model.3 (E=3)
+[repair] attached moe_loss_fn to model.6 (E=3)
+[repair] attached moe_loss_fn to model.9 (E=3)
+[repair] attached moe_loss_fn to model.12 (E=3)
+[mtq] sensitive set 'default': ('*model.0.*', '*model.1.*', '*routing*', '*router*', '*dfl*')
+[calib] 1024 train images from /data/datasets/coco/images/train2017
+Inserted 722 quantizers
+[mtq] calibrated in 24s, 282 active quantizers
+model.0.conv.input_quantizer                                                     TensorQuantizer(disabled)
+model.0.conv.output_quantizer                                                    TensorQuantizer(disabled)
+model.0.conv.weight_quantizer                                                    TensorQuantizer(disabled)
+model.0.bn.input_quantizer                                                       TensorQuantizer(disabled)
+model.0.bn.output_quantizer                                                      TensorQuantizer(disabled)
+model.1.conv.input_quantizer                                                     TensorQuantizer(disabled)
+model.1.conv.output_quantizer                                                    TensorQuantizer(disabled)
+model.1.conv.weight_quantizer                                                    TensorQuantizer(disabled)
+model.1.bn.input_quantizer                                                       TensorQuantizer(disabled)
+model.1.bn.output_quantizer                                                      TensorQuantizer(disabled)
+model.2.cv1.conv.input_quantizer                                                 TensorQuantizer(8 bit fake per-tensor amax=107.2799 calibrator=MaxCalibrator quant)
+model.2.cv1.conv.output_quantizer                                                TensorQuantizer(disabled)
+model.2.cv1.conv.weight_quantizer                                                TensorQuantizer(8 bit fake axis=0 amax=[0.1075, 0.3623](32) calibrator=MaxCalibrator quant)
+model.2.cv1.bn.input_quantizer                                                   TensorQuantizer(disabled)
+model.2.cv1.bn.output_quantizer                                                  TensorQuantizer(disabled)
+model.2.cv2.conv.input_quantizer                                                 TensorQuantizer(8 bit fake per-tensor amax=31.6236 calibrator=MaxCalibrator quant)
+model.2.cv2.conv.output_quantizer                                                TensorQuantizer(disabled)
+model.2.cv2.conv.weight_quantizer                                                TensorQuantizer(8 bit fake axis=0 amax=[0.0524, 0.1975](64) calibrator=MaxCalibrator quant)
+model.2.cv2.bn.input_quantizer                                                   TensorQuantizer(disabled)
+model.2.cv2.bn.output_quantizer                                                  TensorQuantizer(disabled)
+model.2.m.0.cv1.conv.input_quantizer                                             TensorQuantizer(8 bit fake per-tensor amax=22.2776 calibrator=MaxCalibrator quant)
+model.2.m.0.cv1.conv.output_quantizer                                            TensorQuantizer(disabled)
+model.2.m.0.cv1.conv.weight_quantizer                                            TensorQuantizer(8 bit fake axis=0 amax=[0.1143, 0.2451](8) calibrator=MaxCalibrator quant)
+model.2.m.0.cv1.bn.input_quantizer                                               TensorQuantizer(disabled)
+model.2.m.0.cv1.bn.output_quantizer                                              TensorQuantizer(disabled)
+model.2.m.0.cv2.conv.input_quantizer                                             TensorQuantizer(8 bit fake per-tensor amax=7.0511 calibrator=MaxCalibrator quant)
+model.2.m.0.cv2.conv.output_quantizer                                            TensorQuantizer(disabled)
+model.2.m.0.cv2.conv.weight_quantizer                                            TensorQuantizer(8 bit fake axis=0 amax=[0.0811, 0.2690](16) calibrator=MaxCalibrator quant)
+model.2.m.0.cv2.bn.input_quantizer                                               TensorQuantizer(disabled)
+model.2.m.0.cv2.bn.output_quantizer                                              TensorQuantizer(disabled)
+model.3.routing.global_pool.input_quantizer                                      TensorQuantizer(disabled)
+model.3.routing.global_pool.output_quantizer                                     TensorQuantizer(disabled)
+model.3.routing.routing_network.0.input_quantizer                                TensorQuantizer(disabled)
+model.3.routing.routing_network.0.output_quantizer                               TensorQuantizer(disabled)
+model.3.routing.routing_network.0.weight_quantizer                               TensorQuantizer(disabled)
+model.3.routing.routing_network.2.input_quantizer                                TensorQuantizer(disabled)
+model.3.routing.routing_network.2.output_quantizer                               TensorQuantizer(disabled)
+model.3.routing.routing_network.2.weight_quantizer                               TensorQuantizer(disabled)
+model.3.experts.0.conv.depthwise.input_quantizer                                 TensorQuantizer(8 bit fake per-tensor amax=23.2944 calibrator=MaxCalibrator quant)
+model.3.experts.0.conv.depthwise.output_quantizer                                TensorQuantizer(disabled)
+model.3.experts.0.conv.depthwise.weight_quantizer                                TensorQuantizer(8 bit fake axis=0 amax=[0.0197, 0.2067](64) calibrator=MaxCalibrator quant)
+model.3.experts.0.conv.pointwise.input_quantizer                                 TensorQuantizer(8 bit fake per-tensor amax=2.1714 calibrator=MaxCalibrator quant)
+model.3.experts.0.conv.pointwise.output_quantizer                                TensorQuantizer(disabled)
+model.3.experts.0.conv.pointwise.weight_quantizer                                TensorQuantizer(8 bit fake axis=0 amax=[0.0474, 0.1676](64) calibrator=MaxCalibrator quant)
+model.3.experts.0.conv.bn.input_quantizer                                        TensorQuantizer(disabled)
+model.3.experts.0.conv.bn.output_quantizer                                       TensorQuantizer(disabled)
+model.3.experts.1.conv.depthwise.input_quantizer                                 TensorQuantizer(8 bit fake per-tensor amax=23.2944 calibrator=MaxCalibrator quant)
+model.3.experts.1.conv.depthwise.output_quantizer                                TensorQuantizer(disabled)
+model.3.experts.1.conv.depthwise.weight_quantizer                                TensorQuantizer(8 bit fake axis=0 amax=[0.0228, 0.1953](64) calibrator=MaxCalibrator quant)
+model.3.experts.1.conv.pointwise.input_quantizer                                 TensorQuantizer(8 bit fake per-tensor amax=2.5912 calibrator=MaxCalibrator quant)
+model.3.experts.1.conv.pointwise.output_quantizer                                TensorQuantizer(disabled)
+model.3.experts.1.conv.pointwise.weight_quantizer                                TensorQuantizer(8 bit fake axis=0 amax=[0.0549, 0.1936](64) calibrator=MaxCalibrator quant)
+model.3.experts.1.conv.bn.input_quantizer                                        TensorQuantizer(disabled)
+model.3.experts.1.conv.bn.output_quantizer                                       TensorQuantizer(disabled)
+model.3.experts.2.conv.depthwise.input_quantizer                                 TensorQuantizer(8 bit fake per-tensor amax=23.2944 calibrator=MaxCalibrator quant)
+model.3.experts.2.conv.depthwise.output_quantizer                                TensorQuantizer(disabled)
+model.3.experts.2.conv.depthwise.weight_quantizer                                TensorQuantizer(8 bit fake axis=0 amax=[0.0409, 0.1793](64) calibrator=MaxCalibrator quant)
+model.3.experts.2.conv.pointwise.input_quantizer                                 TensorQuantizer(8 bit fake per-tensor amax=4.0182 calibrator=MaxCalibrator quant)
+model.3.experts.2.conv.pointwise.output_quantizer                                TensorQuantizer(disabled)
+model.3.experts.2.conv.pointwise.weight_quantizer                                TensorQuantizer(8 bit fake axis=0 amax=[0.0504, 0.1862](64) calibrator=MaxCalibrator quant)
+model.3.experts.2.conv.bn.input_quantizer                                        TensorQuantizer(disabled)
+model.3.experts.2.conv.bn.output_quantizer                                       TensorQuantizer(disabled)
+model.3.norm.0.input_quantizer                                                   TensorQuantizer(disabled)
+model.3.norm.0.output_quantizer                                                  TensorQuantizer(disabled)
+model.4.conv.input_quantizer                                                     TensorQuantizer(8 bit fake per-tensor amax=51.8690 calibrator=MaxCalibrator quant)
+model.4.conv.output_quantizer                                                    TensorQuantizer(disabled)
+model.4.conv.weight_quantizer                                                    TensorQuantizer(8 bit fake axis=0 amax=[0.0459, 0.1902](64) calibrator=MaxCalibrator quant)
+model.4.bn.input_quantizer                                                       TensorQuantizer(disabled)
+model.4.bn.output_quantizer                                                      TensorQuantizer(disabled)
+model.5.cv1.conv.input_quantizer                                                 TensorQuantizer(8 bit fake per-tensor amax=8.9203 calibrator=MaxCalibrator quant)
+model.5.cv1.conv.output_quantizer                                                TensorQuantizer(disabled)
+model.5.cv1.conv.weight_quantizer                                                TensorQuantizer(8 bit fake axis=0 amax=[0.0628, 0.2057](64) calibrator=MaxCalibrator quant)
+model.5.cv1.bn.input_quantizer                                                   TensorQuantizer(disabled)
+model.5.cv1.bn.output_quantizer                                                  TensorQuantizer(disabled)
+model.5.cv2.conv.input_quantizer                                                 TensorQuantizer(8 bit fake per-tensor amax=8.3807 calibrator=MaxCalibrator quant)
+model.5.cv2.conv.output_quantizer                                                TensorQuantizer(disabled)
+model.5.cv2.conv.weight_quantizer                                                TensorQuantizer(8 bit fake axis=0 amax=[0.0449, 0.2168](128) calibrator=MaxCalibrator quant)
+model.5.cv2.bn.input_quantizer                                                   TensorQuantizer(disabled)
+model.5.cv2.bn.output_quantizer                                                  TensorQuantizer(disabled)
+model.5.m.0.cv1.conv.input_quantizer                                             TensorQuantizer(8 bit fake per-tensor amax=5.4570 calibrator=MaxCalibrator quant)
+model.5.m.0.cv1.conv.output_quantizer                                            TensorQuantizer(disabled)
+model.5.m.0.cv1.conv.weight_quantizer                                            TensorQuantizer(8 bit fake axis=0 amax=[0.0670, 0.0991](16) calibrator=MaxCalibrator quant)
+model.5.m.0.cv1.bn.input_quantizer                                               TensorQuantizer(disabled)
+model.5.m.0.cv1.bn.output_quantizer                                              TensorQuantizer(disabled)
+model.5.m.0.cv2.conv.input_quantizer                                             TensorQuantizer(8 bit fake per-tensor amax=5.8818 calibrator=MaxCalibrator quant)
+model.5.m.0.cv2.conv.output_quantizer                                            TensorQuantizer(disabled)
+model.5.m.0.cv2.conv.weight_quantizer                                            TensorQuantizer(8 bit fake axis=0 amax=[0.0536, 0.1196](32) calibrator=MaxCalibrator quant)
+model.5.m.0.cv2.bn.input_quantizer                                               TensorQuantizer(disabled)
+model.5.m.0.cv2.bn.output_quantizer                                              TensorQuantizer(disabled)
+model.6.routing.global_pool.input_quantizer                                      TensorQuantizer(disabled)
+model.6.routing.global_pool.output_quantizer                                     TensorQuantizer(disabled)
+model.6.routing.routing_network.0.input_quantizer                                TensorQuantizer(disabled)
+model.6.routing.routing_network.0.output_quantizer                               TensorQuantizer(disabled)
+model.6.routing.routing_network.0.weight_quantizer                               TensorQuantizer(disabled)
+model.6.routing.routing_network.2.input_quantizer                                TensorQuantizer(disabled)
+model.6.routing.routing_network.2.output_quantizer                               TensorQuantizer(disabled)
+model.6.routing.routing_network.2.weight_quantizer                               TensorQuantizer(disabled)
+model.6.experts.0.conv.depthwise.input_quantizer                                 TensorQuantizer(8 bit fake per-tensor amax=11.8530 calibrator=MaxCalibrator quant)
+model.6.experts.0.conv.depthwise.output_quantizer                                TensorQuantizer(disabled)
+model.6.experts.0.conv.depthwise.weight_quantizer                                TensorQuantizer(8 bit fake axis=0 amax=[0.0371, 0.1938](128) calibrator=MaxCalibrator quant)
+model.6.experts.0.conv.pointwise.input_quantizer                                 TensorQuantizer(8 bit fake per-tensor amax=0.9776 calibrator=MaxCalibrator quant)
+model.6.experts.0.conv.pointwise.output_quantizer                                TensorQuantizer(disabled)
+model.6.experts.0.conv.pointwise.weight_quantizer                                TensorQuantizer(8 bit fake axis=0 amax=[0.0321, 0.2258](128) calibrator=MaxCalibrator quant)
+model.6.experts.0.conv.bn.input_quantizer                                        TensorQuantizer(disabled)
+model.6.experts.0.conv.bn.output_quantizer                                       TensorQuantizer(disabled)
+model.6.experts.1.conv.depthwise.input_quantizer                                 TensorQuantizer(8 bit fake per-tensor amax=11.8530 calibrator=MaxCalibrator quant)
+model.6.experts.1.conv.depthwise.output_quantizer                                TensorQuantizer(disabled)
+model.6.experts.1.conv.depthwise.weight_quantizer                                TensorQuantizer(8 bit fake axis=0 amax=[0.0322, 0.1649](128) calibrator=MaxCalibrator quant)
+model.6.experts.1.conv.pointwise.input_quantizer                                 TensorQuantizer(8 bit fake per-tensor amax=1.2042 calibrator=MaxCalibrator quant)
+model.6.experts.1.conv.pointwise.output_quantizer                                TensorQuantizer(disabled)
+model.6.experts.1.conv.pointwise.weight_quantizer                                TensorQuantizer(8 bit fake axis=0 amax=[0.0364, 0.1561](128) calibrator=MaxCalibrator quant)
+model.6.experts.1.conv.bn.input_quantizer                                        TensorQuantizer(disabled)
+model.6.experts.1.conv.bn.output_quantizer                                       TensorQuantizer(disabled)
+model.6.experts.2.conv.depthwise.input_quantizer                                 TensorQuantizer(8 bit fake per-tensor amax=11.8530 calibrator=MaxCalibrator quant)
+model.6.experts.2.conv.depthwise.output_quantizer                                TensorQuantizer(disabled)
+model.6.experts.2.conv.depthwise.weight_quantizer                                TensorQuantizer(8 bit fake axis=0 amax=[0.0369, 0.1495](128) calibrator=MaxCalibrator quant)
+model.6.experts.2.conv.pointwise.input_quantizer                                 TensorQuantizer(8 bit fake per-tensor amax=1.4615 calibrator=MaxCalibrator quant)
+model.6.experts.2.conv.pointwise.output_quantizer                                TensorQuantizer(disabled)
+model.6.experts.2.conv.pointwise.weight_quantizer                                TensorQuantizer(8 bit fake axis=0 amax=[0.0361, 0.1708](128) calibrator=MaxCalibrator quant)
+model.6.experts.2.conv.bn.input_quantizer                                        TensorQuantizer(disabled)
+model.6.experts.2.conv.bn.output_quantizer                                       TensorQuantizer(disabled)
+model.6.norm.0.input_quantizer                                                   TensorQuantizer(disabled)
+model.6.norm.0.output_quantizer                                                  TensorQuantizer(disabled)
+model.7.conv.input_quantizer                                                     TensorQuantizer(8 bit fake per-tensor amax=24.3806 calibrator=MaxCalibrator quant)
+model.7.conv.output_quantizer                                                    TensorQuantizer(disabled)
+model.7.conv.weight_quantizer                                                    TensorQuantizer(8 bit fake axis=0 amax=[0.0214, 0.1519](128) calibrator=MaxCalibrator quant)
+model.7.bn.input_quantizer                                                       TensorQuantizer(disabled)
+model.7.bn.output_quantizer                                                      TensorQuantizer(disabled)
+model.8.cv1.conv.input_quantizer                                                 TensorQuantizer(8 bit fake per-tensor amax=23.5026 calibrator=MaxCalibrator quant)
+model.8.cv1.conv.output_quantizer                                                TensorQuantizer(disabled)
+model.8.cv1.conv.weight_quantizer                                                TensorQuantizer(8 bit fake axis=0 amax=[0.0443, 0.2332](64) calibrator=MaxCalibrator quant)
+model.8.cv1.bn.input_quantizer                                                   TensorQuantizer(disabled)
+model.8.cv1.bn.output_quantizer                                                  TensorQuantizer(disabled)
+model.8.cv2.conv.input_quantizer                                                 TensorQuantizer(8 bit fake per-tensor amax=22.2431 calibrator=MaxCalibrator quant)
+model.8.cv2.conv.output_quantizer                                                TensorQuantizer(disabled)
+model.8.cv2.conv.weight_quantizer                                                TensorQuantizer(8 bit fake axis=0 amax=[0.0389, 0.1276](128) calibrator=MaxCalibrator quant)
+model.8.cv2.bn.input_quantizer                                                   TensorQuantizer(disabled)
+model.8.cv2.bn.output_quantizer                                                  TensorQuantizer(disabled)
+model.8.m.0.0.attn.qkv.conv.input_quantizer                                      TensorQuantizer(8 bit fake per-tensor amax=17.1392 calibrator=MaxCalibrator quant)
+model.8.m.0.0.attn.qkv.conv.output_quantizer                                     TensorQuantizer(disabled)
+model.8.m.0.0.attn.qkv.conv.weight_quantizer                                     TensorQuantizer(8 bit fake axis=0 amax=[0.0168, 0.1194](192) calibrator=MaxCalibrator quant)
+model.8.m.0.0.attn.qkv.bn.input_quantizer                                        TensorQuantizer(disabled)
+model.8.m.0.0.attn.qkv.bn.output_quantizer                                       TensorQuantizer(disabled)
+model.8.m.0.0.attn.proj.conv.input_quantizer                                     TensorQuantizer(8 bit fake per-tensor amax=11.1740 calibrator=MaxCalibrator quant)
+model.8.m.0.0.attn.proj.conv.output_quantizer                                    TensorQuantizer(disabled)
+model.8.m.0.0.attn.proj.conv.weight_quantizer                                    TensorQuantizer(8 bit fake axis=0 amax=[0.0342, 0.1748](64) calibrator=MaxCalibrator quant)
+model.8.m.0.0.attn.proj.bn.input_quantizer                                       TensorQuantizer(disabled)
+model.8.m.0.0.attn.proj.bn.output_quantizer                                      TensorQuantizer(disabled)
+model.8.m.0.0.attn.pe.conv.input_quantizer                                       TensorQuantizer(8 bit fake per-tensor amax=15.6817 calibrator=MaxCalibrator quant)
+model.8.m.0.0.attn.pe.conv.output_quantizer                                      TensorQuantizer(disabled)
+model.8.m.0.0.attn.pe.conv.weight_quantizer                                      TensorQuantizer(8 bit fake axis=0 amax=[0.0259, 0.1775](64) calibrator=MaxCalibrator quant)
+model.8.m.0.0.attn.pe.bn.input_quantizer                                         TensorQuantizer(disabled)
+model.8.m.0.0.attn.pe.bn.output_quantizer                                        TensorQuantizer(disabled)
+model.8.m.0.0.mlp.0.conv.input_quantizer                                         TensorQuantizer(8 bit fake per-tensor amax=13.1611 calibrator=MaxCalibrator quant)
+model.8.m.0.0.mlp.0.conv.output_quantizer                                        TensorQuantizer(disabled)
+model.8.m.0.0.mlp.0.conv.weight_quantizer                                        TensorQuantizer(8 bit fake axis=0 amax=[0.0306, 0.1349](128) calibrator=MaxCalibrator quant)
+model.8.m.0.0.mlp.0.bn.input_quantizer                                           TensorQuantizer(disabled)
+model.8.m.0.0.mlp.0.bn.output_quantizer                                          TensorQuantizer(disabled)
+model.8.m.0.0.mlp.1.conv.input_quantizer                                         TensorQuantizer(8 bit fake per-tensor amax=7.2989 calibrator=MaxCalibrator quant)
+model.8.m.0.0.mlp.1.conv.output_quantizer                                        TensorQuantizer(disabled)
+model.8.m.0.0.mlp.1.conv.weight_quantizer                                        TensorQuantizer(8 bit fake axis=0 amax=[0.0315, 0.0906](64) calibrator=MaxCalibrator quant)
+model.8.m.0.0.mlp.1.bn.input_quantizer                                           TensorQuantizer(disabled)
+model.8.m.0.0.mlp.1.bn.output_quantizer                                          TensorQuantizer(disabled)
+model.8.m.0.1.attn.qkv.conv.input_quantizer                                      TensorQuantizer(8 bit fake per-tensor amax=12.1492 calibrator=MaxCalibrator quant)
+model.8.m.0.1.attn.qkv.conv.output_quantizer                                     TensorQuantizer(disabled)
+model.8.m.0.1.attn.qkv.conv.weight_quantizer                                     TensorQuantizer(8 bit fake axis=0 amax=[0.0210, 0.1199](192) calibrator=MaxCalibrator quant)
+model.8.m.0.1.attn.qkv.bn.input_quantizer                                        TensorQuantizer(disabled)
+model.8.m.0.1.attn.qkv.bn.output_quantizer                                       TensorQuantizer(disabled)
+model.8.m.0.1.attn.proj.conv.input_quantizer                                     TensorQuantizer(8 bit fake per-tensor amax=8.2220 calibrator=MaxCalibrator quant)
+model.8.m.0.1.attn.proj.conv.output_quantizer                                    TensorQuantizer(disabled)
+model.8.m.0.1.attn.proj.conv.weight_quantizer                                    TensorQuantizer(8 bit fake axis=0 amax=[0.0319, 0.0965](64) calibrator=MaxCalibrator quant)
+model.8.m.0.1.attn.proj.bn.input_quantizer                                       TensorQuantizer(disabled)
+model.8.m.0.1.attn.proj.bn.output_quantizer                                      TensorQuantizer(disabled)
+model.8.m.0.1.attn.pe.conv.input_quantizer                                       TensorQuantizer(8 bit fake per-tensor amax=14.6522 calibrator=MaxCalibrator quant)
+model.8.m.0.1.attn.pe.conv.output_quantizer                                      TensorQuantizer(disabled)
+model.8.m.0.1.attn.pe.conv.weight_quantizer                                      TensorQuantizer(8 bit fake axis=0 amax=[0.0299, 0.1776](64) calibrator=MaxCalibrator quant)
+model.8.m.0.1.attn.pe.bn.input_quantizer                                         TensorQuantizer(disabled)
+model.8.m.0.1.attn.pe.bn.output_quantizer                                        TensorQuantizer(disabled)
+model.8.m.0.1.mlp.0.conv.input_quantizer                                         TensorQuantizer(8 bit fake per-tensor amax=14.1828 calibrator=MaxCalibrator quant)
+model.8.m.0.1.mlp.0.conv.output_quantizer                                        TensorQuantizer(disabled)
+model.8.m.0.1.mlp.0.conv.weight_quantizer                                        TensorQuantizer(8 bit fake axis=0 amax=[0.0302, 0.1310](128) calibrator=MaxCalibrator quant)
+model.8.m.0.1.mlp.0.bn.input_quantizer                                           TensorQuantizer(disabled)
+model.8.m.0.1.mlp.0.bn.output_quantizer                                          TensorQuantizer(disabled)
+model.8.m.0.1.mlp.1.conv.input_quantizer                                         TensorQuantizer(8 bit fake per-tensor amax=7.8551 calibrator=MaxCalibrator quant)
+model.8.m.0.1.mlp.1.conv.output_quantizer                                        TensorQuantizer(disabled)
+model.8.m.0.1.mlp.1.conv.weight_quantizer                                        TensorQuantizer(8 bit fake axis=0 amax=[0.0324, 0.1132](64) calibrator=MaxCalibrator quant)
+model.8.m.0.1.mlp.1.bn.input_quantizer                                           TensorQuantizer(disabled)
+model.8.m.0.1.mlp.1.bn.output_quantizer                                          TensorQuantizer(disabled)
+model.8.m.1.0.attn.qkv.conv.input_quantizer                                      TensorQuantizer(8 bit fake per-tensor amax=13.8284 calibrator=MaxCalibrator quant)
+model.8.m.1.0.attn.qkv.conv.output_quantizer                                     TensorQuantizer(disabled)
+model.8.m.1.0.attn.qkv.conv.weight_quantizer                                     TensorQuantizer(8 bit fake axis=0 amax=[0.0132, 0.1350](192) calibrator=MaxCalibrator quant)
+model.8.m.1.0.attn.qkv.bn.input_quantizer                                        TensorQuantizer(disabled)
+model.8.m.1.0.attn.qkv.bn.output_quantizer                                       TensorQuantizer(disabled)
+model.8.m.1.0.attn.proj.conv.input_quantizer                                     TensorQuantizer(8 bit fake per-tensor amax=12.3950 calibrator=MaxCalibrator quant)
+model.8.m.1.0.attn.proj.conv.output_quantizer                                    TensorQuantizer(disabled)
+model.8.m.1.0.attn.proj.conv.weight_quantizer                                    TensorQuantizer(8 bit fake axis=0 amax=[0.0165, 0.0964](64) calibrator=MaxCalibrator quant)
+model.8.m.1.0.attn.proj.bn.input_quantizer                                       TensorQuantizer(disabled)
+model.8.m.1.0.attn.proj.bn.output_quantizer                                      TensorQuantizer(disabled)
+model.8.m.1.0.attn.pe.conv.input_quantizer                                       TensorQuantizer(8 bit fake per-tensor amax=15.8477 calibrator=MaxCalibrator quant)
+model.8.m.1.0.attn.pe.conv.output_quantizer                                      TensorQuantizer(disabled)
+model.8.m.1.0.attn.pe.conv.weight_quantizer                                      TensorQuantizer(8 bit fake axis=0 amax=[0.0313, 0.1401](64) calibrator=MaxCalibrator quant)
+model.8.m.1.0.attn.pe.bn.input_quantizer                                         TensorQuantizer(disabled)
+model.8.m.1.0.attn.pe.bn.output_quantizer                                        TensorQuantizer(disabled)
+model.8.m.1.0.mlp.0.conv.input_quantizer                                         TensorQuantizer(8 bit fake per-tensor amax=14.5527 calibrator=MaxCalibrator quant)
+model.8.m.1.0.mlp.0.conv.output_quantizer                                        TensorQuantizer(disabled)
+model.8.m.1.0.mlp.0.conv.weight_quantizer                                        TensorQuantizer(8 bit fake axis=0 amax=[0.0312, 0.1109](128) calibrator=MaxCalibrator quant)
+model.8.m.1.0.mlp.0.bn.input_quantizer                                           TensorQuantizer(disabled)
+model.8.m.1.0.mlp.0.bn.output_quantizer                                          TensorQuantizer(disabled)
+model.8.m.1.0.mlp.1.conv.input_quantizer                                         TensorQuantizer(8 bit fake per-tensor amax=7.8910 calibrator=MaxCalibrator quant)
+model.8.m.1.0.mlp.1.conv.output_quantizer                                        TensorQuantizer(disabled)
+model.8.m.1.0.mlp.1.conv.weight_quantizer                                        TensorQuantizer(8 bit fake axis=0 amax=[0.0223, 0.0839](64) calibrator=MaxCalibrator quant)
+model.8.m.1.0.mlp.1.bn.input_quantizer                                           TensorQuantizer(disabled)
+model.8.m.1.0.mlp.1.bn.output_quantizer                                          TensorQuantizer(disabled)
+model.8.m.1.1.attn.qkv.conv.input_quantizer                                      TensorQuantizer(8 bit fake per-tensor amax=14.6811 calibrator=MaxCalibrator quant)
+model.8.m.1.1.attn.qkv.conv.output_quantizer                                     TensorQuantizer(disabled)
+model.8.m.1.1.attn.qkv.conv.weight_quantizer                                     TensorQuantizer(8 bit fake axis=0 amax=[0.0131, 0.1552](192) calibrator=MaxCalibrator quant)
+model.8.m.1.1.attn.qkv.bn.input_quantizer                                        TensorQuantizer(disabled)
+model.8.m.1.1.attn.qkv.bn.output_quantizer                                       TensorQuantizer(disabled)
+model.8.m.1.1.attn.proj.conv.input_quantizer                                     TensorQuantizer(8 bit fake per-tensor amax=7.2195 calibrator=MaxCalibrator quant)
+model.8.m.1.1.attn.proj.conv.output_quantizer                                    TensorQuantizer(disabled)
+model.8.m.1.1.attn.proj.conv.weight_quantizer                                    TensorQuantizer(8 bit fake axis=0 amax=[0.0314, 0.0998](64) calibrator=MaxCalibrator quant)
+model.8.m.1.1.attn.proj.bn.input_quantizer                                       TensorQuantizer(disabled)
+model.8.m.1.1.attn.proj.bn.output_quantizer                                      TensorQuantizer(disabled)
+model.8.m.1.1.attn.pe.conv.input_quantizer                                       TensorQuantizer(8 bit fake per-tensor amax=14.6060 calibrator=MaxCalibrator quant)
+model.8.m.1.1.attn.pe.conv.output_quantizer                                      TensorQuantizer(disabled)
+model.8.m.1.1.attn.pe.conv.weight_quantizer                                      TensorQuantizer(8 bit fake axis=0 amax=[0.0472, 0.1635](64) calibrator=MaxCalibrator quant)
+model.8.m.1.1.attn.pe.bn.input_quantizer                                         TensorQuantizer(disabled)
+model.8.m.1.1.attn.pe.bn.output_quantizer                                        TensorQuantizer(disabled)
+model.8.m.1.1.mlp.0.conv.input_quantizer                                         TensorQuantizer(8 bit fake per-tensor amax=22.8265 calibrator=MaxCalibrator quant)
+model.8.m.1.1.mlp.0.conv.output_quantizer                                        TensorQuantizer(disabled)
+model.8.m.1.1.mlp.0.conv.weight_quantizer                                        TensorQuantizer(8 bit fake axis=0 amax=[0.0304, 0.0760](128) calibrator=MaxCalibrator quant)
+model.8.m.1.1.mlp.0.bn.input_quantizer                                           TensorQuantizer(disabled)
+model.8.m.1.1.mlp.0.bn.output_quantizer                                          TensorQuantizer(disabled)
+model.8.m.1.1.mlp.1.conv.input_quantizer                                         TensorQuantizer(8 bit fake per-tensor amax=6.6599 calibrator=MaxCalibrator quant)
+model.8.m.1.1.mlp.1.conv.output_quantizer                                        TensorQuantizer(disabled)
+model.8.m.1.1.mlp.1.conv.weight_quantizer                                        TensorQuantizer(8 bit fake axis=0 amax=[0.0296, 0.0784](64) calibrator=MaxCalibrator quant)
+model.8.m.1.1.mlp.1.bn.input_quantizer                                           TensorQuantizer(disabled)
+model.8.m.1.1.mlp.1.bn.output_quantizer                                          TensorQuantizer(disabled)
+model.9.routing.global_pool.input_quantizer                                      TensorQuantizer(disabled)
+model.9.routing.global_pool.output_quantizer                                     TensorQuantizer(disabled)
+model.9.routing.routing_network.0.input_quantizer                                TensorQuantizer(disabled)
+model.9.routing.routing_network.0.output_quantizer                               TensorQuantizer(disabled)
+model.9.routing.routing_network.0.weight_quantizer                               TensorQuantizer(disabled)
+model.9.routing.routing_network.2.input_quantizer                                TensorQuantizer(disabled)
+model.9.routing.routing_network.2.output_quantizer                               TensorQuantizer(disabled)
+model.9.routing.routing_network.2.weight_quantizer                               TensorQuantizer(disabled)
+model.9.experts.0.conv.depthwise.input_quantizer                                 TensorQuantizer(8 bit fake per-tensor amax=10.7516 calibrator=MaxCalibrator quant)
+model.9.experts.0.conv.depthwise.output_quantizer                                TensorQuantizer(disabled)
+model.9.experts.0.conv.depthwise.weight_quantizer                                TensorQuantizer(8 bit fake axis=0 amax=[0.0344, 0.1659](128) calibrator=MaxCalibrator quant)
+model.9.experts.0.conv.pointwise.input_quantizer                                 TensorQuantizer(8 bit fake per-tensor amax=0.9835 calibrator=MaxCalibrator quant)
+model.9.experts.0.conv.pointwise.output_quantizer                                TensorQuantizer(disabled)
+model.9.experts.0.conv.pointwise.weight_quantizer                                TensorQuantizer(8 bit fake axis=0 amax=[0.0352, 0.1622](128) calibrator=MaxCalibrator quant)
+model.9.experts.0.conv.bn.input_quantizer                                        TensorQuantizer(disabled)
+model.9.experts.0.conv.bn.output_quantizer                                       TensorQuantizer(disabled)
+model.9.experts.1.conv.depthwise.input_quantizer                                 TensorQuantizer(8 bit fake per-tensor amax=10.7516 calibrator=MaxCalibrator quant)
+model.9.experts.1.conv.depthwise.output_quantizer                                TensorQuantizer(disabled)
+model.9.experts.1.conv.depthwise.weight_quantizer                                TensorQuantizer(8 bit fake axis=0 amax=[0.0338, 0.1414](128) calibrator=MaxCalibrator quant)
+model.9.experts.1.conv.pointwise.input_quantizer                                 TensorQuantizer(8 bit fake per-tensor amax=1.0251 calibrator=MaxCalibrator quant)
+model.9.experts.1.conv.pointwise.output_quantizer                                TensorQuantizer(disabled)
+model.9.experts.1.conv.pointwise.weight_quantizer                                TensorQuantizer(8 bit fake axis=0 amax=[0.0293, 0.1407](128) calibrator=MaxCalibrator quant)
+model.9.experts.1.conv.bn.input_quantizer                                        TensorQuantizer(disabled)
+model.9.experts.1.conv.bn.output_quantizer                                       TensorQuantizer(disabled)
+model.9.experts.2.conv.depthwise.input_quantizer                                 TensorQuantizer(8 bit fake per-tensor amax=10.7516 calibrator=MaxCalibrator quant)
+model.9.experts.2.conv.depthwise.output_quantizer                                TensorQuantizer(disabled)
+model.9.experts.2.conv.depthwise.weight_quantizer                                TensorQuantizer(8 bit fake axis=0 amax=[0.0209, 0.1414](128) calibrator=MaxCalibrator quant)
+model.9.experts.2.conv.pointwise.input_quantizer                                 TensorQuantizer(8 bit fake per-tensor amax=1.2576 calibrator=MaxCalibrator quant)
+model.9.experts.2.conv.pointwise.output_quantizer                                TensorQuantizer(disabled)
+model.9.experts.2.conv.pointwise.weight_quantizer                                TensorQuantizer(8 bit fake axis=0 amax=[0.0314, 0.1428](128) calibrator=MaxCalibrator quant)
+model.9.experts.2.conv.bn.input_quantizer                                        TensorQuantizer(disabled)
+model.9.experts.2.conv.bn.output_quantizer                                       TensorQuantizer(disabled)
+model.9.norm.0.input_quantizer                                                   TensorQuantizer(disabled)
+model.9.norm.0.output_quantizer                                                  TensorQuantizer(disabled)
+model.10.conv.input_quantizer                                                    TensorQuantizer(8 bit fake per-tensor amax=22.0123 calibrator=MaxCalibrator quant)
+model.10.conv.output_quantizer                                                   TensorQuantizer(disabled)
+model.10.conv.weight_quantizer                                                   TensorQuantizer(8 bit fake axis=0 amax=[0.0180, 0.1185](256) calibrator=MaxCalibrator quant)
+model.10.bn.input_quantizer                                                      TensorQuantizer(disabled)
+model.10.bn.output_quantizer                                                     TensorQuantizer(disabled)
+model.11.cv1.conv.input_quantizer                                                TensorQuantizer(8 bit fake per-tensor amax=13.8435 calibrator=MaxCalibrator quant)
+model.11.cv1.conv.output_quantizer                                               TensorQuantizer(disabled)
+model.11.cv1.conv.weight_quantizer                                               TensorQuantizer(8 bit fake axis=0 amax=[0.0361, 0.1899](128) calibrator=MaxCalibrator quant)
+model.11.cv1.bn.input_quantizer                                                  TensorQuantizer(disabled)
+model.11.cv1.bn.output_quantizer                                                 TensorQuantizer(disabled)
+model.11.cv2.conv.input_quantizer                                                TensorQuantizer(8 bit fake per-tensor amax=20.6175 calibrator=MaxCalibrator quant)
+model.11.cv2.conv.output_quantizer                                               TensorQuantizer(disabled)
+model.11.cv2.conv.weight_quantizer                                               TensorQuantizer(8 bit fake axis=0 amax=[0.0257, 0.0979](256) calibrator=MaxCalibrator quant)
+model.11.cv2.bn.input_quantizer                                                  TensorQuantizer(disabled)
+model.11.cv2.bn.output_quantizer                                                 TensorQuantizer(disabled)
+model.11.m.0.0.attn.qkv.conv.input_quantizer                                     TensorQuantizer(8 bit fake per-tensor amax=19.8675 calibrator=MaxCalibrator quant)
+model.11.m.0.0.attn.qkv.conv.output_quantizer                                    TensorQuantizer(disabled)
+model.11.m.0.0.attn.qkv.conv.weight_quantizer                                    TensorQuantizer(8 bit fake axis=0 amax=[0.0093, 0.1797](384) calibrator=MaxCalibrator quant)
+model.11.m.0.0.attn.qkv.bn.input_quantizer                                       TensorQuantizer(disabled)
+model.11.m.0.0.attn.qkv.bn.output_quantizer                                      TensorQuantizer(disabled)
+model.11.m.0.0.attn.proj.conv.input_quantizer                                    TensorQuantizer(8 bit fake per-tensor amax=18.0576 calibrator=MaxCalibrator quant)
+model.11.m.0.0.attn.proj.conv.output_quantizer                                   TensorQuantizer(disabled)
+model.11.m.0.0.attn.proj.conv.weight_quantizer                                   TensorQuantizer(8 bit fake axis=0 amax=[0.0267, 0.1807](128) calibrator=MaxCalibrator quant)
+model.11.m.0.0.attn.proj.bn.input_quantizer                                      TensorQuantizer(disabled)
+model.11.m.0.0.attn.proj.bn.output_quantizer                                     TensorQuantizer(disabled)
+model.11.m.0.0.attn.pe.conv.input_quantizer                                      TensorQuantizer(8 bit fake per-tensor amax=12.9741 calibrator=MaxCalibrator quant)
+model.11.m.0.0.attn.pe.conv.output_quantizer                                     TensorQuantizer(disabled)
+model.11.m.0.0.attn.pe.conv.weight_quantizer                                     TensorQuantizer(8 bit fake axis=0 amax=[0.0210, 0.1414](128) calibrator=MaxCalibrator quant)
+model.11.m.0.0.attn.pe.bn.input_quantizer                                        TensorQuantizer(disabled)
+model.11.m.0.0.attn.pe.bn.output_quantizer                                       TensorQuantizer(disabled)
+model.11.m.0.0.mlp.0.conv.input_quantizer                                        TensorQuantizer(8 bit fake per-tensor amax=17.8653 calibrator=MaxCalibrator quant)
+model.11.m.0.0.mlp.0.conv.output_quantizer                                       TensorQuantizer(disabled)
+model.11.m.0.0.mlp.0.conv.weight_quantizer                                       TensorQuantizer(8 bit fake axis=0 amax=[0.0260, 0.1385](256) calibrator=MaxCalibrator quant)
+model.11.m.0.0.mlp.0.bn.input_quantizer                                          TensorQuantizer(disabled)
+model.11.m.0.0.mlp.0.bn.output_quantizer                                         TensorQuantizer(disabled)
+model.11.m.0.0.mlp.1.conv.input_quantizer                                        TensorQuantizer(8 bit fake per-tensor amax=8.3931 calibrator=MaxCalibrator quant)
+model.11.m.0.0.mlp.1.conv.output_quantizer                                       TensorQuantizer(disabled)
+model.11.m.0.0.mlp.1.conv.weight_quantizer                                       TensorQuantizer(8 bit fake axis=0 amax=[0.0175, 0.1472](128) calibrator=MaxCalibrator quant)
+model.11.m.0.0.mlp.1.bn.input_quantizer                                          TensorQuantizer(disabled)
+model.11.m.0.0.mlp.1.bn.output_quantizer                                         TensorQuantizer(disabled)
+model.11.m.0.1.attn.qkv.conv.input_quantizer                                     TensorQuantizer(8 bit fake per-tensor amax=17.8700 calibrator=MaxCalibrator quant)
+model.11.m.0.1.attn.qkv.conv.output_quantizer                                    TensorQuantizer(disabled)
+model.11.m.0.1.attn.qkv.conv.weight_quantizer                                    TensorQuantizer(8 bit fake axis=0 amax=[0.0134, 0.1241](384) calibrator=MaxCalibrator quant)
+model.11.m.0.1.attn.qkv.bn.input_quantizer                                       TensorQuantizer(disabled)
+model.11.m.0.1.attn.qkv.bn.output_quantizer                                      TensorQuantizer(disabled)
+model.11.m.0.1.attn.proj.conv.input_quantizer                                    TensorQuantizer(8 bit fake per-tensor amax=11.5576 calibrator=MaxCalibrator quant)
+model.11.m.0.1.attn.proj.conv.output_quantizer                                   TensorQuantizer(disabled)
+model.11.m.0.1.attn.proj.conv.weight_quantizer                                   TensorQuantizer(8 bit fake axis=0 amax=[0.0244, 0.0993](128) calibrator=MaxCalibrator quant)
+model.11.m.0.1.attn.proj.bn.input_quantizer                                      TensorQuantizer(disabled)
+model.11.m.0.1.attn.proj.bn.output_quantizer                                     TensorQuantizer(disabled)
+model.11.m.0.1.attn.pe.conv.input_quantizer                                      TensorQuantizer(8 bit fake per-tensor amax=11.8828 calibrator=MaxCalibrator quant)
+model.11.m.0.1.attn.pe.conv.output_quantizer                                     TensorQuantizer(disabled)
+model.11.m.0.1.attn.pe.conv.weight_quantizer                                     TensorQuantizer(8 bit fake axis=0 amax=[0.0195, 0.1172](128) calibrator=MaxCalibrator quant)
+model.11.m.0.1.attn.pe.bn.input_quantizer                                        TensorQuantizer(disabled)
+model.11.m.0.1.attn.pe.bn.output_quantizer                                       TensorQuantizer(disabled)
+model.11.m.0.1.mlp.0.conv.input_quantizer                                        TensorQuantizer(8 bit fake per-tensor amax=16.9955 calibrator=MaxCalibrator quant)
+model.11.m.0.1.mlp.0.conv.output_quantizer                                       TensorQuantizer(disabled)
+model.11.m.0.1.mlp.0.conv.weight_quantizer                                       TensorQuantizer(8 bit fake axis=0 amax=[0.0227, 0.1315](256) calibrator=MaxCalibrator quant)
+model.11.m.0.1.mlp.0.bn.input_quantizer                                          TensorQuantizer(disabled)
+model.11.m.0.1.mlp.0.bn.output_quantizer                                         TensorQuantizer(disabled)
+model.11.m.0.1.mlp.1.conv.input_quantizer                                        TensorQuantizer(8 bit fake per-tensor amax=10.5855 calibrator=MaxCalibrator quant)
+model.11.m.0.1.mlp.1.conv.output_quantizer                                       TensorQuantizer(disabled)
+model.11.m.0.1.mlp.1.conv.weight_quantizer                                       TensorQuantizer(8 bit fake axis=0 amax=[0.0235, 0.1210](128) calibrator=MaxCalibrator quant)
+model.11.m.0.1.mlp.1.bn.input_quantizer                                          TensorQuantizer(disabled)
+model.11.m.0.1.mlp.1.bn.output_quantizer                                         TensorQuantizer(disabled)
+model.11.m.1.0.attn.qkv.conv.input_quantizer                                     TensorQuantizer(8 bit fake per-tensor amax=17.8481 calibrator=MaxCalibrator quant)
+model.11.m.1.0.attn.qkv.conv.output_quantizer                                    TensorQuantizer(disabled)
+model.11.m.1.0.attn.qkv.conv.weight_quantizer                                    TensorQuantizer(8 bit fake axis=0 amax=[0.0146, 0.1063](384) calibrator=MaxCalibrator quant)
+model.11.m.1.0.attn.qkv.bn.input_quantizer                                       TensorQuantizer(disabled)
+model.11.m.1.0.attn.qkv.bn.output_quantizer                                      TensorQuantizer(disabled)
+model.11.m.1.0.attn.proj.conv.input_quantizer                                    TensorQuantizer(8 bit fake per-tensor amax=8.2516 calibrator=MaxCalibrator quant)
+model.11.m.1.0.attn.proj.conv.output_quantizer                                   TensorQuantizer(disabled)
+model.11.m.1.0.attn.proj.conv.weight_quantizer                                   TensorQuantizer(8 bit fake axis=0 amax=[0.0247, 0.1207](128) calibrator=MaxCalibrator quant)
+model.11.m.1.0.attn.proj.bn.input_quantizer                                      TensorQuantizer(disabled)
+model.11.m.1.0.attn.proj.bn.output_quantizer                                     TensorQuantizer(disabled)
+model.11.m.1.0.attn.pe.conv.input_quantizer                                      TensorQuantizer(8 bit fake per-tensor amax=14.0341 calibrator=MaxCalibrator quant)
+model.11.m.1.0.attn.pe.conv.output_quantizer                                     TensorQuantizer(disabled)
+model.11.m.1.0.attn.pe.conv.weight_quantizer                                     TensorQuantizer(8 bit fake axis=0 amax=[0.0173, 0.1570](128) calibrator=MaxCalibrator quant)
+model.11.m.1.0.attn.pe.bn.input_quantizer                                        TensorQuantizer(disabled)
+model.11.m.1.0.attn.pe.bn.output_quantizer                                       TensorQuantizer(disabled)
+model.11.m.1.0.mlp.0.conv.input_quantizer                                        TensorQuantizer(8 bit fake per-tensor amax=18.0536 calibrator=MaxCalibrator quant)
+model.11.m.1.0.mlp.0.conv.output_quantizer                                       TensorQuantizer(disabled)
+model.11.m.1.0.mlp.0.conv.weight_quantizer                                       TensorQuantizer(8 bit fake axis=0 amax=[0.0237, 0.1993](256) calibrator=MaxCalibrator quant)
+model.11.m.1.0.mlp.0.bn.input_quantizer                                          TensorQuantizer(disabled)
+model.11.m.1.0.mlp.0.bn.output_quantizer                                         TensorQuantizer(disabled)
+model.11.m.1.0.mlp.1.conv.input_quantizer                                        TensorQuantizer(8 bit fake per-tensor amax=8.7136 calibrator=MaxCalibrator quant)
+model.11.m.1.0.mlp.1.conv.output_quantizer                                       TensorQuantizer(disabled)
+model.11.m.1.0.mlp.1.conv.weight_quantizer                                       TensorQuantizer(8 bit fake axis=0 amax=[0.0247, 0.1123](128) calibrator=MaxCalibrator quant)
+model.11.m.1.0.mlp.1.bn.input_quantizer                                          TensorQuantizer(disabled)
+model.11.m.1.0.mlp.1.bn.output_quantizer                                         TensorQuantizer(disabled)
+model.11.m.1.1.attn.qkv.conv.input_quantizer                                     TensorQuantizer(8 bit fake per-tensor amax=17.5857 calibrator=MaxCalibrator quant)
+model.11.m.1.1.attn.qkv.conv.output_quantizer                                    TensorQuantizer(disabled)
+model.11.m.1.1.attn.qkv.conv.weight_quantizer                                    TensorQuantizer(8 bit fake axis=0 amax=[0.0177, 0.0886](384) calibrator=MaxCalibrator quant)
+model.11.m.1.1.attn.qkv.bn.input_quantizer                                       TensorQuantizer(disabled)
+model.11.m.1.1.attn.qkv.bn.output_quantizer                                      TensorQuantizer(disabled)
+model.11.m.1.1.attn.proj.conv.input_quantizer                                    TensorQuantizer(8 bit fake per-tensor amax=8.0701 calibrator=MaxCalibrator quant)
+model.11.m.1.1.attn.proj.conv.output_quantizer                                   TensorQuantizer(disabled)
+model.11.m.1.1.attn.proj.conv.weight_quantizer                                   TensorQuantizer(8 bit fake axis=0 amax=[0.0266, 0.1027](128) calibrator=MaxCalibrator quant)
+model.11.m.1.1.attn.proj.bn.input_quantizer                                      TensorQuantizer(disabled)
+model.11.m.1.1.attn.proj.bn.output_quantizer                                     TensorQuantizer(disabled)
+model.11.m.1.1.attn.pe.conv.input_quantizer                                      TensorQuantizer(8 bit fake per-tensor amax=13.7029 calibrator=MaxCalibrator quant)
+model.11.m.1.1.attn.pe.conv.output_quantizer                                     TensorQuantizer(disabled)
+model.11.m.1.1.attn.pe.conv.weight_quantizer                                     TensorQuantizer(8 bit fake axis=0 amax=[0.0179, 0.1262](128) calibrator=MaxCalibrator quant)
+model.11.m.1.1.attn.pe.bn.input_quantizer                                        TensorQuantizer(disabled)
+model.11.m.1.1.attn.pe.bn.output_quantizer                                       TensorQuantizer(disabled)
+model.11.m.1.1.mlp.0.conv.input_quantizer                                        TensorQuantizer(8 bit fake per-tensor amax=18.3709 calibrator=MaxCalibrator quant)
+model.11.m.1.1.mlp.0.conv.output_quantizer                                       TensorQuantizer(disabled)
+model.11.m.1.1.mlp.0.conv.weight_quantizer                                       TensorQuantizer(8 bit fake axis=0 amax=[0.0230, 0.0753](256) calibrator=MaxCalibrator quant)
+model.11.m.1.1.mlp.0.bn.input_quantizer                                          TensorQuantizer(disabled)
+model.11.m.1.1.mlp.0.bn.output_quantizer                                         TensorQuantizer(disabled)
+model.11.m.1.1.mlp.1.conv.input_quantizer                                        TensorQuantizer(8 bit fake per-tensor amax=9.8294 calibrator=MaxCalibrator quant)
+model.11.m.1.1.mlp.1.conv.output_quantizer                                       TensorQuantizer(disabled)
+model.11.m.1.1.mlp.1.conv.weight_quantizer                                       TensorQuantizer(8 bit fake axis=0 amax=[0.0229, 0.0604](128) calibrator=MaxCalibrator quant)
+model.11.m.1.1.mlp.1.bn.input_quantizer                                          TensorQuantizer(disabled)
+model.11.m.1.1.mlp.1.bn.output_quantizer                                         TensorQuantizer(disabled)
+model.12.routing.global_pool.input_quantizer                                     TensorQuantizer(disabled)
+model.12.routing.global_pool.output_quantizer                                    TensorQuantizer(disabled)
+model.12.routing.routing_network.0.input_quantizer                               TensorQuantizer(disabled)
+model.12.routing.routing_network.0.output_quantizer                              TensorQuantizer(disabled)
+model.12.routing.routing_network.0.weight_quantizer                              TensorQuantizer(disabled)
+model.12.routing.routing_network.2.input_quantizer                               TensorQuantizer(disabled)
+model.12.routing.routing_network.2.output_quantizer                              TensorQuantizer(disabled)
+model.12.routing.routing_network.2.weight_quantizer                              TensorQuantizer(disabled)
+model.12.experts.0.conv.depthwise.input_quantizer                                TensorQuantizer(8 bit fake per-tensor amax=12.4114 calibrator=MaxCalibrator quant)
+model.12.experts.0.conv.depthwise.output_quantizer                               TensorQuantizer(disabled)
+model.12.experts.0.conv.depthwise.weight_quantizer                               TensorQuantizer(8 bit fake axis=0 amax=[0.0179, 0.1189](256) calibrator=MaxCalibrator quant)
+model.12.experts.0.conv.pointwise.input_quantizer                                TensorQuantizer(8 bit fake per-tensor amax=1.6118 calibrator=MaxCalibrator quant)
+model.12.experts.0.conv.pointwise.output_quantizer                               TensorQuantizer(disabled)
+model.12.experts.0.conv.pointwise.weight_quantizer                               TensorQuantizer(8 bit fake axis=0 amax=[0.0085, 0.1116](256) calibrator=MaxCalibrator quant)
+model.12.experts.0.conv.bn.input_quantizer                                       TensorQuantizer(disabled)
+model.12.experts.0.conv.bn.output_quantizer                                      TensorQuantizer(disabled)
+model.12.experts.1.conv.depthwise.input_quantizer                                TensorQuantizer(8 bit fake per-tensor amax=12.4114 calibrator=MaxCalibrator quant)
+model.12.experts.1.conv.depthwise.output_quantizer                               TensorQuantizer(disabled)
+model.12.experts.1.conv.depthwise.weight_quantizer                               TensorQuantizer(8 bit fake axis=0 amax=[0.0164, 0.1038](256) calibrator=MaxCalibrator quant)
+model.12.experts.1.conv.pointwise.input_quantizer                                TensorQuantizer(8 bit fake per-tensor amax=1.6775 calibrator=MaxCalibrator quant)
+model.12.experts.1.conv.pointwise.output_quantizer                               TensorQuantizer(disabled)
+model.12.experts.1.conv.pointwise.weight_quantizer                               TensorQuantizer(8 bit fake axis=0 amax=[0.0213, 0.0809](256) calibrator=MaxCalibrator quant)
+model.12.experts.1.conv.bn.input_quantizer                                       TensorQuantizer(disabled)
+model.12.experts.1.conv.bn.output_quantizer                                      TensorQuantizer(disabled)
+model.12.experts.2.conv.depthwise.input_quantizer                                TensorQuantizer(8 bit fake per-tensor amax=12.4114 calibrator=MaxCalibrator quant)
+model.12.experts.2.conv.depthwise.output_quantizer                               TensorQuantizer(disabled)
+model.12.experts.2.conv.depthwise.weight_quantizer                               TensorQuantizer(8 bit fake axis=0 amax=[0.0126, 0.1046](256) calibrator=MaxCalibrator quant)
+model.12.experts.2.conv.pointwise.input_quantizer                                TensorQuantizer(8 bit fake per-tensor amax=2.0300 calibrator=MaxCalibrator quant)
+model.12.experts.2.conv.pointwise.output_quantizer                               TensorQuantizer(disabled)
+model.12.experts.2.conv.pointwise.weight_quantizer                               TensorQuantizer(8 bit fake axis=0 amax=[0.0198, 0.1754](256) calibrator=MaxCalibrator quant)
+model.12.experts.2.conv.bn.input_quantizer                                       TensorQuantizer(disabled)
+model.12.experts.2.conv.bn.output_quantizer                                      TensorQuantizer(disabled)
+model.12.norm.0.input_quantizer                                                  TensorQuantizer(disabled)
+model.12.norm.0.output_quantizer                                                 TensorQuantizer(disabled)
+model.15.cv1.conv.input_quantizer                                                TensorQuantizer(8 bit fake per-tensor amax=23.1033 calibrator=MaxCalibrator quant)
+model.15.cv1.conv.output_quantizer                                               TensorQuantizer(disabled)
+model.15.cv1.conv.weight_quantizer                                               TensorQuantizer(8 bit fake axis=0 amax=[0.0320, 0.1857](128) calibrator=MaxCalibrator quant)
+model.15.cv1.bn.input_quantizer                                                  TensorQuantizer(disabled)
+model.15.cv1.bn.output_quantizer                                                 TensorQuantizer(disabled)
+model.15.cv2.conv.input_quantizer                                                TensorQuantizer(8 bit fake per-tensor amax=11.3180 calibrator=MaxCalibrator quant)
+model.15.cv2.conv.output_quantizer                                               TensorQuantizer(disabled)
+model.15.cv2.conv.weight_quantizer                                               TensorQuantizer(8 bit fake axis=0 amax=[0.0346, 0.1483](128) calibrator=MaxCalibrator quant)
+model.15.cv2.bn.input_quantizer                                                  TensorQuantizer(disabled)
+model.15.cv2.bn.output_quantizer                                                 TensorQuantizer(disabled)
+model.15.m.0.cv1.conv.input_quantizer                                            TensorQuantizer(8 bit fake per-tensor amax=8.3998 calibrator=MaxCalibrator quant)
+model.15.m.0.cv1.conv.output_quantizer                                           TensorQuantizer(disabled)
+model.15.m.0.cv1.conv.weight_quantizer                                           TensorQuantizer(8 bit fake axis=0 amax=[0.0491, 0.1310](32) calibrator=MaxCalibrator quant)
+model.15.m.0.cv1.bn.input_quantizer                                              TensorQuantizer(disabled)
+model.15.m.0.cv1.bn.output_quantizer                                             TensorQuantizer(disabled)
+model.15.m.0.cv2.conv.input_quantizer                                            TensorQuantizer(8 bit fake per-tensor amax=8.3998 calibrator=MaxCalibrator quant)
+model.15.m.0.cv2.conv.output_quantizer                                           TensorQuantizer(disabled)
+model.15.m.0.cv2.conv.weight_quantizer                                           TensorQuantizer(8 bit fake axis=0 amax=[0.0235, 0.0659](32) calibrator=MaxCalibrator quant)
+model.15.m.0.cv2.bn.input_quantizer                                              TensorQuantizer(disabled)
+model.15.m.0.cv2.bn.output_quantizer                                             TensorQuantizer(disabled)
+model.15.m.0.cv3.conv.input_quantizer                                            TensorQuantizer(8 bit fake per-tensor amax=22.5014 calibrator=MaxCalibrator quant)
+model.15.m.0.cv3.conv.output_quantizer                                           TensorQuantizer(disabled)
+model.15.m.0.cv3.conv.weight_quantizer                                           TensorQuantizer(8 bit fake axis=0 amax=[0.0345, 0.0834](64) calibrator=MaxCalibrator quant)
+model.15.m.0.cv3.bn.input_quantizer                                              TensorQuantizer(disabled)
+model.15.m.0.cv3.bn.output_quantizer                                             TensorQuantizer(disabled)
+model.15.m.0.m.0.cv1.conv.input_quantizer                                        TensorQuantizer(8 bit fake per-tensor amax=2.9928 calibrator=MaxCalibrator quant)
+model.15.m.0.m.0.cv1.conv.output_quantizer                                       TensorQuantizer(disabled)
+model.15.m.0.m.0.cv1.conv.weight_quantizer                                       TensorQuantizer(8 bit fake axis=0 amax=[0.0443, 0.0820](32) calibrator=MaxCalibrator quant)
+model.15.m.0.m.0.cv1.bn.input_quantizer                                          TensorQuantizer(disabled)
+model.15.m.0.m.0.cv1.bn.output_quantizer                                         TensorQuantizer(disabled)
+model.15.m.0.m.0.cv2.conv.input_quantizer                                        TensorQuantizer(8 bit fake per-tensor amax=8.3841 calibrator=MaxCalibrator quant)
+model.15.m.0.m.0.cv2.conv.output_quantizer                                       TensorQuantizer(disabled)
+model.15.m.0.m.0.cv2.conv.weight_quantizer                                       TensorQuantizer(8 bit fake axis=0 amax=[0.0369, 0.0886](32) calibrator=MaxCalibrator quant)
+model.15.m.0.m.0.cv2.bn.input_quantizer                                          TensorQuantizer(disabled)
+model.15.m.0.m.0.cv2.bn.output_quantizer                                         TensorQuantizer(disabled)
+model.15.m.0.m.1.cv1.conv.input_quantizer                                        TensorQuantizer(8 bit fake per-tensor amax=8.7568 calibrator=MaxCalibrator quant)
+model.15.m.0.m.1.cv1.conv.output_quantizer                                       TensorQuantizer(disabled)
+model.15.m.0.m.1.cv1.conv.weight_quantizer                                       TensorQuantizer(8 bit fake axis=0 amax=[0.0373, 0.1278](32) calibrator=MaxCalibrator quant)
+model.15.m.0.m.1.cv1.bn.input_quantizer                                          TensorQuantizer(disabled)
+model.15.m.0.m.1.cv1.bn.output_quantizer                                         TensorQuantizer(disabled)
+model.15.m.0.m.1.cv2.conv.input_quantizer                                        TensorQuantizer(8 bit fake per-tensor amax=6.6651 calibrator=MaxCalibrator quant)
+model.15.m.0.m.1.cv2.conv.output_quantizer                                       TensorQuantizer(disabled)
+model.15.m.0.m.1.cv2.conv.weight_quantizer                                       TensorQuantizer(8 bit fake axis=0 amax=[0.0296, 0.1234](32) calibrator=MaxCalibrator quant)
+model.15.m.0.m.1.cv2.bn.input_quantizer                                          TensorQuantizer(disabled)
+model.15.m.0.m.1.cv2.bn.output_quantizer                                         TensorQuantizer(disabled)
+model.18.cv1.conv.input_quantizer                                                TensorQuantizer(8 bit fake per-tensor amax=24.3806 calibrator=MaxCalibrator quant)
+model.18.cv1.conv.output_quantizer                                               TensorQuantizer(disabled)
+model.18.cv1.conv.weight_quantizer                                               TensorQuantizer(8 bit fake axis=0 amax=[0.0420, 0.1735](64) calibrator=MaxCalibrator quant)
+model.18.cv1.bn.input_quantizer                                                  TensorQuantizer(disabled)
+model.18.cv1.bn.output_quantizer                                                 TensorQuantizer(disabled)
+model.18.cv2.conv.input_quantizer                                                TensorQuantizer(8 bit fake per-tensor amax=6.2680 calibrator=MaxCalibrator quant)
+model.18.cv2.conv.output_quantizer                                               TensorQuantizer(disabled)
+model.18.cv2.conv.weight_quantizer                                               TensorQuantizer(8 bit fake axis=0 amax=[0.0436, 0.1809](64) calibrator=MaxCalibrator quant)
+model.18.cv2.bn.input_quantizer                                                  TensorQuantizer(disabled)
+model.18.cv2.bn.output_quantizer                                                 TensorQuantizer(disabled)
+model.18.m.0.cv1.conv.input_quantizer                                            TensorQuantizer(8 bit fake per-tensor amax=5.9463 calibrator=MaxCalibrator quant)
+model.18.m.0.cv1.conv.output_quantizer                                           TensorQuantizer(disabled)
+model.18.m.0.cv1.conv.weight_quantizer                                           TensorQuantizer(8 bit fake axis=0 amax=[0.0703, 0.1451](16) calibrator=MaxCalibrator quant)
+model.18.m.0.cv1.bn.input_quantizer                                              TensorQuantizer(disabled)
+model.18.m.0.cv1.bn.output_quantizer                                             TensorQuantizer(disabled)
+model.18.m.0.cv2.conv.input_quantizer                                            TensorQuantizer(8 bit fake per-tensor amax=5.9463 calibrator=MaxCalibrator quant)
+model.18.m.0.cv2.conv.output_quantizer                                           TensorQuantizer(disabled)
+model.18.m.0.cv2.conv.weight_quantizer                                           TensorQuantizer(8 bit fake axis=0 amax=[0.0320, 0.0843](16) calibrator=MaxCalibrator quant)
+model.18.m.0.cv2.bn.input_quantizer                                              TensorQuantizer(disabled)
+model.18.m.0.cv2.bn.output_quantizer                                             TensorQuantizer(disabled)
+model.18.m.0.cv3.conv.input_quantizer                                            TensorQuantizer(8 bit fake per-tensor amax=16.6669 calibrator=MaxCalibrator quant)
+model.18.m.0.cv3.conv.output_quantizer                                           TensorQuantizer(disabled)
+model.18.m.0.cv3.conv.weight_quantizer                                           TensorQuantizer(8 bit fake axis=0 amax=[0.0430, 0.1377](32) calibrator=MaxCalibrator quant)
+model.18.m.0.cv3.bn.input_quantizer                                              TensorQuantizer(disabled)
+model.18.m.0.cv3.bn.output_quantizer                                             TensorQuantizer(disabled)
+model.18.m.0.m.0.cv1.conv.input_quantizer                                        TensorQuantizer(8 bit fake per-tensor amax=1.5469 calibrator=MaxCalibrator quant)
+model.18.m.0.m.0.cv1.conv.output_quantizer                                       TensorQuantizer(disabled)
+model.18.m.0.m.0.cv1.conv.weight_quantizer                                       TensorQuantizer(8 bit fake axis=0 amax=[0.0685, 0.1624](16) calibrator=MaxCalibrator quant)
+model.18.m.0.m.0.cv1.bn.input_quantizer                                          TensorQuantizer(disabled)
+model.18.m.0.m.0.cv1.bn.output_quantizer                                         TensorQuantizer(disabled)
+model.18.m.0.m.0.cv2.conv.input_quantizer                                        TensorQuantizer(8 bit fake per-tensor amax=7.3895 calibrator=MaxCalibrator quant)
+model.18.m.0.m.0.cv2.conv.output_quantizer                                       TensorQuantizer(disabled)
+model.18.m.0.m.0.cv2.conv.weight_quantizer                                       TensorQuantizer(8 bit fake axis=0 amax=[0.0673, 0.1603](16) calibrator=MaxCalibrator quant)
+model.18.m.0.m.0.cv2.bn.input_quantizer                                          TensorQuantizer(disabled)
+model.18.m.0.m.0.cv2.bn.output_quantizer                                         TensorQuantizer(disabled)
+model.18.m.0.m.1.cv1.conv.input_quantizer                                        TensorQuantizer(8 bit fake per-tensor amax=7.6146 calibrator=MaxCalibrator quant)
+model.18.m.0.m.1.cv1.conv.output_quantizer                                       TensorQuantizer(disabled)
+model.18.m.0.m.1.cv1.conv.weight_quantizer                                       TensorQuantizer(8 bit fake axis=0 amax=[0.0595, 0.1273](16) calibrator=MaxCalibrator quant)
+model.18.m.0.m.1.cv1.bn.input_quantizer                                          TensorQuantizer(disabled)
+model.18.m.0.m.1.cv1.bn.output_quantizer                                         TensorQuantizer(disabled)
+model.18.m.0.m.1.cv2.conv.input_quantizer                                        TensorQuantizer(8 bit fake per-tensor amax=5.3806 calibrator=MaxCalibrator quant)
+model.18.m.0.m.1.cv2.conv.output_quantizer                                       TensorQuantizer(disabled)
+model.18.m.0.m.1.cv2.conv.weight_quantizer                                       TensorQuantizer(8 bit fake axis=0 amax=[0.0623, 0.1539](16) calibrator=MaxCalibrator quant)
+model.18.m.0.m.1.cv2.bn.input_quantizer                                          TensorQuantizer(disabled)
+model.18.m.0.m.1.cv2.bn.output_quantizer                                         TensorQuantizer(disabled)
+model.19.conv.input_quantizer                                                    TensorQuantizer(8 bit fake per-tensor amax=5.0974 calibrator=MaxCalibrator quant)
+model.19.conv.output_quantizer                                                   TensorQuantizer(disabled)
+model.19.conv.weight_quantizer                                                   TensorQuantizer(8 bit fake axis=0 amax=[0.0192, 0.0632](64) calibrator=MaxCalibrator quant)
+model.19.bn.input_quantizer                                                      TensorQuantizer(disabled)
+model.19.bn.output_quantizer                                                     TensorQuantizer(disabled)
+model.21.cv1.conv.input_quantizer                                                TensorQuantizer(8 bit fake per-tensor amax=11.6268 calibrator=MaxCalibrator quant)
+model.21.cv1.conv.output_quantizer                                               TensorQuantizer(disabled)
+model.21.cv1.conv.weight_quantizer                                               TensorQuantizer(8 bit fake axis=0 amax=[0.0245, 0.1169](128) calibrator=MaxCalibrator quant)
+model.21.cv1.bn.input_quantizer                                                  TensorQuantizer(disabled)
+model.21.cv1.bn.output_quantizer                                                 TensorQuantizer(disabled)
+model.21.cv2.conv.input_quantizer                                                TensorQuantizer(8 bit fake per-tensor amax=12.1745 calibrator=MaxCalibrator quant)
+model.21.cv2.conv.output_quantizer                                               TensorQuantizer(disabled)
+model.21.cv2.conv.weight_quantizer                                               TensorQuantizer(8 bit fake axis=0 amax=[0.0329, 0.1456](128) calibrator=MaxCalibrator quant)
+model.21.cv2.bn.input_quantizer                                                  TensorQuantizer(disabled)
+model.21.cv2.bn.output_quantizer                                                 TensorQuantizer(disabled)
+model.21.m.0.cv1.conv.input_quantizer                                            TensorQuantizer(8 bit fake per-tensor amax=10.4691 calibrator=MaxCalibrator quant)
+model.21.m.0.cv1.conv.output_quantizer                                           TensorQuantizer(disabled)
+model.21.m.0.cv1.conv.weight_quantizer                                           TensorQuantizer(8 bit fake axis=0 amax=[0.0407, 0.1533](32) calibrator=MaxCalibrator quant)
+model.21.m.0.cv1.bn.input_quantizer                                              TensorQuantizer(disabled)
+model.21.m.0.cv1.bn.output_quantizer                                             TensorQuantizer(disabled)
+model.21.m.0.cv2.conv.input_quantizer                                            TensorQuantizer(8 bit fake per-tensor amax=10.4691 calibrator=MaxCalibrator quant)
+model.21.m.0.cv2.conv.output_quantizer                                           TensorQuantizer(disabled)
+model.21.m.0.cv2.conv.weight_quantizer                                           TensorQuantizer(8 bit fake axis=0 amax=[0.0210, 0.0503](32) calibrator=MaxCalibrator quant)
+model.21.m.0.cv2.bn.input_quantizer                                              TensorQuantizer(disabled)
+model.21.m.0.cv2.bn.output_quantizer                                             TensorQuantizer(disabled)
+model.21.m.0.cv3.conv.input_quantizer                                            TensorQuantizer(8 bit fake per-tensor amax=21.4265 calibrator=MaxCalibrator quant)
+model.21.m.0.cv3.conv.output_quantizer                                           TensorQuantizer(disabled)
+model.21.m.0.cv3.conv.weight_quantizer                                           TensorQuantizer(8 bit fake axis=0 amax=[0.0338, 0.1436](64) calibrator=MaxCalibrator quant)
+model.21.m.0.cv3.bn.input_quantizer                                              TensorQuantizer(disabled)
+model.21.m.0.cv3.bn.output_quantizer                                             TensorQuantizer(disabled)
+model.21.m.0.m.0.cv1.conv.input_quantizer                                        TensorQuantizer(8 bit fake per-tensor amax=2.4393 calibrator=MaxCalibrator quant)
+model.21.m.0.m.0.cv1.conv.output_quantizer                                       TensorQuantizer(disabled)
+model.21.m.0.m.0.cv1.conv.weight_quantizer                                       TensorQuantizer(8 bit fake axis=0 amax=[0.0544, 0.1210](32) calibrator=MaxCalibrator quant)
+model.21.m.0.m.0.cv1.bn.input_quantizer                                          TensorQuantizer(disabled)
+model.21.m.0.m.0.cv1.bn.output_quantizer                                         TensorQuantizer(disabled)
+model.21.m.0.m.0.cv2.conv.input_quantizer                                        TensorQuantizer(8 bit fake per-tensor amax=4.9380 calibrator=MaxCalibrator quant)
+model.21.m.0.m.0.cv2.conv.output_quantizer                                       TensorQuantizer(disabled)
+model.21.m.0.m.0.cv2.conv.weight_quantizer                                       TensorQuantizer(8 bit fake axis=0 amax=[0.0394, 0.1214](32) calibrator=MaxCalibrator quant)
+model.21.m.0.m.0.cv2.bn.input_quantizer                                          TensorQuantizer(disabled)
+model.21.m.0.m.0.cv2.bn.output_quantizer                                         TensorQuantizer(disabled)
+model.21.m.0.m.1.cv1.conv.input_quantizer                                        TensorQuantizer(8 bit fake per-tensor amax=8.1911 calibrator=MaxCalibrator quant)
+model.21.m.0.m.1.cv1.conv.output_quantizer                                       TensorQuantizer(disabled)
+model.21.m.0.m.1.cv1.conv.weight_quantizer                                       TensorQuantizer(8 bit fake axis=0 amax=[0.0439, 0.1553](32) calibrator=MaxCalibrator quant)
+model.21.m.0.m.1.cv1.bn.input_quantizer                                          TensorQuantizer(disabled)
+model.21.m.0.m.1.cv1.bn.output_quantizer                                         TensorQuantizer(disabled)
+model.21.m.0.m.1.cv2.conv.input_quantizer                                        TensorQuantizer(8 bit fake per-tensor amax=7.5626 calibrator=MaxCalibrator quant)
+model.21.m.0.m.1.cv2.conv.output_quantizer                                       TensorQuantizer(disabled)
+model.21.m.0.m.1.cv2.conv.weight_quantizer                                       TensorQuantizer(8 bit fake axis=0 amax=[0.0350, 0.1173](32) calibrator=MaxCalibrator quant)
+model.21.m.0.m.1.cv2.bn.input_quantizer                                          TensorQuantizer(disabled)
+model.21.m.0.m.1.cv2.bn.output_quantizer                                         TensorQuantizer(disabled)
+model.22.conv.input_quantizer                                                    TensorQuantizer(8 bit fake per-tensor amax=10.8984 calibrator=MaxCalibrator quant)
+model.22.conv.output_quantizer                                                   TensorQuantizer(disabled)
+model.22.conv.weight_quantizer                                                   TensorQuantizer(8 bit fake axis=0 amax=[0.0119, 0.0510](128) calibrator=MaxCalibrator quant)
+model.22.bn.input_quantizer                                                      TensorQuantizer(disabled)
+model.22.bn.output_quantizer                                                     TensorQuantizer(disabled)
+model.24.cv1.conv.input_quantizer                                                TensorQuantizer(8 bit fake per-tensor amax=23.1033 calibrator=MaxCalibrator quant)
+model.24.cv1.conv.output_quantizer                                               TensorQuantizer(disabled)
+model.24.cv1.conv.weight_quantizer                                               TensorQuantizer(8 bit fake axis=0 amax=[0.0199, 0.1442](128) calibrator=MaxCalibrator quant)
+model.24.cv1.bn.input_quantizer                                                  TensorQuantizer(disabled)
+model.24.cv1.bn.output_quantizer                                                 TensorQuantizer(disabled)
+model.24.cv2.conv.input_quantizer                                                TensorQuantizer(8 bit fake per-tensor amax=12.8605 calibrator=MaxCalibrator quant)
+model.24.cv2.conv.output_quantizer                                               TensorQuantizer(disabled)
+model.24.cv2.conv.weight_quantizer                                               TensorQuantizer(8 bit fake axis=0 amax=[0.0172, 0.1240](128) calibrator=MaxCalibrator quant)
+model.24.cv2.bn.input_quantizer                                                  TensorQuantizer(disabled)
+model.24.cv2.bn.output_quantizer                                                 TensorQuantizer(disabled)
+model.24.m.0.cv1.conv.input_quantizer                                            TensorQuantizer(8 bit fake per-tensor amax=10.9696 calibrator=MaxCalibrator quant)
+model.24.m.0.cv1.conv.output_quantizer                                           TensorQuantizer(disabled)
+model.24.m.0.cv1.conv.weight_quantizer                                           TensorQuantizer(8 bit fake axis=0 amax=[0.0326, 0.0854](32) calibrator=MaxCalibrator quant)
+model.24.m.0.cv1.bn.input_quantizer                                              TensorQuantizer(disabled)
+model.24.m.0.cv1.bn.output_quantizer                                             TensorQuantizer(disabled)
+model.24.m.0.cv2.conv.input_quantizer                                            TensorQuantizer(8 bit fake per-tensor amax=10.9696 calibrator=MaxCalibrator quant)
+model.24.m.0.cv2.conv.output_quantizer                                           TensorQuantizer(disabled)
+model.24.m.0.cv2.conv.weight_quantizer                                           TensorQuantizer(8 bit fake axis=0 amax=[0.0142, 0.0501](32) calibrator=MaxCalibrator quant)
+model.24.m.0.cv2.bn.input_quantizer                                              TensorQuantizer(disabled)
+model.24.m.0.cv2.bn.output_quantizer                                             TensorQuantizer(disabled)
+model.24.m.0.cv3.conv.input_quantizer                                            TensorQuantizer(8 bit fake per-tensor amax=19.6650 calibrator=MaxCalibrator quant)
+model.24.m.0.cv3.conv.output_quantizer                                           TensorQuantizer(disabled)
+model.24.m.0.cv3.conv.weight_quantizer                                           TensorQuantizer(8 bit fake axis=0 amax=[0.0192, 0.1138](64) calibrator=MaxCalibrator quant)
+model.24.m.0.cv3.bn.input_quantizer                                              TensorQuantizer(disabled)
+model.24.m.0.cv3.bn.output_quantizer                                             TensorQuantizer(disabled)
+model.24.m.0.m.0.cv1.conv.input_quantizer                                        TensorQuantizer(8 bit fake per-tensor amax=2.7295 calibrator=MaxCalibrator quant)
+model.24.m.0.m.0.cv1.conv.output_quantizer                                       TensorQuantizer(disabled)
+model.24.m.0.m.0.cv1.conv.weight_quantizer                                       TensorQuantizer(8 bit fake axis=0 amax=[0.0296, 0.0916](32) calibrator=MaxCalibrator quant)
+model.24.m.0.m.0.cv1.bn.input_quantizer                                          TensorQuantizer(disabled)
+model.24.m.0.m.0.cv1.bn.output_quantizer                                         TensorQuantizer(disabled)
+model.24.m.0.m.0.cv2.conv.input_quantizer                                        TensorQuantizer(8 bit fake per-tensor amax=7.0912 calibrator=MaxCalibrator quant)
+model.24.m.0.m.0.cv2.conv.output_quantizer                                       TensorQuantizer(disabled)
+model.24.m.0.m.0.cv2.conv.weight_quantizer                                       TensorQuantizer(8 bit fake axis=0 amax=[0.0401, 0.0904](32) calibrator=MaxCalibrator quant)
+model.24.m.0.m.0.cv2.bn.input_quantizer                                          TensorQuantizer(disabled)
+model.24.m.0.m.0.cv2.bn.output_quantizer                                         TensorQuantizer(disabled)
+model.24.m.0.m.1.cv1.conv.input_quantizer                                        TensorQuantizer(8 bit fake per-tensor amax=9.2756 calibrator=MaxCalibrator quant)
+model.24.m.0.m.1.cv1.conv.output_quantizer                                       TensorQuantizer(disabled)
+model.24.m.0.m.1.cv1.conv.weight_quantizer                                       TensorQuantizer(8 bit fake axis=0 amax=[0.0361, 0.0912](32) calibrator=MaxCalibrator quant)
+model.24.m.0.m.1.cv1.bn.input_quantizer                                          TensorQuantizer(disabled)
+model.24.m.0.m.1.cv1.bn.output_quantizer                                         TensorQuantizer(disabled)
+model.24.m.0.m.1.cv2.conv.input_quantizer                                        TensorQuantizer(8 bit fake per-tensor amax=10.1187 calibrator=MaxCalibrator quant)
+model.24.m.0.m.1.cv2.conv.output_quantizer                                       TensorQuantizer(disabled)
+model.24.m.0.m.1.cv2.conv.weight_quantizer                                       TensorQuantizer(8 bit fake axis=0 amax=[0.0244, 0.0761](32) calibrator=MaxCalibrator quant)
+model.24.m.0.m.1.cv2.bn.input_quantizer                                          TensorQuantizer(disabled)
+model.24.m.0.m.1.cv2.bn.output_quantizer                                         TensorQuantizer(disabled)
+model.25.cv2.0.0.conv.input_quantizer                                            TensorQuantizer(8 bit fake per-tensor amax=5.0974 calibrator=MaxCalibrator quant)
+model.25.cv2.0.0.conv.output_quantizer                                           TensorQuantizer(disabled)
+model.25.cv2.0.0.conv.weight_quantizer                                           TensorQuantizer(8 bit fake axis=0 amax=[0.0323, 0.1390](64) calibrator=MaxCalibrator quant)
+model.25.cv2.0.0.bn.input_quantizer                                              TensorQuantizer(disabled)
+model.25.cv2.0.0.bn.output_quantizer                                             TensorQuantizer(disabled)
+model.25.cv2.0.1.conv.input_quantizer                                            TensorQuantizer(8 bit fake per-tensor amax=11.2856 calibrator=MaxCalibrator quant)
+model.25.cv2.0.1.conv.output_quantizer                                           TensorQuantizer(disabled)
+model.25.cv2.0.1.conv.weight_quantizer                                           TensorQuantizer(8 bit fake axis=0 amax=[0.0332, 0.1335](64) calibrator=MaxCalibrator quant)
+model.25.cv2.0.1.bn.input_quantizer                                              TensorQuantizer(disabled)
+model.25.cv2.0.1.bn.output_quantizer                                             TensorQuantizer(disabled)
+model.25.cv2.0.2.input_quantizer                                                 TensorQuantizer(8 bit fake per-tensor amax=100.2795 calibrator=MaxCalibrator quant)
+model.25.cv2.0.2.output_quantizer                                                TensorQuantizer(disabled)
+model.25.cv2.0.2.weight_quantizer                                                TensorQuantizer(8 bit fake axis=0 amax=[0.0572, 0.2316](64) calibrator=MaxCalibrator quant)
+model.25.cv2.1.0.conv.input_quantizer                                            TensorQuantizer(8 bit fake per-tensor amax=10.8984 calibrator=MaxCalibrator quant)
+model.25.cv2.1.0.conv.output_quantizer                                           TensorQuantizer(disabled)
+model.25.cv2.1.0.conv.weight_quantizer                                           TensorQuantizer(8 bit fake axis=0 amax=[0.0260, 0.1008](64) calibrator=MaxCalibrator quant)
+model.25.cv2.1.0.bn.input_quantizer                                              TensorQuantizer(disabled)
+model.25.cv2.1.0.bn.output_quantizer                                             TensorQuantizer(disabled)
+model.25.cv2.1.1.conv.input_quantizer                                            TensorQuantizer(8 bit fake per-tensor amax=14.2173 calibrator=MaxCalibrator quant)
+model.25.cv2.1.1.conv.output_quantizer                                           TensorQuantizer(disabled)
+model.25.cv2.1.1.conv.weight_quantizer                                           TensorQuantizer(8 bit fake axis=0 amax=[0.0325, 0.1169](64) calibrator=MaxCalibrator quant)
+model.25.cv2.1.1.bn.input_quantizer                                              TensorQuantizer(disabled)
+model.25.cv2.1.1.bn.output_quantizer                                             TensorQuantizer(disabled)
+model.25.cv2.1.2.input_quantizer                                                 TensorQuantizer(8 bit fake per-tensor amax=80.4298 calibrator=MaxCalibrator quant)
+model.25.cv2.1.2.output_quantizer                                                TensorQuantizer(disabled)
+model.25.cv2.1.2.weight_quantizer                                                TensorQuantizer(8 bit fake axis=0 amax=[0.0710, 0.2563](64) calibrator=MaxCalibrator quant)
+model.25.cv2.2.0.conv.input_quantizer                                            TensorQuantizer(8 bit fake per-tensor amax=13.0649 calibrator=MaxCalibrator quant)
+model.25.cv2.2.0.conv.output_quantizer                                           TensorQuantizer(disabled)
+model.25.cv2.2.0.conv.weight_quantizer                                           TensorQuantizer(8 bit fake axis=0 amax=[0.0171, 0.0550](64) calibrator=MaxCalibrator quant)
+model.25.cv2.2.0.bn.input_quantizer                                              TensorQuantizer(disabled)
+model.25.cv2.2.0.bn.output_quantizer                                             TensorQuantizer(disabled)
+model.25.cv2.2.1.conv.input_quantizer                                            TensorQuantizer(8 bit fake per-tensor amax=13.8373 calibrator=MaxCalibrator quant)
+model.25.cv2.2.1.conv.output_quantizer                                           TensorQuantizer(disabled)
+model.25.cv2.2.1.conv.weight_quantizer                                           TensorQuantizer(8 bit fake axis=0 amax=[0.0265, 0.0714](64) calibrator=MaxCalibrator quant)
+model.25.cv2.2.1.bn.input_quantizer                                              TensorQuantizer(disabled)
+model.25.cv2.2.1.bn.output_quantizer                                             TensorQuantizer(disabled)
+model.25.cv2.2.2.input_quantizer                                                 TensorQuantizer(8 bit fake per-tensor amax=71.1172 calibrator=MaxCalibrator quant)
+model.25.cv2.2.2.output_quantizer                                                TensorQuantizer(disabled)
+model.25.cv2.2.2.weight_quantizer                                                TensorQuantizer(8 bit fake axis=0 amax=[0.0169, 0.2194](64) calibrator=MaxCalibrator quant)
+model.25.cv3.0.0.0.conv.input_quantizer                                          TensorQuantizer(8 bit fake per-tensor amax=5.0974 calibrator=MaxCalibrator quant)
+model.25.cv3.0.0.0.conv.output_quantizer                                         TensorQuantizer(disabled)
+model.25.cv3.0.0.0.conv.weight_quantizer                                         TensorQuantizer(8 bit fake axis=0 amax=[0.0186, 0.1054](64) calibrator=MaxCalibrator quant)
+model.25.cv3.0.0.0.bn.input_quantizer                                            TensorQuantizer(disabled)
+model.25.cv3.0.0.0.bn.output_quantizer                                           TensorQuantizer(disabled)
+model.25.cv3.0.0.1.conv.input_quantizer                                          TensorQuantizer(8 bit fake per-tensor amax=7.7193 calibrator=MaxCalibrator quant)
+model.25.cv3.0.0.1.conv.output_quantizer                                         TensorQuantizer(disabled)
+model.25.cv3.0.0.1.conv.weight_quantizer                                         TensorQuantizer(8 bit fake axis=0 amax=[0.0276, 0.1267](80) calibrator=MaxCalibrator quant)
+model.25.cv3.0.0.1.bn.input_quantizer                                            TensorQuantizer(disabled)
+model.25.cv3.0.0.1.bn.output_quantizer                                           TensorQuantizer(disabled)
+model.25.cv3.0.1.0.conv.input_quantizer                                          TensorQuantizer(8 bit fake per-tensor amax=12.2527 calibrator=MaxCalibrator quant)
+model.25.cv3.0.1.0.conv.output_quantizer                                         TensorQuantizer(disabled)
+model.25.cv3.0.1.0.conv.weight_quantizer                                         TensorQuantizer(8 bit fake axis=0 amax=[0.0208, 0.1727](80) calibrator=MaxCalibrator quant)
+model.25.cv3.0.1.0.bn.input_quantizer                                            TensorQuantizer(disabled)
+model.25.cv3.0.1.0.bn.output_quantizer                                           TensorQuantizer(disabled)
+model.25.cv3.0.1.1.conv.input_quantizer                                          TensorQuantizer(8 bit fake per-tensor amax=21.3705 calibrator=MaxCalibrator quant)
+model.25.cv3.0.1.1.conv.output_quantizer                                         TensorQuantizer(disabled)
+model.25.cv3.0.1.1.conv.weight_quantizer                                         TensorQuantizer(8 bit fake axis=0 amax=[0.0337, 0.1356](80) calibrator=MaxCalibrator quant)
+model.25.cv3.0.1.1.bn.input_quantizer                                            TensorQuantizer(disabled)
+model.25.cv3.0.1.1.bn.output_quantizer                                           TensorQuantizer(disabled)
+model.25.cv3.0.2.input_quantizer                                                 TensorQuantizer(8 bit fake per-tensor amax=162.8826 calibrator=MaxCalibrator quant)
+model.25.cv3.0.2.output_quantizer                                                TensorQuantizer(disabled)
+model.25.cv3.0.2.weight_quantizer                                                TensorQuantizer(8 bit fake axis=0 amax=[0.0657, 0.1763](80) calibrator=MaxCalibrator quant)
+model.25.cv3.1.0.0.conv.input_quantizer                                          TensorQuantizer(8 bit fake per-tensor amax=10.8984 calibrator=MaxCalibrator quant)
+model.25.cv3.1.0.0.conv.output_quantizer                                         TensorQuantizer(disabled)
+model.25.cv3.1.0.0.conv.weight_quantizer                                         TensorQuantizer(8 bit fake axis=0 amax=[0.0099, 0.0865](128) calibrator=MaxCalibrator quant)
+model.25.cv3.1.0.0.bn.input_quantizer                                            TensorQuantizer(disabled)
+model.25.cv3.1.0.0.bn.output_quantizer                                           TensorQuantizer(disabled)
+model.25.cv3.1.0.1.conv.input_quantizer                                          TensorQuantizer(8 bit fake per-tensor amax=13.9825 calibrator=MaxCalibrator quant)
+model.25.cv3.1.0.1.conv.output_quantizer                                         TensorQuantizer(disabled)
+model.25.cv3.1.0.1.conv.weight_quantizer                                         TensorQuantizer(8 bit fake axis=0 amax=[0.0226, 0.1084](80) calibrator=MaxCalibrator quant)
+model.25.cv3.1.0.1.bn.input_quantizer                                            TensorQuantizer(disabled)
+model.25.cv3.1.0.1.bn.output_quantizer                                           TensorQuantizer(disabled)
+model.25.cv3.1.1.0.conv.input_quantizer                                          TensorQuantizer(8 bit fake per-tensor amax=10.1870 calibrator=MaxCalibrator quant)
+model.25.cv3.1.1.0.conv.output_quantizer                                         TensorQuantizer(disabled)
+model.25.cv3.1.1.0.conv.weight_quantizer                                         TensorQuantizer(8 bit fake axis=0 amax=[0.0181, 0.1140](80) calibrator=MaxCalibrator quant)
+model.25.cv3.1.1.0.bn.input_quantizer                                            TensorQuantizer(disabled)
+model.25.cv3.1.1.0.bn.output_quantizer                                           TensorQuantizer(disabled)
+model.25.cv3.1.1.1.conv.input_quantizer                                          TensorQuantizer(8 bit fake per-tensor amax=36.1163 calibrator=MaxCalibrator quant)
+model.25.cv3.1.1.1.conv.output_quantizer                                         TensorQuantizer(disabled)
+model.25.cv3.1.1.1.conv.weight_quantizer                                         TensorQuantizer(8 bit fake axis=0 amax=[0.0315, 0.0847](80) calibrator=MaxCalibrator quant)
+model.25.cv3.1.1.1.bn.input_quantizer                                            TensorQuantizer(disabled)
+model.25.cv3.1.1.1.bn.output_quantizer                                           TensorQuantizer(disabled)
+model.25.cv3.1.2.input_quantizer                                                 TensorQuantizer(8 bit fake per-tensor amax=69.8389 calibrator=MaxCalibrator quant)
+model.25.cv3.1.2.output_quantizer                                                TensorQuantizer(disabled)
+model.25.cv3.1.2.weight_quantizer                                                TensorQuantizer(8 bit fake axis=0 amax=[0.0722, 0.1581](80) calibrator=MaxCalibrator quant)
+model.25.cv3.2.0.0.conv.input_quantizer                                          TensorQuantizer(8 bit fake per-tensor amax=13.0649 calibrator=MaxCalibrator quant)
+model.25.cv3.2.0.0.conv.output_quantizer                                         TensorQuantizer(disabled)
+model.25.cv3.2.0.0.conv.weight_quantizer                                         TensorQuantizer(8 bit fake axis=0 amax=[0.0065, 0.0642](128) calibrator=MaxCalibrator quant)
+model.25.cv3.2.0.0.bn.input_quantizer                                            TensorQuantizer(disabled)
+model.25.cv3.2.0.0.bn.output_quantizer                                           TensorQuantizer(disabled)
+model.25.cv3.2.0.1.conv.input_quantizer                                          TensorQuantizer(8 bit fake per-tensor amax=13.5188 calibrator=MaxCalibrator quant)
+model.25.cv3.2.0.1.conv.output_quantizer                                         TensorQuantizer(disabled)
+model.25.cv3.2.0.1.conv.weight_quantizer                                         TensorQuantizer(8 bit fake axis=0 amax=[0.0196, 0.0790](80) calibrator=MaxCalibrator quant)
+model.25.cv3.2.0.1.bn.input_quantizer                                            TensorQuantizer(disabled)
+model.25.cv3.2.0.1.bn.output_quantizer                                           TensorQuantizer(disabled)
+model.25.cv3.2.1.0.conv.input_quantizer                                          TensorQuantizer(8 bit fake per-tensor amax=16.5640 calibrator=MaxCalibrator quant)
+model.25.cv3.2.1.0.conv.output_quantizer                                         TensorQuantizer(disabled)
+model.25.cv3.2.1.0.conv.weight_quantizer                                         TensorQuantizer(8 bit fake axis=0 amax=[0.0169, 0.0994](80) calibrator=MaxCalibrator quant)
+model.25.cv3.2.1.0.bn.input_quantizer                                            TensorQuantizer(disabled)
+model.25.cv3.2.1.0.bn.output_quantizer                                           TensorQuantizer(disabled)
+model.25.cv3.2.1.1.conv.input_quantizer                                          TensorQuantizer(8 bit fake per-tensor amax=31.7784 calibrator=MaxCalibrator quant)
+model.25.cv3.2.1.1.conv.output_quantizer                                         TensorQuantizer(disabled)
+model.25.cv3.2.1.1.conv.weight_quantizer                                         TensorQuantizer(8 bit fake axis=0 amax=[0.0291, 0.0915](80) calibrator=MaxCalibrator quant)
+model.25.cv3.2.1.1.bn.input_quantizer                                            TensorQuantizer(disabled)
+model.25.cv3.2.1.1.bn.output_quantizer                                           TensorQuantizer(disabled)
+model.25.cv3.2.2.input_quantizer                                                 TensorQuantizer(8 bit fake per-tensor amax=66.8974 calibrator=MaxCalibrator quant)
+model.25.cv3.2.2.output_quantizer                                                TensorQuantizer(disabled)
+model.25.cv3.2.2.weight_quantizer                                                TensorQuantizer(8 bit fake axis=0 amax=[0.0359, 0.1425](80) calibrator=MaxCalibrator quant)
+model.25.dfl.conv.input_quantizer                                                TensorQuantizer(disabled)
+model.25.dfl.conv.output_quantizer                                               TensorQuantizer(disabled)
+model.25.dfl.conv.weight_quantizer                                               TensorQuantizer(disabled)
+722 TensorQuantizers found in model
+[mtq] exporting with 282 active quantizers (1 candidate weight sets)
+[onnx] runs/a3/esmoen/qdq/qat_qdq_model.onnx
+  [audit int8-qdq] engine layer precisions: {'Float': 112, 'Half': 168, 'Int8': 174}
+Ultralytics 8.3.240 🚀 Python-3.11.10 torch-2.4.1+cu124 CUDA:0 (NVIDIA L4, 22563MiB)
+Loading runs/a3/esmoen/qdq/model_int8-qdq_model.engine for TensorRT inference...
+[08/23/2026-01:07:55] [TRT] [I] Loaded engine size: 10 MiB
+[08/23/2026-01:07:55] [TRT] [I] [MemUsageChange] TensorRT-managed allocation in IExecutionContext creation: CPU +1, GPU +28, now: CPU 1, GPU 31 (MiB)
+Setting batch=1 input of shape (1, 3, 640, 640)
+[34m[1mval: [0mFast image access ✅ (ping: 0.6±0.3 ms, read: 27.5±14.6 MB/s, size: 166.5 KB)
+[K[34m[1mval: [0mScanning /data/datasets/coco/labels/val2017.cache... 4952 images, 48 backgrounds, 0 corrupt: 100% ━━━━━━━━━━━━ 5000/5000 749.0Mit/s 0.0s[K[34m[1mval: [0mScanning /data/datasets/coco/labels/val2017.cache... 4952 images, 48 backgrounds, 0 corrupt: 100% ━━━━━━━━━━━━ 5000/5000 58.3Mit/s 0.0s
+[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 0% ──────────── 10/5000 29.1it/s 0.1s<2:51[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 1% ──────────── 26/5000 66.2it/s 0.2s<1:15[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 1% ──────────── 41/5000 91.3it/s 0.3s<54.3s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 1% ──────────── 56/5000 106.1it/s 0.4s<46.6s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 1% ──────────── 71/5000 118.0it/s 0.5s<41.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 2% ──────────── 86/5000 124.3it/s 0.6s<39.5s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 2% ──────────── 101/5000 129.8it/s 0.7s<37.7s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 2% ──────────── 116/5000 133.1it/s 0.8s<36.7s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 3% ──────────── 131/5000 135.5it/s 0.9s<35.9s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 3% ──────────── 146/5000 137.7it/s 1.0s<35.3s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 3% ──────────── 161/5000 139.7it/s 1.2s<34.6s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 4% ──────────── 176/5000 141.9it/s 1.3s<34.0s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 4% ──────────── 185/5000 125.0it/s 1.4s<38.5s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 4% ──────────── 200/5000 130.4it/s 1.5s<36.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 4% ╸─────────── 216/5000 137.9it/s 1.6s<34.7s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 5% ╸─────────── 231/5000 141.1it/s 1.7s<33.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 5% ╸─────────── 246/5000 141.4it/s 1.8s<33.6s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 5% ╸─────────── 261/5000 141.8it/s 1.9s<33.4s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 6% ╸─────────── 276/5000 143.2it/s 2.0s<33.0s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 6% ╸─────────── 291/5000 142.4it/s 2.1s<33.1s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 6% ╸─────────── 305/5000 141.2it/s 2.2s<33.2s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 6% ╸─────────── 319/5000 140.8it/s 2.3s<33.2s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 7% ╸─────────── 334/5000 142.6it/s 2.4s<32.7s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 7% ╸─────────── 348/5000 141.5it/s 2.5s<32.9s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 7% ╸─────────── 363/5000 142.2it/s 2.6s<32.6s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 8% ╸─────────── 379/5000 144.9it/s 2.7s<31.9s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 8% ╸─────────── 394/5000 146.1it/s 2.8s<31.5s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 8% ╸─────────── 409/5000 144.8it/s 2.9s<31.7s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 8% ━─────────── 424/5000 144.9it/s 3.0s<31.6s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 9% ━─────────── 439/5000 144.4it/s 3.1s<31.6s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 9% ━─────────── 454/5000 143.6it/s 3.2s<31.7s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 9% ━─────────── 469/5000 143.5it/s 3.3s<31.6s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 10% ━─────────── 483/5000 140.3it/s 3.4s<32.2s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 10% ━─────────── 496/5000 137.1it/s 3.5s<32.9s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 10% ━─────────── 511/5000 138.8it/s 3.6s<32.4s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 10% ━─────────── 525/5000 136.5it/s 3.7s<32.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 11% ━─────────── 539/5000 136.4it/s 3.8s<32.7s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 11% ━─────────── 554/5000 138.2it/s 4.0s<32.2s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 11% ━─────────── 569/5000 139.0it/s 4.1s<31.9s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 12% ━─────────── 583/5000 138.8it/s 4.2s<31.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 12% ━─────────── 598/5000 140.3it/s 4.3s<31.4s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 12% ━─────────── 613/5000 140.4it/s 4.4s<31.2s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 13% ━╸────────── 628/5000 140.6it/s 4.5s<31.1s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 13% ━╸────────── 642/5000 139.2it/s 4.6s<31.3s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 13% ━╸────────── 656/5000 138.8it/s 4.7s<31.3s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 13% ━╸────────── 671/5000 139.6it/s 4.8s<31.0s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 14% ━╸────────── 686/5000 140.9it/s 4.9s<30.6s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 14% ━╸────────── 701/5000 141.5it/s 5.0s<30.4s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 14% ━╸────────── 716/5000 141.0it/s 5.1s<30.4s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 15% ━╸────────── 730/5000 139.9it/s 5.2s<30.5s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 15% ━╸────────── 744/5000 138.8it/s 5.3s<30.7s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 15% ━╸────────── 759/5000 140.0it/s 5.4s<30.3s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 15% ━╸────────── 773/5000 139.7it/s 5.5s<30.2s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 16% ━╸────────── 789/5000 143.3it/s 5.6s<29.4s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 16% ━╸────────── 804/5000 144.1it/s 5.7s<29.1s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 16% ━╸────────── 819/5000 145.0it/s 5.8s<28.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 17% ━━────────── 834/5000 146.2it/s 5.9s<28.5s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 17% ━━────────── 850/5000 147.5it/s 6.0s<28.1s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 17% ━━────────── 865/5000 146.3it/s 6.1s<28.3s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 18% ━━────────── 880/5000 146.7it/s 6.2s<28.1s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 18% ━━────────── 895/5000 145.2it/s 6.3s<28.3s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 18% ━━────────── 910/5000 146.3it/s 6.4s<28.0s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 18% ━━────────── 925/5000 146.2it/s 6.5s<27.9s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 19% ━━────────── 940/5000 146.5it/s 6.7s<27.7s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 19% ━━────────── 954/5000 143.4it/s 6.8s<28.2s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 19% ━━────────── 968/5000 140.1it/s 6.9s<28.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 20% ━━────────── 982/5000 139.3it/s 7.0s<28.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 20% ━━────────── 997/5000 140.7it/s 7.1s<28.4s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 20% ━━────────── 1012/5000 142.8it/s 7.2s<27.9s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 21% ━━────────── 1027/5000 143.3it/s 7.3s<27.7s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 21% ━━────────── 1041/5000 141.2it/s 7.4s<28.0s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 21% ━━╸───────── 1056/5000 142.2it/s 7.5s<27.7s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 21% ━━╸───────── 1071/5000 142.3it/s 7.6s<27.6s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 22% ━━╸───────── 1086/5000 142.7it/s 7.7s<27.4s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 22% ━━╸───────── 1101/5000 142.6it/s 7.8s<27.3s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 22% ━━╸───────── 1116/5000 143.6it/s 7.9s<27.1s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 23% ━━╸───────── 1131/5000 142.9it/s 8.0s<27.1s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 23% ━━╸───────── 1146/5000 143.2it/s 8.1s<26.9s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 23% ━━╸───────── 1161/5000 144.3it/s 8.2s<26.6s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 24% ━━╸───────── 1176/5000 144.8it/s 8.3s<26.4s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 24% ━━╸───────── 1191/5000 145.6it/s 8.4s<26.2s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 24% ━━╸───────── 1205/5000 142.3it/s 8.5s<26.7s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 24% ━━╸───────── 1218/5000 137.2it/s 8.6s<27.6s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 25% ━━╸───────── 1232/5000 137.6it/s 8.7s<27.4s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 25% ━━╸───────── 1246/5000 137.2it/s 8.8s<27.4s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 25% ━━━───────── 1260/5000 137.5it/s 8.9s<27.2s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 25% ━━━───────── 1274/5000 136.5it/s 9.0s<27.3s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 26% ━━━───────── 1288/5000 137.5it/s 9.1s<27.0s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 26% ━━━───────── 1302/5000 138.0it/s 9.2s<26.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 26% ━━━───────── 1316/5000 138.2it/s 9.3s<26.7s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 27% ━━━───────── 1331/5000 138.3it/s 9.4s<26.5s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 27% ━━━───────── 1345/5000 138.6it/s 9.5s<26.4s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 27% ━━━───────── 1360/5000 139.2it/s 9.6s<26.1s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 27% ━━━───────── 1374/5000 139.4it/s 9.7s<26.0s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 28% ━━━───────── 1388/5000 139.5it/s 9.8s<25.9s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 28% ━━━───────── 1402/5000 139.4it/s 9.9s<25.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 28% ━━━───────── 1417/5000 140.7it/s 10.1s<25.5s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 29% ━━━───────── 1431/5000 138.5it/s 10.2s<25.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 29% ━━━───────── 1445/5000 138.7it/s 10.3s<25.6s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 29% ━━━╸──────── 1459/5000 138.4it/s 10.4s<25.6s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 29% ━━━╸──────── 1474/5000 140.8it/s 10.5s<25.0s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 30% ━━━╸──────── 1488/5000 138.4it/s 10.6s<25.4s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 30% ━━━╸──────── 1502/5000 138.4it/s 10.7s<25.3s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 30% ━━━╸──────── 1517/5000 141.1it/s 10.8s<24.7s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 31% ━━━╸──────── 1532/5000 141.7it/s 10.9s<24.5s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 31% ━━━╸──────── 1546/5000 140.8it/s 11.0s<24.5s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 31% ━━━╸──────── 1561/5000 140.4it/s 11.1s<24.5s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 32% ━━━╸──────── 1575/5000 139.6it/s 11.2s<24.5s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 32% ━━━╸──────── 1589/5000 137.6it/s 11.3s<24.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 32% ━━━╸──────── 1603/5000 137.9it/s 11.4s<24.6s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 32% ━━━╸──────── 1617/5000 138.2it/s 11.5s<24.5s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 33% ━━━╸──────── 1631/5000 138.6it/s 11.6s<24.3s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 33% ━━━╸──────── 1646/5000 139.7it/s 11.7s<24.0s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 33% ━━━╸──────── 1661/5000 142.0it/s 11.8s<23.5s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 34% ━━━━──────── 1675/5000 140.2it/s 11.9s<23.7s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 34% ━━━━──────── 1688/5000 137.1it/s 12.0s<24.2s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 34% ━━━━──────── 1704/5000 142.2it/s 12.1s<23.2s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 34% ━━━━──────── 1719/5000 143.9it/s 12.2s<22.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 35% ━━━━──────── 1733/5000 141.6it/s 12.3s<23.1s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 35% ━━━━──────── 1748/5000 143.3it/s 12.4s<22.7s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 35% ━━━━──────── 1764/5000 148.2it/s 12.5s<21.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 36% ━━━━──────── 1780/5000 149.3it/s 12.6s<21.6s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 36% ━━━━──────── 1793/5000 142.1it/s 12.7s<22.6s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 36% ━━━━──────── 1808/5000 143.5it/s 12.8s<22.2s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 36% ━━━━──────── 1822/5000 141.4it/s 12.9s<22.5s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 37% ━━━━──────── 1836/5000 138.6it/s 13.0s<22.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 37% ━━━━──────── 1850/5000 137.5it/s 13.1s<22.9s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 37% ━━━━──────── 1865/5000 140.3it/s 13.2s<22.3s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 38% ━━━━╸─────── 1880/5000 141.1it/s 13.3s<22.1s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 38% ━━━━╸─────── 1893/5000 137.2it/s 13.4s<22.7s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 38% ━━━━╸─────── 1907/5000 136.4it/s 13.5s<22.7s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 38% ━━━━╸─────── 1923/5000 140.6it/s 13.7s<21.9s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 39% ━━━━╸─────── 1938/5000 142.4it/s 13.8s<21.5s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 39% ━━━━╸─────── 1952/5000 141.6it/s 13.9s<21.5s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 39% ━━━━╸─────── 1967/5000 141.1it/s 14.0s<21.5s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 40% ━━━━╸─────── 1981/5000 138.7it/s 14.1s<21.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 40% ━━━━╸─────── 1996/5000 140.3it/s 14.2s<21.4s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 40% ━━━━╸─────── 2010/5000 139.7it/s 14.3s<21.4s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 40% ━━━━╸─────── 2024/5000 138.7it/s 14.4s<21.5s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 41% ━━━━╸─────── 2039/5000 139.5it/s 14.5s<21.2s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 41% ━━━━╸─────── 2054/5000 140.7it/s 14.6s<20.9s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 41% ━━━━╸─────── 2069/5000 141.5it/s 14.7s<20.7s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 42% ━━━━╸─────── 2083/5000 140.9it/s 14.8s<20.7s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 42% ━━━━━─────── 2097/5000 140.1it/s 14.9s<20.7s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 42% ━━━━━─────── 2112/5000 141.1it/s 15.0s<20.5s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 43% ━━━━━─────── 2127/5000 140.9it/s 15.1s<20.4s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 43% ━━━━━─────── 2142/5000 140.9it/s 15.2s<20.3s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 43% ━━━━━─────── 2157/5000 140.9it/s 15.3s<20.2s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 43% ━━━━━─────── 2172/5000 141.6it/s 15.4s<20.0s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 44% ━━━━━─────── 2187/5000 141.5it/s 15.5s<19.9s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 44% ━━━━━─────── 2201/5000 139.8it/s 15.6s<20.0s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 44% ━━━━━─────── 2215/5000 138.1it/s 15.7s<20.2s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 45% ━━━━━─────── 2228/5000 135.5it/s 15.8s<20.5s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 45% ━━━━━─────── 2242/5000 136.2it/s 15.9s<20.3s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 45% ━━━━━─────── 2256/5000 136.3it/s 16.0s<20.1s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 45% ━━━━━─────── 2271/5000 137.3it/s 16.1s<19.9s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 46% ━━━━━─────── 2285/5000 137.3it/s 16.3s<19.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 46% ━━━━━╸────── 2300/5000 139.5it/s 16.4s<19.4s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 46% ━━━━━╸────── 2314/5000 138.7it/s 16.5s<19.4s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 47% ━━━━━╸────── 2329/5000 141.1it/s 16.6s<18.9s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 47% ━━━━━╸────── 2344/5000 141.5it/s 16.7s<18.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 47% ━━━━━╸────── 2358/5000 140.5it/s 16.8s<18.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 47% ━━━━━╸────── 2372/5000 139.0it/s 16.9s<18.9s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 48% ━━━━━╸────── 2386/5000 137.9it/s 17.0s<19.0s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 48% ━━━━━╸────── 2400/5000 137.3it/s 17.1s<18.9s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 48% ━━━━━╸────── 2414/5000 137.5it/s 17.2s<18.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 49% ━━━━━╸────── 2428/5000 137.1it/s 17.3s<18.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 49% ━━━━━╸────── 2442/5000 136.4it/s 17.4s<18.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 49% ━━━━━╸────── 2456/5000 136.6it/s 17.5s<18.6s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 49% ━━━━━╸────── 2470/5000 137.2it/s 17.6s<18.4s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 50% ━━━━━╸────── 2484/5000 136.7it/s 17.7s<18.4s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 50% ━━━━━╸────── 2498/5000 136.5it/s 17.8s<18.3s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 50% ━━━━━━────── 2512/5000 135.4it/s 17.9s<18.4s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 51% ━━━━━━────── 2527/5000 138.1it/s 18.0s<17.9s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 51% ━━━━━━────── 2542/5000 139.3it/s 18.1s<17.6s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 51% ━━━━━━────── 2551/5000 106.4it/s 18.4s<23.0s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 51% ━━━━━━────── 2565/5000 116.3it/s 18.5s<20.9s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 52% ━━━━━━────── 2578/5000 118.4it/s 18.6s<20.5s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 52% ━━━━━━────── 2593/5000 126.6it/s 18.7s<19.0s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 52% ━━━━━━────── 2608/5000 130.8it/s 18.8s<18.3s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 52% ━━━━━━────── 2622/5000 131.7it/s 18.9s<18.1s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 53% ━━━━━━────── 2635/5000 131.1it/s 19.0s<18.0s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 53% ━━━━━━────── 2650/5000 133.6it/s 19.1s<17.6s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 53% ━━━━━━────── 2665/5000 136.0it/s 19.2s<17.2s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 54% ━━━━━━────── 2679/5000 135.7it/s 19.3s<17.1s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 54% ━━━━━━────── 2693/5000 136.5it/s 19.5s<16.9s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 54% ━━━━━━────── 2708/5000 137.9it/s 19.6s<16.6s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 54% ━━━━━━╸───── 2723/5000 140.1it/s 19.7s<16.3s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 55% ━━━━━━╸───── 2737/5000 138.6it/s 19.8s<16.3s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 55% ━━━━━━╸───── 2752/5000 139.3it/s 19.9s<16.1s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 55% ━━━━━━╸───── 2767/5000 140.0it/s 20.0s<15.9s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 56% ━━━━━━╸───── 2782/5000 140.7it/s 20.1s<15.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 56% ━━━━━━╸───── 2797/5000 140.4it/s 20.2s<15.7s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 56% ━━━━━━╸───── 2812/5000 142.1it/s 20.3s<15.4s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 57% ━━━━━━╸───── 2827/5000 142.0it/s 20.4s<15.3s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 57% ━━━━━━╸───── 2842/5000 143.3it/s 20.5s<15.1s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 57% ━━━━━━╸───── 2856/5000 141.5it/s 20.6s<15.1s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 57% ━━━━━━╸───── 2871/5000 143.4it/s 20.7s<14.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 58% ━━━━━━╸───── 2886/5000 143.5it/s 20.8s<14.7s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 58% ━━━━━━╸───── 2901/5000 142.6it/s 20.9s<14.7s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 58% ━━━━━━╸───── 2915/5000 140.7it/s 21.0s<14.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 59% ━━━━━━━───── 2930/5000 141.1it/s 21.1s<14.7s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 59% ━━━━━━━───── 2945/5000 141.2it/s 21.2s<14.6s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 59% ━━━━━━━───── 2960/5000 141.6it/s 21.3s<14.4s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 59% ━━━━━━━───── 2974/5000 140.1it/s 21.4s<14.5s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 60% ━━━━━━━───── 2989/5000 140.7it/s 21.5s<14.3s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 60% ━━━━━━━───── 3004/5000 142.1it/s 21.6s<14.0s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 60% ━━━━━━━───── 3018/5000 140.6it/s 21.7s<14.1s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 61% ━━━━━━━───── 3033/5000 141.1it/s 21.9s<13.9s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 61% ━━━━━━━───── 3048/5000 141.1it/s 22.0s<13.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 61% ━━━━━━━───── 3063/5000 140.9it/s 22.1s<13.7s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 62% ━━━━━━━───── 3076/5000 137.5it/s 22.2s<14.0s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 62% ━━━━━━━───── 3091/5000 138.7it/s 22.3s<13.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 62% ━━━━━━━───── 3106/5000 139.2it/s 22.4s<13.6s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 62% ━━━━━━━───── 3121/5000 139.3it/s 22.5s<13.5s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 63% ━━━━━━━╸──── 3135/5000 138.1it/s 22.6s<13.5s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 63% ━━━━━━━╸──── 3149/5000 137.2it/s 22.7s<13.5s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 63% ━━━━━━━╸──── 3164/5000 138.8it/s 22.8s<13.2s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 64% ━━━━━━━╸──── 3178/5000 137.5it/s 22.9s<13.2s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 64% ━━━━━━━╸──── 3192/5000 137.9it/s 23.0s<13.1s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 64% ━━━━━━━╸──── 3206/5000 137.4it/s 23.1s<13.1s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 64% ━━━━━━━╸──── 3221/5000 138.7it/s 23.2s<12.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 65% ━━━━━━━╸──── 3235/5000 138.5it/s 23.3s<12.7s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 65% ━━━━━━━╸──── 3250/5000 139.4it/s 23.4s<12.6s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 65% ━━━━━━━╸──── 3264/5000 137.7it/s 23.5s<12.6s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 66% ━━━━━━━╸──── 3279/5000 138.6it/s 23.6s<12.4s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 66% ━━━━━━━╸──── 3293/5000 136.9it/s 23.7s<12.5s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 66% ━━━━━━━╸──── 3307/5000 136.5it/s 23.8s<12.4s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 66% ━━━━━━━╸──── 3322/5000 138.4it/s 23.9s<12.1s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 67% ━━━━━━━━──── 3336/5000 138.6it/s 24.0s<12.0s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 67% ━━━━━━━━──── 3350/5000 138.5it/s 24.1s<11.9s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 67% ━━━━━━━━──── 3364/5000 137.2it/s 24.3s<11.9s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 68% ━━━━━━━━──── 3378/5000 136.3it/s 24.4s<11.9s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 68% ━━━━━━━━──── 3392/5000 136.4it/s 24.5s<11.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 68% ━━━━━━━━──── 3406/5000 135.7it/s 24.6s<11.7s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 68% ━━━━━━━━──── 3420/5000 135.5it/s 24.7s<11.7s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 69% ━━━━━━━━──── 3433/5000 133.6it/s 24.8s<11.7s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 69% ━━━━━━━━──── 3445/5000 127.5it/s 24.9s<12.2s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 69% ━━━━━━━━──── 3459/5000 128.8it/s 25.0s<12.0s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 69% ━━━━━━━━──── 3473/5000 131.3it/s 25.1s<11.6s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 70% ━━━━━━━━──── 3487/5000 131.2it/s 25.2s<11.5s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 70% ━━━━━━━━──── 3501/5000 131.7it/s 25.3s<11.4s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 70% ━━━━━━━━──── 3514/5000 131.1it/s 25.4s<11.3s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 71% ━━━━━━━━──── 3528/5000 133.4it/s 25.5s<11.0s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 71% ━━━━━━━━╸─── 3542/5000 133.6it/s 25.6s<10.9s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 71% ━━━━━━━━╸─── 3556/5000 134.3it/s 25.7s<10.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 71% ━━━━━━━━╸─── 3570/5000 134.8it/s 25.8s<10.6s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 72% ━━━━━━━━╸─── 3584/5000 133.6it/s 25.9s<10.6s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 72% ━━━━━━━━╸─── 3597/5000 132.0it/s 26.0s<10.6s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 72% ━━━━━━━━╸─── 3611/5000 131.5it/s 26.1s<10.6s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 72% ━━━━━━━━╸─── 3625/5000 133.1it/s 26.2s<10.3s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 73% ━━━━━━━━╸─── 3639/5000 133.7it/s 26.3s<10.2s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 73% ━━━━━━━━╸─── 3653/5000 133.5it/s 26.4s<10.1s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 73% ━━━━━━━━╸─── 3667/5000 134.2it/s 26.5s<9.9s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 74% ━━━━━━━━╸─── 3681/5000 133.7it/s 26.6s<9.9s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 74% ━━━━━━━━╸─── 3695/5000 133.1it/s 26.7s<9.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 74% ━━━━━━━━╸─── 3708/5000 131.5it/s 26.8s<9.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 74% ━━━━━━━━╸─── 3722/5000 133.5it/s 26.9s<9.6s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 75% ━━━━━━━━╸─── 3736/5000 135.0it/s 27.1s<9.4s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 75% ━━━━━━━━╸─── 3749/5000 128.8it/s 27.2s<9.7s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 75% ━━━━━━━━━─── 3763/5000 130.0it/s 27.3s<9.5s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 76% ━━━━━━━━━─── 3777/5000 131.8it/s 27.4s<9.3s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 76% ━━━━━━━━━─── 3791/5000 133.2it/s 27.5s<9.1s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 76% ━━━━━━━━━─── 3805/5000 133.5it/s 27.6s<9.0s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 76% ━━━━━━━━━─── 3819/5000 134.8it/s 27.7s<8.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 77% ━━━━━━━━━─── 3834/5000 137.3it/s 27.8s<8.5s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 77% ━━━━━━━━━─── 3849/5000 139.6it/s 27.9s<8.2s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 77% ━━━━━━━━━─── 3864/5000 141.2it/s 28.0s<8.0s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 78% ━━━━━━━━━─── 3878/5000 138.6it/s 28.1s<8.1s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 78% ━━━━━━━━━─── 3893/5000 140.2it/s 28.2s<7.9s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 78% ━━━━━━━━━─── 3908/5000 141.6it/s 28.3s<7.7s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 78% ━━━━━━━━━─── 3923/5000 141.9it/s 28.4s<7.6s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 79% ━━━━━━━━━─── 3937/5000 141.2it/s 28.5s<7.5s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 79% ━━━━━━━━━─── 3952/5000 141.4it/s 28.6s<7.4s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 79% ━━━━━━━━━╸── 3967/5000 143.0it/s 28.7s<7.2s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 80% ━━━━━━━━━╸── 3982/5000 143.2it/s 28.8s<7.1s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 80% ━━━━━━━━━╸── 3997/5000 143.5it/s 28.9s<7.0s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 80% ━━━━━━━━━╸── 4011/5000 142.3it/s 29.0s<6.9s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 81% ━━━━━━━━━╸── 4026/5000 142.7it/s 29.1s<6.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 81% ━━━━━━━━━╸── 4040/5000 141.0it/s 29.2s<6.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 81% ━━━━━━━━━╸── 4055/5000 141.0it/s 29.3s<6.7s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 81% ━━━━━━━━━╸── 4070/5000 139.5it/s 29.5s<6.7s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 82% ━━━━━━━━━╸── 4083/5000 135.6it/s 29.6s<6.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 82% ━━━━━━━━━╸── 4096/5000 132.3it/s 29.7s<6.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 82% ━━━━━━━━━╸── 4110/5000 133.5it/s 29.8s<6.7s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 82% ━━━━━━━━━╸── 4125/5000 136.1it/s 29.9s<6.4s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 83% ━━━━━━━━━╸── 4140/5000 137.5it/s 30.0s<6.3s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 83% ━━━━━━━━━╸── 4154/5000 135.5it/s 30.1s<6.2s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 83% ━━━━━━━━━━── 4168/5000 136.0it/s 30.2s<6.1s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 84% ━━━━━━━━━━── 4183/5000 137.5it/s 30.3s<5.9s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 84% ━━━━━━━━━━── 4196/5000 134.8it/s 30.4s<6.0s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 84% ━━━━━━━━━━── 4211/5000 136.6it/s 30.5s<5.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 84% ━━━━━━━━━━── 4225/5000 137.5it/s 30.6s<5.6s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 85% ━━━━━━━━━━── 4240/5000 138.8it/s 30.7s<5.5s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 85% ━━━━━━━━━━── 4254/5000 138.8it/s 30.8s<5.4s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 85% ━━━━━━━━━━── 4268/5000 138.5it/s 30.9s<5.3s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 86% ━━━━━━━━━━── 4282/5000 138.6it/s 31.0s<5.2s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 86% ━━━━━━━━━━── 4296/5000 137.8it/s 31.1s<5.1s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 86% ━━━━━━━━━━── 4311/5000 140.6it/s 31.2s<4.9s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 87% ━━━━━━━━━━── 4326/5000 142.3it/s 31.3s<4.7s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 87% ━━━━━━━━━━── 4341/5000 144.5it/s 31.4s<4.6s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 87% ━━━━━━━━━━── 4357/5000 147.3it/s 31.5s<4.4s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 87% ━━━━━━━━━━── 4372/5000 146.7it/s 31.6s<4.3s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 88% ━━━━━━━━━━╸─ 4387/5000 145.0it/s 31.7s<4.2s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 88% ━━━━━━━━━━╸─ 4402/5000 144.0it/s 31.8s<4.2s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 88% ━━━━━━━━━━╸─ 4416/5000 141.3it/s 31.9s<4.1s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 89% ━━━━━━━━━━╸─ 4430/5000 139.7it/s 32.0s<4.1s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 89% ━━━━━━━━━━╸─ 4444/5000 138.4it/s 32.1s<4.0s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 89% ━━━━━━━━━━╸─ 4459/5000 140.4it/s 32.2s<3.9s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 89% ━━━━━━━━━━╸─ 4473/5000 137.0it/s 32.4s<3.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 90% ━━━━━━━━━━╸─ 4487/5000 136.1it/s 32.5s<3.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 90% ━━━━━━━━━━╸─ 4501/5000 135.8it/s 32.6s<3.7s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 90% ━━━━━━━━━━╸─ 4515/5000 136.2it/s 32.7s<3.6s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 91% ━━━━━━━━━━╸─ 4530/5000 137.3it/s 32.8s<3.4s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 91% ━━━━━━━━━━╸─ 4545/5000 139.0it/s 32.9s<3.3s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 91% ━━━━━━━━━━╸─ 4560/5000 140.4it/s 33.0s<3.1s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 91% ━━━━━━━━━━╸─ 4574/5000 137.8it/s 33.1s<3.1s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 92% ━━━━━━━━━━━─ 4588/5000 138.0it/s 33.2s<3.0s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 92% ━━━━━━━━━━━─ 4602/5000 137.5it/s 33.3s<2.9s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 92% ━━━━━━━━━━━─ 4616/5000 136.7it/s 33.4s<2.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 93% ━━━━━━━━━━━─ 4629/5000 133.5it/s 33.5s<2.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 93% ━━━━━━━━━━━─ 4643/5000 134.8it/s 33.6s<2.6s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 93% ━━━━━━━━━━━─ 4657/5000 132.8it/s 33.7s<2.6s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 93% ━━━━━━━━━━━─ 4673/5000 137.8it/s 33.8s<2.4s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 94% ━━━━━━━━━━━─ 4687/5000 138.0it/s 33.9s<2.3s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 94% ━━━━━━━━━━━─ 4701/5000 137.8it/s 34.0s<2.2s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 94% ━━━━━━━━━━━─ 4716/5000 138.2it/s 34.1s<2.1s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 95% ━━━━━━━━━━━─ 4730/5000 137.2it/s 34.2s<2.0s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 95% ━━━━━━━━━━━─ 4745/5000 138.7it/s 34.3s<1.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 95% ━━━━━━━━━━━─ 4759/5000 138.7it/s 34.4s<1.7s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 95% ━━━━━━━━━━━─ 4774/5000 139.4it/s 34.5s<1.6s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 96% ━━━━━━━━━━━─ 4789/5000 140.4it/s 34.6s<1.5s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 96% ━━━━━━━━━━━╸ 4803/5000 140.1it/s 34.8s<1.4s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 96% ━━━━━━━━━━━╸ 4818/5000 142.1it/s 34.9s<1.3s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 97% ━━━━━━━━━━━╸ 4833/5000 142.7it/s 35.0s<1.2s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 97% ━━━━━━━━━━━╸ 4847/5000 140.6it/s 35.1s<1.1s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 97% ━━━━━━━━━━━╸ 4862/5000 141.5it/s 35.2s<1.0s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 98% ━━━━━━━━━━━╸ 4876/5000 140.2it/s 35.3s<0.9s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 98% ━━━━━━━━━━━╸ 4890/5000 138.3it/s 35.4s<0.8s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 98% ━━━━━━━━━━━╸ 4904/5000 137.4it/s 35.5s<0.7s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 98% ━━━━━━━━━━━╸ 4918/5000 136.8it/s 35.6s<0.6s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 99% ━━━━━━━━━━━╸ 4932/5000 136.0it/s 35.7s<0.5s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 99% ━━━━━━━━━━━╸ 4945/5000 131.9it/s 35.8s<0.4s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 99% ━━━━━━━━━━━╸ 4960/5000 135.1it/s 35.9s<0.3s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 100% ━━━━━━━━━━━╸ 4975/5000 136.9it/s 36.0s<0.2s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 100% ━━━━━━━━━━━╸ 4989/5000 134.9it/s 36.1s<0.1s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 100% ━━━━━━━━━━━━ 5000/5000 138.1it/s 36.2s[K                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 100% ━━━━━━━━━━━━ 5000/5000 138.1it/s 36.2s
+                   all       5000      36335      0.669      0.524       0.57      0.412
+Speed: 0.8ms preprocess, 2.6ms inference, 0.0ms loss, 1.0ms postprocess per image
+[int8-qdq model] 2.141ms  mAP50 0.5703  mAP50-95 0.4121  size 11.5MB

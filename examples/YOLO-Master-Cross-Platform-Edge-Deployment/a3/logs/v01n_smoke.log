@@ -1,0 +1,40 @@
+[smoke] /data/YOLO-Master/YOLO-Master-v0.1-N.pt torch 2.4.1+cu124 YOLO-Master acce839c7e89
+[ref] ultralytics/utils/export/engine.py:79 (1 hits) exporter forces the legacy tracer (dynamo=False); dynamo ignores the MoE guards
+[ref] ultralytics/nn/modules/moe/modules.py:562 (1 hits) ES_MOE: dense path under export
+[ref] ultralytics/nn/modules/moe/modules.py:650 (1 hits) ES_MOE: dense forward = weighted sum over ALL experts
+[ref] ultralytics/nn/modules/moe/modules.py:659 (1 hits) ES_MOE: sparse path top-k + dynamic_threshold (what dense drops)
+[ref] ultralytics/nn/modules/moe/modules.py:867 (2 hits) OptimizedMOEImproved: exact top-k export via stack + gather
+[ref] ultralytics/nn/modules/moe/modules.py:866 (2 hits) OptimizedMOEImproved: export branch bakes B/H/W as Python ints (dynamic axes unsafe)
+[ref] ultralytics/nn/modules/moe/modules.py:- (0 hits) OptimizedMOEImproved: compat shim defaults a MISSING add_residual to True (the trap)
+[ref] ultralytics/engine/exporter.py:934 (7 hits) exporter: no MoE awareness (grep count of 'moe' in exporter.py)
+[repair] legacy attrs filled: {'progressive_sparsity': 3, '_training_step': 3, 'warmup_steps': 3, 'expert_dropout_rate': 3, 'dropout_interval': 3, 'detach_routing': 3, 'last_routing_snapshot': 3, '_moe_nonfinite_events': 3, '_current_top_k': 3, 'routing.capacity_factor': 3}
+[repair] {'add_residual_forced_false': 3, 'property_shadows_stripped': 1, 'esmoe_dense_forced': False}
+[moe] model.6    OptimizedMOEImproved     E=4 k=2 use_top_k=False thr=None add_residual=False router=EfficientSpatialRouter
+[moe] model.9    OptimizedMOEImproved     E=8 k=2 use_top_k=False thr=None add_residual=False router=EfficientSpatialRouter
+[moe] model.12   OptimizedMOEImproved     E=16 k=2 use_top_k=False thr=None add_residual=False router=EfficientSpatialRouter
+[policy] model.6    -> preserve semantic_change=False  export branch computes all experts and gathers the top-k: exact
+[policy] model.9    -> preserve semantic_change=False  export branch computes all experts and gathers the top-k: exact
+[policy] model.12   -> preserve semantic_change=False  export branch computes all experts and gathers the top-k: exact
+Export preflight: format=onnx, routed_modules=3, strategies=['dense_fallback']
+Ultralytics 8.4.101 🚀 Python-3.11.10 torch-2.4.1+cu124 CUDA:0 (NVIDIA L4, 22563MiB)
+YOLO-master-n-v2 summary: 330 layers, 7,543,544 parameters, 0 gradients, 10.1 GFLOPs
+
+[34m[1mPyTorch:[0m starting from '/data/YOLO-Master/YOLO-Master-v0.1-N.pt' with input shape (1, 3, 640, 640) BCHW and output shape(s) (1, 84, 8400) (15.1 MB)
+
+[34m[1mONNX:[0m starting export with onnx 1.17.0 opset 17...
+[34m[1mONNX:[0m slimming with onnxslim 0.1.96...
+[34m[1mONNX:[0m export success ✅ 4.6s, saved as '/data/YOLO-Master/YOLO-Master-v0.1-N.onnx' (29.1 MB)
+
+Export complete (6.5s)
+Results saved to [1m/data/YOLO-Master/YOLO-Master-v0.1-N.onnx[0m
+Predict:         yolo predict task=detect model=/data/YOLO-Master/YOLO-Master-v0.1-N.onnx imgsz=640 
+Validate:        yolo val task=detect model=/data/YOLO-Master/YOLO-Master-v0.1-N.onnx imgsz=640 data=/home/tione/notebook/YOLO-Master/ultralytics/cfg/datasets/coco.yaml  
+Visualize:       https://netron.app
+[export] runs/a3/v01n/YOLO-Master-v0.1-N.onnx 30.54 MB in 6.6s
+[onnx] ops=753 routing-relevant={'TopK': 3, 'Gather': 12, 'GatherElements': 6, 'Softmax': 12, 'ScatterND': 0, 'NonZero': 0, 'If': 0, 'Loop': 0, 'Conv': 189}
+[onnx] expert Conv: module=56 graph=56
+YOLO-master-n-v2 summary: 330 layers, 7,543,544 parameters, 0 gradients, 10.1 GFLOPs
+[parity] {'providers': 'CUDAExecutionProvider', 'tf32': False, 'n_images': 8, 'max_abs': 0.004119873046875, 'mean_abs': 2.22142345762677e-06, 'max_rel_elementwise': 0.00020278753072489053, 'max_norm_rel': 6.343170753098093e-06, 'top100_anchor_agreement': 1.0}
+YOLO-master-n-v2 summary: 330 layers, 7,543,544 parameters, 0 gradients
+[parity tf32 default] {'providers': 'CUDAExecutionProvider', 'tf32': True, 'n_images': 8, 'max_abs': 2.1778564453125, 'mean_abs': 0.0008234442648245022, 'max_rel_elementwise': 0.08542271703481674, 'max_norm_rel': 0.003353141015395522, 'top100_anchor_agreement': 0.99875}
+[smoke] PASS in 19.2s -> a3/results/smoke_v01n.json
