@@ -1,0 +1,529 @@
+{
+  "bucket_thresholds": {
+    "simple_max": 3,
+    "medium_max": 8
+  },
+  "buckets": {
+    "simple": {
+      "n_images": 2110,
+      "layers": {
+        "model.6.routing": {
+          "num_experts": 4,
+          "total_hits": 4222.0,
+          "load_balance_std": 0.249882,
+          "gini": 0.499881,
+          "hit_shares_degenerate": false,
+          "experts": {
+            "0": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "1": {
+              "hits": 1.0,
+              "share": 0.000237,
+              "avg_weight": 0.014336
+            },
+            "2": {
+              "hits": 2110.0,
+              "share": 0.499763,
+              "avg_weight": 0.430184
+            },
+            "3": {
+              "hits": 2111.0,
+              "share": 0.5,
+              "avg_weight": 0.570011
+            }
+          }
+        },
+        "model.9.routing": {
+          "num_experts": 8,
+          "total_hits": 4222.0,
+          "load_balance_std": 0.216506,
+          "gini": 0.75,
+          "hit_shares_degenerate": false,
+          "experts": {
+            "0": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "1": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "2": {
+              "hits": 2111.0,
+              "share": 0.5,
+              "avg_weight": 0.716026
+            },
+            "3": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "4": {
+              "hits": 2111.0,
+              "share": 0.5,
+              "avg_weight": 0.283973
+            },
+            "5": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "6": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "7": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            }
+          }
+        },
+        "model.12.routing": {
+          "num_experts": 16,
+          "total_hits": 4222.0,
+          "load_balance_std": 0.165359,
+          "gini": 0.875,
+          "hit_shares_degenerate": false,
+          "experts": {
+            "0": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "1": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "2": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "3": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "4": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "5": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "6": {
+              "hits": 2111.0,
+              "share": 0.5,
+              "avg_weight": 0.502424
+            },
+            "7": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "8": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "9": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "10": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "11": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "12": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "13": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "14": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "15": {
+              "hits": 2111.0,
+              "share": 0.5,
+              "avg_weight": 0.497574
+            }
+          }
+        }
+      }
+    },
+    "medium": {
+      "n_images": 1367,
+      "layers": {
+        "model.6.routing": {
+          "num_experts": 4,
+          "total_hits": 2734.0,
+          "load_balance_std": 0.25,
+          "gini": 0.5,
+          "hit_shares_degenerate": false,
+          "experts": {
+            "0": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "1": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "2": {
+              "hits": 1367.0,
+              "share": 0.5,
+              "avg_weight": 0.427666
+            },
+            "3": {
+              "hits": 1367.0,
+              "share": 0.5,
+              "avg_weight": 0.572332
+            }
+          }
+        },
+        "model.9.routing": {
+          "num_experts": 8,
+          "total_hits": 2734.0,
+          "load_balance_std": 0.216506,
+          "gini": 0.75,
+          "hit_shares_degenerate": false,
+          "experts": {
+            "0": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "1": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "2": {
+              "hits": 1367.0,
+              "share": 0.5,
+              "avg_weight": 0.711865
+            },
+            "3": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "4": {
+              "hits": 1367.0,
+              "share": 0.5,
+              "avg_weight": 0.288134
+            },
+            "5": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "6": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "7": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            }
+          }
+        },
+        "model.12.routing": {
+          "num_experts": 16,
+          "total_hits": 2734.0,
+          "load_balance_std": 0.165359,
+          "gini": 0.875,
+          "hit_shares_degenerate": false,
+          "experts": {
+            "0": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "1": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "2": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "3": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "4": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "5": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "6": {
+              "hits": 1367.0,
+              "share": 0.5,
+              "avg_weight": 0.502934
+            },
+            "7": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "8": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "9": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "10": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "11": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "12": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "13": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "14": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "15": {
+              "hits": 1367.0,
+              "share": 0.5,
+              "avg_weight": 0.497063
+            }
+          }
+        }
+      }
+    },
+    "complex": {
+      "n_images": 1523,
+      "layers": {
+        "model.6.routing": {
+          "num_experts": 4,
+          "total_hits": 3046.0,
+          "load_balance_std": 0.25,
+          "gini": 0.5,
+          "hit_shares_degenerate": false,
+          "experts": {
+            "0": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "1": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "2": {
+              "hits": 1523.0,
+              "share": 0.5,
+              "avg_weight": 0.427865
+            },
+            "3": {
+              "hits": 1523.0,
+              "share": 0.5,
+              "avg_weight": 0.572133
+            }
+          }
+        },
+        "model.9.routing": {
+          "num_experts": 8,
+          "total_hits": 3046.0,
+          "load_balance_std": 0.216506,
+          "gini": 0.75,
+          "hit_shares_degenerate": false,
+          "experts": {
+            "0": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "1": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "2": {
+              "hits": 1523.0,
+              "share": 0.5,
+              "avg_weight": 0.706023
+            },
+            "3": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "4": {
+              "hits": 1523.0,
+              "share": 0.5,
+              "avg_weight": 0.293976
+            },
+            "5": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "6": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "7": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            }
+          }
+        },
+        "model.12.routing": {
+          "num_experts": 16,
+          "total_hits": 3046.0,
+          "load_balance_std": 0.165359,
+          "gini": 0.875,
+          "hit_shares_degenerate": false,
+          "experts": {
+            "0": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "1": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "2": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "3": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "4": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "5": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "6": {
+              "hits": 1523.0,
+              "share": 0.5,
+              "avg_weight": 0.502097
+            },
+            "7": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "8": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "9": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "10": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "11": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "12": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "13": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "14": {
+              "hits": 0.0,
+              "share": 0.0,
+              "avg_weight": 0.0
+            },
+            "15": {
+              "hits": 1523.0,
+              "share": 0.5,
+              "avg_weight": 0.4979
+            }
+          }
+        }
+      }
+    }
+  },
+  "l1_divergence_simple_vs_complex": {
+    "model.6.routing": 0.000474,
+    "model.9.routing": 0.0,
+    "model.12.routing": 0.0
+  }
+}
