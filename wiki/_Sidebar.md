@@ -12,6 +12,7 @@
 - [Mixture of Attention](MoE/Mixture_of_Attention.md)
 - [版本演进指南 (CN)](MoE/MoE_Modules_Explanation.md)
 - [Version Evolution (EN)](MoE/MoE_Modules_Explanation_EN.md)
+- [MoE × End2End 实验闭环 SOP](MoE-End2End-实验闭环SOP.md)
 
 ## 🔶 PEFT — Parameter-Efficient Fine-Tuning
 
