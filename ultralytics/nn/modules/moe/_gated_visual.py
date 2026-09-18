@@ -55,6 +55,9 @@ def run_visual_hybrid_moe_forward(module, x, detail_gate=None, context_mixer=Non
     routing_weights, routing_indices, routing_stats, adaptive_top_k = module._apply_complexity_gate(
         routing_weights, routing_indices, routing_stats, complexity
     )
+    # F11 路由 KD: 保留本轮路由 logits/摘要(与 AdaptiveGateMoE.forward 接口一致)
+    module._last_routing_logits = routing_stats.get("router_logits")
+    module._last_routing_summary = routing_stats.get("routing_summary")
     out_dynamic = module.fused_experts(x_dynamic, routing_weights, routing_indices, adaptive_top_k)
 
     out_concat = module._channel_shuffle(torch.cat([out_static, out_dynamic], dim=1))

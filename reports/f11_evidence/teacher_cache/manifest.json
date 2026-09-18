@@ -1,0 +1,133 @@
+{
+  "task": "F11 · teacher feature cache",
+  "teacher_model": "dinov2_vitb14",
+  "device": "cuda:0",
+  "imgsz": 112,
+  "batch": 1,
+  "num_requested": 50,
+  "num_cached": 12,
+  "created_at": "2026-08-24T06:44:21.313645Z",
+  "reproduce_cmd": "python scripts/cache_teacher_features.py --data coco8.yaml --num 50 --out runs/f11_teacher_cache --teacher dinov2_vitb14 --device cuda:0 --imgsz 112 --batch 1",
+  "rows": [
+    {
+      "idx": 0,
+      "image": "bus.jpg",
+      "patch_path": "patches\\img_0000.pt",
+      "patch_shape": [
+        64,
+        768
+      ],
+      "sha256": "f52b305184f0be93749862da5aa22c1d0850125eb1bf353e764be73f4948cf4d"
+    },
+    {
+      "idx": 1,
+      "image": "bus.jpg",
+      "patch_path": "patches\\img_0001.pt",
+      "patch_shape": [
+        64,
+        768
+      ],
+      "sha256": "3d6eee688505770ed1f39bce2958d4e41554956187aa572702b1b8a74a44c219"
+    },
+    {
+      "idx": 2,
+      "image": "labels.jpg",
+      "patch_path": "patches\\img_0002.pt",
+      "patch_shape": [
+        64,
+        768
+      ],
+      "sha256": "2e200016822995c66cb203bb46b9094b1fead39fc696c9d35d6b069ffe3da7bf"
+    },
+    {
+      "idx": 3,
+      "image": "train_batch0.jpg",
+      "patch_path": "patches\\img_0003.pt",
+      "patch_shape": [
+        64,
+        768
+      ],
+      "sha256": "23914a2906e25b42cb57ba1960a6bafc8b5f63b0d0f4ce2fa79925473a6860e0"
+    },
+    {
+      "idx": 4,
+      "image": "val_batch0_labels.jpg",
+      "patch_path": "patches\\img_0004.pt",
+      "patch_shape": [
+        64,
+        768
+      ],
+      "sha256": "b4808b2537a4e93fe310a46c7b0c58df80e668e7b66526222ffe484ea9066069"
+    },
+    {
+      "idx": 5,
+      "image": "val_batch0_pred.jpg",
+      "patch_path": "patches\\img_0005.pt",
+      "patch_shape": [
+        64,
+        768
+      ],
+      "sha256": "0e5ec87af1094a323d53c9d560621e245db18e9800cce56386c23decbfe9d2aa"
+    },
+    {
+      "idx": 6,
+      "image": "labels.jpg",
+      "patch_path": "patches\\img_0006.pt",
+      "patch_shape": [
+        64,
+        768
+      ],
+      "sha256": "14ad0f002b1f4f054f90c7c9026f045cb586bd8bd9baa90fa6b1aad628b514e8"
+    },
+    {
+      "idx": 7,
+      "image": "train_batch0.jpg",
+      "patch_path": "patches\\img_0007.pt",
+      "patch_shape": [
+        64,
+        768
+      ],
+      "sha256": "6b57deab3902538f53f82630ddd99548e84013709e9664fb6fdb4ac039950fed"
+    },
+    {
+      "idx": 8,
+      "image": "val_batch0_labels.jpg",
+      "patch_path": "patches\\img_0008.pt",
+      "patch_shape": [
+        64,
+        768
+      ],
+      "sha256": "73f4c832ba917c71c5c1ecdb6827cf9f854e724dc6b7d91c4fd4f34a7352a7fd"
+    },
+    {
+      "idx": 9,
+      "image": "val_batch0_pred.jpg",
+      "patch_path": "patches\\img_0009.pt",
+      "patch_shape": [
+        64,
+        768
+      ],
+      "sha256": "fd75dd8d262be683aa50ec2d1594a07d84eb10746c197efbd596d3f732c108cd"
+    },
+    {
+      "idx": 10,
+      "image": "bus.jpg",
+      "patch_path": "patches\\img_0010.pt",
+      "patch_shape": [
+        64,
+        768
+      ],
+      "sha256": "74de4e4ff65dfd5d872e07773d1294c2009560e4eacfaa4afe530b77f8505496"
+    },
+    {
+      "idx": 11,
+      "image": "zidane.jpg",
+      "patch_path": "patches\\img_0011.pt",
+      "patch_shape": [
+        64,
+        768
+      ],
+      "sha256": "464308160bd8e1b88bcf4d9e3d6e740a1b0225e020b4dccc5c42ded0b64fe616"
+    }
+  ]
+}
