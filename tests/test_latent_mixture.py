@@ -1,9 +1,10 @@
+from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 import torch
-import torch.nn as nn
+from torch import nn
 
 from ultralytics.nn.mixture_loss import build_composite_criterion
 from ultralytics.nn.modules import LatentMixture, LatentRouter, MultiScaleLatentMixture
@@ -14,7 +15,7 @@ from ultralytics.nn.modules.routing_protocol import (
     iter_aux_records,
 )
 from ultralytics.nn.tasks import DetectionModel
-
+from ultralytics.utils.torch_utils import ModelEMA
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -190,6 +191,24 @@ def test_yolo26_latent_yaml_builds_and_runs():
     with torch.no_grad():
         output = model(torch.zeros(1, 3, 64, 64))
     assert output is not None
+
+
+def test_yolo26_latent_owns_ema_deepcopy_cleanup():
+    model = DetectionModel(
+        ROOT / "ultralytics/cfg/models/26/yolo26-master-latent-n.yaml", ch=3, nc=80, verbose=False
+    ).train()
+    latent = next(module for module in model.modules() if isinstance(module, LatentMixture))
+    original_logits = latent.routing_logits
+
+    copied = deepcopy(model)
+    ema = ModelEMA(model)
+
+    copied_latent = next(module for module in copied.modules() if isinstance(module, LatentMixture))
+    assert original_logits is not None and latent.routing_logits is original_logits
+    assert copied_latent.routing_logits is None
+    assert copied_latent.routing_probs is None
+    assert copied_latent.routing_summary is None
+    assert isinstance(ema.ema, DetectionModel)
 
 
 def test_latent_detection_model_load_skips_non_tensor_extra_state():
