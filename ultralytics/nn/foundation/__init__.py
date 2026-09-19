@@ -28,6 +28,23 @@ from .semantic import (
     semantic_distillation_loss,
 )
 
+from .response import (
+    GLOBAL_BATCH_INDEX_VERSION,
+    RESPONSE_FIELD_CONDITIONS,
+    RESPONSE_FIELD_PAYLOAD_VERSION,
+    BatchNormBufferSnapshot,
+    ResponseFieldCondition,
+    apply_response_field_condition_batch,
+    build_response_field_paired_view,
+    logical_global_batch_index,
+    preserve_batchnorm_buffers,
+    response_field_condition,
+    response_field_kd_loss,
+    response_field_noise_seed,
+    strict_cosine_kd_loss,
+    tensor_sha256,
+)
+
 __all__ = [
     "DEFAULT_DINOV3_MODEL",
     "DINOv3Teacher",
@@ -57,4 +74,18 @@ __all__ = [
     "region_text_loss",
     "region_image_loss",
     "semantic_distillation_loss",
+    "GLOBAL_BATCH_INDEX_VERSION",
+    "RESPONSE_FIELD_CONDITIONS",
+    "RESPONSE_FIELD_PAYLOAD_VERSION",
+    "BatchNormBufferSnapshot",
+    "ResponseFieldCondition",
+    "apply_response_field_condition_batch",
+    "build_response_field_paired_view",
+    "logical_global_batch_index",
+    "preserve_batchnorm_buffers",
+    "response_field_condition",
+    "response_field_kd_loss",
+    "response_field_noise_seed",
+    "strict_cosine_kd_loss",
+    "tensor_sha256",
 ]
