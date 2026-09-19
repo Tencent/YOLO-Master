@@ -1,0 +1,53 @@
+# Portable example recipe, not a claim of reproducing every historical run.
+train:
+  task: detect
+  imgsz: 640
+  optimizer: AdamW
+  lr0: 0.001
+  lrf: 0.01
+  momentum: 0.9
+  weight_decay: 0.0005
+  warmup_epochs: 3.0
+  warmup_bias_lr: 0.1
+  cos_lr: true
+  amp: true
+  deterministic: true
+  pretrained: false
+  resume: false
+  patience: 0
+  save: true
+  save_period: 5
+  plots: false
+  val: true
+  rect: false
+  cache: false
+  compile: false
+  conf: 0.001
+  close_mosaic: 0
+  multi_scale: 0.0
+  hsv_h: 0.0
+  hsv_s: 0.0
+  hsv_v: 0.0
+  degrees: 0.0
+  translate: 0.0
+  scale: 0.0
+  shear: 0.0
+  perspective: 0.0
+  flipud: 0.0
+  fliplr: 0.0
+  bgr: 0.0
+  mosaic: 0.0
+  mixup: 0.0
+  cutmix: 0.0
+  copy_paste: 0.0
+  erasing: 0.0
+  latent_aux_gain: 0.1
+  mixture_aux_budget: 3.0
+model:
+  balance_loss_coeff: 0.1
+  router_z_loss_coeff: 0.0
+runtime:
+  max_open_feature_shards: 4
+  feature_prefetch_factor: 1
+  amp_init_scale: 0.0625
+  amp_growth_interval: 1000000

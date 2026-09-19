@@ -1,0 +1,49 @@
+{
+  "archives": {
+    "annotations_trainval2017.zip": {
+      "bytes": 252907541,
+      "download_url": "https://www.modelscope.cn/datasets/PAI/COCO2017/resolve/5466a7f1944225fcddb1896006508cad5be27b5b/annotations_trainval2017.zip",
+      "mirror_revision": "5466a7f1944225fcddb1896006508cad5be27b5b",
+      "sha256": "113a836d90195ee1f884e704da6304dfaaecff1f023f49b6ca93c4aaae470268",
+      "upstream_url": "http://images.cocodataset.org/annotations/annotations_trainval2017.zip"
+    },
+    "coco2017labels.zip": {
+      "bytes": 48639045,
+      "download_url": "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco2017labels.zip",
+      "sha256": "51a5175c894a7a1010f90eb4cba613473445f02633b684ed46c0292a997d0234",
+      "upstream_url": "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco2017labels.zip"
+    },
+    "train2017.zip": {
+      "bytes": 19336861798,
+      "download_url": "https://www.modelscope.cn/datasets/PAI/COCO2017/resolve/5466a7f1944225fcddb1896006508cad5be27b5b/train2017.zip",
+      "mirror_revision": "5466a7f1944225fcddb1896006508cad5be27b5b",
+      "sha256": "69a8bb58ea5f8f99d24875f21416de2e9ded3178e903f1f7603e283b9e06d929",
+      "upstream_url": "http://images.cocodataset.org/zips/train2017.zip"
+    },
+    "val2017.zip": {
+      "bytes": 815585330,
+      "download_url": "https://www.modelscope.cn/datasets/PAI/COCO2017/resolve/5466a7f1944225fcddb1896006508cad5be27b5b/val2017.zip",
+      "mirror_revision": "5466a7f1944225fcddb1896006508cad5be27b5b",
+      "sha256": "4f7e2ccb2866ec5041993c9cf2a952bbed69647b115d0f74da7ce8f4bef82f05",
+      "upstream_url": "http://images.cocodataset.org/zips/val2017.zip"
+    }
+  },
+  "labels": {
+    "train2017": 117266,
+    "val2017": 4952
+  },
+  "schema_version": "d1-coco2017-splits-v1",
+  "split_policy": "canonical COCO 2017 train2017/val2017; sorted by image filename; no random split",
+  "splits": {
+    "train2017": {
+      "count": 118287,
+      "path": "coco2017-train2017.txt",
+      "sha256": "cdb18d3c86093bf6f9259f2a74b15c1aea22ba3a400bfe3bf77042bebfb750d1"
+    },
+    "val2017": {
+      "count": 5000,
+      "path": "coco2017-val2017.txt",
+      "sha256": "70d1b9c55663f6820a30e4ccc02b4c3174e9aafb6512b500f5ce7869f5d1b3d6"
+    }
+  }
+}
