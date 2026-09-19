@@ -1,0 +1,19 @@
+# VisDrone-smoke dataset config (reference copy; the runnable one is generated
+# by A2/smoke/smoke_test.py with an absolute `path`).
+#
+# VisDrone2019-DET class schema (matches ultralytics/cfg/datasets/VisDrone.yaml).
+# This is a tiny synthetic subset (small 8-24 px objects) for the 1-epoch smoke.
+path: datasets/VisDrone-smoke
+train: images/train
+val: images/val
+names:
+  0: pedestrian
+  1: people
+  2: bicycle
+  3: car
+  4: van
+  5: truck
+  6: tricycle
+  7: awning-tricycle
+  8: bus
+  9: motor
