@@ -1,0 +1,28 @@
+run_id: p1-20260901-cpu-split
+
+runtime_root: ../YOLO-Master-main-07d3303
+p0_repo_root: ../YOLO-Master-E3-P0
+official_runtime_ref: 07d330325b5a26b75aabfc75389f9bcbc0d40245
+official_runtime_tree: e4a900338bd6679d5ad9f8673e466b250ba2c711
+
+device: cpu
+seed: 0
+dataset: coco8.yaml
+dataset_split: val
+sample_indices: [0, 1]
+image_size: 64
+batch_size: 2
+warmup_pairs: 5
+measured_pairs: 30
+bootstrap_resamples: 5000
+target_slowdown_percent: 10.0
+loss_match_rtol: 0.000001
+loss_match_atol: 0.000001
+
+profiles:
+  moe:
+    model_config: ultralytics/cfg/models/26/yolo26-master-n.yaml
+  mot:
+    model_config: ultralytics/cfg/models/26/yolo26-master-mot-n.yaml
+  latent:
+    model_config: ultralytics/cfg/models/26/yolo26-master-latent-n.yaml

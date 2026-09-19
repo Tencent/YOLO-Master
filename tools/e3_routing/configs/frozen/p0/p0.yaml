@@ -1,0 +1,31 @@
+run_id: p0-20260831-cpu-multisample
+schema_version: e3.routing/v1.0.0
+
+# The source tree is kept separate from this tool repository.
+runtime_root: ../YOLO-Master-main-07d3303
+official_locked_base_ref: acce839c7e895d6b179de7f7093fa879e237cc7b
+official_runtime_ref: 07d330325b5a26b75aabfc75389f9bcbc0d40245
+official_runtime_tree: e4a900338bd6679d5ad9f8673e466b250ba2c711
+official_source_archive_url: https://codeload.github.com/Tencent/YOLO-Master/zip/07d330325b5a26b75aabfc75389f9bcbc0d40245
+official_source_archive_sha256: 774abaa264028f1aca4b6d14c3db249f8a75bc253b4131c272f6dc8a8c744c49
+
+device: cpu
+seed: 0
+dataset: coco8.yaml
+dataset_split: val
+sample_indices: [0, 1, 2, 3]
+image_size: 64
+primary_batch_size: 1
+boundary_batch_sizes: [2, 4]
+repeat_primary_passes: 2
+batch_consistency_tolerance: 0.00001
+selection_policy: leaf_routed_modules
+moe_snapshot_interval: 1
+
+profiles:
+  moe:
+    model_config: ultralytics/cfg/models/26/yolo26-master-n.yaml
+  mot:
+    model_config: ultralytics/cfg/models/26/yolo26-master-mot-n.yaml
+  latent:
+    model_config: ultralytics/cfg/models/26/yolo26-master-latent-n.yaml

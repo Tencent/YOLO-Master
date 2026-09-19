@@ -1,0 +1,35 @@
+run_id: p2s-20260905-coco128-32-v1
+require_committed_source: true
+
+runtime_root: ../YOLO-Master-main-07d3303
+official_locked_base_ref: acce839c7e895d6b179de7f7093fa879e237cc7b
+official_runtime_ref: 07d330325b5a26b75aabfc75389f9bcbc0d40245
+official_runtime_tree: e4a900338bd6679d5ad9f8673e466b250ba2c711
+
+device: cpu
+family: moa
+target_module: model.16.m.0.router
+seeds: [0, 1, 2]
+dataset: coco128.yaml
+dataset_split: val
+expected_dataset_image_count: 128
+selected_image_count: 32
+selection_salt: e3-p2-coco128-image-v1
+resolution: 128
+transformations:
+  - {name: identity, kind: identity}
+  - {name: brightness_090, kind: brightness, factor: 0.9}
+  - {name: contrast_090, kind: contrast, factor: 0.9}
+  - {name: gaussian_blur_075, kind: gaussian_blur, radius: 0.75}
+
+profile:
+  model_config: ultralytics/cfg/models/26/yolo26-master-moa-n.yaml
+  router_class: _MoARouter
+
+bootstrap_draws: 10000
+bootstrap_seed: 20260905
+max_evidence_bytes: 67108864
+
+source_fingerprints:
+  ultralytics/nn/modules/moa/router.py: ad753404db8b740c909b38d4f74dc4912527ce931ea76f48609ae7dbeb8f517f
+  ultralytics/cfg/models/26/yolo26-master-moa-n.yaml: 20a57222cd4a51b11b39d51ca959a2d250e46c5e42b4ecf9fe6a9808e3147310

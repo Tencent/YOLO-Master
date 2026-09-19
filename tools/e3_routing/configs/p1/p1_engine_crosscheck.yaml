@@ -1,0 +1,38 @@
+run_id: p1e-20260903-cpu-trainer-v3
+
+runtime_root: ../..
+p0_repo_root: .
+official_runtime_ref: 7bfbfd374a6b44720f98366e088f3a962e16321d
+official_runtime_tree: cfdc006e9da0f0daa6ead7aa66af742983ea14bc
+runtime_identity_policy: base_ancestor
+runtime_input_sha256:
+  ultralytics/engine/trainer.py: d1aa2e8d56371e24014cd934d83b86eccef57d086038b0b365def40ef5c3c7a9
+  ultralytics/models/yolo/detect/train.py: 257f81fcbce922e9032f6d3908378f6e1d1b0648169d72f4a37f1448d2afb81e
+  ultralytics/nn/modules/routing_protocol.py: fb1182314dd74fbc2295a33fef927e9f7333b4e2906688e5c0ecd4f9a00340b3
+  ultralytics/cfg/models/26/yolo26-master-n.yaml: 135ae1f18197f42039dbd67d4e6104cd531c7d9d65ede77c8edb4d0afa11a223
+  ultralytics/cfg/models/26/yolo26-master-mot-n.yaml: 739aca4279cd2ae7813f4b0b5a16211efd68c74a1beaacc71d2431101dca6fda
+  ultralytics/cfg/models/26/yolo26-master-latent-n.yaml: 08307e7ca5e7aa68cb41f4a39d2eb0901e8cd20a9f3784edd2dd96ab0da11219
+
+device: cpu
+seed: 2300
+dataset: coco8.yaml
+image_size: 64
+batch_size: 2
+epochs: 5
+warmup_pairs: 2
+measured_pairs: 6
+target_slowdown_percent: 10.0
+
+optimizer:
+  name: SGD
+  learning_rate: 0.001
+  momentum: 0.9
+  weight_decay: 0.0005
+
+profiles:
+  moe:
+    model_config: ultralytics/cfg/models/26/yolo26-master-n.yaml
+  mot:
+    model_config: ultralytics/cfg/models/26/yolo26-master-mot-n.yaml
+  latent:
+    model_config: ultralytics/cfg/models/26/yolo26-master-latent-n.yaml
