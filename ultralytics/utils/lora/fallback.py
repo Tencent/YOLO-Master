@@ -445,6 +445,19 @@ def _freeze_batchnorm_layers(module: nn.Module) -> None:
                 param.requires_grad = False
 
 
+def _freeze_unadapted_module(module: nn.Module) -> None:
+    """Freeze a layer that is deliberately left without an adapter.
+
+    Wrapped layers freeze their own base convolution inside ``ManualLoRAConv``;
+    layers skipped by the targeting rules are never wrapped, so they have to be
+    frozen here. Otherwise a placement plan would only decide adapter
+    *placement* while the unadapted base layers keep training (and, being
+    non-adapter parameters, are silently absent from ``save_adapters``).
+    """
+    for param in module.parameters():
+        param.requires_grad = False
+
+
 def _matches_target_modules(module_name: str, target_modules: Optional[List[str]]) -> bool:
     """Return whether a module name matches the user's explicit target module request."""
     if not target_modules:
@@ -524,6 +537,11 @@ def _replace_conv_with_manual_lora(
     convs (where groups == in_channels == out_channels) are still gated by
     `config.allow_depthwise` to match the PEFT backend behavior.
 
+    Convs that stay unadapted (rank-groups mismatch, disabled depthwise,
+    head-like modules, `only_3x3` filtering or an explicit `target_modules`
+    list) are frozen so that only adapter parameters remain trainable, matching
+    the PEFT backend and the selected placement plan.
+
     v3: Supports layer-wise adaptive rank when few_shot_layerwise_rank=True.
     """
     replaced = 0
@@ -547,18 +565,23 @@ def _replace_conv_with_manual_lora(
                 if r > 0 and (r % groups != 0):
                     # Skip silently: rank-groups mismatch
                     replaced += _replace_conv_with_manual_lora(child, config, full_name, include_head)
+                    _freeze_unadapted_module(child)
                     continue
                 is_depthwise = child.in_channels == child.out_channels == groups
                 if is_depthwise and not allow_depthwise:
                     replaced += _replace_conv_with_manual_lora(child, config, full_name, include_head)
+                    _freeze_unadapted_module(child)
                     continue
             if not include_head and _is_head_like_module(full_name):
+                _freeze_unadapted_module(child)
                 continue
             if getattr(config, "only_3x3", False):
                 kernel = child.kernel_size
                 if kernel == 1 or kernel == (1, 1):
+                    _freeze_unadapted_module(child)
                     continue
             if not _matches_target_modules(full_name, getattr(config, "target_modules", None)):
+                _freeze_unadapted_module(child)
                 continue
             # Use FewShotLoRAConv in few-shot mode
             if few_shot:
