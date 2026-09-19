@@ -1,0 +1,45 @@
+{
+  "probe": "B (learnability / projector absorption)",
+  "script": "experiments/d2/scripts/kd_gradient_probe.py --mode learnable --steps 300",
+  "machine": "RTX 3090 (see experiments/d2/env/README.md)",
+  "note": "KD-only: the task loss is not backwarded at all. Adam(lr=1e-3), 2 fit batches, 8 held out.",
+  "raw_output": {
+    "steps": 300,
+    "optimizer": "Adam(lr=0.001)",
+    "fit_batches": 2,
+    "heldout_batches": 8,
+    "arms": {
+      "full": {
+        "trainable_tensors": 765,
+        "fit_before": 0.35537219047546387,
+        "fit_after": 0.019854030571877956,
+        "fit_reduction_pct": 94.4131726949949,
+        "heldout_before": 0.34792740270495415,
+        "heldout_after": 0.14117152709513903,
+        "heldout_reduction_pct": 59.42500475742813
+      },
+      "projector_only": {
+        "trainable_tensors": 3,
+        "fit_before": 0.35537219047546387,
+        "fit_after": 0.20456740260124207,
+        "fit_reduction_pct": 42.43573130256907,
+        "heldout_before": 0.34792740270495415,
+        "heldout_after": 0.2500037420541048,
+        "heldout_reduction_pct": 28.144854325800132
+      }
+    },
+    "heldout_residual_ratio_frozen_over_full": 1.770921850874511,
+    "verdict": "LEARNABLE: held out, freezing the backbone leaves 1.77x the residual error of the full arm."
+  },
+  "interpretation": {
+    "reachable": "Yes, decisively. 94.4% reduction on the fit batches and 59.4% held out. The 2.5% movement seen at w=4.0 in the 10-epoch sweep was a weight-and-budget effect, not a capacity wall.",
+    "generalizes": "Yes. 59.4% held-out reduction is real transfer, not memorization -- though the fit/held-out gap is 7.1x, which is expected when fitting only 2 batches.",
+    "projector_absorption": "Not dominant, but present. The frozen-backbone arm still reaches 28.1% held out with 3 trainable tensors against 765. The backbone accounts for 53% of the held-out gain.",
+    "verdict_margin": "1.77x against a pre-set 1.5x bar. Above the line but NOT by a comfortable margin; the threshold was a judgement call, so read the ratio, not the label."
+  },
+  "caveats": [
+    "Probe B optimizes the KD term ALONE with Adam(1e-3). P1 runs SGD(lr0=0.01) with KD at roughly a 10% gradient share. 'Reachable in principle' is not 'reached under P1's budget'.",
+    "2 fit batches and 8 held-out batches of coco128 at imgsz 256, on an untrained model (pretrained=False).",
+    "The absorb-factor (1.5) and learnable-threshold (20%) are author-set, not derived."
+  ]
+}

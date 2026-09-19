@@ -133,7 +133,7 @@ class DINOv3Teacher(nn.Module):
             from transformers import DINOv3ViTBackbone
         except (ImportError, ModuleNotFoundError) as exc:
             raise ImportError(
-                "Foundation DINOv3 backend requires optional dependency 'transformers>=4.56.0,<6'. "
+                "Foundation DINOv3 backend requires optional dependency 'transformers>=5,<6'. "
                 "Install with: pip install -e '.[foundation]'"
             ) from exc
 
