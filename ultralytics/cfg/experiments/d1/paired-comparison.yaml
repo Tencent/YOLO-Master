@@ -1,0 +1,36 @@
+# Final fixed-budget comparison. Paths and launch approval are runtime inputs.
+schema_version: d1-paired-comparison-v2
+validation_precision: fp32-v1
+training_precision: bf16-mixed-fp32-loss-v1
+seeds: [0, 1, 2]
+world_size: 6
+workers: 4
+prefetch_factor: 1
+evaluation_period: 5
+benchmark_epochs: 5
+minimum_free_gib: 80
+maximum_memory_fraction: 0.75
+teacher_weights_sha256: 4610ad75edef83e75afdebf162d148dc628045ea6cbb83d67d4708c709c4f91d
+cache_contract_sha256: 6bfda0e13bde01001c3f3f2d72631a2401fb9a77b146d6fb2794303e379e47a7
+models: [BN64, SCRATCH]
+datasets:
+  coco:
+    nc: 80
+    train_images: 118287
+    val_images: 5000
+    epochs: 50
+    global_batch: 384
+    frozen_total_parameters: 23001383
+    scratch_parameters: 23133560
+    train_paths_sha256: cdb18d3c86093bf6f9259f2a74b15c1aea22ba3a400bfe3bf77042bebfb750d1
+    val_paths_sha256: 70d1b9c55663f6820a30e4ccc02b4c3174e9aafb6512b500f5ce7869f5d1b3d6
+  visdrone:
+    nc: 10
+    train_images: 6471
+    val_images: 548
+    epochs: 120
+    global_batch: 96
+    frozen_total_parameters: 22936803
+    scratch_parameters: 23032340
+    train_paths_sha256: 08690be5f316240d5d31a05e7589f11dcb2bd0fa1fd1256fc0b695342e7b25a4
+    val_paths_sha256: e7a836107d87985f4eaebe1af2ceaa27b52542d03fde7965561a197c283eea55

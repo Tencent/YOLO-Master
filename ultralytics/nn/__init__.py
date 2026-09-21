@@ -1,5 +1,6 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
+from .foundation_detection_model import D1FoundationDetectionModel
 from .tasks import (
     BaseModel,
     ClassificationModel,
@@ -17,6 +18,7 @@ from .tasks import (
 __all__ = (
     "BaseModel",
     "ClassificationModel",
+    "D1FoundationDetectionModel",
     "DetectionModel",
     "MultiTaskModel",
     "SegmentationModel",

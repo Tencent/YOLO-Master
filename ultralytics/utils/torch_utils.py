@@ -731,7 +731,14 @@ class ModelEMA:
             tau (int, optional): EMA decay time constant.
             updates (int, optional): Initial number of updates.
         """
-        self.ema = deepcopy(unwrap_model(model)).eval()  # FP32 EMA
+        source = unwrap_model(model)
+        try:
+            from ultralytics.nn.modules.routing_protocol import reset_routing_runtime_state
+
+            reset_routing_runtime_state(source)
+        except Exception:  # noqa: BLE001, S110 - Optional routing cleanup must retain legacy EMA construction behavior.
+            pass
+        self.ema = deepcopy(source).eval()  # FP32 EMA
         if hasattr(self.ema, "teacher_model"):
             # DistillationModel: strip the teacher so the EMA does not carry a full duplicate copy.
             self.ema.teacher_model = None

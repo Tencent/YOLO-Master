@@ -1,0 +1,43 @@
+# D1 downstream detector. It consumes cached DINOv3 features, not RGB images.
+model_type: d1_foundation_detection
+task: detect
+
+input_features:
+  source_names: [block4, block8, block12]
+  channels: 384
+
+adapter:
+  pyramid_channels: [64, 128, 256]
+  norm_groups: 8
+
+latent_mixture:
+  num_experts: 4
+  expert_ratio: 0.25
+  temperature: 1.0
+  balance_loss_coeff: 0.01
+  router_z_loss_coeff: 0.001
+  residual_init: 0.0
+  noise_std: 0.0
+  router_init_std: 0.0
+  value_fusion_mode: router_only
+
+detect:
+  nc: 80
+  reg_max: 1
+  end2end: true
+  strides: [8, 16, 32]
+
+loss:
+  box: 7.5
+  cls: 0.5
+  dfl: 1.5
+  latent_aux_gain: 0.1
+  mixture_aux_budget: 3.0
+
+teacher_reference:
+  backend: transformers
+  model_id: facebook/dinov3-vits16-pretrain-lvd1689m
+  output_layers: [4, 8, 12]
+  output_layer_indices: [3, 7, 11]
+  cache_schema: d1-cache-v1
+  weights_sha256: 4610ad75edef83e75afdebf162d148dc628045ea6cbb83d67d4708c709c4f91d
