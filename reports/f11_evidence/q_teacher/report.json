@@ -1,0 +1,30 @@
+{
+  "task": "F11 · q_teacher non-degenerate check",
+  "config": {
+    "cache": "runs/f11_teacher_cache",
+    "model": "ultralytics/cfg/models/master/v0_8/det/yolo-master-n.yaml",
+    "device": "cpu",
+    "temperature": 0.5,
+    "smoothing_eps": 0.0,
+    "confidence_mask": true,
+    "out": "runs/f11_q_teacher_check",
+    "n_experts": 4,
+    "expert_dim": 768,
+    "use_real_protos": false
+  },
+  "num_patches": 768,
+  "num_experts": 4,
+  "check": {
+    "mean": 0.6457056403160095,
+    "std": 0.20228850841522217,
+    "min": 0.0905284434556961,
+    "max": 1.0,
+    "not_collapsed_ratio": 0.9947916865348816,
+    "not_uniform_ratio": 0.9700520634651184,
+    "pass": true
+  },
+  "outputs": {
+    "entropy_csv": "G:\\Codes\\OpenSource\\Rhino-bird\\Practice\\Code\\YOLO-Master\\runs\\f11_q_teacher_check\\entropy.csv",
+    "q_teacher_pt": "G:\\Codes\\OpenSource\\Rhino-bird\\Practice\\Code\\YOLO-Master\\runs\\f11_q_teacher_check\\q_teacher.pt"
+  }
+}

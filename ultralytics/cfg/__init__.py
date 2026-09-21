@@ -513,7 +513,7 @@ CFG_STR_KEYS = frozenset(
         "foundation_siglip2_weights",
     }
 ) | MIXTURE_STR_KEYS
-FOUNDATION_TEACHERS = frozenset({"none", "dinov3", "siglip2", "multi"})
+FOUNDATION_TEACHERS = frozenset({"none", "dinov2", "dinov3", "siglip2", "multi"})
 FOUNDATION_BACKENDS = frozenset({"transformers", "local"})
 FOUNDATION_LOSSES = frozenset({"cosine", "l2", "relational", "hybrid"})
 FOUNDATION_RELATION_MODES = frozenset({"sampled", "full"})

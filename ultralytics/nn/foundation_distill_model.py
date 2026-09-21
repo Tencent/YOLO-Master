@@ -16,8 +16,10 @@ import torch.nn.functional as F
 from torch import nn
 
 from ultralytics.nn.foundation import (
+    DEFAULT_DINOV2_MODEL,
     DEFAULT_DINOV3_MODEL,
     DEFAULT_SIGLIP2_MODEL,
+    DINOv2Teacher,
     DINOv3Teacher,
     FoundationFeatures,
     MultiFoundationTeacher,
@@ -584,12 +586,18 @@ class FoundationDistillationModel(nn.Module):
         return metrics
 
     def _latent_route_modules(self) -> list[tuple[str, nn.Module]]:
-        """Return the F11-supported LatentMixture image-level routers only."""
+        """Return modules exposing the F11 routing-KD interface.
+
+        Supported students:
+          - LatentMixture image-level routers (official F11 student).
+          - AdaptiveGateMoE family (gated.py): exposes ``routing_logits`` [B, E]
+            and ``routing_summary`` [B, 2C] properties during training.
+        """
 
         modules = []
         for name, module in self.student_model.named_modules():
-            if module.__class__.__name__ != "LatentMixture":
-                continue
+            # 接口识别: 任何暴露 routing_logits/routing_summary 的模块均可被蒸馏
+            # (LatentMixture 与 AdaptiveGateMoE 家族均实现该接口)
             if not hasattr(module, "routing_logits") or not hasattr(module, "routing_summary"):
                 continue
             modules.append((name or "root", module))
@@ -650,7 +658,7 @@ class FoundationDistillationModel(nn.Module):
         return route_teachers
 
     def _routing_kd(self, teacher_summary: torch.Tensor, *, batch_size: int) -> tuple[torch.Tensor, dict[str, float]]:
-        """Compute F11 route KD over LatentMixture modules and publish one aux record."""
+        """Compute F11 route KD over routing-interface modules and publish one aux record."""
 
         routes = self._latent_route_modules()
         if not self._router_enabled:
@@ -1387,7 +1395,18 @@ class FoundationDistillationModel(nn.Module):
                 # replace it with the exact DINO+SigLIP summary width.
                 teacher_dim = teacher_channels * 3 + siglip_channels * 3 + 2
             for index, (name, module) in enumerate(self._latent_route_modules()):
-                student_dim = int(getattr(getattr(module, "router", None), "latent_dim", 0) or 0)
+                latent_router = getattr(module, "router", None)
+                if latent_router is not None and hasattr(latent_router, "latent_dim"):
+                    # LatentMixture: latent router 显式携带 latent_dim
+                    student_dim = int(getattr(latent_router, "latent_dim", 0) or 0)
+                else:
+                    # AdaptiveGateMoE 家族: 摘要为 [mean, std] 拼接 → 2 * dynamic_channels
+                    live_summary = getattr(module, "routing_summary", None)
+                    if isinstance(live_summary, torch.Tensor) and live_summary.ndim == 2:
+                        student_dim = int(live_summary.shape[1])
+                    else:
+                        dynamic_channels = int(getattr(module, "dynamic_channels", 0) or 0)
+                        student_dim = dynamic_channels * 2
                 num_experts = int(getattr(module, "num_experts", 0) or 0)
                 if student_dim <= 0 or num_experts <= 0:
                     continue
@@ -1785,11 +1804,14 @@ def build_foundation_distillation_wrapper(
                 processor_loader=processor_loader,
             )
             teacher_manager = MultiFoundationTeacher(dinov3=dino, siglip2=siglip)
-        elif teacher_name in {"dinov3", "siglip2"}:
-            model_id = _get(args, "foundation_model", None) or (
-                DEFAULT_SIGLIP2_MODEL if teacher_name == "siglip2" else DEFAULT_DINOV3_MODEL
-            )
-            teacher_cls = SigLIP2Teacher if teacher_name == "siglip2" else DINOv3Teacher
+        elif teacher_name in {"dinov2", "dinov3", "siglip2"}:
+            default_model = {
+                "dinov2": DEFAULT_DINOV2_MODEL,
+                "dinov3": DEFAULT_DINOV3_MODEL,
+                "siglip2": DEFAULT_SIGLIP2_MODEL,
+            }[teacher_name]
+            teacher_cls = {"dinov2": DINOv2Teacher, "dinov3": DINOv3Teacher, "siglip2": SigLIP2Teacher}[teacher_name]
+            model_id = _get(args, "foundation_model", None) or default_model
             teacher_kwargs = {
                 "model_id": model_id,
                 "dtype": dtype,
@@ -1801,7 +1823,7 @@ def build_foundation_distillation_wrapper(
                 teacher_kwargs["processor_loader"] = processor_loader
             teacher_manager = teacher_cls(**teacher_kwargs)
         else:
-            raise ValueError(f"Unsupported foundation_teacher={teacher_name!r}; use dinov3, siglip2, or multi.")
+            raise ValueError(f"Unsupported foundation_teacher={teacher_name!r}; use dinov2, dinov3, siglip2, or multi.")
     elif str(_get(args, "foundation_teacher", "none")).lower() == "multi":
         if not isinstance(teacher_manager, MultiFoundationTeacher):
             if isinstance(teacher_manager, Mapping):

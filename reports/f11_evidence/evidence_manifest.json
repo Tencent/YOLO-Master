@@ -1,0 +1,84 @@
+{
+  "task": "F11 · 8.24 准入证据包",
+  "created_at": "2026-08-24T07:03:01.765707Z",
+  "outputs": {
+    "teacher_cache": {
+      "description": "DINO 教师特征离线缓存（100 张）",
+      "files": [
+        {
+          "path": "runs\\f11_teacher_cache\\manifest.json",
+          "dest": "teacher_cache\\manifest.json",
+          "exists": true,
+          "sha256": "7a5dd113b36ce65ddc7c09813ad5e9a33b2c45d8aa1ec03d6a3a342e4403d10d",
+          "size_bytes": 3488
+        },
+        {
+          "path": "runs\\f11_teacher_cache\\meta.json",
+          "dest": "teacher_cache\\meta.json",
+          "exists": true,
+          "sha256": "fc3fd7da8caed3f721af9a4af41260bf7c854183ab8dc417078dd555187ecf93",
+          "size_bytes": 286
+        },
+        "patches\\img_0000.pt",
+        "patches\\img_0001.pt",
+        "patches\\img_0002.pt",
+        "patches\\img_0003.pt",
+        "patches\\img_0004.pt",
+        "patches\\img_0005.pt",
+        "patches\\img_0006.pt",
+        "patches\\img_0007.pt",
+        "patches\\img_0008.pt",
+        "patches\\img_0009.pt",
+        "patches\\img_0010.pt",
+        "patches\\img_0011.pt"
+      ]
+    },
+    "q_teacher": {
+      "description": "q_teacher 软目标 + 熵校验",
+      "files": [
+        {
+          "path": "runs\\f11_q_teacher_check\\report.json",
+          "dest": "q_teacher\\report.json",
+          "exists": true,
+          "sha256": "77b1a9a462187ccb05e8a30022954d3438456b8d427747fa0e5cbf99500fa6c5",
+          "size_bytes": 976
+        },
+        {
+          "path": "runs\\f11_q_teacher_check\\entropy.csv",
+          "dest": "q_teacher\\entropy.csv",
+          "exists": true,
+          "sha256": "ff7a1c7a4233884ff8d15c4766692a17ffd16bc0cc0dfa1516aa851407419bff",
+          "size_bytes": 17572
+        },
+        {
+          "path": "runs\\f11_q_teacher_check\\q_teacher.pt",
+          "dest": "q_teacher\\q_teacher.pt",
+          "exists": true,
+          "sha256": "578762921aa9094823481bc97012d62d6fc5feb6bfa82b973a237649384922e9",
+          "size_bytes": 17717
+        }
+      ]
+    },
+    "router_kd": {
+      "description": "Router KD 训练闭环（单 batch 冒烟）",
+      "files": [
+        {
+          "path": "runs\\f11_smoke_kd\\smoke_report.json",
+          "dest": "router_kd\\smoke_report.json",
+          "exists": true,
+          "sha256": "3d7ee030e2fa22088bfac1aa47826bc7b09bc4ff2ca3f7a7073cd10451ba8244",
+          "size_bytes": 733
+        }
+      ]
+    },
+    "commands": {
+      "description": "冒烟 1-4 完整命令清单",
+      "files": [
+        {
+          "path": "commands.sh",
+          "sha256": "7118d7aa1a718a7a514846d6080117dd181f7327ea44bddceedebc3ac92e391a"
+        }
+      ]
+    }
+  }
+}
