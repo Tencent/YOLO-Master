@@ -156,7 +156,7 @@ _WANDB_METRICS = {
 
 
 def _make_wandb_callbacks(
-    run_name: str, dataset: "DatasetSpec", spec: "ModelSpec", args: argparse.Namespace, dense_val: bool
+    run_name: str, dataset: DatasetSpec, spec: ModelSpec, args: argparse.Namespace, dense_val: bool
 ) -> dict:
     """Return trainer callbacks that stream per-epoch metrics to Weights & Biases.
 
@@ -174,23 +174,33 @@ def _make_wandb_callbacks(
             LOGGER.warning(f"[reproduce] wandb unavailable ({exc}); continuing without it.")
             return
         try:
+            config = {
+                "model": spec.name,
+                "cfg": spec.cfg,
+                "dataset": dataset.name,
+                "data": dataset.data,
+                "epochs": args.epochs,
+                "imgsz": args.imgsz,
+                "batch": args.batch,
+                "seed": args.seed,
+                "dense_val": dense_val,
+                "scale_small_definition": "transformed GT area < 32^2",
+                "scale_medium_definition": "transformed GT area >= 32^2 and < 96^2",
+                "scale_large_definition": "transformed GT area >= 96^2",
+                "positive_stats": "final one-to-many assignments per valid GT after conflict resolution",
+            }
+            # A2 runners expose only the controlled method variables used by
+            # the current pure/fixed/adaptive assignment comparison.
+            for key in ("assigner", "stal_area_threshold"):
+                if hasattr(args, key):
+                    config[key] = getattr(args, key)
             state["run"] = wandb.init(
                 project=args.wandb_project,
                 entity=(args.wandb_entity or None),
                 name=run_name,
                 mode=args.wandb_mode,
                 reinit=True,
-                config={
-                    "model": spec.name,
-                    "cfg": spec.cfg,
-                    "dataset": dataset.name,
-                    "data": dataset.data,
-                    "epochs": args.epochs,
-                    "imgsz": args.imgsz,
-                    "batch": args.batch,
-                    "seed": args.seed,
-                    "dense_val": dense_val,
-                },
+                config=config,
             )
             url = getattr(state["run"], "url", None)
             LOGGER.info(f"[reproduce] wandb run '{run_name}' [{args.wandb_mode}] -> {url}")
@@ -208,11 +218,11 @@ def _make_wandb_callbacks(
         data = {}
         try:
             data.update(trainer.label_loss_items(trainer.tloss, prefix="train"))
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S110
             pass
         try:
             data.update(trainer.metrics or {})
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S110
             pass
         epoch = int(getattr(trainer, "epoch", 0)) + 1
         log = {"epoch": epoch}
@@ -238,7 +248,7 @@ def _make_wandb_callbacks(
                     pass
 
         try:
-            run.log(log, step=epoch)
+            run.log(log, step=epoch, commit=True)
         except Exception as exc:  # noqa: BLE001
             LOGGER.warning(f"[reproduce] wandb log failed at epoch {epoch}: {exc}")
 
@@ -247,7 +257,7 @@ def _make_wandb_callbacks(
         if run is not None:
             try:
                 run.finish()
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001, S110
                 pass
             state["run"] = None
 

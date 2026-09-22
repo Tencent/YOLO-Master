@@ -192,6 +192,35 @@ def test_resume_allows_epoch_and_fraction_overrides(tmp_path):
     assert trainer.args.fraction == 1.0
 
 
+@pytest.mark.parametrize("scaler_state", ["empty", "enabled", "missing"])
+def test_resume_grad_scaler_preserves_checkpoint_mode_and_optimizer(scaler_state):
+    """A disabled checkpoint scaler must resume without discarding optimizer state."""
+    trainer = object.__new__(BaseTrainer)
+    trainer.model = torch.nn.Linear(1, 1)
+    source = torch.optim.SGD(trainer.model.parameters(), lr=0.02, momentum=0.9)
+    trainer.model(torch.ones(1, 1)).sum().backward()
+    source.step()
+    trainer.optimizer = torch.optim.SGD(trainer.model.parameters(), lr=0.1, momentum=0.9)
+    trainer.args = SimpleNamespace(amp=True)
+    trainer.amp = True
+    trainer.scaler = torch.amp.GradScaler("cpu", init_scale=1024)
+    trainer.ema = None
+    checkpoint = {"optimizer": source.state_dict(), "optimizer_steps": 123, "best_fitness": 0.25}
+    if scaler_state == "empty":
+        checkpoint["scaler"] = {}
+    elif scaler_state == "enabled":
+        checkpoint["scaler"] = torch.amp.GradScaler("cpu", init_scale=2048).state_dict()
+
+    trainer._load_checkpoint_state(checkpoint)
+
+    assert trainer.optimizer.param_groups[0]["lr"] == 0.02
+    assert trainer.optimizer.state and trainer.optimizer_steps == 123
+    assert trainer.best_fitness == 0.25
+    assert trainer.amp == (scaler_state != "empty")
+    assert trainer.scaler.is_enabled() == (scaler_state != "empty")
+    assert trainer.scaler.get_scale() == {"empty": 1, "enabled": 2048, "missing": 1024}[scaler_state]
+
+
 def test_distill_resume(tmp_path: Path):
     """Test knowledge distillation resumes from an incomplete checkpoint."""
     overrides = {
