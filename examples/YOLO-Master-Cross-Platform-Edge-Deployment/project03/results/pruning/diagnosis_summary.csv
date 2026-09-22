@@ -1,0 +1,2 @@
+model,mAP50,mAP50_95,layers,dense_forced,max_gini
+best,0.3504,0.20363,4,True,0.0

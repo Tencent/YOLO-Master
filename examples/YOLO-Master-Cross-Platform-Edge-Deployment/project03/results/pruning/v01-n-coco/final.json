@@ -1,0 +1,71 @@
+{
+  "model": "/data/YOLO-Master/YOLO-Master-v0.1-N.pt",
+  "base": {
+    "params_M": 7.5546,
+    "GFLOPs": 10.338,
+    "mAP50": 0.59311,
+    "mAP50_95": 0.42916
+  },
+  "rows": [
+    {
+      "threshold": 0.05,
+      "kept_experts": "{\"6\": 2, \"9\": 2, \"12\": 2}",
+      "params_M": 3.3321,
+      "dParams_pct": 55.89,
+      "GFLOPs": 10.336,
+      "mAP50": 0.59312,
+      "mAP50_95": 0.42915,
+      "dmAP50_95": -1e-05
+    },
+    {
+      "threshold": 0.1,
+      "kept_experts": "{\"6\": 2, \"9\": 2, \"12\": 2}",
+      "params_M": 3.3321,
+      "dParams_pct": 55.89,
+      "GFLOPs": 10.336,
+      "mAP50": 0.59312,
+      "mAP50_95": 0.42915,
+      "dmAP50_95": -1e-05
+    },
+    {
+      "threshold": 0.15,
+      "kept_experts": "{\"6\": 2, \"9\": 2, \"12\": 2}",
+      "params_M": 3.3321,
+      "dParams_pct": 55.89,
+      "GFLOPs": 10.336,
+      "mAP50": 0.59312,
+      "mAP50_95": 0.42915,
+      "dmAP50_95": -1e-05
+    },
+    {
+      "threshold": 0.2,
+      "kept_experts": "{\"6\": 2, \"9\": 2, \"12\": 2}",
+      "params_M": 3.3321,
+      "dParams_pct": 55.89,
+      "GFLOPs": 10.336,
+      "mAP50": 0.59312,
+      "mAP50_95": 0.42915,
+      "dmAP50_95": -1e-05
+    },
+    {
+      "threshold": 0.3,
+      "kept_experts": "{\"6\": 2, \"9\": 2, \"12\": 2}",
+      "params_M": 3.3321,
+      "dParams_pct": 55.89,
+      "GFLOPs": 10.336,
+      "mAP50": 0.59312,
+      "mAP50_95": 0.42915,
+      "dmAP50_95": -1e-05
+    }
+  ],
+  "best_within_budget": {
+    "threshold": 0.05,
+    "kept_experts": "{\"6\": 2, \"9\": 2, \"12\": 2}",
+    "params_M": 3.3321,
+    "dParams_pct": 55.89,
+    "GFLOPs": 10.336,
+    "mAP50": 0.59312,
+    "mAP50_95": 0.42915,
+    "dmAP50_95": -1e-05
+  }
+}
