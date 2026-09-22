@@ -1,0 +1,15 @@
+[smoke] /data/YOLO-Master/YOLO-Master-v0.1-N.pt torch 2.4.1+cu124 YOLO-Master 3ea98305a844
+[ref] ultralytics/utils/export/engine.py:37 (1 hits) exporter forces the legacy tracer (dynamo=False); dynamo ignores the MoE guards
+[ref] ultralytics/nn/modules/moe/modules.py:470 (1 hits) ES_MOE: dense path under export
+[ref] ultralytics/nn/modules/moe/modules.py:529 (1 hits) ES_MOE: dense forward = weighted sum over ALL experts
+[ref] ultralytics/nn/modules/moe/modules.py:538 (1 hits) ES_MOE: sparse path top-k + dynamic_threshold (what dense drops)
+[ref] ultralytics/nn/modules/moe/modules.py:739 (2 hits) OptimizedMOEImproved: exact top-k export via stack + gather
+[ref] ultralytics/nn/modules/moe/modules.py:738 (2 hits) OptimizedMOEImproved: export branch bakes B/H/W as Python ints (dynamic axes unsafe)
+[ref] ultralytics/nn/modules/moe/modules.py:967 (1 hits) OptimizedMOEImproved: compat shim defaults a MISSING add_residual to True (the trap)
+[ref] ultralytics/engine/exporter.py:- (0 hits) exporter: no MoE awareness (grep count of 'moe' in exporter.py)
+[repair] {'add_residual_forced_false': 3, 'property_shadows_stripped': 0, 'esmoe_dense_forced': False}
+[moe] model.6    OptimizedMOEImproved     E=4 k=2 use_top_k=False thr=None add_residual=False router=EfficientSpatialRouter
+[moe] model.9    OptimizedMOEImproved     E=8 k=2 use_top_k=False thr=None add_residual=False router=EfficientSpatialRouter
+[moe] model.12   OptimizedMOEImproved     E=16 k=2 use_top_k=False thr=None add_residual=False router=EfficientSpatialRouter
+[policy] REJECTED (exit 2): dynamic axes REJECTED: the MoE export branches bake batch/height/width as Python ints (view/expand in the gather path); a dynamic-axes graph is silently wrong at any other shape. Export is static 1x3x640x640 only.
+[chain 84s] dynamic-axes run exit=2 (2 expected)

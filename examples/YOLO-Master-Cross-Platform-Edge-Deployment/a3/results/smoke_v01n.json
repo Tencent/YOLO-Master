@@ -1,0 +1,291 @@
+{
+  "model": "/data/YOLO-Master/YOLO-Master-v0.1-N.pt",
+  "args": {
+    "model": "/data/YOLO-Master/YOLO-Master-v0.1-N.pt",
+    "out": "runs/a3/v01n",
+    "data": "a3/config/coco-a3.yaml",
+    "routing": "auto",
+    "dynamic": false,
+    "imgsz": 640,
+    "opset": 17,
+    "parity_n": 8,
+    "rel_tol": 0.001,
+    "json": "a3/results/smoke_v01n.json",
+    "log": "a3/logs/v01n_smoke.log",
+    "yolo_repo": "/data/YOLO-Master"
+  },
+  "torch": "2.4.1+cu124",
+  "yolo_master_commit": "acce839c7e895d6b179de7f7093fa879e237cc7b",
+  "edge_commit": "30dd3c3f156e0150201ec3f2ca7b413e60dac0ae",
+  "code_refs": [
+    {
+      "what": "exporter forces the legacy tracer (dynamo=False); dynamo ignores the MoE guards",
+      "file": "ultralytics/utils/export/engine.py",
+      "commit": "acce839c7e895d6b179de7f7093fa879e237cc7b",
+      "hits": [
+        {
+          "line": 79,
+          "text": "kwargs = {\"dynamo\": False} if TORCH_2_4 else {}"
+        }
+      ],
+      "n_hits": 1
+    },
+    {
+      "what": "ES_MOE: dense path under export",
+      "file": "ultralytics/nn/modules/moe/modules.py",
+      "commit": "acce839c7e895d6b179de7f7093fa879e237cc7b",
+      "hits": [
+        {
+          "line": 562,
+          "text": "or torch.onnx.is_in_onnx_export()"
+        }
+      ],
+      "n_hits": 1
+    },
+    {
+      "what": "ES_MOE: dense forward = weighted sum over ALL experts",
+      "file": "ultralytics/nn/modules/moe/modules.py",
+      "commit": "acce839c7e895d6b179de7f7093fa879e237cc7b",
+      "hits": [
+        {
+          "line": 650,
+          "text": "def _dense_forward(self, x, routing_weights):"
+        }
+      ],
+      "n_hits": 1
+    },
+    {
+      "what": "ES_MOE: sparse path top-k + dynamic_threshold (what dense drops)",
+      "file": "ultralytics/nn/modules/moe/modules.py",
+      "commit": "acce839c7e895d6b179de7f7093fa879e237cc7b",
+      "hits": [
+        {
+          "line": 659,
+          "text": "def _sparse_forward(self, x, routing_weights):"
+        }
+      ],
+      "n_hits": 1
+    },
+    {
+      "what": "OptimizedMOEImproved: exact top-k export via stack + gather",
+      "file": "ultralytics/nn/modules/moe/modules.py",
+      "commit": "acce839c7e895d6b179de7f7093fa879e237cc7b",
+      "hits": [
+        {
+          "line": 867,
+          "text": "selected = torch.gather(all_outs, 1, idx_exp).squeeze(1)  # [B, out_C, H, W]"
+        },
+        {
+          "line": 1125,
+          "text": "selected = torch.gather(all_outs, 1, idx_exp).squeeze(1)  # [B, out_C, H, W]"
+        }
+      ],
+      "n_hits": 2
+    },
+    {
+      "what": "OptimizedMOEImproved: export branch bakes B/H/W as Python ints (dynamic axes unsafe)",
+      "file": "ultralytics/nn/modules/moe/modules.py",
+      "commit": "acce839c7e895d6b179de7f7093fa879e237cc7b",
+      "hits": [
+        {
+          "line": 866,
+          "text": "idx_exp = idx_k.view(B, 1, 1, 1, 1).expand(B, 1, self.out_channels, H, W)"
+        },
+        {
+          "line": 1124,
+          "text": "idx_exp = idx_k.view(B, 1, 1, 1, 1).expand(B, 1, self.out_channels, H, W)"
+        }
+      ],
+      "n_hits": 2
+    },
+    {
+      "what": "OptimizedMOEImproved: compat shim defaults a MISSING add_residual to True (the trap)",
+      "file": "ultralytics/nn/modules/moe/modules.py",
+      "commit": "acce839c7e895d6b179de7f7093fa879e237cc7b",
+      "hits": [],
+      "n_hits": 0
+    },
+    {
+      "what": "exporter: no MoE awareness (grep count of 'moe' in exporter.py)",
+      "file": "ultralytics/engine/exporter.py",
+      "commit": "acce839c7e895d6b179de7f7093fa879e237cc7b",
+      "hits": [
+        {
+          "line": 934,
+          "text": "artifact / \"moe-prune.json\""
+        },
+        {
+          "line": 940,
+          "text": "LOGGER.info(\"MoE pre-export pruning manifest saved to %s\", manifest_path)"
+        },
+        {
+          "line": 971,
+          "text": "from ultralytics.nn.modules.moe.analysis import ExpertUsageTracker"
+        }
+      ],
+      "n_hits": 7
+    }
+  ],
+  "repairs": {
+    "add_residual_forced_false": 3,
+    "property_shadows_stripped": 1,
+    "esmoe_dense_forced": false
+  },
+  "inventory": [
+    {
+      "module": "model.6",
+      "cls": "OptimizedMOEImproved",
+      "E": 4,
+      "k": 2,
+      "use_top_k": false,
+      "router_cls": "EfficientSpatialRouter",
+      "router_use_top_k": false,
+      "use_sparse_inference": null,
+      "dynamic_threshold": null,
+      "add_residual": false
+    },
+    {
+      "module": "model.9",
+      "cls": "OptimizedMOEImproved",
+      "E": 8,
+      "k": 2,
+      "use_top_k": false,
+      "router_cls": "EfficientSpatialRouter",
+      "router_use_top_k": false,
+      "use_sparse_inference": null,
+      "dynamic_threshold": null,
+      "add_residual": false
+    },
+    {
+      "module": "model.12",
+      "cls": "OptimizedMOEImproved",
+      "E": 16,
+      "k": 2,
+      "use_top_k": false,
+      "router_cls": "EfficientSpatialRouter",
+      "router_use_top_k": false,
+      "use_sparse_inference": null,
+      "dynamic_threshold": null,
+      "add_residual": false
+    }
+  ],
+  "policy": {
+    "routing": "auto",
+    "dynamic": false,
+    "decisions": [
+      {
+        "module": "model.6",
+        "cls": "OptimizedMOEImproved",
+        "decision": "preserve",
+        "semantic_change": false,
+        "why": "export branch computes all experts and gathers the top-k: exact"
+      },
+      {
+        "module": "model.9",
+        "cls": "OptimizedMOEImproved",
+        "decision": "preserve",
+        "semantic_change": false,
+        "why": "export branch computes all experts and gathers the top-k: exact"
+      },
+      {
+        "module": "model.12",
+        "cls": "OptimizedMOEImproved",
+        "decision": "preserve",
+        "semantic_change": false,
+        "why": "export branch computes all experts and gathers the top-k: exact"
+      }
+    ],
+    "reason": "ok",
+    "exit_code": 0
+  },
+  "onnx": {
+    "path": "runs/a3/v01n/YOLO-Master-v0.1-N.onnx",
+    "size_mb": 30.54,
+    "export_s": 6.6,
+    "op_histogram": {
+      "Conv": 189,
+      "Sigmoid": 120,
+      "Mul": 134,
+      "Split": 15,
+      "Add": 43,
+      "Concat": 24,
+      "AveragePool": 3,
+      "Unsqueeze": 28,
+      "ReduceMean": 3,
+      "Softmax": 12,
+      "TopK": 3,
+      "ReduceSum": 3,
+      "Gather": 12,
+      "Clip": 3,
+      "Reshape": 52,
+      "Div": 4,
+      "Expand": 6,
+      "GatherElements": 6,
+      "Squeeze": 6,
+      "Transpose": 65,
+      "MatMul": 16,
+      "Resize": 2,
+      "Slice": 2,
+      "Sub": 2
+    },
+    "routing_ops": {
+      "TopK": 3,
+      "Gather": 12,
+      "GatherElements": 6,
+      "Softmax": 12,
+      "ScatterND": 0,
+      "NonZero": 0,
+      "If": 0,
+      "Loop": 0,
+      "Conv": 189
+    },
+    "metadata": {
+      "description": "Ultralytics YOLO-master-n-v2 model trained on /home/tione/no",
+      "author": "Ultralytics",
+      "date": "2026-08-23T07:14:45.527484",
+      "version": "8.4.101",
+      "license": "AGPL-3.0 License (https://ultralytics.com/license)",
+      "docs": "https://docs.ultralytics.com",
+      "stride": "32",
+      "task": "detect",
+      "head": "Detect",
+      "batch": "1",
+      "imgsz": "[640, 640]",
+      "names": "{0: 'person', 1: 'bicycle', 2: 'car', 3: 'motorcycle', 4: 'a",
+      "args": "{'data': None, 'batch': 1, 'fraction': 1.0, 'quantize': None",
+      "channels": "3",
+      "end2end": "False",
+      "mixture_export_preflight": "{'format': 'onnx', 'supported': True, 'matrix_schema_version",
+      "molora_export_mode": "dynamic"
+    },
+    "expert_conv": {
+      "module": 56,
+      "graph": 56
+    }
+  },
+  "parity": {
+    "providers": "CUDAExecutionProvider",
+    "tf32": false,
+    "n_images": 8,
+    "max_abs": 0.004119873046875,
+    "mean_abs": 2.22142345762677e-06,
+    "max_rel_elementwise": 0.00020278753072489053,
+    "max_norm_rel": 6.343170753098093e-06,
+    "top100_anchor_agreement": 1.0
+  },
+  "parity_tf32_default": {
+    "providers": "CUDAExecutionProvider",
+    "tf32": true,
+    "n_images": 8,
+    "max_abs": 2.1778564453125,
+    "mean_abs": 0.0008234442648245022,
+    "max_rel_elementwise": 0.08542271703481674,
+    "max_norm_rel": 0.003353141015395522,
+    "top100_anchor_agreement": 0.99875
+  },
+  "verification": {
+    "failures": []
+  },
+  "status": "pass",
+  "elapsed_s": 19.2
+}
