@@ -25,6 +25,7 @@ class TaskAlignedAssigner(nn.Module):
         beta (float): The beta parameter for the localization component of the task-aligned metric.
         stride (list): List of stride values for different feature levels.
         stride_val (int): The stride value used for select_candidates_in_gts.
+        stal_mode (str): Candidate policy: raw TAL, legacy fixed-stride expansion, or adaptive STAL.
         eps (float): A small value to prevent division by zero.
     """
 
@@ -37,6 +38,14 @@ class TaskAlignedAssigner(nn.Module):
         stride: list | None = None,
         eps: float = 1e-9,
         topk2=None,
+        stal_mode: str = "fixed",
+        stal_small_area: float = 32**2,
+        stal_medium_area: float = 96**2,
+        stal_candidate_scale: float = 1.5,
+        stal_min_candidates: int = 3,
+        stal_topk_small: int = 13,
+        stal_topk_medium: int = 10,
+        stal_topk_large: int = 10,
     ):
         """Initialize a TaskAlignedAssigner object with customizable hyperparameters.
 
@@ -48,6 +57,14 @@ class TaskAlignedAssigner(nn.Module):
             stride (list, optional): List of stride values for different feature levels.
             eps (float, optional): A small value to prevent division by zero.
             topk2 (int, optional): Secondary topk value for additional filtering.
+            stal_mode (str, optional): Candidate policy: ``tal``, ``fixed``, or ``adaptive``.
+            stal_small_area (float, optional): Small-object threshold in assigner-input pixels.
+            stal_medium_area (float, optional): Medium-object threshold in assigner-input pixels.
+            stal_candidate_scale (float, optional): Small-object candidate-box expansion factor.
+            stal_min_candidates (int, optional): Minimum pre-conflict candidates for each valid small GT.
+            stal_topk_small (int, optional): Adaptive top-k for small GT.
+            stal_topk_medium (int, optional): Adaptive top-k for medium GT.
+            stal_topk_large (int, optional): Adaptive top-k for large GT.
         """
         super().__init__()
         self.topk = topk
@@ -57,6 +74,12 @@ class TaskAlignedAssigner(nn.Module):
         self.beta = beta
         self.stride = stride if stride is not None else [8, 16, 32]
         self.stride_val = self.stride[1] if len(self.stride) > 1 else self.stride[0]
+        self.stal_mode = stal_mode
+        self.stal_small_area = stal_small_area
+        self.stal_medium_area = stal_medium_area
+        self.stal_candidate_scale = stal_candidate_scale
+        self.stal_min_candidates = stal_min_candidates
+        self.stal_topk = (stal_topk_small, stal_topk_medium, stal_topk_large)
         self.eps = eps
 
     @torch.no_grad()
@@ -163,7 +186,10 @@ class TaskAlignedAssigner(nn.Module):
         # Get anchor_align metric, (b, max_num_obj, h*w)
         align_metric, overlaps = self.get_box_metrics(pd_scores, pd_bboxes, gt_labels, gt_bboxes, mask_in_gts * mask_gt)
         # Get topk_metric mask, (b, max_num_obj, h*w)
-        mask_topk = self.select_topk_candidates(align_metric, topk_mask=mask_gt.expand(-1, -1, self.topk).bool())
+        if self.stal_mode == "adaptive":
+            mask_topk = self.select_adaptive_topk_candidates(align_metric, mask_in_gts, gt_bboxes, mask_gt)
+        else:
+            mask_topk = self.select_topk_candidates(align_metric, topk_mask=mask_gt.expand(-1, -1, self.topk).bool())
         # Merge all mask to a final mask, (b, max_num_obj, h*w)
         mask_pos = mask_topk * mask_in_gts * mask_gt
 
@@ -246,6 +272,29 @@ class TaskAlignedAssigner(nn.Module):
 
         return count_tensor.to(metrics.dtype)
 
+    def get_adaptive_topks(self, gt_bboxes):
+        """Return per-GT top-k values from augmented, resized boxes entering the assigner."""
+        wh = (gt_bboxes[..., 2:] - gt_bboxes[..., :2]).clamp_(min=0)
+        areas = wh.prod(-1)
+        small_topk, medium_topk, large_topk = self.stal_topk
+        return torch.where(
+            areas < self.stal_small_area,
+            small_topk,
+            torch.where(areas < self.stal_medium_area, medium_topk, large_topk),
+        ).long()
+
+    def select_adaptive_topk_candidates(self, metrics, candidate_mask, gt_bboxes, mask_gt):
+        """Select a scale-dependent number of anchors strictly from each GT candidate region."""
+        topks = self.get_adaptive_topks(gt_bboxes)
+        max_topk = min(max(self.stal_topk), metrics.shape[-1])
+        masked_metrics = metrics.masked_fill(~candidate_mask.bool(), -torch.inf)
+        topk_metrics, topk_idxs = torch.topk(masked_metrics, max_topk, dim=-1, largest=True)
+        rank_mask = torch.arange(max_topk, device=metrics.device).view(1, 1, -1) < topks.unsqueeze(-1)
+        valid = rank_mask & topk_metrics.isfinite() & mask_gt.bool()
+        selected = torch.zeros_like(metrics, dtype=torch.int8)
+        selected.scatter_add_(-1, topk_idxs, valid.to(torch.int8))
+        return selected.clamp_(max=1).to(metrics.dtype)
+
     def get_targets(self, gt_labels, gt_bboxes, target_gt_idx, fg_mask):
         """Compute target labels, target bounding boxes, and target scores for the positive anchor points.
 
@@ -302,17 +351,45 @@ class TaskAlignedAssigner(nn.Module):
             - b: batch size, n_boxes: number of ground truth boxes, h: height, w: width.
             - Bounding box format: [x_min, y_min, x_max, y_max].
         """
-        gt_bboxes_xywh = xyxy2xywh(gt_bboxes)
-        wh_mask = gt_bboxes_xywh[..., 2:] < self.stride[0]  # the smallest stride
-        gt_bboxes_xywh[..., 2:] = torch.where(
-            (wh_mask * mask_gt).bool(),
-            torch.tensor(self.stride_val, dtype=gt_bboxes_xywh.dtype, device=gt_bboxes_xywh.device),
-            gt_bboxes_xywh[..., 2:],
-        )
-        gt_bboxes = xywh2xyxy(gt_bboxes_xywh)
+        original_bboxes = gt_bboxes
+        if self.stal_mode == "fixed":
+            gt_bboxes_xywh = xyxy2xywh(gt_bboxes)
+            wh_mask = gt_bboxes_xywh[..., 2:] < self.stride[0]  # the smallest stride
+            gt_bboxes_xywh[..., 2:] = torch.where(
+                (wh_mask * mask_gt).bool(),
+                torch.tensor(self.stride_val, dtype=gt_bboxes_xywh.dtype, device=gt_bboxes_xywh.device),
+                gt_bboxes_xywh[..., 2:],
+            )
+            gt_bboxes = xywh2xyxy(gt_bboxes_xywh)
+        elif self.stal_mode == "adaptive":
+            gt_bboxes_xywh = xyxy2xywh(gt_bboxes)
+            areas = gt_bboxes_xywh[..., 2:].prod(-1, keepdim=True)
+            small_mask = (areas < self.stal_small_area) & mask_gt.bool()
+            min_extent = 2 * self.stride[0]
+            expanded_wh = torch.maximum(
+                gt_bboxes_xywh[..., 2:] * self.stal_candidate_scale,
+                torch.as_tensor(min_extent, dtype=gt_bboxes.dtype, device=gt_bboxes.device),
+            )
+            gt_bboxes_xywh[..., 2:] = torch.where(small_mask, expanded_wh, gt_bboxes_xywh[..., 2:])
+            gt_bboxes = xywh2xyxy(gt_bboxes_xywh)
 
         lt, rb = gt_bboxes.unsqueeze(2).chunk(2, 3)  # (b, n_boxes, 1, 2) left-top, right-bottom
-        return ((xy_centers - lt > eps) & (rb - xy_centers > eps)).all(3)
+        candidate_mask = ((xy_centers - lt > eps) & (rb - xy_centers > eps)).all(3)
+        if self.stal_mode != "adaptive":
+            return candidate_mask
+
+        original_wh = (original_bboxes[..., 2:] - original_bboxes[..., :2]).clamp_(min=0)
+        small_mask = (original_wh.prod(-1) < self.stal_small_area) & mask_gt.squeeze(-1).bool()
+        needs_candidates = small_mask & (candidate_mask.sum(-1) < self.stal_min_candidates)
+        if needs_candidates.any():
+            centers = (original_bboxes[..., :2] + original_bboxes[..., 2:]) / 2
+            distances = (xy_centers.view(1, 1, -1, 2) - centers.unsqueeze(2)).square().sum(-1)
+            distances.masked_fill_(~needs_candidates.unsqueeze(-1), torch.inf)
+            nearest = distances.topk(min(self.stal_min_candidates, xy_centers.shape[0]), dim=-1, largest=False).indices
+            supplements = torch.zeros_like(candidate_mask)
+            supplements.scatter_(-1, nearest, needs_candidates.unsqueeze(-1).expand_as(nearest))
+            candidate_mask |= supplements
+        return candidate_mask
 
     def select_highest_overlaps(self, mask_pos, overlaps, n_max_boxes, align_metric):
         """Select anchor boxes with highest IoU when assigned to multiple ground truths.
@@ -343,10 +420,13 @@ class TaskAlignedAssigner(nn.Module):
 
         if self.topk2 != self.topk:
             align_metric = align_metric * mask_pos  # update overlaps
+            topk2 = min(self.topk2, align_metric.shape[-1])
+            if self.stal_mode == "adaptive":
+                align_metric = align_metric.masked_fill(~mask_pos.bool(), -torch.inf)
             # (b, n_max_boxes, topk2)
-            max_overlaps_idx = torch.topk(align_metric, self.topk2, dim=-1, largest=True).indices
+            topk2_metrics, max_overlaps_idx = torch.topk(align_metric, topk2, dim=-1, largest=True)
             topk_idx = torch.zeros(mask_pos.shape, dtype=mask_pos.dtype, device=mask_pos.device)  # update mask_pos
-            topk_idx.scatter_(-1, max_overlaps_idx, 1.0)
+            topk_idx.scatter_(-1, max_overlaps_idx, topk2_metrics.isfinite().to(mask_pos.dtype))
             mask_pos *= topk_idx
             fg_mask = mask_pos.sum(-2)
         # Find each grid serve which gt(index)
