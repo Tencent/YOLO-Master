@@ -371,13 +371,32 @@ class v8DetectionLoss:
         self.assigner = TaskAlignedAssigner(
             topk=tal_topk,
             num_classes=self.nc,
-            alpha=0.5,
-            beta=6.0,
+            alpha=getattr(h, "tal_alpha", 0.5),
+            beta=getattr(h, "tal_beta", 6.0),
             stride=self.stride.tolist(),
             topk2=tal_topk2,
+            stal_mode=getattr(h, "stal_mode", "fixed"),
+            stal_min_positive=getattr(h, "stal_min_positive", False),
+            stal_area_small=getattr(h, "stal_area_small", 32**2),
+            stal_area_medium=getattr(h, "stal_area_medium", 96**2),
+            stal_topk_small=getattr(h, "stal_topk_small", tal_topk),
+            stal_expand=getattr(h, "stal_expand", 1.0),
         )
+        # STAL: config-driven area-tier thresholds for per-tier positive stats, mirroring the assigner defaults.
+        self.stal_area_small = getattr(h, "stal_area_small", 32**2)
+        self.stal_area_medium = getattr(h, "stal_area_medium", 96**2)
         self.bbox_loss = BboxLoss(m.reg_max).to(device)
         self.proj = torch.arange(m.reg_max, dtype=torch.float, device=device)
+
+        # STAL P0: per-epoch positive-sample (foreground) statistics. Accumulated here because fg_mask is only
+        # available inside get_assigned_targets_and_loss; surfaced to the trainer via a callback reading these attrs.
+        self.fg_count = 0
+        self.fg_count_by_stride = {}
+        # STAL P0: per-area-tier coverage, keyed by tier name -> accumulated {pos, gt, zero} counts. See
+        # _record_tier_positives. Surfaced as train/fg_{tier} / train/gt_{tier} / train/zero_{tier}.
+        self.fg_tier_pos = {}
+        self.fg_tier_gt = {}
+        self.fg_tier_zero = {}
 
     def preprocess(self, targets: torch.Tensor, batch_size: int, scale_tensor: torch.Tensor) -> torch.Tensor:
         """Preprocess targets by converting to tensor format and scaling coordinates."""
@@ -439,6 +458,16 @@ class v8DetectionLoss:
             mask_gt,
         )
 
+        # STAL P0: count positives overall and per FPN level (stride is an area proxy: 8/16/32 -> small/medium/large).
+        self.fg_count += int(fg_mask.sum())
+        strides = stride_tensor.squeeze(-1)
+        for s in strides.unique():
+            key = int(s.item())
+            self.fg_count_by_stride[key] = self.fg_count_by_stride.get(key, 0) + int((fg_mask & (strides == s)).sum())
+
+        # STAL P0: per-area-tier positive-sample coverage (COCO-style 32²/96², training-pixel area).
+        self._record_tier_positives(gt_bboxes, mask_gt, target_gt_idx, fg_mask)
+
         target_scores_sum = max(target_scores.sum(), 1)
 
         # Cls loss with optional class weighting
@@ -469,6 +498,41 @@ class v8DetectionLoss:
             loss,
             loss.detach(),
         )  # loss(box, cls, dfl)
+
+    def _record_tier_positives(self, gt_bboxes, mask_gt, target_gt_idx, fg_mask):
+        """Accumulate per-area-tier positive-sample coverage (STAL P0, COCO-style 32²/96²).
+
+        For each GT in the batch, counts how many anchors were assigned to it, then buckets GTs by
+        their training-pixel area (small < 32² ≤ medium < 96² ≤ large). ``gt_bboxes`` are the
+        post-resize targets entering the assigner, matching the training-scale definition; the eval
+        tiering in ``A2/P0/tiered_eval.py`` instead uses the original val-image GT area.
+        """
+        valid = mask_gt.squeeze(-1).bool()  # (b, n_max_boxes)
+        if not valid.any():
+            return
+        wh = gt_bboxes[..., 2:] - gt_bboxes[..., :2]
+        area = (wh[..., 0] * wh[..., 1]).clamp_min(0.0)  # (b, n_max_boxes)
+
+        # Per-GT positive-anchor count via scatter (duplicate indices accumulate correctly).
+        n_max_boxes = gt_bboxes.shape[1]
+        pos_count = torch.zeros(gt_bboxes.shape[:2], device=self.device, dtype=torch.long)
+        if fg_mask.any():
+            b_idx, a_idx = fg_mask.nonzero(as_tuple=True)
+            flat_idx = b_idx * n_max_boxes + target_gt_idx[b_idx, a_idx]
+            pos_count.view(-1).scatter_add_(0, flat_idx, torch.ones_like(flat_idx, dtype=torch.long))
+
+        for name, lo, hi in (
+            ("small", 0, self.stal_area_small),
+            ("medium", self.stal_area_small, self.stal_area_medium),
+            ("large", self.stal_area_medium, float("inf")),
+        ):
+            in_tier = valid & (area >= lo) & (area < hi)
+            n_gt = int(in_tier.sum())
+            if n_gt == 0:
+                continue
+            self.fg_tier_pos[name] = self.fg_tier_pos.get(name, 0) + int(pos_count[in_tier].sum())
+            self.fg_tier_gt[name] = self.fg_tier_gt.get(name, 0) + n_gt
+            self.fg_tier_zero[name] = self.fg_tier_zero.get(name, 0) + int((pos_count[in_tier] == 0).sum())
 
     def parse_output(
         self, preds: dict[str, torch.Tensor] | tuple[torch.Tensor, dict[str, torch.Tensor]]
