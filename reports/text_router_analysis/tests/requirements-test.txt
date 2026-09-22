@@ -1,0 +1,13 @@
+torch==2.7.1
+torchvision==0.22.1
+pytest==8.4.2
+numpy==2.3.5
+opencv-python==4.11.0.86
+PyYAML==6.0.2
+requests==2.32.4
+psutil==7.0.0
+scipy==1.15.3
+matplotlib==3.10.3
+ultralytics-thop==2.0.18
+polars==1.31.0
+nvidia-ml-py==12.575.51
