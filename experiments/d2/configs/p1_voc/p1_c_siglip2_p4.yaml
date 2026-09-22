@@ -1,0 +1,46 @@
+# D2 P1-VOC 格 C｜SigLIP2 × P4 单尺度
+# 相对 A 只动教师轴。SigLIP2 同为 patch 16，P4 仍是原生同格，零插值。
+# 除 name 与末尾"唯一变量"区块外，本文件应与 configs/p1_voc/ 下其余四份逐字相同。
+# 改动其余任何一行都会使整个 2x2 对照失效。
+model: ultralytics/cfg/models/26/yolo26-master-n.yaml
+data: VOC.yaml
+task: detect
+mode: train
+
+# ---- 预算与优化：五份配置必须完全一致 ----
+epochs: 400
+imgsz: 256
+batch: 64
+workers: 32
+optimizer: SGD
+lr0: 0.01
+lrf: 0.01
+warmup_epochs: 3.0
+pretrained: false
+amp: false
+
+# ---- 可复现性（seed 由命令行覆盖为 17 / 29 / 43）----
+seed: 17
+deterministic: true
+
+# ---- 评测与产物 ----
+val: true
+plots: true
+save: true
+project: d2/p1voc
+name: c-s17
+
+# ---- 唯一变量：Foundation 蒸馏配置 ----
+foundation_enabled: true
+foundation_teacher: siglip2
+foundation_model: google/siglip2-base-patch16-256
+# 教师 revision（2025-02-21，仓库自此未变）: 3f9f96cb90da5dbc758b01813f2f6f1aee24c1ab
+# 记录用；本仓库无 foundation_revision 配置项，见 limitations.md 2.3
+foundation_loss_weight: 3.1106560298222616
+foundation_backend: transformers
+foundation_target_levels: [p4]
+foundation_multiscale: false
+foundation_align_dim: 256
+foundation_loss: relational
+foundation_foreground_weighting: false
+foundation_weight_schedule: constant
