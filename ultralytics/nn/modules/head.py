@@ -161,6 +161,12 @@ class Detect(nn.Module):
         preds = self.forward_head(x, **self.one2many)
         if self.end2end:
             x_detach = [xi.detach() for xi in x]
+            # A1 research opt-in: do not change native training, inference or export by default.
+            alpha = getattr(self, "p2_o2o_gradient_alpha", 0.0) if self.training and not self.export else 0.0
+            if alpha:
+                if type(self) is not Detect or not math.isfinite(alpha) or not 0.0 <= alpha <= 1.0:
+                    raise ValueError("P2 gradient bridge requires Detect and a finite alpha in [0, 1]")
+                x_detach = [xd + alpha * (xi - xd) for xi, xd in zip(x, x_detach)]
             one2one = self.forward_head(x_detach, **self.one2one)
             preds = {"one2many": preds, "one2one": one2one}
         if self.training:
