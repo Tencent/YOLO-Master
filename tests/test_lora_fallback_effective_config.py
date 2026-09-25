@@ -98,3 +98,31 @@ def test_legacy_fallback_adapter_without_scaling_mode_keeps_lora_scaling(tmp_pat
 
     assert restored[0].use_rslora is False
     assert restored[0].scaling == pytest.approx(16 / 8)
+
+
+def test_layers_outside_explicit_targets_are_frozen():
+    model = apply_manual_lora(
+        nn.Sequential(nn.Conv2d(4, 4, 1), nn.Conv2d(4, 4, 1)),
+        LoRAConfig(r=2, alpha=4, backend="fallback", target_modules=["1"], skip_stem=False),
+    )
+
+    assert isinstance(model[1], ManualLoRAConv)
+    trainable = {name for name, parameter in model.named_parameters() if parameter.requires_grad}
+    assert trainable == {"1.lora_A", "1.lora_B"}
+
+
+def test_skipped_depthwise_and_head_like_layers_are_frozen():
+    class _TinyModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.stem = nn.Conv2d(4, 4, 1)
+            self.depthwise = nn.Conv2d(4, 4, 3, padding=1, groups=4)
+            self.dfl = nn.Sequential(nn.Conv2d(4, 4, 1))
+
+    model = apply_manual_lora(_TinyModel(), LoRAConfig(r=2, alpha=4, backend="fallback", skip_stem=False))
+
+    assert isinstance(model.stem, ManualLoRAConv)
+    assert not any(parameter.requires_grad for parameter in model.depthwise.parameters())
+    assert not any(parameter.requires_grad for parameter in model.dfl.parameters())
+    trainable = {name for name, parameter in model.named_parameters() if parameter.requires_grad}
+    assert trainable == {"stem.lora_A", "stem.lora_B"}
