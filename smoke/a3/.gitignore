@@ -1,0 +1,27 @@
+# A3 smoke 提交用 .gitignore
+# 仅包含 smoke 提交需排除的项（不替代仓库根 .gitignore）
+
+# 本地虚拟环境
+.venv/
+venv/
+
+# 大产物（不直接进 git，由 SHA256 文件指向外部）
+yolo_master_n.pt
+yolo_master_n.onnx
+*.pt
+*.onnx
+
+# 跑 val 时生成的曲线（不在 smoke 目录里，但若混入 .workbuddy 等会很大）
+runs/
+
+# 数据集压缩包
+coco8.zip
+
+# 操作系统
+.DS_Store
+Thumbs.db
+
+# 编辑器
+.idea/
+.vscode/
+*.swp

@@ -1,0 +1,622 @@
+{
+  "status": "success",
+  "families": {
+    "moe": {
+      "fp32": {
+        "status": "success",
+        "elapsed_seconds": 381.27877358719707,
+        "data_yaml": "/mnt/workspace/a3_precision_cpu_accuracy_v1/contract/sensitivity_data.yaml",
+        "data_yaml_sha256": "58bc6caf68af5f45416e38df0cea3107b264dd3961e725958d7605308bc30403",
+        "accuracy": {
+          "map50_95": 0.42249018626489615,
+          "map50": 0.5845072840279137,
+          "map75": 0.45674324893866236,
+          "precision": 0.6843725820081951,
+          "recall": 0.5359383247820533
+        },
+        "validator_speed_ms": {
+          "preprocess": 0.4847946103662253,
+          "inference": 56.55608868300914,
+          "loss": 0.0017512552440166473,
+          "postprocess": 1.5044395700097084
+        },
+        "raw_results": {
+          "metrics/precision(B)": 0.6843725820081951,
+          "metrics/recall(B)": 0.5359383247820533,
+          "metrics/mAP50(B)": 0.5845072840279137,
+          "metrics/mAP50-95(B)": 0.42249018626489615,
+          "fitness": 0.42249018626489615
+        },
+        "artifact": "/mnt/workspace/a3_precision_cpu_export_v1/moe/artifacts/fp32.onnx",
+        "artifact_sha256": "6c377011e744696a7fc898f6ecbf0f65a832b4c3fc0d6ba4eeff9d30dcf4db2e",
+        "size_bytes": 11061692,
+        "size_mb": 10.549251556396484,
+        "run_contract_sha256": "5118b65ac76d9cdbe707aad94147a83f69524e7a7632931d8212b5b89d52f15f",
+        "map50_95_loss": 0.0,
+        "map50_95_loss_percentage_points": 0.0
+      },
+      "fp16": {
+        "status": "success",
+        "elapsed_seconds": 715.553670052439,
+        "data_yaml": "/mnt/workspace/a3_precision_cpu_accuracy_v1/contract/sensitivity_data.yaml",
+        "data_yaml_sha256": "58bc6caf68af5f45416e38df0cea3107b264dd3961e725958d7605308bc30403",
+        "accuracy": {
+          "map50_95": 0.4222722719215939,
+          "map50": 0.5844520290207464,
+          "map75": 0.45671012383488047,
+          "precision": 0.6850136964679001,
+          "recall": 0.5353508489839532
+        },
+        "validator_speed_ms": {
+          "preprocess": 0.5248547498136759,
+          "inference": 127.73595498353244,
+          "loss": 0.0010505232959985733,
+          "postprocess": 1.493347044661641
+        },
+        "raw_results": {
+          "metrics/precision(B)": 0.6850136964679001,
+          "metrics/recall(B)": 0.5353508489839532,
+          "metrics/mAP50(B)": 0.5844520290207464,
+          "metrics/mAP50-95(B)": 0.4222722719215939,
+          "fitness": 0.4222722719215939
+        },
+        "artifact": "/mnt/workspace/a3_precision_cpu_export_v1/moe/artifacts/fp16.onnx",
+        "artifact_sha256": "405e3d76be3ff736db1be29166dfe21c79138dab40d8daaf739a80e88cb63510",
+        "size_bytes": 5671032,
+        "size_mb": 5.408317565917969,
+        "run_contract_sha256": "5118b65ac76d9cdbe707aad94147a83f69524e7a7632931d8212b5b89d52f15f",
+        "map50_95_loss": 0.00021791434330226123,
+        "map50_95_loss_percentage_points": 0.021791434330226123
+      },
+      "full_int8": {
+        "status": "success",
+        "elapsed_seconds": 831.5460318922997,
+        "data_yaml": "/mnt/workspace/a3_precision_cpu_accuracy_v1/contract/sensitivity_data.yaml",
+        "data_yaml_sha256": "58bc6caf68af5f45416e38df0cea3107b264dd3961e725958d7605308bc30403",
+        "accuracy": {
+          "map50_95": 0.3849698625170654,
+          "map50": 0.549514795271276,
+          "map75": 0.41901997571005134,
+          "precision": 0.6621773153768981,
+          "recall": 0.5031149503696486
+        },
+        "validator_speed_ms": {
+          "preprocess": 0.5024510599672795,
+          "inference": 153.06298027634622,
+          "loss": 0.001010383665561676,
+          "postprocess": 1.4283523611724376
+        },
+        "raw_results": {
+          "metrics/precision(B)": 0.6621773153768981,
+          "metrics/recall(B)": 0.5031149503696486,
+          "metrics/mAP50(B)": 0.549514795271276,
+          "metrics/mAP50-95(B)": 0.3849698625170654,
+          "fitness": 0.3849698625170654
+        },
+        "artifact": "/mnt/workspace/a3_precision_cpu_export_v1/moe/artifacts/full_int8.onnx",
+        "artifact_sha256": "0d6f552f5a7fc0e4813db25837828958afc1bafc135167bd4a10057a5112359d",
+        "size_bytes": 3496533,
+        "size_mb": 3.3345537185668945,
+        "run_contract_sha256": "5118b65ac76d9cdbe707aad94147a83f69524e7a7632931d8212b5b89d52f15f",
+        "map50_95_loss": 0.037520323747830764,
+        "map50_95_loss_percentage_points": 3.7520323747830764
+      },
+      "manual_fallback": {
+        "status": "success",
+        "elapsed_seconds": 726.1318070944399,
+        "data_yaml": "/mnt/workspace/a3_precision_cpu_accuracy_v1/contract/sensitivity_data.yaml",
+        "data_yaml_sha256": "58bc6caf68af5f45416e38df0cea3107b264dd3961e725958d7605308bc30403",
+        "accuracy": {
+          "map50_95": 0.38649195165233025,
+          "map50": 0.5529821576449592,
+          "map75": 0.4185887017234286,
+          "precision": 0.6597501645452197,
+          "recall": 0.5087868756001221
+        },
+        "validator_speed_ms": {
+          "preprocess": 0.5389662589877844,
+          "inference": 129.58188461735844,
+          "loss": 0.001348944753408432,
+          "postprocess": 1.4282791394740342
+        },
+        "raw_results": {
+          "metrics/precision(B)": 0.6597501645452197,
+          "metrics/recall(B)": 0.5087868756001221,
+          "metrics/mAP50(B)": 0.5529821576449592,
+          "metrics/mAP50-95(B)": 0.38649195165233025,
+          "fitness": 0.38649195165233025
+        },
+        "artifact": "/mnt/workspace/a3_precision_cpu_export_v1/moe/artifacts/manual_fallback.onnx",
+        "artifact_sha256": "12a983e059146ad3f962df84e27bd5d25ce12d69d6da2a1edd94c1635c4eff8e",
+        "size_bytes": 4508609,
+        "size_mb": 4.299744606018066,
+        "run_contract_sha256": "5118b65ac76d9cdbe707aad94147a83f69524e7a7632931d8212b5b89d52f15f",
+        "map50_95_loss": 0.035998234612565905,
+        "map50_95_loss_percentage_points": 3.5998234612565905
+      }
+    },
+    "mot": {
+      "fp32": {
+        "status": "success",
+        "elapsed_seconds": 957.3033613916487,
+        "data_yaml": "/mnt/workspace/a3_precision_cpu_accuracy_v1/contract/sensitivity_data.yaml",
+        "data_yaml_sha256": "58bc6caf68af5f45416e38df0cea3107b264dd3961e725958d7605308bc30403",
+        "accuracy": {
+          "map50_95": 0.1772703035119351,
+          "map50": 0.3331188447398383,
+          "map75": 0.1706622194506724,
+          "precision": 0.44513509667007795,
+          "recall": 0.3478798017850059
+        },
+        "validator_speed_ms": {
+          "preprocess": 0.758392634242773,
+          "inference": 182.09099204353987,
+          "loss": 0.00137237086892128,
+          "postprocess": 0.14917085990309714
+        },
+        "raw_results": {
+          "metrics/precision(B)": 0.44513509667007795,
+          "metrics/recall(B)": 0.3478798017850059,
+          "metrics/mAP50(B)": 0.3331188447398383,
+          "metrics/mAP50-95(B)": 0.1772703035119351,
+          "fitness": 0.1772703035119351
+        },
+        "artifact": "/mnt/workspace/a3_precision_cpu_export_v1/mot/artifacts/fp32.onnx",
+        "artifact_sha256": "7028de9a461d1ca912dd7361fdb9de7c9747bb518b732c4865394a4c1bf753b2",
+        "size_bytes": 13692575,
+        "size_mb": 13.058257102966309,
+        "run_contract_sha256": "96959d9291f88aab3f8043496aaaffa4acf013305780ed3087531fe7e81543ed",
+        "map50_95_loss": 0.0,
+        "map50_95_loss_percentage_points": 0.0
+      },
+      "fp16": {
+        "status": "failed",
+        "path": "/mnt/workspace/a3_precision_cpu_export_v1/mot/artifacts/fp16.onnx",
+        "stage": "accuracy",
+        "error_type": "ConnectionError",
+        "error": "❌  Download failure for https://ultralytics.com/assets/Arial.ttf. Retry limit reached. Curl return value 16",
+        "failed_operators": [],
+        "artifact": "/mnt/workspace/a3_precision_cpu_export_v1/mot/artifacts/fp16.onnx",
+        "artifact_sha256": "b03b98c2742fde569f764812b036fd5e176d18595bfbc3e67c8b6aafad895cd2",
+        "run_contract_sha256": "96959d9291f88aab3f8043496aaaffa4acf013305780ed3087531fe7e81543ed"
+      },
+      "full_int8": {
+        "status": "success",
+        "elapsed_seconds": 2570.6594771146774,
+        "data_yaml": "/mnt/workspace/a3_precision_cpu_accuracy_v1/contract/sensitivity_data.yaml",
+        "data_yaml_sha256": "58bc6caf68af5f45416e38df0cea3107b264dd3961e725958d7605308bc30403",
+        "accuracy": {
+          "map50_95": 0.14898865441341408,
+          "map50": 0.2967452194640748,
+          "map75": 0.1327180107782367,
+          "precision": 0.40897902741295733,
+          "recall": 0.33979392976726863
+        },
+        "validator_speed_ms": {
+          "preprocess": 0.872053949162364,
+          "inference": 503.1785659570247,
+          "loss": 0.001262866333127022,
+          "postprocess": 0.15713266693055628
+        },
+        "raw_results": {
+          "metrics/precision(B)": 0.40897902741295733,
+          "metrics/recall(B)": 0.33979392976726863,
+          "metrics/mAP50(B)": 0.2967452194640748,
+          "metrics/mAP50-95(B)": 0.14898865441341408,
+          "fitness": 0.14898865441341408
+        },
+        "artifact": "/mnt/workspace/a3_precision_cpu_export_v1/mot/artifacts/full_int8.onnx",
+        "artifact_sha256": "fab921083dd97afe410ea39f13a65788836ca2ac5b63855776832a01f02631c8",
+        "size_bytes": 6035129,
+        "size_mb": 5.755547523498535,
+        "run_contract_sha256": "96959d9291f88aab3f8043496aaaffa4acf013305780ed3087531fe7e81543ed",
+        "map50_95_loss": 0.028281649098521017,
+        "map50_95_loss_percentage_points": 2.828164909852102
+      },
+      "manual_fallback": {
+        "status": "success",
+        "elapsed_seconds": 1248.667938414961,
+        "data_yaml": "/mnt/workspace/a3_precision_cpu_accuracy_v1/contract/sensitivity_data.yaml",
+        "data_yaml_sha256": "58bc6caf68af5f45416e38df0cea3107b264dd3961e725958d7605308bc30403",
+        "accuracy": {
+          "map50_95": 0.1582234643320197,
+          "map50": 0.30489599220487434,
+          "map75": 0.14744845051309052,
+          "precision": 0.4799658350099104,
+          "recall": 0.28724107405693433
+        },
+        "validator_speed_ms": {
+          "preprocess": 0.5078000947833061,
+          "inference": 234.43069493696095,
+          "loss": 0.0013541545718908311,
+          "postprocess": 0.15721605457365512
+        },
+        "raw_results": {
+          "metrics/precision(B)": 0.4799658350099104,
+          "metrics/recall(B)": 0.28724107405693433,
+          "metrics/mAP50(B)": 0.30489599220487434,
+          "metrics/mAP50-95(B)": 0.1582234643320197,
+          "fitness": 0.1582234643320197
+        },
+        "artifact": "/mnt/workspace/a3_precision_cpu_export_v1/mot/artifacts/manual_fallback.onnx",
+        "artifact_sha256": "e317be4d549c582f87232a4cae5adfa19ac03d355838f2e5e41cf22a014a4c68",
+        "size_bytes": 7240806,
+        "size_mb": 6.905370712280273,
+        "run_contract_sha256": "96959d9291f88aab3f8043496aaaffa4acf013305780ed3087531fe7e81543ed",
+        "map50_95_loss": 0.019046839179915398,
+        "map50_95_loss_percentage_points": 1.9046839179915398
+      }
+    },
+    "moa": {
+      "fp32": {
+        "status": "success",
+        "elapsed_seconds": 256.59840523824096,
+        "data_yaml": "/mnt/workspace/a3_precision_cpu_accuracy_v1/contract/sensitivity_data.yaml",
+        "data_yaml_sha256": "58bc6caf68af5f45416e38df0cea3107b264dd3961e725958d7605308bc30403",
+        "accuracy": {
+          "map50_95": 0.17390407738336452,
+          "map50": 0.32714652373024294,
+          "map75": 0.16723948169235323,
+          "precision": 0.4390617950266639,
+          "recall": 0.34546551998949054
+        },
+        "validator_speed_ms": {
+          "preprocess": 0.5191747207194566,
+          "inference": 42.38009882979095,
+          "loss": 0.0013484865427017213,
+          "postprocess": 0.15078972578048705
+        },
+        "raw_results": {
+          "metrics/precision(B)": 0.4390617950266639,
+          "metrics/recall(B)": 0.34546551998949054,
+          "metrics/mAP50(B)": 0.32714652373024294,
+          "metrics/mAP50-95(B)": 0.17390407738336452,
+          "fitness": 0.17390407738336452
+        },
+        "artifact": "/mnt/workspace/a3_precision_cpu_export_v1/moa/artifacts/fp32.onnx",
+        "artifact_sha256": "f7bfc26fb6bef101d12ba44e5424910749435798e49aa66010ca21ea4284c9ee",
+        "size_bytes": 9747106,
+        "size_mb": 9.295564651489258,
+        "run_contract_sha256": "96959d9291f88aab3f8043496aaaffa4acf013305780ed3087531fe7e81543ed",
+        "map50_95_loss": 0.0,
+        "map50_95_loss_percentage_points": 0.0
+      },
+      "fp16": {
+        "status": "success",
+        "elapsed_seconds": 846.7496574521065,
+        "data_yaml": "/mnt/workspace/a3_precision_cpu_accuracy_v1/contract/sensitivity_data.yaml",
+        "data_yaml_sha256": "58bc6caf68af5f45416e38df0cea3107b264dd3961e725958d7605308bc30403",
+        "accuracy": {
+          "map50_95": 0.17386305976828845,
+          "map50": 0.3272126829294909,
+          "map75": 0.1672406340572473,
+          "precision": 0.43928921921942266,
+          "recall": 0.34598861149677584
+        },
+        "validator_speed_ms": {
+          "preprocess": 0.5064518868923187,
+          "inference": 156.79814520142975,
+          "loss": 0.0011606428772211075,
+          "postprocess": 0.15208716802299024
+        },
+        "raw_results": {
+          "metrics/precision(B)": 0.43928921921942266,
+          "metrics/recall(B)": 0.34598861149677584,
+          "metrics/mAP50(B)": 0.3272126829294909,
+          "metrics/mAP50-95(B)": 0.17386305976828845,
+          "fitness": 0.17386305976828845
+        },
+        "artifact": "/mnt/workspace/a3_precision_cpu_export_v1/moa/artifacts/fp16.onnx",
+        "artifact_sha256": "97c19b54bdd4726ff3c156cfdfc4a930f09a740df3d500c41ed8f9096d384395",
+        "size_bytes": 5253923,
+        "size_mb": 5.010531425476074,
+        "run_contract_sha256": "96959d9291f88aab3f8043496aaaffa4acf013305780ed3087531fe7e81543ed",
+        "map50_95_loss": 4.101761507607771e-05,
+        "map50_95_loss_percentage_points": 0.004101761507607771
+      },
+      "full_int8": {
+        "status": "success",
+        "elapsed_seconds": 602.1169771961868,
+        "data_yaml": "/mnt/workspace/a3_precision_cpu_accuracy_v1/contract/sensitivity_data.yaml",
+        "data_yaml_sha256": "58bc6caf68af5f45416e38df0cea3107b264dd3961e725958d7605308bc30403",
+        "accuracy": {
+          "map50_95": 0.15490426225799644,
+          "map50": 0.29810447027751164,
+          "map75": 0.14784915495979037,
+          "precision": 0.4139764927581496,
+          "recall": 0.3235642180664762
+        },
+        "validator_speed_ms": {
+          "preprocess": 0.48842205405235295,
+          "inference": 110.66615626737475,
+          "loss": 0.0014351420104503632,
+          "postprocess": 0.15310172699391844
+        },
+        "raw_results": {
+          "metrics/precision(B)": 0.4139764927581496,
+          "metrics/recall(B)": 0.3235642180664762,
+          "metrics/mAP50(B)": 0.29810447027751164,
+          "metrics/mAP50-95(B)": 0.15490426225799644,
+          "fitness": 0.15490426225799644
+        },
+        "artifact": "/mnt/workspace/a3_precision_cpu_export_v1/moa/artifacts/full_int8.onnx",
+        "artifact_sha256": "b96950a57fa919039a0406f7ccd616389c2e441a04c7efa41020859edd846240",
+        "size_bytes": 3443500,
+        "size_mb": 3.283977508544922,
+        "run_contract_sha256": "96959d9291f88aab3f8043496aaaffa4acf013305780ed3087531fe7e81543ed",
+        "map50_95_loss": 0.01899981512536808,
+        "map50_95_loss_percentage_points": 1.899981512536808
+      },
+      "manual_fallback": {
+        "status": "success",
+        "elapsed_seconds": 508.3042301405221,
+        "data_yaml": "/mnt/workspace/a3_precision_cpu_accuracy_v1/contract/sensitivity_data.yaml",
+        "data_yaml_sha256": "58bc6caf68af5f45416e38df0cea3107b264dd3961e725958d7605308bc30403",
+        "accuracy": {
+          "map50_95": 0.15232590080733993,
+          "map50": 0.2946718336957762,
+          "map75": 0.1433254112540421,
+          "precision": 0.4113712052779275,
+          "recall": 0.32039504777634964
+        },
+        "validator_speed_ms": {
+          "preprocess": 0.4927921071648598,
+          "inference": 91.15684647001326,
+          "loss": 0.0012543521821498872,
+          "postprocess": 0.15311463735997677
+        },
+        "raw_results": {
+          "metrics/precision(B)": 0.4113712052779275,
+          "metrics/recall(B)": 0.32039504777634964,
+          "metrics/mAP50(B)": 0.2946718336957762,
+          "metrics/mAP50-95(B)": 0.15232590080733993,
+          "fitness": 0.15232590080733993
+        },
+        "artifact": "/mnt/workspace/a3_precision_cpu_export_v1/moa/artifacts/manual_fallback.onnx",
+        "artifact_sha256": "5bd0f89f0bb88dd96be9917f50655ad7a794b11a67b7792748dfb56c7fc4db95",
+        "size_bytes": 3509950,
+        "size_mb": 3.347349166870117,
+        "run_contract_sha256": "96959d9291f88aab3f8043496aaaffa4acf013305780ed3087531fe7e81543ed",
+        "map50_95_loss": 0.021578176576024594,
+        "map50_95_loss_percentage_points": 2.1578176576024592
+      }
+    },
+    "latent": {
+      "fp32": {
+        "status": "success",
+        "elapsed_seconds": 1391.7617696207017,
+        "data_yaml": "/mnt/workspace/a3_precision_cpu_accuracy_v1/contract/sensitivity_data.yaml",
+        "data_yaml_sha256": "58bc6caf68af5f45416e38df0cea3107b264dd3961e725958d7605308bc30403",
+        "accuracy": {
+          "map50_95": 0.010416881088556882,
+          "map50": 0.020234877150971754,
+          "map75": 0.009549286673927937,
+          "precision": 0.5395642068666815,
+          "recall": 0.02757131561199789
+        },
+        "validator_speed_ms": {
+          "preprocess": 0.9113444793969393,
+          "inference": 247.88237853571775,
+          "loss": 0.0014906994998455049,
+          "postprocess": 0.15580835044384003
+        },
+        "raw_results": {
+          "metrics/precision(B)": 0.5395642068666815,
+          "metrics/recall(B)": 0.02757131561199789,
+          "metrics/mAP50(B)": 0.020234877150971754,
+          "metrics/mAP50-95(B)": 0.010416881088556882,
+          "fitness": 0.010416881088556882
+        },
+        "artifact": "/mnt/workspace/a3_precision_cpu_export_v1/latent/artifacts/fp32.onnx",
+        "artifact_sha256": "39369327053225142576d19593c0284a539469e572c976caaa77745be8a7be9b",
+        "size_bytes": 29405146,
+        "size_mb": 28.042932510375977,
+        "run_contract_sha256": "96959d9291f88aab3f8043496aaaffa4acf013305780ed3087531fe7e81543ed",
+        "map50_95_loss": 0.0,
+        "map50_95_loss_percentage_points": 0.0
+      },
+      "full_int8": {
+        "status": "success",
+        "elapsed_seconds": 3116.5625486616045,
+        "data_yaml": "/mnt/workspace/a3_precision_cpu_accuracy_v1/contract/sensitivity_data.yaml",
+        "data_yaml_sha256": "58bc6caf68af5f45416e38df0cea3107b264dd3961e725958d7605308bc30403",
+        "accuracy": {
+          "map50_95": 0.008726951163394087,
+          "map50": 0.016985250533798246,
+          "map75": 0.008203737718066617,
+          "precision": 0.4393273569142303,
+          "recall": 0.035201429046851265
+        },
+        "validator_speed_ms": {
+          "preprocess": 0.9090094726532697,
+          "inference": 613.8556034971028,
+          "loss": 0.0015127804130315782,
+          "postprocess": 0.17243365608155728
+        },
+        "raw_results": {
+          "metrics/precision(B)": 0.4393273569142303,
+          "metrics/recall(B)": 0.035201429046851265,
+          "metrics/mAP50(B)": 0.016985250533798246,
+          "metrics/mAP50-95(B)": 0.008726951163394087,
+          "fitness": 0.008726951163394087
+        },
+        "artifact": "/mnt/workspace/a3_precision_cpu_export_v1/latent/artifacts/full_int8.onnx",
+        "artifact_sha256": "55dde0dd5a992e5153b85948b39d514ef963c72594d72bd2eba3c5c7a081b61e",
+        "size_bytes": 14580904,
+        "size_mb": 13.905433654785156,
+        "run_contract_sha256": "96959d9291f88aab3f8043496aaaffa4acf013305780ed3087531fe7e81543ed",
+        "map50_95_loss": 0.001689929925162795,
+        "map50_95_loss_percentage_points": 0.1689929925162795
+      }
+    },
+    "molora": {
+      "fp32": {
+        "status": "success",
+        "elapsed_seconds": 479.85912309587,
+        "data_yaml": "/mnt/workspace/a3_precision_cpu_accuracy_v1/contract/sensitivity_data.yaml",
+        "data_yaml_sha256": "58bc6caf68af5f45416e38df0cea3107b264dd3961e725958d7605308bc30403",
+        "accuracy": {
+          "map50_95": 0.36055317444855817,
+          "map50": 0.5125249381352033,
+          "map75": 0.39083496310565824,
+          "precision": 0.6065088489616051,
+          "recall": 0.477987268478919
+        },
+        "validator_speed_ms": {
+          "preprocess": 0.907644210755825,
+          "inference": 86.54717171713709,
+          "loss": 0.0015677575021982193,
+          "postprocess": 0.16645017080008984
+        },
+        "raw_results": {
+          "metrics/precision(B)": 0.6065088489616051,
+          "metrics/recall(B)": 0.477987268478919,
+          "metrics/mAP50(B)": 0.5125249381352033,
+          "metrics/mAP50-95(B)": 0.36055317444855817,
+          "fitness": 0.36055317444855817
+        },
+        "artifact": "/mnt/workspace/a3_precision_cpu_export_v1/molora/artifacts/fp32.onnx",
+        "artifact_sha256": "c04e7a70b2a74af9f80b17538abc154d69f8597d7cbe6458f7eb7d3bcab87cb7",
+        "size_bytes": 47396154,
+        "size_mb": 45.20049476623535,
+        "run_contract_sha256": "96959d9291f88aab3f8043496aaaffa4acf013305780ed3087531fe7e81543ed",
+        "map50_95_loss": 0.0,
+        "map50_95_loss_percentage_points": 0.0
+      },
+      "full_int8": {
+        "status": "success",
+        "elapsed_seconds": 992.3275055997074,
+        "data_yaml": "/mnt/workspace/a3_precision_cpu_accuracy_v1/contract/sensitivity_data.yaml",
+        "data_yaml_sha256": "58bc6caf68af5f45416e38df0cea3107b264dd3961e725958d7605308bc30403",
+        "accuracy": {
+          "map50_95": 0.3089309180261286,
+          "map50": 0.4639295231893016,
+          "map75": 0.333851905640789,
+          "precision": 0.5722063877371515,
+          "recall": 0.4612257210889519
+        },
+        "validator_speed_ms": {
+          "preprocess": 0.5421157971024514,
+          "inference": 184.65045049600303,
+          "loss": 0.0013293910771608353,
+          "postprocess": 0.15852981358766555
+        },
+        "raw_results": {
+          "metrics/precision(B)": 0.5722063877371515,
+          "metrics/recall(B)": 0.4612257210889519,
+          "metrics/mAP50(B)": 0.4639295231893016,
+          "metrics/mAP50-95(B)": 0.3089309180261286,
+          "fitness": 0.3089309180261286
+        },
+        "artifact": "/mnt/workspace/a3_precision_cpu_export_v1/molora/artifacts/full_int8.onnx",
+        "artifact_sha256": "cbcc0d678d44c83fc6d5d0b1d64c3f234088ce7d855ee5d592b0a971f2365830",
+        "size_bytes": 38310183,
+        "size_mb": 36.53543758392334,
+        "run_contract_sha256": "96959d9291f88aab3f8043496aaaffa4acf013305780ed3087531fe7e81543ed",
+        "map50_95_loss": 0.05162225642242957,
+        "map50_95_loss_percentage_points": 5.162225642242957
+      }
+    }
+  },
+  "claim_boundary": "Accuracy only on the exact locked validation image list; no latency. Runtime differs from the export lock and both contracts are retained.",
+  "source_experiment": "/mnt/workspace/a3_precision_cpu_export_v1",
+  "experiment_lock_sha256": "c8980962859771d261ccfef868fe2def8c49b61aaff5d3fe50ee9ef1d983b5cf",
+  "script_sha256": "9242c4058ac19a5e135caa4e80609d2907b230c027c2f8aa0c53a382c029a364",
+  "runtime_contract_match": false,
+  "runtime_drift_allowed": true,
+  "locked_export_runtime": {
+    "onnxruntime_providers": [
+      "AzureExecutionProvider",
+      "CPUExecutionProvider"
+    ],
+    "packages": {
+      "numpy": "1.26.4",
+      "onnx": "1.20.1",
+      "onnxruntime": "1.23.2",
+      "onnxruntime-gpu": null,
+      "opencv-python": "4.11.0.86",
+      "torch": "2.3.1+cpu",
+      "ultralytics": "8.4.101"
+    },
+    "platform": "Linux-5.10.134-17.3.al8.x86_64-x86_64-with-glibc2.35",
+    "python_version": "3.11.11",
+    "torch_runtime": {
+      "cuda_available": false,
+      "cuda_devices": [],
+      "cuda_version": null,
+      "cudnn_version": null
+    }
+  },
+  "current_validation_runtime": {
+    "python_version": "3.12.13",
+    "platform": "Linux-5.10.134-17.3.al8.x86_64-x86_64-with-glibc2.35",
+    "packages": {
+      "numpy": "2.5.2",
+      "onnx": "1.22.0",
+      "onnxruntime": "1.29.0",
+      "onnxruntime-gpu": null,
+      "opencv-python": "4.11.0.86",
+      "torch": "2.13.0+cpu",
+      "ultralytics": "8.4.101"
+    },
+    "torch_runtime": {
+      "cuda_version": null,
+      "cudnn_version": null,
+      "cuda_available": false,
+      "cuda_devices": []
+    },
+    "onnxruntime_providers": [
+      "AzureExecutionProvider",
+      "CPUExecutionProvider"
+    ]
+  },
+  "run_contract": {
+    "task": "accuracy_only",
+    "locked_image_count": 5000,
+    "locked_selection_digest": "e34582bc6d2036cdfd93a19bab5963d3c069ebb3026be9ec84e6030298af4372",
+    "data_yaml_sha256": "58bc6caf68af5f45416e38df0cea3107b264dd3961e725958d7605308bc30403",
+    "settings": {
+      "imgsz": 640,
+      "validation_batch": 1,
+      "validation_device": "cpu",
+      "workers": 0,
+      "conf": 0.001,
+      "iou": 0.7
+    },
+    "current_validation_runtime": {
+      "python_version": "3.12.13",
+      "platform": "Linux-5.10.134-17.3.al8.x86_64-x86_64-with-glibc2.35",
+      "packages": {
+        "numpy": "2.5.2",
+        "onnx": "1.22.0",
+        "onnxruntime": "1.29.0",
+        "onnxruntime-gpu": null,
+        "opencv-python": "4.11.0.86",
+        "torch": "2.13.0+cpu",
+        "ultralytics": "8.4.101"
+      },
+      "torch_runtime": {
+        "cuda_version": null,
+        "cudnn_version": null,
+        "cuda_available": false,
+        "cuda_devices": []
+      },
+      "onnxruntime_providers": [
+        "AzureExecutionProvider",
+        "CPUExecutionProvider"
+      ]
+    }
+  },
+  "run_contract_sha256": "96959d9291f88aab3f8043496aaaffa4acf013305780ed3087531fe7e81543ed",
+  "completed": 4,
+  "expected": 4,
+  "selected_families": [
+    "latent"
+  ],
+  "selected_variants": [
+    "fp32",
+    "fp16",
+    "full_int8",
+    "manual_fallback"
+  ]
+}

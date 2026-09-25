@@ -1,0 +1,110 @@
+# A3 five-family FP32/FP16/INT8 routing-sensitivity experiment.
+#
+# All five checkpoint variables are intentionally required. They must be real,
+# trained checkpoints for the SAME VisDrone validation contract. The lock stage
+# fails rather than silently constructing random models when any is missing.
+schema_version: 1
+
+experiment:
+  output_dir: ${A3_OUTPUT_DIR:-runs/a3_five_family_precision}
+  seed: 42
+  imgsz: 640
+  batch: 1
+  validation_batch: 1
+  device: ${A3_DEVICE:-cuda:0}
+  export_device: ${A3_EXPORT_DEVICE:-cpu}
+  validation_device: ${A3_DEVICE:-cuda:0}
+  benchmark_device: ${A3_DEVICE:-cuda:0}
+  workers: 8
+  opset: 17
+  simplify: false
+  dynamic: false
+  conf: 0.001
+  iou: 0.7
+  warmup: 20
+  repeats: ${A3_LATENCY_REPEATS:-200}
+  benchmark_images: ${A3_BENCHMARK_IMAGES:-16}
+  # One extra profiled inference records which optimized ops actually ran on
+  # CUDA vs CPU, preventing silent provider fallback from hiding in latency.
+  profile_provider_assignment: true
+  ort_providers:
+    - CUDAExecutionProvider
+    - CPUExecutionProvider
+
+locking:
+  # Load every trained checkpoint during the lock stage and reject a declared
+  # family whose live module graph has no matching routed implementation.
+  inspect_checkpoints: true
+
+dataset:
+  data_yaml: ${A3_DATA_YAML:-data/visdrone/data.yaml}
+  calibration_images: ${A3_CALIB_IMAGES:-data/visdrone/images/train}
+  validation_images: ${A3_VAL_IMAGES:-data/visdrone/images/val}
+  validation_labels: ${A3_VAL_LABELS:-data/visdrone/labels/val}
+  calibration_samples: ${A3_CALIBRATION_SAMPLES:-300}
+  validation_samples: ${A3_VALIDATION_SAMPLES:-548}
+
+# Stage 0 is mandatory and runs before the lock/export/quantization matrix.
+trained_mot_drift:
+  limit: ${A3_STAGE0_SAMPLES:-548}
+  scope: router_only
+  per_channel: true
+  device: ${A3_DEVICE:-cuda:0}
+
+quantization:
+  format: QDQ
+  calibration_method: MinMax
+  activation_type: QInt8
+  weight_type: QInt8
+  calibration_providers: [CUDAExecutionProvider, CPUExecutionProvider]
+  per_channel: true
+  op_types: [Conv, Gemm, MatMul]
+  extra_options:
+    ActivationSymmetric: true
+    WeightSymmetric: true
+    QuantizeBias: false
+  # Manual fallback is the conservative engineering baseline. ORT excluded
+  # nodes remain FP32; FP16 fallback is represented by the separate FP16 graph.
+  manual_fallback_roles: [router, topk, attention, matmul]
+
+sensitivity:
+  roles: [router, topk, attention, matmul]
+  # Set 0 for every discovered group. A finite cap is useful for a cloud smoke
+  # run, but final evidence should keep this at 0.
+  max_groups: ${A3_MAX_GROUPS:-0}
+  route_samples: ${A3_ROUTE_SAMPLES:-64}
+  # Per-layer screening uses this locked subset; the final five-variant matrix
+  # always returns to all 548 validation images.
+  validation_samples: ${A3_SENSITIVITY_SAMPLES:-128}
+  calibration_samples: ${A3_SENSITIVITY_CALIBRATION_SAMPLES:-32}
+  keep_probe_models: false
+  route_device: ${A3_DEVICE:-cuda:0}
+  route_per_channel: true
+  map_loss_pp_threshold: 0.10
+  topk_exact_min: 0.99
+  topk_ordered_exact_min: 0.99
+  top1_flip_max: 0.01
+  score_threshold: 0.50
+  map_weight: 0.60
+  route_weight: 0.40
+  validation:
+    validation_batch: 1
+    workers: 8
+
+models:
+  - family: moe
+    config: repo://ultralytics/cfg/models/master/v0/det/yolo-master-esmoe-n-visdrone.yaml
+    checkpoint: ${A3_MOE_WEIGHT}
+  - family: moa
+    config: repo://ultralytics/cfg/models/master/v0_10/det/yolo-master-moa-n.yaml
+    checkpoint: ${A3_MOA_WEIGHT}
+  - family: mot
+    config: repo://ultralytics/cfg/models/master/v0_10/det/yolo-master-mot-n.yaml
+    checkpoint: ${A3_MOT_WEIGHT}
+  - family: molora
+    config: repo://ultralytics/cfg/models/26/yolo26-master-n.yaml
+    checkpoint: ${A3_MOLORA_WEIGHT}
+    adapter: ${A3_MOLORA_ADAPTER:-}
+  - family: latent
+    config: repo://ultralytics/cfg/models/26/yolo26-master-latent-n.yaml
+    checkpoint: ${A3_LATENT_WEIGHT}

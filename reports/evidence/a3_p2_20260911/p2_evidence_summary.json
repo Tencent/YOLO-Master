@@ -1,0 +1,210 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-09-11",
+  "task": "A3 Export Gap: sparse-routing model quantization and deployment",
+  "source_bundle": {
+    "name": "a3_p2_evidence_bundle.zip",
+    "sha256": "468523b784e9fcfaf5e92521e81785c55d16569a44f9a7799e4120b9a829bf6b",
+    "size_bytes": 946882,
+    "file_count": 28,
+    "uncompressed_size_bytes": 11926523
+  },
+  "provenance": {
+    "repository_branch": "rhino-a3-dev/smoke/a3",
+    "repository_commit": "637c66e72520118d1409ec06869aa42ee301e74b",
+    "repository_dirty": true,
+    "experiment_lock_sha256": "c8980962859771d261ccfef868fe2def8c49b61aaff5d3fe50ee9ef1d983b5cf",
+    "accuracy_script_sha256": "9242c4058ac19a5e135caa4e80609d2907b230c027c2f8aa0c53a382c029a364",
+    "route_script_sha256": "1f6101a0fd3893638ca92c9c462366d44e131516730a4c684809b22204107bf6",
+    "validation_images": 5000,
+    "validation_selection_digest": "e34582bc6d2036cdfd93a19bab5963d3c069ebb3026be9ec84e6030298af4372",
+    "route_images": 64,
+    "route_selection_digest": "5c0ae74ea602ce0867b87822321dba534099e54357472d903692d6846db061ec",
+    "calibration_images": 4,
+    "calibration_selection_digest": "cc27755b68c35561acaa18021382b860def5207234ce84c211450473f0f19bc5"
+  },
+  "baseline_models": [
+    {
+      "family": "moe",
+      "checkpoint_sha256": "29e1b93f09b16c8cf7c402f36dcaafc19d4812155631ed45b769e941e4c88c32",
+      "epochs_requested": 700,
+      "routed_layers": 4,
+      "parameters": 2694364
+    },
+    {
+      "family": "moa",
+      "checkpoint_sha256": "78e8b43702b971409e96f9e0b8c9335743c48c18e86a5773b340bcfbb5c2b2a2",
+      "epochs_requested": 5,
+      "routed_layers": 4,
+      "parameters": 2450630
+    },
+    {
+      "family": "mot",
+      "checkpoint_sha256": "7f655e63646f5fd079e6a6b612e799f418967a411f673bae05d081a37ec9027b",
+      "epochs_requested": 5,
+      "routed_layers": 4,
+      "parameters": 2927512
+    },
+    {
+      "family": "molora",
+      "checkpoint_sha256": "7059828084cce488adfa9f86bc014f277d37c08e79379205383ea9eb54e96246",
+      "epochs_requested": 5,
+      "routed_layers": 66,
+      "parameters": 3862052
+    },
+    {
+      "family": "latent",
+      "checkpoint_sha256": "d4c869893f0e25f4ab55a23bdda59cdf07638e0736b3c12729d02b69c3815f32",
+      "epochs_requested": 5,
+      "routed_layers": 3,
+      "parameters": 5478423
+    }
+  ],
+  "accuracy": [
+    {
+      "family": "moe",
+      "fp32_map50_95": 0.42249018626489615,
+      "full_int8_map50_95": 0.3849698625170654,
+      "loss_percentage_points": 3.7520323747830764,
+      "int8_size_reduction_percent": 68.39,
+      "full_validation_time_ratio": 2.18
+    },
+    {
+      "family": "moa",
+      "fp32_map50_95": 0.17390407738336452,
+      "full_int8_map50_95": 0.15490426225799644,
+      "loss_percentage_points": 1.899981512536808,
+      "int8_size_reduction_percent": 64.67,
+      "full_validation_time_ratio": 2.35
+    },
+    {
+      "family": "mot",
+      "fp32_map50_95": 0.1772703035119351,
+      "full_int8_map50_95": 0.14898865441341408,
+      "loss_percentage_points": 2.828164909852102,
+      "int8_size_reduction_percent": 55.92,
+      "full_validation_time_ratio": 2.69
+    },
+    {
+      "family": "molora",
+      "fp32_map50_95": 0.36055317444855817,
+      "full_int8_map50_95": 0.3089309180261286,
+      "loss_percentage_points": 5.162225642242959,
+      "int8_size_reduction_percent": 19.17,
+      "full_validation_time_ratio": 2.07
+    },
+    {
+      "family": "latent",
+      "fp32_map50_95": 0.010416881088556882,
+      "full_int8_map50_95": 0.008726951163394087,
+      "loss_percentage_points": 0.1689929925162795,
+      "int8_size_reduction_percent": 50.41,
+      "full_validation_time_ratio": 2.24
+    }
+  ],
+  "route_consistency": {
+    "thresholds": {
+      "exact_set_match_min": 0.99,
+      "ordered_match_min": 0.99,
+      "top1_flip_max": 0.01
+    },
+    "measurement_status": "success",
+    "families_measured": 5,
+    "families_expected": 5,
+    "families_passing": 1,
+    "acceptance_passed": false,
+    "families": [
+      {
+        "family": "moe",
+        "representation": "dense_probabilities_top2_proxy",
+        "layers": 4,
+        "weighted_exact_set_match": 1.0,
+        "weighted_ordered_match": 1.0,
+        "weighted_top1_flip": 0.0,
+        "worst_exact_set_match": 1.0,
+        "worst_ordered_match": 1.0,
+        "worst_top1_flip": 0.0,
+        "gate_passed": true
+      },
+      {
+        "family": "moa",
+        "representation": "dense_probabilities_top2_proxy",
+        "layers": 4,
+        "weighted_exact_set_match": 0.65535625,
+        "weighted_ordered_match": 0.4080734375,
+        "weighted_top1_flip": 0.48528125,
+        "worst_exact_set_match": 0.58421875,
+        "worst_ordered_match": 0.38425537109375,
+        "worst_top1_flip": 0.56626220703125,
+        "gate_passed": false
+      },
+      {
+        "family": "mot",
+        "representation": "sparse_topk",
+        "layers": 4,
+        "weighted_exact_set_match": 0.2014390625,
+        "weighted_ordered_match": 0.149603125,
+        "weighted_top1_flip": 0.7559484375,
+        "worst_exact_set_match": 0.0001171875,
+        "worst_ordered_match": 0.0001171875,
+        "worst_top1_flip": 0.9998828125,
+        "gate_passed": false
+      },
+      {
+        "family": "molora",
+        "representation": "sparse_topk",
+        "layers": 66,
+        "weighted_exact_set_match": 0.3458806818181818,
+        "weighted_ordered_match": 0.26017992424242425,
+        "weighted_top1_flip": 0.41571969696969696,
+        "worst_exact_set_match": 0.046875,
+        "worst_ordered_match": 0.0,
+        "worst_top1_flip": 0.921875,
+        "gate_passed": false
+      },
+      {
+        "family": "latent",
+        "representation": "sparse_topk",
+        "layers": 6,
+        "weighted_exact_set_match": 0.234375,
+        "weighted_ordered_match": 0.16145833333333334,
+        "weighted_top1_flip": 0.6302083333333334,
+        "worst_exact_set_match": 0.046875,
+        "worst_ordered_match": 0.015625,
+        "worst_top1_flip": 0.84375,
+        "gate_passed": false
+      }
+    ]
+  },
+  "mixed_precision_fallback": [
+    {
+      "family": "moe",
+      "full_int8_loss_percentage_points": 3.7520323747830764,
+      "fallback_loss_percentage_points": 3.5998234612565905,
+      "recovery_percentage_points": 0.1522089135264859
+    },
+    {
+      "family": "moa",
+      "full_int8_loss_percentage_points": 1.899981512536808,
+      "fallback_loss_percentage_points": 2.1578176576024592,
+      "recovery_percentage_points": -0.2578361450656511
+    },
+    {
+      "family": "mot",
+      "full_int8_loss_percentage_points": 2.828164909852102,
+      "fallback_loss_percentage_points": 1.9046839179915398,
+      "recovery_percentage_points": 0.9234809918605623
+    }
+  ],
+  "claim_boundary": {
+    "core_accuracy_runs_successful": "10/10 FP32 and full-INT8 family/variant pairs",
+    "route_measurements_successful": "5/5 families",
+    "route_acceptance": "failed; 1/5 families passed the proposed strict gate",
+    "true_conditional_int8_execution": false,
+    "gpu_latency_measured": false,
+    "qat_attempted": false,
+    "fallback_scope": "manual role-level exclusion attempted on moe, moa and mot only",
+    "runtime_contract_match": false,
+    "runtime_drift_allowed": true
+  }
+}

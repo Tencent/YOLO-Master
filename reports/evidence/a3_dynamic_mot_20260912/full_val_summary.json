@@ -1,0 +1,103 @@
+{
+  "schema_version": 2,
+  "status": "PASS_WITH_ROUTE_DRIFT",
+  "source_archive": {
+    "name": "mot_dynamic_full_val_20260912_evidence.zip",
+    "bytes": 16182,
+    "sha256": "0B05BACB5FAB5A91ACABE4211A6CF6852ABD01B7C37588E04A874E7BAE18CC72"
+  },
+  "checkpoint_sha256": "5f6ff684f74c773de5cdf0a2e4a51773317829bbeccc48c5c13f0ed3a2f3d417",
+  "scope": "full_yolo_visdrone_ort_router_pytorch_checkpoint_experts",
+  "execution_semantics": "host_ort_router_conditional_pytorch_checkpoint_experts",
+  "masked_dense_allowed": false,
+  "not_a_full_export": true,
+  "not_tensorrt": true,
+  "latency_is_deployment_benchmark": false,
+  "eager": {
+    "images": 548,
+    "precision": 0.10710894554754607,
+    "recall": 0.2392802158725934,
+    "map50": 0.06634212473100944,
+    "map50_95": 0.032929580881133534,
+    "inference_ms_per_image_diagnostic": 9.63999991729714
+  },
+  "dynamic": {
+    "images": 548,
+    "precision": 0.107113262440674,
+    "recall": 0.23929897448223708,
+    "map50": 0.06633809398647492,
+    "map50_95": 0.03293158798954675,
+    "inference_ms_per_image_diagnostic": 12.948603960013735
+  },
+  "accuracy_gate": {
+    "delta_percentage_points": 0.00020071084132142203,
+    "absolute_delta_percentage_points": 0.00020071084132142203,
+    "tolerance_percentage_points": 0.5,
+    "passed": true
+  },
+  "route_gate": {
+    "exact_route_required": false,
+    "mismatched_locations": 173,
+    "total_locations": 3945600,
+    "mismatch_ratio": 0.0000438463098134631,
+    "mismatch_percent": 0.00438463098134631,
+    "passed": true
+  },
+  "route_margin_followup": {
+    "source_archive": {
+      "name": "mot_dynamic_route_margin_20260912_evidence.zip",
+      "bytes": 18728,
+      "sha256": "818607439F165D63369A1839F365BCC3C266D8EBD5F828759073C4D78BD2C63D"
+    },
+    "status": "PASS_WITH_ROUTE_DRIFT",
+    "mismatched_locations": 173,
+    "total_locations": 3945600,
+    "diagnosis": "near_tie_cross_backend_floating_point_flip",
+    "semantic_export_error_supported": false,
+    "blocks": [
+      {
+        "module_name": "model.14.m.0",
+        "mismatch_locations": 149,
+        "ort_mismatch_margin_median": 2.980232238769531e-08,
+        "ort_mismatch_margin_p95": 1.1920928955078125e-07,
+        "ort_mismatch_margin_max": 1.7881393432617188e-07,
+        "eager_mismatch_margin_median": 2.980232238769531e-08,
+        "eager_mismatch_margin_p95": 1.1920928955078125e-07,
+        "eager_mismatch_margin_max": 1.4901161193847656e-07,
+        "dense_probability_max_abs_error": 2.682209014892578e-07
+      },
+      {
+        "module_name": "model.20.m.0",
+        "mismatch_locations": 24,
+        "ort_mismatch_margin_median": 2.980232238769531e-08,
+        "ort_mismatch_margin_p95": 1.445412635803222e-07,
+        "ort_mismatch_margin_max": 1.4901161193847656e-07,
+        "eager_mismatch_margin_median": 5.960464477539063e-08,
+        "eager_mismatch_margin_p95": 1.7434358596801751e-07,
+        "eager_mismatch_margin_max": 2.086162567138672e-07,
+        "dense_probability_max_abs_error": 2.980232238769531e-07
+      }
+    ]
+  },
+  "dynamic_execution_gate": {
+    "all_blocks_executed": true,
+    "at_least_one_block_observed_sample_pair_reduction": true,
+    "onnx_expert_sessions_loaded": 0,
+    "checkpoint_pytorch_experts_executed": true,
+    "passed": true
+  },
+  "blocks": [
+    {"module_name": "model.14.m.0", "calls": 69, "sample_pair_reduction_ratio": 0.0, "executed_expert_calls": 207, "dense_expert_calls": 207, "route_location_mismatches": 149, "route_locations": 876800},
+    {"module_name": "model.14.m.1", "calls": 69, "sample_pair_reduction_ratio": 0.33333333333333337, "executed_expert_calls": 138, "dense_expert_calls": 207, "route_location_mismatches": 0, "route_locations": 876800},
+    {"module_name": "model.20.m.0", "calls": 69, "sample_pair_reduction_ratio": 0.0, "executed_expert_calls": 207, "dense_expert_calls": 207, "route_location_mismatches": 24, "route_locations": 876800},
+    {"module_name": "model.20.m.1", "calls": 69, "sample_pair_reduction_ratio": 0.33333333333333337, "executed_expert_calls": 138, "dense_expert_calls": 207, "route_location_mismatches": 0, "route_locations": 876800},
+    {"module_name": "model.23.m.0", "calls": 69, "sample_pair_reduction_ratio": 0.6666666666666667, "executed_expert_calls": 69, "dense_expert_calls": 207, "route_location_mismatches": 0, "route_locations": 219200},
+    {"module_name": "model.23.m.1", "calls": 69, "sample_pair_reduction_ratio": 0.6666666666666667, "executed_expert_calls": 69, "dense_expert_calls": 207, "route_location_mismatches": 0, "route_locations": 219200}
+  ],
+  "validation_safety": {
+    "thop_flop_profiling_disabled": true,
+    "stale_thop_hooks_removed_eager": 0,
+    "stale_thop_hooks_removed_hybrid": 0,
+    "prediction_or_metric_semantics_changed": false
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "family": "MoT",
+  "format": "ORT QDQ S8S8 mixed INT8",
+  "artifact": "/mnt/workspace/YOLO-Master/examples/artifacts/mot_v10_ort_int8_qdq_s8s8/mot_v10_qdq_s8s8_int8.onnx",
+  "sha256": "463ce6aeb9b573cd46d5cfdc9646d7fd96d75aba5768d433c408e78f8cebbb73",
+  "gate": "/mnt/workspace/YOLO-Master/examples/results/mot_v10_ort_int8/MOT_INT8_FINAL_GATE.json",
+  "mAP50-95": 0.030531749807394308,
+  "delta_percentage_points": -0.0057463552323333555,
+  "latency_ms": 188.12031217640006,
+  "size_mb": 8.510103225708008,
+  "status": "PASS"
+}
