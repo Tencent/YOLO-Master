@@ -4,9 +4,10 @@ import json
 
 import pytest
 import torch
-import torch.nn as nn
 from PIL import Image
+from torch import nn
 
+from ultralytics.nn.modules.latent_mixture import LatentMixture
 from ultralytics.nn.modules.moa import MoABlock
 from ultralytics.nn.modules.moe.modules import ES_MOE, OptimizedMOE
 from ultralytics.nn.modules.mot import MoTBlock
@@ -304,6 +305,23 @@ def test_capture_routing_supports_real_mixture_families(module, batch, expected_
     )
 
 
+def test_capture_routing_supports_latent_family_and_versioned_snapshot():
+    module = LatentMixture([8, 8], 8, num_experts=3, residual_init=0.1).eval()
+    batch = [torch.randn(2, 8, 4, 5), torch.randn(2, 8, 4, 5)]
+    interpreter = RoutingInterpreter(module)
+
+    heatmaps = interpreter.capture_routing(batch, layer_name="<root>", forward_fn=lambda model, inputs: model(inputs))
+    record = interpreter.routing_snapshot_records(heatmaps=heatmaps, step=7)[0]
+
+    assert heatmaps["<root>"].probabilities.shape == (2, 3)
+    assert record["schema_version"] == "yolo_master.routing_snapshot.v1"
+    assert record["family"] == "latent"
+    assert record["context"] == {"step": 7, "mode": "eval"}
+    assert record["routing"]["visualization_type"] == "global_distribution"
+    assert record["routing"]["spatial_available"] is False
+    assert sum(record["routing"]["expert_usage"]) == pytest.approx(1.0)
+
+
 def test_capture_routing_reconstructs_optimized_moe_sparse_topk_probabilities():
     module = OptimizedMOE(16, 16, num_experts=4, top_k=2)
     heatmap = RoutingInterpreter(module).capture_routing(torch.randn(2, 16, 4, 5), layer_name="<root>")["<root>"]
@@ -311,6 +329,15 @@ def test_capture_routing_reconstructs_optimized_moe_sparse_topk_probabilities():
     assert heatmap.probabilities.shape == (2, 4)
     assert torch.allclose(heatmap.probabilities.sum(dim=1), torch.ones(2), atol=1e-6)
     assert torch.count_nonzero(heatmap.probabilities, dim=1).tolist() == [2, 2]
+
+
+def test_snapshot_family_uses_nearest_routed_parent_for_leaf_router():
+    model = nn.Sequential(OptimizedMOE(16, 16, num_experts=4, top_k=2))
+    interpreter = RoutingInterpreter(model)
+    heatmaps = interpreter.capture_routing(torch.randn(2, 16, 4, 5))
+    record = interpreter.routing_snapshot_records(heatmaps=heatmaps)[0]
+
+    assert record["family"] == "moe"
 
 
 def test_visualize_routing_writes_png_and_json_safe_summary(tmp_path):
@@ -383,9 +410,14 @@ def test_cli_writes_report_and_heatmap(monkeypatch, tmp_path):
         [str(tmp_path / "toy.pt"), str(image_path), "--imgsz", "8", "--output", str(output_dir)]
     )
     report = json.loads((output_dir / "routing_report.json").read_text(encoding="utf-8"))
+    snapshot = [json.loads(line) for line in (output_dir / "routing_snapshot.jsonl").read_text().splitlines()]
 
     assert exit_code == 0
     assert (output_dir / "routed_confidence_heatmap.png").stat().st_size > 0
     assert report["visualizations"]["routed"]["confidence_heatmap"].endswith("routed_confidence_heatmap.png")
     assert list(report["heatmaps"]) == ["routed"]
     assert [summary["layer_name"] for summary in report["summaries"]] == ["routed"]
+    assert report["schema_version"] == "yolo_master.routing_report.v1"
+    assert snapshot[0]["schema_version"] == "yolo_master.routing_snapshot.v1"
+    assert snapshot[0]["routing"]["spatial_available"] is True
+
