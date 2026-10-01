@@ -1,0 +1,27 @@
+# Builds the yolomaster-api container image WITHOUT a Docker daemon (RunPod pods cannot run
+# dockerd): rules_oci pulls the CUDA base image, appends our relocatable bundle as one layer
+# and pushes with crane. See https://docs.runpod.io/tutorials/pods/build-docker-images
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_archive(
+    name = "rules_oci",
+    sha256 = "56d5499025d67a6b86b2e6ebae5232c72104ae682b5a21287770bd3bf0661abf",
+    strip_prefix = "rules_oci-1.7.5",
+    url = "https://github.com/bazel-contrib/rules_oci/releases/download/v1.7.5/rules_oci-v1.7.5.tar.gz",
+)
+
+load("@rules_oci//oci:dependencies.bzl", "rules_oci_dependencies")
+rules_oci_dependencies()
+
+load("@rules_oci//oci:repositories.bzl", "LATEST_CRANE_VERSION", "oci_register_toolchains")
+oci_register_toolchains(name = "oci", crane_version = LATEST_CRANE_VERSION)
+
+load("@rules_oci//oci:pull.bzl", "oci_pull")
+
+# CUDA 12.9 runtime + cuDNN 9 on Ubuntu 22.04 (matches TensorRT 10.16 +cuda12.9 and ORT-GPU 1.20).
+oci_pull(
+    name = "cuda_base",
+    image = "index.docker.io/nvidia/cuda",
+    digest = "sha256:59e37ec1a44489f498791a0ab8143422eeec2fe9381c67350bca87bac8e0cefb",  # 12.9.1-cudnn-runtime-ubuntu22.04
+    platforms = ["linux/amd64"],
+)

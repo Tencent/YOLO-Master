@@ -56,7 +56,7 @@ func appMark() -> NSImage {
 struct InfoView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var licenseExpanded = false   // license is collapsed by default
-    private var version: String { (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "1.1.0" }
+    private var version: String { (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "1.2.0" }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -71,7 +71,7 @@ struct InfoView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("YOLO-Master CoreML Runner").font(.title2.bold())
+                        Text("YOLO-Master").font(.title2.bold())
                         Text("Version \(version) · on-device YOLO-Master detection & segmentation via Core ML.")
                             .font(.callout).foregroundStyle(.secondary)
                     }

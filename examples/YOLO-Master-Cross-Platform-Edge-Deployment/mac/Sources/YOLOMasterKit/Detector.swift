@@ -40,9 +40,13 @@ public struct Detection: Sendable {
     public let score: Float
     public let rect: CGRect
     public let maskCoeffs: [Float]
-    public init(cls: Int, score: Float, rect: CGRect, maskCoeffs: [Float] = []) {
-        self.cls = cls; self.score = score; self.rect = rect; self.maskCoeffs = maskCoeffs
+    /// Track id when the detection came out of a `Tracker` (video / camera with tracking on); nil otherwise.
+    public let trackId: Int?
+    public init(cls: Int, score: Float, rect: CGRect, maskCoeffs: [Float] = [], trackId: Int? = nil) {
+        self.cls = cls; self.score = score; self.rect = rect; self.maskCoeffs = maskCoeffs; self.trackId = trackId
     }
+    /// The same detection tagged with a track id.
+    public func withTrackId(_ id: Int?) -> Detection { Detection(cls: cls, score: score, rect: rect, maskCoeffs: maskCoeffs, trackId: id) }
 }
 
 /// A rendered instance mask (segmentation): a proto-resolution tinted RGBA image, the unit
@@ -55,26 +59,34 @@ public struct MaskBitmap: @unchecked Sendable {
 
 /// Core ML compute unit selection. Default cpuAndGPU: the ANE can crash on this
 /// fragmented MoE+attention graph.
+///
+/// `cpuAndNeuralEngine` is the Neural Engine measurement: every op the ANE supports runs there and
+/// the rest falls back to the CPU, never the GPU. `all` hands the whole decision to Core ML, which
+/// partitions the graph across all three units and can end up slower than the GPU alone on a
+/// graph with many ANE-unsupported segments (each boundary is a sync and a copy).
 public enum ComputeMode: String, CaseIterable, Sendable {
-    case cpuAndGPU, all, cpu
+    case cpuAndGPU, cpuAndNeuralEngine, all, cpu
     public var mlUnits: MLComputeUnits {
         switch self {
         case .all: return .all
         case .cpu: return .cpuOnly
         case .cpuAndGPU: return .cpuAndGPU
+        case .cpuAndNeuralEngine: return .cpuAndNeuralEngine
         }
     }
     /// Human-readable label for the UI.
     public var label: String {
         switch self {
         case .cpuAndGPU: return "CPU + GPU"
-        case .all: return "CPU + GPU + Neural Engine"
+        case .cpuAndNeuralEngine: return "CPU + Neural Engine"
+        case .all: return "Auto (ANE + GPU + CPU)"
         case .cpu: return "CPU only"
         }
     }
     public init(_ s: String) {
         switch s.lowercased() {
         case "all": self = .all
+        case "ane", "neuralengine", "cpuandneuralengine", "cpuandane": self = .cpuAndNeuralEngine
         case "cpu", "cpuonly": self = .cpu
         default: self = .cpuAndGPU
         }
@@ -111,23 +123,27 @@ public final class Detector {
 
     public let isSegment: Bool
     public let nm: Int   // mask-coeff count (segmentation); 0 for detection
+    public let end2end: Bool   // NMS-free head: output [1, max_det, 6] instead of [1, 4+nc, anchors]
+    public let modelURL: URL
+    /// The exporter's creator-defined metadata (names, imgsz, task, precision when stamped, ...).
+    public let metadata: [String: String]
 
     private let model: MLModel
     private let inputName: String
     private let outputName: String
     private let protoName: String
 
-    public init(modelURL: URL, compute: ComputeMode = .cpuAndGPU) throws {
-        self.computeMode = compute
-        let cfg = MLModelConfiguration(); cfg.computeUnits = compute.mlUnits
-        let loaded: MLModel
-        if modelURL.pathExtension.lowercased() == "mlmodelc" {
-            loaded = try MLModel(contentsOf: modelURL, configuration: cfg)
-        } else {
-            let compiled = try MLModel.compileModel(at: modelURL)
-            loaded = try MLModel(contentsOf: compiled, configuration: cfg)
+    /// `forceCompute: true` keeps the requested compute units even for end2end models,
+    /// which otherwise auto-downgrade to CPU (see below).
+    public init(modelURL: URL, compute: ComputeMode = .cpuAndGPU, forceCompute: Bool = false) throws {
+        let compiledURL = modelURL.pathExtension.lowercased() == "mlmodelc"
+            ? modelURL : try MLModel.compileModel(at: modelURL)
+        func load(_ mode: ComputeMode) throws -> MLModel {
+            let cfg = MLModelConfiguration(); cfg.computeUnits = mode.mlUnits
+            return try MLModel(contentsOf: compiledURL, configuration: cfg)
         }
-        self.model = loaded
+        var loaded = try load(compute)
+        var effectiveCompute = compute
         let md = loaded.modelDescription
 
         let inName = md.inputDescriptionsByName.keys.sorted().first ?? "images"
@@ -135,14 +151,25 @@ public final class Detector {
         let metaNames = meta["names"]?.split(separator: ",").map(String.init)
             ?? ["pedestrian", "people", "bicycle", "car", "van", "truck", "tricycle", "awning-tricycle", "bus", "motor"]
         let outName = meta["output"] ?? md.outputDescriptionsByName.keys.sorted().first ?? "output0"
+        // end2end (NMS-free) detect head: output is [1, max_det, 6] rows of
+        // [x1,y1,x2,y2,score,cls] in letterboxed-input pixels. The exporter stamps an
+        // `end2end` metadata key (authoritative); the shape heuristic mirrors the C++
+        // runtime's looks_end2end (dim2 == 6 && dim1 >= 32) for models without it.
+        let e2eFromShape: Bool = {
+            if let sh = md.outputDescriptionsByName[outName]?.multiArrayConstraint?.shape,
+               sh.count == 3, sh[2].intValue == 6, sh[1].intValue >= 32 { return true }
+            return false
+        }()
+        let e2eResolved = meta["end2end"].map { $0 == "true" } ?? e2eFromShape
         // class count from the output shape [1, 4+nc, anchors] (authoritative for ANY model);
-        // fall back to the metadata names count.
+        // fall back to the metadata names count. An end2end tensor's dim1 is max_det, not
+        // 4+nc, so it must use the names count.
         let ncFromShape: Int? = {
             if let sh = md.outputDescriptionsByName[outName]?.multiArrayConstraint?.shape,
                sh.count >= 2, sh[1].intValue > 4 { return sh[1].intValue - 4 }
             return nil
         }()
-        let ncResolved = ncFromShape ?? metaNames.count
+        let ncResolved = e2eResolved ? metaNames.count : (ncFromShape ?? metaNames.count)
         // Input resolution is FIXED at export time - read it from the model ([1,3,H,W]).
         let szResolved: Int = {
             if let shape = md.inputDescriptionsByName[inName]?.multiArrayConstraint?.shape,
@@ -155,19 +182,56 @@ public final class Detector {
         let segTask = (meta["task"] ?? "detect") == "segment"
         let ncFinal = segTask ? metaNames.count : ncResolved
 
+        // MPSGraph aborts compiling end2end mixture graphs on GPU (a hard assertion at
+        // the first predict, not catchable in-process), and CPU is orders of magnitude
+        // faster on these fragmented graphs anyway (measured: 22ms CPU vs 7.5s GPU-path
+        // on the anchors sibling). Auto-downgrade unless the caller insists.
+        if e2eResolved && !segTask && effectiveCompute != .cpu && !forceCompute {
+            effectiveCompute = .cpu
+            loaded = try load(.cpu)
+        }
+        self.computeMode = effectiveCompute
+        self.modelURL = modelURL
+        self.metadata = meta
+        self.model = loaded
+
         self.inputName = inName
         self.outputName = outName
-        self.protoName = meta["proto"] ?? ""
+        // proto/nm: metadata keys when the exporter stamped them; else recover from
+        // shapes (proto = the rank-4 output that isn't the det tensor, nm = its dim1).
+        // Without this, a seg model missing `nm` decodes with empty coeffs and
+        // renders zero masks with no error.
+        let protoResolved: String = {
+            if let p = meta["proto"], !p.isEmpty { return p }
+            guard segTask else { return "" }
+            return md.outputDescriptionsByName.first {
+                $0.key != outName && ($0.value.multiArrayConstraint?.shape.count ?? 0) == 4
+            }?.key ?? ""
+        }()
+        let nmResolved: Int = {
+            guard segTask else { return 0 }
+            if let v = Int(meta["nm"] ?? ""), v > 0 { return v }
+            if let sh = md.outputDescriptionsByName[protoResolved]?.multiArrayConstraint?.shape,
+               sh.count == 4 { return sh[1].intValue }
+            if let sh = md.outputDescriptionsByName[outName]?.multiArrayConstraint?.shape,
+               sh.count == 3, sh[1].intValue > 4 + metaNames.count {
+                return sh[1].intValue - 4 - metaNames.count
+            }
+            return 0
+        }()
+        self.protoName = protoResolved
         self.isSegment = segTask
-        self.nm = Int(meta["nm"] ?? "0") ?? 0
+        self.nm = nmResolved
         self.nc = ncFinal
         self.classNames = metaNames.count == ncFinal ? metaNames : (0..<ncFinal).map { "class\($0)" }
         self.imgsz = szResolved
+        self.end2end = e2eResolved && !segTask
     }
 
     /// Human-readable one-line model summary (parity with the CLI `[model]` banner).
     public var summary: String {
         "input=\(inputName) [\(imgsz)x\(imgsz)] output=\(outputName) classes=\(nc) compute=\(computeMode.rawValue)"
+            + (end2end ? " layout=end2end" : "")
     }
 
     // ---------- preprocess ----------
@@ -177,6 +241,15 @@ public final class Detector {
     /// whole image to imgsz×imgsz (no padding; the size the model was trained on), distorting aspect.
     public enum PreprocessMode: String, CaseIterable, Sendable { case letterbox, stretch }
     public var preprocess: PreprocessMode = .letterbox
+    /// Where the letterbox + tensor build runs: `.cpu` (CGContext + vDSP, the 1.1.x path) or `.gpu`
+    /// (the Metal kernel in Preproc.swift, integer pads, bilinear). Falls back to the CPU path when
+    /// Metal is unavailable. Default cpu so existing hosts (the iOS app) are unchanged; the macOS CLI
+    /// and app opt in.
+    public var preprocDevice: PreprocDevice = .cpu
+    private lazy var metal: MetalPreprocessor? = MetalPreprocessor()
+    private var gpuActive: Bool { preprocDevice == .gpu && metal != nil }
+    /// The preprocessing path actually in use (a `.gpu` request without Metal reports `.cpu`).
+    public var effectivePreprocDevice: PreprocDevice { gpuActive ? .gpu : .cpu }
 
     private struct LB { let px: [UInt8]; let scaleX: CGFloat; let scaleY: CGFloat; let padX: CGFloat; let padY: CGFloat }
 
@@ -210,29 +283,137 @@ public final class Detector {
         else { return nil }
         let p = arr.dataPointer.bindMemory(to: Float32.self, capacity: arr.count)
         let plane = imgsz * imgsz
+        // vDSP: interleaved RGBX u8 -> planar float RGB, then one /255 over all
+        // three planes. Replaces a ~400k-iteration scalar loop (mobile hot path).
         raster.withUnsafeBufferPointer { rb in
-            for yy in 0..<imgsz {
-                for xx in 0..<imgsz {
-                    let o = (yy * imgsz + xx) * 4, idx = yy * imgsz + xx
-                    p[idx] = Float32(rb[o]) / 255
-                    p[plane + idx] = Float32(rb[o + 1]) / 255
-                    p[2 * plane + idx] = Float32(rb[o + 2]) / 255
-                }
+            guard let src = rb.baseAddress else { return }
+            for ch in 0..<3 {
+                vDSP_vfltu8(src + ch, 4, p + ch * plane, 1, vDSP_Length(plane))
             }
         }
+        var inv255 = Float32(1.0 / 255.0)
+        vDSP_vsmul(p, 1, &inv255, p, 1, vDSP_Length(3 * plane))
         return try? MLDictionaryFeatureProvider(dictionary: [inputName: MLFeatureValue(multiArray: arr)])
     }
 
     // ---------- decode + NMS (split so forward is cached once, tuning stays cheap) ----------
+    /// Rows the decoder will read down dim 1 (anchor layout) or across dim 2 (end2end rows).
+    /// `nc` and `nm` come from the package's own metadata, so a package whose names list or `nm`
+    /// stamp exceeds its head would otherwise send the raw-pointer scan past the tensor.
+    private func outputFits(_ y: MLMultiArray) -> Bool {
+        guard y.shape.count == 3 else { return false }
+        if end2end { return y.shape[2].intValue >= 6 }
+        return y.shape[1].intValue >= 4 + nc + nm
+    }
+    private func validatedOutput(_ out: MLFeatureProvider) throws -> MLMultiArray {
+        guard let y = out.featureValue(for: outputName)?.multiArrayValue, outputFits(y) else { throw DetectorError.badOutput }
+        return y
+    }
+
     /// All boxes above `confFloor` (NO NMS), ORIGINAL-image pixels, sorted by score desc.
     /// Cache this once per image after `forward`; then re-run `nms(_:conf:iou:)` for cheap tuning.
     public func candidates(_ raw: RawOutput, confFloor: Float = 0.05) -> [Detection] {
         let y = raw.y
+        guard outputFits(y) else { return [] }   // a mask-only raw ([1]) or a foreign RawOutput: nothing to decode
         let na = y.shape[2].intValue
         let s1 = y.strides[1].intValue, s2 = y.strides[2].intValue
         let scaleX = raw.scaleX, scaleY = raw.scaleY, padX = raw.padX, padY = raw.padY
         let origW = raw.origW, origH = raw.origH
         var dets: [Detection] = []
+        // end2end layout [1, max_det, 6]: rows [x1,y1,x2,y2,score,cls] in letterboxed px,
+        // already one-to-one (no NMS needed downstream, though it stays harmless).
+        // Same accessor convention as decodeAnchors: at(dim1Index, dim2Index).
+        func decodeEndToEnd(_ at: (Int, Int) -> Float32) {
+            let n = y.shape[1].intValue
+            for r in 0..<n {
+                let s = at(r, 4)
+                if s <= confFloor { continue }
+                let c = Int(at(r, 5))
+                if c < 0 || c >= nc { continue }
+                var x1 = (CGFloat(at(r, 0)) - padX) / scaleX, y1 = (CGFloat(at(r, 1)) - padY) / scaleY
+                var x2 = (CGFloat(at(r, 2)) - padX) / scaleX, y2 = (CGFloat(at(r, 3)) - padY) / scaleY
+                x1 = max(0, min(CGFloat(origW), x1)); x2 = max(0, min(CGFloat(origW), x2))
+                y1 = max(0, min(CGFloat(origH), y1)); y2 = max(0, min(CGFloat(origH), y2))
+                if x2 > x1 && y2 > y1 {
+                    dets.append(Detection(cls: c, score: s,
+                                          rect: CGRect(x: x1, y: y1, width: x2 - x1, height: y2 - y1),
+                                          maskCoeffs: []))
+                }
+            }
+        }
+        if end2end {
+            if y.dataType == .float16 {
+                let rawPtr = y.dataPointer
+                decodeEndToEnd { r, f in halfToFloat(rawPtr.load(fromByteOffset: (r * s1 + f * s2) * 2, as: UInt16.self)) }
+            } else {
+                y.withUnsafeBufferPointer(ofType: Float32.self) { buf in
+                    guard let yp = buf.baseAddress else { return }
+                    decodeEndToEnd { r, f in yp[r * s1 + f * s2] }
+                }
+            }
+            dets.sort { $0.score > $1.score }
+            return dets
+        }
+        // fast path: contiguous anchors, float32 OR float16, det AND seg. The fp16
+        // case is the ANE's native output - the generic path costs ~100ms/frame
+        // there (per-element closure + scalar half->float); here it is one
+        // vectorized vImage conversion followed by the same vDSP-gated scan.
+        if !end2end, s2 == 1,
+           y.dataType == .float32 || y.dataType == .float16 {
+            func scan(_ yp: UnsafePointer<Float32>) {
+                for c in 0..<nc {
+                    let row = yp + (4 + c) * s1
+                    var mx: Float = 0
+                    vDSP_maxv(row, 1, &mx, vDSP_Length(na))
+                    if mx <= confFloor { continue }
+                    for a in 0..<na {
+                        let s = row[a]
+                        if s <= confFloor { continue }
+                        let cx = CGFloat(yp[a]), cy = CGFloat(yp[s1 + a])
+                        let bw = CGFloat(yp[2 * s1 + a]), bh = CGFloat(yp[3 * s1 + a])
+                        var x1 = (cx - bw / 2 - padX) / scaleX, y1 = (cy - bh / 2 - padY) / scaleY
+                        var x2 = (cx + bw / 2 - padX) / scaleX, y2 = (cy + bh / 2 - padY) / scaleY
+                        x1 = max(0, min(CGFloat(origW), x1)); x2 = max(0, min(CGFloat(origW), x2))
+                        y1 = max(0, min(CGFloat(origH), y1)); y2 = max(0, min(CGFloat(origH), y2))
+                        if x2 > x1 && y2 > y1 {
+                            // seg: gather the nm coeffs down this anchor's column,
+                            // survivors only (the whole-tensor work stays vectorized)
+                            var coeffs: [Float] = []
+                            if nm > 0 {
+                                coeffs.reserveCapacity(nm)
+                                let base = yp + (4 + nc) * s1 + a
+                                for k in 0..<nm { coeffs.append(base[k * s1]) }
+                            }
+                            dets.append(Detection(cls: c, score: s,
+                                                  rect: CGRect(x: x1, y: y1, width: x2 - x1, height: y2 - y1),
+                                                  maskCoeffs: coeffs))
+                        }
+                    }
+                }
+            }
+            if y.dataType == .float32 {
+                y.withUnsafeBufferPointer(ofType: Float32.self) { buf in
+                    if let yp = buf.baseAddress { scan(yp) }
+                }
+            } else {
+                // Convert the full STRIDED extent, not the logical count: ANE
+                // tensors may pad rows (s1 > na), and converting only y.count
+                // elements leaves the tail rows (the highest class indices)
+                // reading garbage - the "wall of last-class detections" bug.
+                let n = y.shape[1].intValue * s1
+                var tmp = [Float32](repeating: 0, count: n)
+                tmp.withUnsafeMutableBufferPointer { dstBuf in
+                    var src = vImage_Buffer(data: y.dataPointer, height: 1,
+                                            width: vImagePixelCount(n), rowBytes: n * 2)
+                    var dst = vImage_Buffer(data: dstBuf.baseAddress, height: 1,
+                                            width: vImagePixelCount(n), rowBytes: n * 4)
+                    vImageConvert_Planar16FtoPlanarF(&src, &dst, vImage_Flags(kvImageNoFlags))
+                    if let yp = dstBuf.baseAddress { scan(yp) }
+                }
+            }
+            dets.sort { $0.score > $1.score }
+            return dets
+        }
         func decodeAnchors(_ at: (Int, Int) -> Float32) {
             for a in 0..<na {
                 let cx = CGFloat(at(0, a)), cy = CGFloat(at(1, a)), bw = CGFloat(at(2, a)), bh = CGFloat(at(3, a))
@@ -320,7 +501,17 @@ public final class Detector {
     }
 
     // ---------- public inference ----------
-    public struct Result: Sendable { public let detections: [Detection]; public let inferMs: Double }
+    /// `inferMs` is the Core ML prediction alone; `preMs` letterbox + input tensor build; `postMs` decode + NMS
+    /// (the Linux runtime's pre / infer / post split, so bench numbers line up across platforms).
+    public struct Result: Sendable {
+        public let detections: [Detection]
+        public let inferMs: Double
+        public let preMs: Double
+        public let postMs: Double
+        public init(detections: [Detection], inferMs: Double, preMs: Double = 0, postMs: Double = 0) {
+            self.detections = detections; self.inferMs = inferMs; self.preMs = preMs; self.postMs = postMs
+        }
+    }
 
     /// Cached forward-pass output + letterbox geometry. Hold onto this and re-decode with
     /// different conf/iou via `decode(_:conf:iou:)` - no second model call. Post-processing
@@ -331,10 +522,14 @@ public final class Detector {
         fileprivate let scaleX, scaleY, padX, padY: CGFloat   // per-axis (scaleX==scaleY for letterbox)
         public let origW, origH: Int
         public let inferMs: Double
+        /// Preprocess wall time (letterbox + tensor build, or texture upload + Metal kernel + wait), the Linux `pre_ms`.
+        public let preMs: Double
+        /// GPU command-buffer time of the Metal preprocess (0 on the CPU path); a sub-metric of `preMs`.
+        public let preGpuMs: Double
         fileprivate init(y: MLMultiArray, proto: MLMultiArray?, scaleX: CGFloat, scaleY: CGFloat, padX: CGFloat, padY: CGFloat,
-                         origW: Int, origH: Int, inferMs: Double) {
+                         origW: Int, origH: Int, inferMs: Double, preMs: Double = 0, preGpuMs: Double = 0) {
             self.y = y; self.proto = proto; self.scaleX = scaleX; self.scaleY = scaleY; self.padX = padX; self.padY = padY
-            self.origW = origW; self.origH = origH; self.inferMs = inferMs
+            self.origW = origW; self.origH = origH; self.inferMs = inferMs; self.preMs = preMs; self.preGpuMs = preGpuMs
         }
 
         /// A copy retaining ONLY what mask rendering needs (proto tensor + letterbox geometry),
@@ -344,30 +539,75 @@ public final class Detector {
         public func maskOnly() -> RawOutput? {
             guard let p = proto, let tiny = try? MLMultiArray(shape: [1], dataType: .float32) else { return nil }
             return RawOutput(y: tiny, proto: p, scaleX: scaleX, scaleY: scaleY, padX: padX, padY: padY,
-                             origW: origW, origH: origH, inferMs: inferMs)
+                             origW: origW, origH: origH, inferMs: inferMs, preMs: preMs, preGpuMs: preGpuMs)
         }
     }
 
     /// Core ML forward pass only (letterbox → predict). Cache the result and re-`decode`.
     public func forward(_ image: CGImage) throws -> RawOutput {
+        if gpuActive, let mp = metal {
+            let tp = Date()
+            guard let tex = mp.texture(from: image),
+                  let o = mp.run(texture: tex, srcW: image.width, srcH: image.height, imgsz: imgsz, stretch: preprocess == .stretch)
+            else { return try forwardCPU(image) }          // any Metal hiccup: the CPU path, same contract
+            return try predict(o, preMs: Date().timeIntervalSince(tp) * 1000, origW: image.width, origH: image.height)
+        }
+        return try forwardCPU(image)
+    }
+    private func forwardCPU(_ image: CGImage) throws -> RawOutput {
+        let tp = Date()
         let lb = letterbox(image)
         guard let input = fillInput(lb.px) else { throw DetectorError.inputBuildFailed }
         let t0 = Date()
+        let preMs = t0.timeIntervalSince(tp) * 1000
         let out = try model.prediction(from: input)
         let infMs = Date().timeIntervalSince(t0) * 1000
-        guard let y = out.featureValue(for: outputName)?.multiArrayValue, y.shape.count == 3 else {
-            throw DetectorError.badOutput
-        }
+        let y = try validatedOutput(out)
         let proto = isSegment ? out.featureValue(for: protoName)?.multiArrayValue : nil
         return RawOutput(y: y, proto: proto, scaleX: lb.scaleX, scaleY: lb.scaleY, padX: lb.padX, padY: lb.padY,
-                         origW: image.width, origH: image.height, inferMs: infMs)
+                         origW: image.width, origH: image.height, inferMs: infMs, preMs: preMs)
+    }
+    /// Prediction on a Metal-preprocessed tensor (integer-pad geometry).
+    private func predict(_ o: MetalPreprocessor.Output, preMs: Double, origW: Int, origH: Int) throws -> RawOutput {
+        guard let input = try? MLDictionaryFeatureProvider(dictionary: [inputName: MLFeatureValue(multiArray: o.array)]) else {
+            throw DetectorError.inputBuildFailed
+        }
+        let t0 = Date()
+        let out = try model.prediction(from: input)
+        let infMs = Date().timeIntervalSince(t0) * 1000
+        let y = try validatedOutput(out)
+        let proto = isSegment ? out.featureValue(for: protoName)?.multiArrayValue : nil
+        let g = o.geometry
+        return RawOutput(y: y, proto: proto, scaleX: g.scaleX, scaleY: g.scaleY, padX: CGFloat(g.padX), padY: CGFloat(g.padY),
+                         origW: origW, origH: origH, inferMs: infMs, preMs: preMs, preGpuMs: o.gpuMs)
     }
 
-    /// Low-latency forward from a camera `CVPixelBuffer` (BGRA). Wraps the buffer as a CGImage with a
-    /// single copy (no CIContext) then runs the same letterbox → predict path. For real-time streaming.
+    /// Low-latency forward from a camera `CVPixelBuffer` (BGRA). On the GPU path the buffer is read by
+    /// the Metal kernel directly (zero copy through the texture cache); on the CPU path it is wrapped
+    /// as a CGImage with a single copy (no CIContext) then letterboxed as usual.
     public func forward(_ pixelBuffer: CVPixelBuffer) throws -> RawOutput {
+        if gpuActive, let mp = metal, let (tex, holder) = mp.texture(from: pixelBuffer) {
+            let tp = Date()
+            let w = CVPixelBufferGetWidth(pixelBuffer), h = CVPixelBufferGetHeight(pixelBuffer)
+            if let o = mp.run(texture: tex, srcW: w, srcH: h, imgsz: imgsz, stretch: preprocess == .stretch) {
+                _ = holder   // keeps the CVMetalTexture alive through the pass
+                return try predict(o, preMs: Date().timeIntervalSince(tp) * 1000, origW: w, origH: h)
+            }
+        }
         guard let cg = Detector.cgImage(from: pixelBuffer) else { throw DetectorError.inputBuildFailed }
         return try forward(cg)
+    }
+
+    /// The model input tensor for `image` on the current preprocessing device (no prediction), as
+    /// raw float32 NCHW bytes: what `--dump-input` writes for the Linux parity check.
+    public func inputTensorBytes(_ image: CGImage) -> Data? {
+        if gpuActive, let mp = metal, let tex = mp.texture(from: image),
+           let o = mp.run(texture: tex, srcW: image.width, srcH: image.height, imgsz: imgsz, stretch: preprocess == .stretch) {
+            return Data(bytes: o.array.dataPointer, count: 3 * imgsz * imgsz * MemoryLayout<Float>.size)
+        }
+        let lb = letterbox(image)
+        guard let input = fillInput(lb.px), let arr = input.featureValue(for: inputName)?.multiArrayValue else { return nil }
+        return Data(bytes: arr.dataPointer, count: 3 * imgsz * imgsz * MemoryLayout<Float>.size)
     }
 
     /// Forward a tile crop, padded bottom-right with gray 114 to tileSize×tileSize and (when
@@ -382,6 +622,7 @@ public final class Detector {
         let cw = crop.width, ch = crop.height
         precondition(cw <= tile && ch <= tile, "tile crop exceeds tile size")
         let s = CGFloat(imgsz) / CGFloat(tile)   // 1 when tile == imgsz; <1 shrinks bigger tiles
+        let tp = Date()
         var px = [UInt8](repeating: 114, count: imgsz * imgsz * 4)
         px.withUnsafeMutableBytes { raw in
             guard let ctx = CGContext(data: raw.baseAddress, width: imgsz, height: imgsz, bitsPerComponent: 8,
@@ -394,18 +635,17 @@ public final class Detector {
         }
         guard let input = fillInput(px) else { throw DetectorError.inputBuildFailed }
         let t0 = Date()
+        let preMs = t0.timeIntervalSince(tp) * 1000
         let out = try model.prediction(from: input)
         let infMs = Date().timeIntervalSince(t0) * 1000
-        guard let y = out.featureValue(for: outputName)?.multiArrayValue, y.shape.count == 3 else {
-            throw DetectorError.badOutput
-        }
+        let y = try validatedOutput(out)
         // proto deliberately nil: tile coeffs are meaningless against a full-image proto tensor.
         return RawOutput(y: y, proto: nil, scaleX: s, scaleY: s, padX: 0, padY: 0,
-                         origW: cw, origH: ch, inferMs: infMs)
+                         origW: cw, origH: ch, inferMs: infMs, preMs: preMs)
     }
 
     /// Cheap BGRA `CVPixelBuffer` → `CGImage` (one memcpy via a buffer-backed context; no Core Image).
-    static func cgImage(from pb: CVPixelBuffer) -> CGImage? {
+    public static func cgImage(from pb: CVPixelBuffer) -> CGImage? {
         CVPixelBufferLockBaseAddress(pb, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(pb, .readOnly) }
         let w = CVPixelBufferGetWidth(pb), h = CVPixelBufferGetHeight(pb)
@@ -419,15 +659,19 @@ public final class Detector {
 
     /// Decode + per-class NMS from a cached forward pass. Cheap - no model call.
     public func decode(_ raw: RawOutput, conf: Float, iou iouT: CGFloat,
-                       mode: NMSMode = .standard, sigma: Float = 0.1) -> [Detection] {
-        Detector.nms(candidates(raw, confFloor: conf), conf: conf, iou: iouT, mode: mode, sigma: sigma)
+                       mode: NMSMode = .standard, sigma: Float = 0.1, maxDet: Int = 300) -> [Detection] {
+        Detector.nms(candidates(raw, confFloor: conf), conf: conf, iou: iouT, maxDet: maxDet, mode: mode, sigma: sigma)
     }
 
-    /// Convenience: forward + decode in one call (used by the CLI). `inferMs` is model-only latency.
+    /// Convenience: forward + decode in one call (used by the CLI). `inferMs` is model-only latency;
+    /// `preMs` / `postMs` are the preprocess and decode + NMS stages around it.
     public func detect(_ image: CGImage, conf: Float = 0.25, iou iouT: CGFloat = 0.5,
-                       mode: NMSMode = .standard, sigma: Float = 0.1) throws -> Result {
+                       mode: NMSMode = .standard, sigma: Float = 0.1, maxDet: Int = 300) throws -> Result {
         let raw = try forward(image)
-        return Result(detections: decode(raw, conf: conf, iou: iouT, mode: mode, sigma: sigma), inferMs: raw.inferMs)
+        let t0 = Date()
+        let dets = decode(raw, conf: conf, iou: iouT, mode: mode, sigma: sigma, maxDet: maxDet)
+        let postMs = Date().timeIntervalSince(t0) * 1000
+        return Result(detections: dets, inferMs: raw.inferMs, preMs: raw.preMs, postMs: postMs)
     }
 
     // ---------- segmentation masks ----------
@@ -495,10 +739,14 @@ public final class Detector {
     /// detections' coefficients form one [N,nm] matrix, and a single SGEMM ([N,nm]x[nm,plane],
     /// dispatched to the AMX matrix units) plus vectorized sigmoid produce every mask grid in
     /// one shot. Only the cheap per-pixel tint + the GPU-backed CG composite remain per mask.
-    public func maskOverlay(_ dets: [Detection], _ raw: RawOutput) -> CGImage? {
+    /// `maxSide` > 0 renders the composite at a downscaled resolution (longest side capped);
+    /// callers draw the overlay stretched over the image, and the proto grid is only 160px,
+    /// so nothing is lost - it just avoids a full-res RGBA canvas per large photo.
+    public func maskOverlay(_ dets: [Detection], _ raw: RawOutput, maxSide: Int = 0) -> CGImage? {
         guard isSegment, let proto = raw.proto, proto.shape.count == 4, !dets.isEmpty else { return nil }
-        let w = raw.origW, h = raw.origH
-        guard w > 0, h > 0 else { return nil }
+        guard raw.origW > 0, raw.origH > 0 else { return nil }
+        let f: CGFloat = maxSide > 0 ? min(1, CGFloat(maxSide) / CGFloat(max(raw.origW, raw.origH))) : 1
+        let w = max(1, Int((CGFloat(raw.origW) * f).rounded())), h = max(1, Int((CGFloat(raw.origH) * f).rounded()))
         let cm = proto.shape[1].intValue, mh = proto.shape[2].intValue, mw = proto.shape[3].intValue
         let plane = mh * mw
         guard cm > 0, plane > 0 else { return nil }
@@ -507,17 +755,44 @@ public final class Detector {
         let N = usable.count
 
         // ---- proto -> contiguous [cm, plane] Float32, once ----
+        // The unpack MUST be vectorized: 32x160x160 = 819k elements per frame, and
+        // a scalar half->float loop here alone costs ~100ms on-device (the same
+        // failure mode as the old scalar decode path). Contiguous rows (s3 == 1,
+        // the CoreML/ANE layout) take one bulk vImage convert of the full strided
+        // extent + row memcpys; anything else falls back to the scalar walk.
         let s1 = proto.strides[1].intValue, s2 = proto.strides[2].intValue, s3 = proto.strides[3].intValue
         var protoF = [Float](repeating: 0, count: cm * plane)
         if proto.dataType == .float16 {
             let rp = proto.dataPointer
-            protoF.withUnsafeMutableBufferPointer { dst in
-                for k in 0..<cm {
-                    let ko = k * plane
-                    for i in 0..<mh {
-                        let ro = ko + i * mw, so = k * s1 + i * s2
-                        for j in 0..<mw {
-                            dst[ro + j] = halfToFloat(rp.load(fromByteOffset: (so + j * s3) * 2, as: UInt16.self))
+            if s3 == 1 {
+                let n = cm * s1
+                var tmp = [Float](repeating: 0, count: n)
+                tmp.withUnsafeMutableBufferPointer { t in
+                    var src = vImage_Buffer(data: rp, height: 1,
+                                            width: vImagePixelCount(n), rowBytes: n * 2)
+                    var dst = vImage_Buffer(data: t.baseAddress, height: 1,
+                                            width: vImagePixelCount(n), rowBytes: n * 4)
+                    vImageConvert_Planar16FtoPlanarF(&src, &dst, vImage_Flags(kvImageNoFlags))
+                }
+                protoF.withUnsafeMutableBufferPointer { dst in
+                    tmp.withUnsafeBufferPointer { sp in
+                        for k in 0..<cm {
+                            for i in 0..<mh {
+                                memcpy(dst.baseAddress! + (k * plane + i * mw),
+                                       sp.baseAddress! + (k * s1 + i * s2), mw * 4)
+                            }
+                        }
+                    }
+                }
+            } else {
+                protoF.withUnsafeMutableBufferPointer { dst in
+                    for k in 0..<cm {
+                        let ko = k * plane
+                        for i in 0..<mh {
+                            let ro = ko + i * mw, so = k * s1 + i * s2
+                            for j in 0..<mw {
+                                dst[ro + j] = halfToFloat(rp.load(fromByteOffset: (so + j * s3) * 2, as: UInt16.self))
+                            }
                         }
                     }
                 }
@@ -526,11 +801,20 @@ public final class Detector {
             proto.withUnsafeBufferPointer(ofType: Float32.self) { buf in
                 guard let pp = buf.baseAddress else { return }
                 protoF.withUnsafeMutableBufferPointer { dst in
-                    for k in 0..<cm {
-                        let ko = k * plane
-                        for i in 0..<mh {
-                            let ro = ko + i * mw, so = k * s1 + i * s2
-                            for j in 0..<mw { dst[ro + j] = pp[so + j * s3] }
+                    if s3 == 1 {
+                        for k in 0..<cm {
+                            for i in 0..<mh {
+                                memcpy(dst.baseAddress! + (k * plane + i * mw),
+                                       pp + (k * s1 + i * s2), mw * 4)
+                            }
+                        }
+                    } else {
+                        for k in 0..<cm {
+                            let ko = k * plane
+                            for i in 0..<mh {
+                                let ro = ko + i * mw, so = k * s1 + i * s2
+                                for j in 0..<mw { dst[ro + j] = pp[so + j * s3] }
+                            }
                         }
                     }
                 }
@@ -564,30 +848,111 @@ public final class Detector {
         let threshold: Float = 0.5, alphaMax: Float = 165
         let band: Float = 0.14, e0 = threshold - band, e1 = threshold + band, inv = 1 / (e1 - e0)
         var drew = false
-        var px = [UInt8](repeating: 0, count: plane * 4)
+        // Edge quality: the proto grid is only imgsz/4 (160px at 640), so thresholding
+        // AT proto resolution bakes its staircase into the contour no matter how the
+        // bitmap is upscaled later. Instead, Lanczos-upscale the CONTINUOUS sigmoid
+        // field 4x first, then smoothstep-threshold at that resolution: the iso-line
+        // follows interpolated curves (rounded, blended edges), not grid steps.
+        let u = 4
+        let umw = mw * u, umh = mh * u, uplane = umw * umh
+        var field = [Float](repeating: 0, count: uplane)   // upscaled sigmoid field
+        var hbuf = [Float](repeating: 0, count: mh * umw)  // horizontal-pass scratch
+        var px = [UInt8](repeating: 0, count: uplane * 4)
+        // per-det tint, fully vectorized (the scalar smoothstep loop was the other
+        // debug-visible hot spot): coverage a = smoothstep(t) * alphaMax as vDSP
+        // planes, premultiplied channel planes, one vImage 4-plane interleave.
+        var aF = [Float](repeating: 0, count: uplane)   // coverage (ends premultiplied alpha)
+        var tt = [Float](repeating: 0, count: uplane)   // t^2 scratch
+        var chF = [Float](repeating: 0, count: uplane)  // channel scratch
+        var chR = [UInt8](repeating: 0, count: uplane), chG = chR, chB = chR, chA = chR
+        let vn = vDSP_Length(uplane)
         for (r, d) in usable.enumerated() {
             let comps = classColor(d.cls).components ?? [1, 0.25, 0.25, 1]
             let cr = Float(comps[0]), cg = Float(comps[1]), cb = Float(comps[2])
-            for i in 0..<plane * 4 { px[i] = 0 }
-            let row = r * plane
-            for i in 0..<plane {
-                var t = (acc[row + i] - e0) * inv
-                if t <= 0 { continue }
-                if t > 1 { t = 1 }
-                let a = t * t * (3 - 2 * t) * alphaMax
-                let o = i * 4
-                px[o] = UInt8(min(255, cr * a)); px[o + 1] = UInt8(min(255, cg * a))
-                px[o + 2] = UInt8(min(255, cb * a)); px[o + 3] = UInt8(min(255, a))
+            // Separable BILINEAR upscale, two vDSP passes. Deliberately NOT
+            // Lanczos (vImageScale): its negative lobes ring on a near-binary
+            // field, dipping interior values below the threshold band - seen
+            // on-device as pinholes and uneven opacity. Bilinear is monotone:
+            // interiors stay saturated, contours stay smooth curves.
+            acc.withUnsafeBufferPointer { ap in
+                let sp = ap.baseAddress! + r * plane
+                hbuf.withUnsafeMutableBufferPointer { hb in
+                    let hp = hb.baseAddress!
+                    for p in 0..<u {
+                        var w1 = Float(p) / Float(u)
+                        var w0 = 1 - w1
+                        for row in 0..<mh {
+                            let s = sp + row * mw
+                            vDSP_vsmsma(s, 1, &w0, s + 1, 1, &w1,
+                                        hp + row * umw + p, vDSP_Stride(u), vDSP_Length(mw - 1))
+                            hp[row * umw + (mw - 1) * u + p] = s[mw - 1]   // edge extend
+                        }
+                    }
+                }
             }
-            guard let mctx = CGContext(data: &px, width: mw, height: mh, bitsPerComponent: 8, bytesPerRow: mw * 4,
+            hbuf.withUnsafeBufferPointer { hb in
+                let hp = hb.baseAddress!
+                field.withUnsafeMutableBufferPointer { fb in
+                    let fp = fb.baseAddress!
+                    for p in 0..<u {
+                        var w1 = Float(p) / Float(u)
+                        var w0 = 1 - w1
+                        for row in 0..<mh {
+                            let nxt = min(row + 1, mh - 1)                 // edge extend
+                            vDSP_vsmsma(hp + row * umw, 1, &w0, hp + nxt * umw, 1, &w1,
+                                        fp + (row * u + p) * umw, 1, vDSP_Length(umw))
+                        }
+                    }
+                }
+            }
+            // t = clip((sigmoid - e0) * inv, 0, 1); a = t*t*(3 - 2t) * alphaMax
+            field.withUnsafeBufferPointer { ap in
+                var m = inv, add = -e0 * inv
+                vDSP_vsmsa(ap.baseAddress!, 1, &m, &add, &aF, 1, vn)
+            }
+            var lo: Float = 0, hi: Float = 1
+            vDSP_vclip(aF, 1, &lo, &hi, &aF, 1, vn)
+            vDSP_vsq(aF, 1, &tt, 1, vn)
+            var mneg2: Float = -2, add3: Float = 3
+            vDSP_vsmsa(aF, 1, &mneg2, &add3, &aF, 1, vn)   // 3 - 2t
+            vDSP_vmul(tt, 1, aF, 1, &aF, 1, vn)            // t^2 * (3 - 2t)
+            var aMaxV = alphaMax
+            vDSP_vsmul(aF, 1, &aMaxV, &aF, 1, vn)          // * alphaMax
+            func plane8(_ scale: Float, _ out: inout [UInt8]) {
+                var s = scale
+                vDSP_vsmul(aF, 1, &s, &chF, 1, vn)
+                vDSP_vfixru8(chF, 1, &out, 1, vn)
+            }
+            plane8(cr, &chR); plane8(cg, &chG); plane8(cb, &chB); plane8(1, &chA)
+            px.withUnsafeMutableBytes { pd in
+                chR.withUnsafeMutableBytes { rr in
+                    chG.withUnsafeMutableBytes { gg in
+                        chB.withUnsafeMutableBytes { bb in
+                            chA.withUnsafeMutableBytes { aa in
+                                func vb(_ p: UnsafeMutableRawBufferPointer, _ rb: Int) -> vImage_Buffer {
+                                    vImage_Buffer(data: p.baseAddress, height: vImagePixelCount(umh),
+                                                  width: vImagePixelCount(umw), rowBytes: rb)
+                                }
+                                var vr = vb(rr, umw), vg = vb(gg, umw), vbP = vb(bb, umw), va = vb(aa, umw)
+                                var dest = vb(pd, umw * 4)
+                                // planes interleave in argument order -> RGBA bytes
+                                vImageConvert_Planar8toARGB8888(&vr, &vg, &vbP, &va, &dest,
+                                                                vImage_Flags(kvImageNoFlags))
+                            }
+                        }
+                    }
+                }
+            }
+            guard let mctx = CGContext(data: &px, width: umw, height: umh, bitsPerComponent: 8, bytesPerRow: umw * 4,
                                        space: CGColorSpaceCreateDeviceRGB(),
                                        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
                   let img = mctx.makeImage() else { continue }
-            let sub = CGRect(x: crop.minX * CGFloat(mw), y: crop.minY * CGFloat(mh),
-                             width: crop.width * CGFloat(mw), height: crop.height * CGFloat(mh))
+            let sub = CGRect(x: crop.minX * CGFloat(umw), y: crop.minY * CGFloat(umh),
+                             width: crop.width * CGFloat(umw), height: crop.height * CGFloat(umh))
             guard sub.width > 0, sub.height > 0, let cropped = img.cropping(to: sub) else { continue }
             ctx.saveGState()
-            ctx.clip(to: CGRect(x: d.rect.minX, y: CGFloat(h) - d.rect.maxY, width: d.rect.width, height: d.rect.height))
+            ctx.clip(to: CGRect(x: d.rect.minX * f, y: CGFloat(h) - d.rect.maxY * f,
+                                width: d.rect.width * f, height: d.rect.height * f))
             ctx.draw(cropped, in: CGRect(x: 0, y: 0, width: w, height: h))  // upright, matches Canvas top-left mapping
             ctx.restoreGState()
             drew = true

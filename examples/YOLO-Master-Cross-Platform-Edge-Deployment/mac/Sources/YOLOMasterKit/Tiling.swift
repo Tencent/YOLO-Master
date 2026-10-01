@@ -220,9 +220,9 @@ extension Detector {
     /// Convenience for the CLI: tiled forward + the selected NMS in one call.
     public func detectTiled(_ image: CGImage, conf: Float, iou iouT: CGFloat,
                             tiling: TilingConfig, nmsMode: NMSMode = .standard,
-                            sigma: Float = 0.1) throws -> (Result, TiledOutput) {
+                            sigma: Float = 0.1, maxDet: Int = 300) throws -> (Result, TiledOutput) {
         let out = try tiledCandidates(image, config: tiling)
-        let dets = Detector.nms(out.candidates, conf: conf, iou: iouT, mode: nmsMode, sigma: sigma)
+        let dets = Detector.nms(out.candidates, conf: conf, iou: iouT, maxDet: maxDet, mode: nmsMode, sigma: sigma)
         return (Result(detections: dets, inferMs: out.inferMs), out)
     }
 }

@@ -102,7 +102,7 @@ class LatencyBenchTest(private val model: String, private val precision: Precisi
         }
         val img = probe(model)
         val ref = fp32Reference(dir!!, img)
-        // x86_64 emulator: keep it short (fp16 flags are inert there anyway); arm64: the real sweep.
+        // x86_64 emulator: keep it short (fp16 flags are inert there anyway); arm64: the real run.
         val n = if (arm64) 50 else 5
         val warm = if (arm64) 10 else 2
         if (useVulkan) { benchVulkan(dir, img, ref, n, warm); return }

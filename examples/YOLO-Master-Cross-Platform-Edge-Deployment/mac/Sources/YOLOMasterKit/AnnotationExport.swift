@@ -233,7 +233,7 @@ public enum AnnotationWriter {
             }
         }
         let cats = names.enumerated().map { COCOCategory(id: $0.offset + 1, name: $0.element) }
-        let doc = COCODoc(info: COCOInfo(description: "YOLO-Master CoreML Runner export"),
+        let doc = COCODoc(info: COCOInfo(description: "YOLO-Master macOS export"),
                           images: imgs, annotations: anns, categories: cats)
         let enc = JSONEncoder(); enc.outputFormatting = [.sortedKeys]
         return try enc.encode(doc)
@@ -249,7 +249,7 @@ public enum AnnotationWriter {
 @discardableResult
 public func exportAnnotationsFolder(_ items: [FolderItem], output: URL, names: [String],
                                     format: AnnotationFormat,
-                                    conf: Float, iou: CGFloat, nmsMode: NMSMode = .standard, sigma: Float = 0.1,
+                                    conf: Float, iou: CGFloat, nmsMode: NMSMode = .standard, sigma: Float = 0.1, maxDet: Int = 300,
                                     detector: Detector? = nil, includePolygons: Bool = false,
                                     progress: ((_ done: Int, _ total: Int) -> Void)? = nil) throws -> AnnotationExportResult {
     try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
@@ -257,7 +257,7 @@ public func exportAnnotationsFolder(_ items: [FolderItem], output: URL, names: [
     var nInstances = 0
     var usedStems = Set<String>()
     for (i, item) in items.enumerated() {
-        let dets = Detector.nms(item.candidates, conf: conf, iou: iou, mode: nmsMode, sigma: sigma)
+        let dets = Detector.nms(item.candidates, conf: conf, iou: iou, maxDet: maxDet, mode: nmsMode, sigma: sigma)
         var raw: Detector.RawOutput? = nil
         var w = item.width, h = item.height
         if includePolygons, let det = detector, let cg = loadCGImage(item.url) {
@@ -301,7 +301,7 @@ public func exportAnnotationsFolder(_ items: [FolderItem], output: URL, names: [
 @discardableResult
 public func exportAnnotationsVideo(input: URL, root: URL, framesCands: [[Detection]], names: [String],
                                    format: AnnotationFormat, sampling: VideoSampling, fps: Double,
-                                   conf: Float, iou: CGFloat, nmsMode: NMSMode = .standard, sigma: Float = 0.1,
+                                   conf: Float, iou: CGFloat, nmsMode: NMSMode = .standard, sigma: Float = 0.1, maxDet: Int = 300,
                                    raws: [Detector.RawOutput?] = [], detector: Detector? = nil,
                                    includePolygons: Bool = false,
                                    progress: ((_ done: Int, _ total: Int) -> Void)? = nil) async throws -> AnnotationExportResult {
@@ -337,7 +337,7 @@ public func exportAnnotationsVideo(input: URL, root: URL, framesCands: [[Detecti
         guard let cg = cictx.createCGImage(ci, from: ci.extent) else { n += 1; continue }
         let frameStem = String(format: "%@_%06d", stem, n)
         saveCGImage(cg, to: framesDir.appendingPathComponent(frameStem + ".jpg"))
-        let dets = Detector.nms(framesCands[n], conf: conf, iou: iou, mode: nmsMode, sigma: sigma)
+        let dets = Detector.nms(framesCands[n], conf: conf, iou: iou, maxDet: maxDet, mode: nmsMode, sigma: sigma)
         let raw = n < raws.count ? raws[n] : nil
         let insts = annotationInstances(dets, detector: detector, raw: raw, includePolygons: includePolygons)
         let img = AnnotatedImage(name: frameStem, width: cg.width, height: cg.height, instances: insts)

@@ -44,7 +44,7 @@ struct BenchRun: Identifiable, Codable {
     var id = UUID()
     var name: String
     let date: Date
-    let mode: String                 // "Cold Sweep" | "Sustained"
+    let mode: String                 // "Cold run" | "Sustained"
     let results: [BenchResult]
     var sparkline: [Double]? = nil    // sustained: the throttle trend
     var thermalTimeline: [Int]? = nil // sustained: thermal level sampled over the run
@@ -102,7 +102,7 @@ func thermalLevelColor(_ level: Int) -> Color {
 
 struct BenchView: View {
     enum Mode: String, CaseIterable, Identifiable {
-        case sweep = "Cold Sweep", sustained = "Sustained"
+        case cold = "Cold run", sustained = "Sustained"
         var id: String { rawValue }
     }
     enum Phase: Equatable {
@@ -116,7 +116,7 @@ struct BenchView: View {
     @State private var models: [BundledModel] = []
     @State private var results: [BenchResult] = []            // active mode's results (shown)
     @State private var stashedResults: [BenchResult] = []     // the OTHER mode's, kept hidden
-    @State private var mode: Mode = .sweep
+    @State private var mode: Mode = .cold
     @State private var phase: Phase = .idle
     @State private var running = false
     @State private var paused = false
@@ -157,14 +157,14 @@ struct BenchView: View {
                 // vertically centered, matching the Photo tab's "No photos" empty state
                 ContentUnavailableView("No benchmarks yet",
                     systemImage: "speedometer",
-                    description: Text("Run a cold sweep across every model and compute unit."))
+                    description: Text("Run a cold pass across every model and compute unit."))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
                     VStack(spacing: 10) {
                         if running { progressCard }
                         if mode == .sustained, sparkSamples.count > 1 { sustainedGraphCard }
-                        if mode == .sweep, let hero = fastest { heroCard(hero) }
+                        if mode == .cold, let hero = fastest { heroCard(hero) }
                         ForEach(modelsWithResults, id: \.self) { modelCard($0) }
                     }
                     .padding(.horizontal, 10)
@@ -318,7 +318,7 @@ struct BenchView: View {
             }
             Text(mode == .sustained
                  ? "In Sustained mode these set the cold baseline the throttle is measured against."
-                 : "Per model x unit cell in the cold sweep.")
+                 : "Per model x unit cell in the cold run.")
                 .font(.caption2).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -535,9 +535,9 @@ struct BenchView: View {
         runThermalStart = thermalLevel; runThermalPeak = thermalLevel
         medHaptic.impactOccurred(); medHaptic.prepare()
         sparkSamples = []; sparkThermal = []; sparkBaseline = nil; liveMs = 0
-        if mode == .sweep {
+        if mode == .cold {
             results = []; expandedCards = []
-            runSweep()
+            runCold()
         } else {
             runSustained()
         }
@@ -569,10 +569,10 @@ struct BenchView: View {
         if !results.isEmpty {
             let name = sustained
                 ? "\(results.first?.shortID ?? "run") · \(selectedCompute.rawValue) · \(Int(sustainedMinutes))min"
-                : "Sweep · \(modelsWithResults.count) models"
+                : "Cold run · \(modelsWithResults.count) models"
             history.add(BenchRun(
                 name: name, date: Date(),
-                mode: sustained ? "Sustained" : "Cold Sweep",
+                mode: sustained ? "Sustained" : "Cold run",
                 results: results,
                 sparkline: sustained ? sparkSamples : nil,
                 thermalTimeline: sustained ? thermalTimeline : nil,
@@ -611,7 +611,7 @@ struct BenchView: View {
         return (pre, inf, dec)
     }
 
-    private func runSweep() {
+    private func runCold() {
         let warmN = warmup, iterN = iters
         loopTask = Task.detached(priority: .userInitiated) {
             let img = testImage()
@@ -819,7 +819,7 @@ struct HistoryView: View {
     @State private var renaming: BenchRun?
     @State private var newName = ""
     @State private var expanded: Set<UUID> = []
-    @State private var fpsRuns: Set<UUID> = []   // cold-sweep cards showing FPS instead of latency
+    @State private var fpsRuns: Set<UUID> = []   // cold-run cards showing FPS instead of latency
     @Environment(\.editMode) private var editMode
     @State private var selection: Set<UUID> = []
     @State private var exportMsg: String?
@@ -851,7 +851,7 @@ struct HistoryView: View {
             ZStack {
                 if history.runs.isEmpty {
                     ContentUnavailableView("No saved runs", systemImage: "clock.arrow.circlepath",
-                        description: Text("Completed cold sweeps and sustained runs are saved here."))
+                        description: Text("Completed cold and sustained runs are saved here."))
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 8) {

@@ -1,0 +1,8 @@
+ncnn-segN | pre=1.25354 infer=150.453 post=1.61621 total=153.323ms  model-FPS=6.52219 | bench median=116.489ms | mAP50=0.5853  mAP50-95=0.4270 
+ncnn-esmoeN | pre=1.68857 infer=158.682 post=1.20692 total=161.577ms  model-FPS=6.189 | bench median=167.371ms | mAP50=0.6053  mAP50-95=0.4353 
+ncnn-v01n-pruned | pre=1.59466 infer=130.569 post=0.999456 total=133.163ms  model-FPS=7.5096 | bench median=178.233ms | mAP50=0.5940  mAP50-95=0.4309 
+mnn-segN-cpu | pre=1.04682 infer=96.0301 post=1.51581 total=98.5927ms  model-FPS=10.1427 | bench median=97.2703ms | mAP50=0.5853  mAP50-95=0.4270 
+mnn-esmoeN-cpu | pre=0.972754 infer=86.3352 post=1.11416 total=88.4221ms  model-FPS=11.3094 | bench median=127.512ms | mAP50=0.6053  mAP50-95=0.4353 
+mnn-v01n-cpu | pre=0.996704 infer=165.982 post=0.925934 total=167.905ms  model-FPS=5.95575 | bench median=201.925ms | mAP50=0.5940  mAP50-95=0.4309 
+mnn-v01n-cuda-bundle | pre=0.895566 infer=212.703 post=1.01846 total=214.617ms  model-FPS=4.65946 | bench median=207.285ms | mAP50=0.5940  mAP50-95=0.4309 
+MEASURE DONE 03:54:44

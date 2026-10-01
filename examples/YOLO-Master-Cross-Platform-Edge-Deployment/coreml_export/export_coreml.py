@@ -87,6 +87,108 @@ def _patch_yolov12_aattn():
     if hasattr(_M, "AAttn"): _M.AAttn = AAttn
 
 
+def _ane_topk_mask(p: torch.Tensor, k: int) -> torch.Tensor:
+    """Top-k membership of each column of `p` [B, E] with arithmetic only (no topk / sort / gather / int ops).
+
+    rank_i = number of j with p_j > p_i, counted with step(p_j - p_i); mask_i = step(k - 0.5 - rank_i).
+    step(z) = clamp(32768 z, 0, 1) is exact for gaps of 3e-5 and more (safe in fp16); two probabilities closer than
+    that (an fp16 tie) get a proportional blend instead of an arbitrary winner.
+    """
+    d = p.unsqueeze(2) - p.unsqueeze(1)                     # [B, j, i] = p_j - p_i
+    rank = (d * 32768.0).clamp(0.0, 1.0).sum(dim=1)          # [B, i]
+    return ((float(k) - 0.5 - rank) * 32768.0).clamp(0.0, 1.0)
+
+
+def _ane_router_probs(router, x: torch.Tensor) -> torch.Tensor:
+    """The router's pooled softmax probabilities [B, E] in eval mode (what its top-k is taken over)."""
+    import torch.nn.functional as F
+    B, C, H, W = x.shape
+    cls = type(router).__name__
+    if cls == "EfficientSpatialRouter":
+        x_in = F.avg_pool2d(x, kernel_size=router.pool_scale, stride=router.pool_scale) \
+            if (H > router.pool_scale and W > router.pool_scale) else x
+        return F.softmax(router.router(x_in).float().mean(dim=[2, 3]), dim=1)
+    if cls == "UltraEfficientRouter":
+        x_down = F.avg_pool2d(x, kernel_size=router.pool_scale, stride=router.pool_scale) \
+            if (H > router.pool_scale and W > router.pool_scale) else x
+        logits = router.router(x_down).clamp(-30.0, 30.0) / router.temperature
+        return F.softmax(logits.float(), dim=1).mean(dim=[2, 3])
+    raise RuntimeError(f"ANE-safe MoE export: unsupported router {cls}")
+
+
+def _patch_ane_safe_moe() -> list[str]:
+    """Export-time forward for OptimizedMOEImproved (v0.1 family) and OptimizedMOE that keeps the whole
+    block on the Neural Engine.
+
+    The stock export path stacks every expert's output and then GATHERS the router's top-k with
+    torch.topk + torch.gather: MIL `topk`, `gather_along_axis` and int32 index tensors. The ANE has no
+    kernels for those, so under cpuAndNeuralEngine Core ML runs each router on the CPU and pays a
+    sync + copy on both sides of every MoE block (v0.1-N: 9.2 ms on the ANE against 4.1 ms for the
+    router-free v0.1-seg-N graph, M4 Max). This path computes the same mixture as
+    shared(x) + sum_i w_i * expert_i(x) with w = p * mask / sum(p * mask) and the mask from
+    `_ane_topk_mask`: identical weights away from fp16 ties, no integer op anywhere.
+    """
+    import ultralytics.nn.modules.moe.modules as M
+    notes = []
+
+    def improved_forward(self, x):
+        B = x.shape[0]
+        p = _ane_router_probs(self.routing, x)
+        w = p * _ane_topk_mask(p, int(self.top_k))
+        w = w / w.sum(dim=1, keepdim=True).clamp_min(1e-6)
+        out = self.shared_expert(x)
+        for i, expert in enumerate(self.experts):
+            out = out + expert(x) * w[:, i].view(B, 1, 1, 1).to(x.dtype)
+        if getattr(self, "add_residual", False) and self.in_channels == self.out_channels:
+            out = out + x
+        return out
+
+    def optimized_forward(self, x):
+        B = x.shape[0]
+        p = _ane_router_probs(self.router, x)
+        w = p * _ane_topk_mask(p, int(self.top_k))
+        w = w / w.sum(dim=1, keepdim=True).clamp_min(1e-6)
+        mix = 0
+        for i, expert in enumerate(self.experts):
+            mix = mix + expert(x) * w[:, i].view(B, 1, 1, 1).to(x.dtype)
+        return self.shared_expert(x) + mix.clamp(-1e4, 1e4)
+
+    if hasattr(M, "OptimizedMOEImproved"):
+        M.OptimizedMOEImproved.forward = improved_forward; notes.append("OptimizedMOEImproved")
+    if hasattr(M, "OptimizedMOE"):
+        M.OptimizedMOE.forward = optimized_forward; notes.append("OptimizedMOE")
+    return notes
+
+
+def _repair_legacy_checkpoint(model) -> list[str]:
+    """Make the Jan-2026 released v0.1-N COCO checkpoint exportable on the 8.4.101 fork (the same
+    repair scripts/export_ncnn_dense.py applies; no-op for current checkpoints).
+
+    Two things that checkpoint predates: (1) `OptimizedMOEImproved.add_residual`, which the fork's
+    `_ensure_compat_attrs()` defaults to True although those blocks were trained WITHOUT the residual;
+    exporting them as-is keeps box regression alive and collapses every class score (mAP ~0, no
+    error), so absence means False. (2) Router `capacity_factor` and the training-schedule
+    bookkeeping the forward reads unconditionally (inert in eval mode, set to the __init__ defaults).
+    """
+    notes = []
+    for name, mod in model.named_modules():
+        cls = type(mod).__name__
+        if cls == "OptimizedMOEImproved":
+            if "add_residual" not in vars(mod):
+                mod.add_residual = False
+                notes.append(f"{name}.add_residual=False (absent in checkpoint)")
+            for attr, default in (("_training_step", 0), ("_current_top_k", getattr(mod, "num_experts", 1)),
+                                  ("warmup_steps", 5000), ("expert_dropout_rate", 0.15), ("dropout_interval", 100),
+                                  ("progressive_sparsity", True), ("detach_routing", False)):
+                if not hasattr(mod, attr):
+                    setattr(mod, attr, default)
+                    notes.append(f"{name}.{attr}={default} (absent in checkpoint)")
+        if cls in {"EfficientSpatialRouter", "AdaptiveRoutingLayer", "LocalRoutingLayer"} and not hasattr(mod, "capacity_factor"):
+            mod.capacity_factor = None
+            notes.append(f"{name}.capacity_factor=None (absent in checkpoint)")
+    return notes
+
+
 def _silence_esmoe_aux_loss():
     """No-op EsMoE's in-place load-balancing telemetry (see docstring #3). Safe: training-only."""
     try:
@@ -103,15 +205,20 @@ def _deploy_target(name: str):
 
 
 def export(weights: str, imgsz: int, out: str, target: str = "macos13",
-           merge_lora_dir: str | None = None, yolov12_aattn: bool = False) -> dict:
+           merge_lora_dir: str | None = None, yolov12_aattn: bool = False, ane_safe_moe: bool = True) -> dict:
     if yolov12_aattn:
         _patch_yolov12_aattn()
+    if ane_safe_moe:
+        for cls in _patch_ane_safe_moe():
+            print(f"[ane] {cls}: top-k mixture exported as arithmetic (no topk / gather / int ops)")
     ym = YOLO(weights)
     if merge_lora_dir:
         if not ym.load_lora(merge_lora_dir, merge=True):
             raise RuntimeError(f"failed to load/merge LoRA adapters from {merge_lora_dir}")
     model = ym.model.eval()
     names = [ym.names[i] for i in sorted(ym.names)] if getattr(ym, "names", None) else []
+    for note in _repair_legacy_checkpoint(model):
+        print(f"[compat] {note}")
 
     for m in model.modules():                      # Detect/Segment head -> single concatenated tensor
         if hasattr(m, "export"): m.export = True
@@ -152,6 +259,8 @@ def export(weights: str, imgsz: int, out: str, target: str = "macos13",
     meta["task"] = task
     meta["output"] = out_name
     meta["imgsz"] = str(imgsz)
+    meta["moe_export"] = "ane_safe_rank" if ane_safe_moe else "topk_gather"
+    meta["precision"] = "fp16"                     # ML program default compute precision (weights and activations)
     if names: meta["names"] = ",".join(names)
     mlmodel.save(out)
 
@@ -174,10 +283,12 @@ if __name__ == "__main__":
     ap.add_argument("--merge-lora-dir", default=None, help="load + merge trained LoRA adapters before export")
     ap.add_argument("--yolov12-aattn", action="store_true",
                     help="monkeypatch stock ultralytics' AAttn with sunsmarterjie/yolov12's qk+v variant")
+    ap.add_argument("--no-ane-safe-moe", action="store_true",
+                    help="keep the stock topk + gather MoE export (router segments run on the CPU under the ANE)")
     a = ap.parse_args()
     try:
         r = export(a.weights, a.imgsz, a.out, target=a.target, merge_lora_dir=a.merge_lora_dir,
-                   yolov12_aattn=a.yolov12_aattn)
+                   yolov12_aattn=a.yolov12_aattn, ane_safe_moe=not a.no_ane_safe_moe)
         print(f"OK  {r['out']}  task={r['task']}  output={r['output']}  classes={r['classes']}  "
               f"imgsz={r['imgsz']}  shapes={r['shapes']}")
     except Exception as e:  # noqa: BLE001

@@ -473,8 +473,8 @@ def _default_protocol(args: argparse.Namespace) -> Dict[str, object]:
         "max_det": args.max_det,
         "multi_label": bool(args.multi_label),
         "letterbox": not args.stretch,
-        # Keep the optional small-object sweep in the signed protocol.  A
-        # disabled sweep is represented by -1 rather than by omission so a
+        # Keep the optional small-object pass in the signed protocol.  A
+        # disabled pass is represented by -1 rather than by omission so a
         # reference and candidate cannot silently use different thresholds.
         "small_conf": getattr(args, "small_conf", -1.0),
         "small_area": getattr(args, "small_area", 32.0 * 32.0),

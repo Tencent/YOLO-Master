@@ -14,7 +14,7 @@ import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 
-/** One model x runtime x unit cell of a cold sweep (or the cold baseline of a sustained run). */
+/** One model x runtime x unit cell of a cold run (or the cold baseline of a sustained run). */
 @Serializable
 data class BenchResult(
     val modelId: String,
@@ -45,7 +45,7 @@ data class BenchRun(
     val id: String,
     var name: String,
     val dateMs: Long,
-    val mode: String,               // "Cold Sweep" | "Sustained"
+    val mode: String,               // "Cold run" | "Sustained"
     val durationSec: Int = 0,
     val results: List<BenchResult>,
     val thermalStart: Int = 0,

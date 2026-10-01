@@ -68,10 +68,10 @@ fun ThermalTach(level: Int, color: Color, size: Dp = 56.dp, modifier: Modifier =
             for (i in 0 until 4) {
                 val from = i * (segLen + gap)
                 val startDeg = 135f + from * 360f
-                val sweepDeg = segLen * 360f
+                val arcDeg = segLen * 360f
                 drawArc(
-                    color = if (i <= level) animated else track,
-                    startAngle = startDeg, sweepAngle = sweepDeg, useCenter = false,
+                    if (i <= level) animated else track,
+                    startDeg, arcDeg, false,
                     topLeft = topLeft, size = Size(d, d),
                     style = Stroke(width = stroke, cap = StrokeCap.Round),
                 )

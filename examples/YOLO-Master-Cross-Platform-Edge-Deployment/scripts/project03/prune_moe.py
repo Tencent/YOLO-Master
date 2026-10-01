@@ -19,12 +19,12 @@ subclassing - the upstream tree is never modified. Fixes applied here:
      projection is found the layer HARD-FAILS instead of corrupting.
   3. --min-keep floor (default: the layer's top_k) so routing stays meaningful;
      _current_top_k is synced where present (stale-attribute hazard).
-  4. One diagnosis feeds the whole progressive sweep: pass --stats usage.json from
+  4. One diagnosis feeds the whole progressive series: pass --stats usage.json from
      diagnose_moe.py, or let this script run the val pass once and reuse it for
      every threshold.
 
-Outputs per model under --out: <stem>_pruned_t{thr}.pt per threshold, sweep.csv
-(threshold, kept experts, params, dParams%, GFLOPs, mAP50, mAP50-95, dmAP), sweep.png,
+Outputs per model under --out: <stem>_pruned_t{thr}.pt per threshold, thresholds.csv
+(threshold, kept experts, params, dParams%, GFLOPs, mAP50, mAP50-95, dmAP), thresholds.png,
 plan_t{thr}.json, and final.json when --final-eval aitod-official is requested.
 """
 
@@ -356,7 +356,7 @@ def main():
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--imgsz", type=int, default=640)
     ap.add_argument("--batch", type=int, default=8)
-    ap.add_argument("--max-images", type=int, default=0, help="subset for fast sweep deltas")
+    ap.add_argument("--max-images", type=int, default=0, help="subset for fast threshold deltas")
     ap.add_argument("--workers", type=int, default=0,
                     help="val dataloader workers (0 = safe for py3.14 local; use 8 on pods)")
     ap.add_argument("--out", default="")
@@ -425,7 +425,7 @@ def main():
         print(f"  params {row['params_M']}M ({row['dParams_pct']}% cut)  "
               f"GFLOPs {fl}  mAP50-95 {m:.4f} (d {row['dmAP50_95']:+.4f})")
 
-    with open(out / "sweep.csv", "w", newline="") as f:
+    with open(out / "thresholds.csv", "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=["threshold", "kept_experts", "params_M",
                                           "dParams_pct", "GFLOPs", "mAP50", "mAP50_95", "dmAP50_95"])
         w.writeheader()
@@ -441,9 +441,9 @@ def main():
     ax.axhline(-args.map_budget, ls="--", color="red", lw=0.8)
     ax.set_xlabel("params reduction %")
     ax.set_ylabel("dmAP50-95")
-    ax.set_title(f"{stem}: pruning sweep (base {base_map:.4f})")
+    ax.set_title(f"{stem}: pruning series (base {base_map:.4f})")
     fig.tight_layout()
-    fig.savefig(out / "sweep.png", dpi=130)
+    fig.savefig(out / "thresholds.png", dpi=130)
 
     ok = [r for r in rows if r["dmAP50_95"] >= -args.map_budget]
     best = max(ok, key=lambda r: r["dParams_pct"]) if ok else None

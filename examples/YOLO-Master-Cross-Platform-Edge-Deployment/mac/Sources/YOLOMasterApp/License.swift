@@ -1,12 +1,12 @@
 // Auto-generated verbatim from LICENSE.txt - do not edit by hand.
 let acknowledgementLicense = """
 ================================================================
-YOLO-Master CoreML Runner
+YOLO-Master for macOS
 Copyright (C) 2026 (Thomas) RUIHENG LI
 (Author affiliated with The Hong Kong University of Science and 
 Technology)
 
-YOLO-Master CoreML Runner is a toolchain for training YOLO-Master
+YOLO-Master for macOS is a toolchain for training YOLO-Master
 models and exporting them to Apple's Core ML format for on-device
 inference.
 

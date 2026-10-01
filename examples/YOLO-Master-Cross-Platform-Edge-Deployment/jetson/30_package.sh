@@ -83,13 +83,14 @@ chmod +x "$OUT/build_engine.sh"
 cat > "$OUT/README.md" <<'EOS'
 # YOLO-Master-EsMoE-N — Jetson Orin native TensorRT runner
 
-Locally packaged aarch64 runner. It requires a compatible **Jetson Orin** and
-the target's JetPack TensorRT + CUDA installation; OpenCV is bundled when found
-by the packaging step. Verify the generated binary and engine on the target.
+Locally packaged aarch64 runner. It requires a compatible **Jetson Orin** (Nano / NX / AGX, sm87)
+and the target's JetPack TensorRT + CUDA installation (MEASURED on JetPack 7, CUDA 13, TensorRT 10:
+Orin Nano 4 GB, EsMoE-N FP16 engine, 35.7 FPS at mAP50 0.3488, see jetson/DEPLOYMENT_LOG.md);
+OpenCV is bundled by the packaging step. Verify the generated binary and engine on the target.
 
 ## 1. Build the engine — once per device (engines are device-specific)
     ./build_engine.sh
-    # writes models/<model-stem>_fp16.engine (FP16). Adds an 8G swapfile if none exists.
+    # ~10-15 min on an Orin Nano; writes models/<model-stem>_fp16.engine (FP16). Adds an 8G swapfile if none exists.
 
 ## 2. Run on the GPU
     ./yolomaster_edge --model models/<model-stem>_fp16.engine --source <image|dir|video> \

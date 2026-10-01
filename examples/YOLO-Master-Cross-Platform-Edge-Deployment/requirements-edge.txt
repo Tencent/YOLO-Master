@@ -1,7 +1,7 @@
 # Export/validation helpers (the C++ runtime itself only needs its CMake SDKs).
 numpy>=1.23
 torch>=2.0
-ultralytics>=8.0
+ultralytics==8.4.101   # the pinned YOLO-Master fork lineage (see README: upstream acce839c)
 onnx>=1.14
 onnxruntime>=1.18
 onnxsim>=0.4

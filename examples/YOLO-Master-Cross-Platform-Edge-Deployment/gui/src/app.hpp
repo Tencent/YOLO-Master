@@ -166,6 +166,7 @@ private:
     // ---- slicing (images + folders; video/webcam stay single-pass) ----
     yolomaster::SliceMode slice_mode_ = yolomaster::SliceMode::Off;
     int  tile_size_req_ = 0;            // requested tile edge, source px (0 = model imgsz)
+    int  max_det_req_ = 300;            // NMS keep cap, tiled runs only (single-pass stays 300)
     bool slice_masks_ = false;          // keep the global pass's masks in sliced runs
     bool sliced_run_ = false;           // current single-image cache came from a sliced run
     yolomaster::SliceOutput sstats_;    // per-image slicing stats (single-image mode)

@@ -1,0 +1,10 @@
+ncnn-segN | pre=1.11262 infer=113.073 post=1.02707 total=115.213ms  model-FPS=8.67961 | bench median=108.952ms | mAP50=0.5853  mAP50-95=0.4270 
+ncnn-esmoeN | pre=1.28979 infer=93.5865 post=0.682822 total=95.5592ms  model-FPS=10.4647 | bench median=93.57ms | mAP50=0.6053  mAP50-95=0.4353 
+ncnn-v01n-pruned | pre=1.08174 infer=97.6556 post=0.66772 total=99.405ms  model-FPS=10.0599 | bench median=131.631ms | mAP50=0.5940  mAP50-95=0.4309 
+mnn-segN-cpu | pre=0.704269 infer=127.99 post=1.42381 total=130.118ms  model-FPS=7.68531 | bench median=131.041ms | mAP50=0.5853  mAP50-95=0.4270 
+mnn-segN-cuda | pre=0.737119 infer=1.72499 post=8.31165 total=10.7738ms  model-FPS=92.8181 | bench median=1.87264ms | mAP50=0.5853  mAP50-95=0.4269 
+mnn-esmoeN-cpu | pre=0.713374 infer=162.594 post=0.890577 total=164.198ms  model-FPS=6.09021 | bench median=164.055ms | mAP50=0.6053  mAP50-95=0.4353 
+mnn-esmoeN-cuda | pre=0.694873 infer=1.64854 post=7.16716 total=9.51058ms  model-FPS=105.146 | bench median=1.61958ms | mAP50=0.6053  mAP50-95=0.4351 
+mnn-v01n-cpu | pre=0.716252 infer=192.197 post=0.869091 total=193.783ms  model-FPS=5.16042 | bench median=191.574ms | mAP50=0.5940  mAP50-95=0.4309 
+mnn-v01n-cuda | pre=0.866476 infer=2.30574 post=10.2821 total=13.4543ms  model-FPS=74.3256 | bench median=1.98165ms | mAP50=0.5938  mAP50-95=0.4309 
+MEASURE DONE 03:50:43

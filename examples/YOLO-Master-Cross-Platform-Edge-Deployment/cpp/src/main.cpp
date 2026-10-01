@@ -1,394 +1,135 @@
 // yolomaster_edge - universal, adaptive YOLO-Master edge runner.
 // Runtime model loading (no baked-in weights), backend/classes/imgsz auto-detected
-// from the model, versatile --source (image / dir / list / video / dataset.yaml).
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#endif
+// from the model, versatile --source (image / dir / video / dataset.yaml).
 #include "yolomaster.hpp"
 #include "slicing.hpp"
+#include "bench.hpp"
+#include "tracker.hpp"
+#include "map_metrics.hpp"
 #include "annotate_export.hpp"
-#include "backend_factory.hpp"
+#ifdef USE_ORT
+#include "ort_backend.hpp"
+#endif
+#ifdef USE_NCNN
+#include "ncnn_backend.hpp"
+#endif
+#ifdef USE_MNN
+#include "mnn_backend.hpp"
+#endif
+#ifdef USE_TRT
+#include "trt_backend.hpp"
+#endif
 #include "CLI11.hpp"
 #include "stb_image.h"
+#include "stb_image_write.h"
 
 #include <chrono>
-#include <cmath>
-#include <algorithm>
-#include <cstdio>
-#include <cstdint>
 #include <cstdlib>
-#include <ctime>
 #include <filesystem>
+#include <regex>
+#include <sstream>
+#include <unistd.h>
 #include <fstream>
-#include <iomanip>
 #include <iostream>
 #include <memory>
-#include <numeric>
-#include <sstream>
-#include <set>
-#include <stdexcept>
-#include <string>
-#include <thread>
-#include <vector>
-
-#ifdef _WIN32
-#include <windows.h>
-#endif
 
 using namespace yolomaster;
 namespace fs = std::filesystem;
 
-// image I/O via stb (avoids OpenCV imgcodecs -> GDAL/DB/poppler dependency closure).
-// On Windows open through _wfopen so UTF-8 paths are not routed through the
-// process ANSI code page.
-#ifdef _WIN32
-static std::wstring utf8_to_wide(const std::string& value) {
-    if (value.empty()) return {};
-    const int needed = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(),
-                                           static_cast<int>(value.size()), nullptr, 0);
-    if (needed <= 0) throw std::runtime_error("image path is not valid UTF-8");
-    std::wstring result(static_cast<size_t>(needed), L'\0');
-    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(),
-                            static_cast<int>(value.size()), result.data(), needed) != needed)
-        throw std::runtime_error("failed to convert image path to UTF-16");
-    return result;
+static bool ends_with(const std::string& s, const std::string& suf) {
+    return s.size() >= suf.size() && s.compare(s.size() - suf.size(), suf.size(), suf) == 0;
 }
-#endif
+
+// image I/O via stb (avoids OpenCV imgcodecs -> GDAL/DB/poppler dependency closure)
 static cv::Mat imread_bgr(const std::string& path) {
     int w, h, n;
-    unsigned char* d = nullptr;
-#ifdef _WIN32
-    std::wstring wide;
-    try { wide = utf8_to_wide(path); }
-    catch (...) { return cv::Mat(); }
-    FILE* file = _wfopen(wide.c_str(), L"rb");
-#else
-    FILE* file = std::fopen(path.c_str(), "rb");
-#endif
-    if (!file) return cv::Mat();
-    d = stbi_load_from_file(file, &w, &h, &n, 3);   // force 3-channel RGB
-    std::fclose(file);
+    unsigned char* d = stbi_load(path.c_str(), &w, &h, &n, 3);   // force 3-channel RGB
     if (!d) return cv::Mat();
     cv::Mat bgr;
     cv::cvtColor(cv::Mat(h, w, CV_8UC3, d), bgr, cv::COLOR_RGB2BGR);
     stbi_image_free(d);
     return bgr;
 }
-struct BenchmarkRow {
-    std::string image;
-    double preprocess_ms = 0.0;
-    double inference_ms = 0.0;
-    double postprocess_ms = 0.0;
-    double total_ms = 0.0;
-    int detections = 0;
-};
-
-static std::string csv_escape(const std::string& value) {
-    std::string escaped = "\"";
-    for (char c : value) {
-        if (c == '\"') escaped += "\"\"";
-        else escaped += c;
-    }
-    escaped += '\"';
-    return escaped;
+static bool imwrite_jpg(const std::string& path, const cv::Mat& bgr) {
+    cv::Mat rgb; cv::cvtColor(bgr, rgb, cv::COLOR_BGR2RGB);
+    if (!rgb.isContinuous()) rgb = rgb.clone();
+    return stbi_write_jpg(path.c_str(), rgb.cols, rgb.rows, 3, rgb.data, 90) != 0;
 }
 
-static double percentile(std::vector<double> values, double pct) {
-    if (values.empty()) return 0.0;
-    std::sort(values.begin(), values.end());
-    const double rank = (pct / 100.0) * static_cast<double>(values.size() - 1);
-    const size_t lo = static_cast<size_t>(std::floor(rank));
-    const size_t hi = static_cast<size_t>(std::ceil(rank));
-    if (lo == hi) return values[lo];
-    const double weight = rank - static_cast<double>(lo);
-    return values[lo] * (1.0 - weight) + values[hi] * weight;
-}
-
-static std::string json_escape(const std::string& value) {
-    std::string escaped;
-    escaped.reserve(value.size() + 8);
-    for (unsigned char c : value) {
-        switch (c) {
-        case '\\': escaped += "\\\\"; break;
-        case '"': escaped += "\\\""; break;
-        case '\b': escaped += "\\b"; break;
-        case '\f': escaped += "\\f"; break;
-        case '\n': escaped += "\\n"; break;
-        case '\r': escaped += "\\r"; break;
-        case '\t': escaped += "\\t"; break;
-        default:
-            if (c < 0x20) {
-                char buf[7];
-                std::snprintf(buf, sizeof(buf), "\\u%04x", static_cast<unsigned int>(c));
-                escaped += buf;
-            } else {
-                escaped += static_cast<char>(c);
+// --help after CLI11 laid it out: one blank line between options, and on a terminal (NO_COLOR
+// honoured) the everyday options in cyan and the section headers bold. The escapes are added
+// after layout, so the columns stay aligned.
+static std::string colorize_help(const std::string &help) {
+    const bool color = isatty(STDOUT_FILENO) && !std::getenv("NO_COLOR");
+    static const char *common[] = {"--model", "--source", "--backend", "--device", "--precision", "--conf", "--iou",
+                                   "--out", "--no-save", "--quiet", "--bench", "--accuracy", "--track", "--help"};
+    static const std::regex head(R"(^(\s+)(-[A-Za-z],\s+)?(--[a-z-]+)(.*)$)");
+    std::string out; out.reserve(help.size() + 1024);
+    std::istringstream in(help); std::string line;
+    bool in_options = false, first = true;
+    while (std::getline(in, line)) {
+        std::smatch m;
+        if (std::regex_match(line, m, head)) {
+            if (in_options && !first) out += '\n';   // a little air between options
+            first = false;
+            if (color) {
+                const std::string name = m[3];
+                bool hot = false;
+                for (const char *c : common) if (name == c) { hot = true; break; }
+                if (hot) line = m[1].str() + "\033[36m" + m[2].str() + name + "\033[0m" + m[4].str();
             }
+        } else if (!line.empty() && line.back() == ':' && line.find(' ') == std::string::npos) {
+            in_options = true; first = true;
+            if (color) line = "\033[1m" + line + "\033[0m";   // section headers (OPTIONS:)
         }
+        out += line; out += '\n';
     }
-    return escaped;
-}
-
-static std::string host_os() {
-#ifdef _WIN32
-    return "windows";
-#elif defined(__APPLE__)
-    return "macos";
-#elif defined(__linux__)
-    return "linux";
-#else
-    return "unknown";
-#endif
-}
-
-static std::string host_arch() {
-#if defined(__aarch64__) || defined(_M_ARM64)
-    return "aarch64";
-#elif defined(__x86_64__) || defined(_M_X64) || defined(__amd64__)
-    return "x86_64";
-#elif defined(__i386__) || defined(_M_IX86)
-    return "x86";
-#elif defined(__arm__) || defined(_M_ARM)
-    return "arm";
-#else
-    return "unknown";
-#endif
-}
-
-static std::string compiler_id() {
-#if defined(_MSC_VER)
-    return "MSVC " + std::to_string(_MSC_VER);
-#elif defined(__clang__)
-    return std::string("Clang ") + __clang_version__;
-#elif defined(__GNUC__)
-    return std::string("GCC ") + __VERSION__;
-#else
-    return "unknown";
-#endif
-}
-
-static std::string trim_copy(std::string value) {
-    const auto first = value.find_first_not_of(" \t\r\n");
-    if (first == std::string::npos) return {};
-    const auto last = value.find_last_not_of(" \t\r\n");
-    return value.substr(first, last - first + 1);
-}
-
-static std::string cpu_model() {
-#ifdef _WIN32
-    if (const char* value = std::getenv("PROCESSOR_IDENTIFIER")) {
-        if (*value) return value;
-    }
-#elif defined(__linux__)
-    std::ifstream cpuinfo("/proc/cpuinfo");
-    std::string line;
-    while (std::getline(cpuinfo, line)) {
-        const auto colon = line.find(':');
-        if (colon == std::string::npos) continue;
-        const std::string key = trim_copy(line.substr(0, colon));
-        if (key == "model name" || key == "Hardware" || key == "Processor") {
-            const std::string value = trim_copy(line.substr(colon + 1));
-            if (!value.empty()) return value;
-        }
-    }
-#elif defined(__APPLE__)
-    if (const char* value = std::getenv("HOSTTYPE")) {
-        if (*value) return value;
-    }
-#endif
-    return "unknown";
-}
-
-static std::string build_date() {
-    return std::string(__DATE__) + " " + __TIME__;
-}
-
-static bool write_benchmark_json(const std::string& path, const std::vector<BenchmarkRow>& rows,
-                                 int warmup, int runs, int threads, const std::string& model,
-                                 const std::string& source, const std::string& backend,
-                                 const std::string& execution_provider, const std::string& profile,
-                                 const Config& cfg, const std::string& csv_path,
-                                 long frames, long failed_frames, double wall_sec) {
-    const fs::path output_path = fs::u8path(path);
-    if (const fs::path parent = output_path.parent_path(); !parent.empty()) {
-        std::error_code ec;
-        fs::create_directories(parent, ec);
-        if (ec) return false;
-    }
-    std::ofstream out(output_path);
-    if (!out) return false;
-    std::vector<double> prep, infer, post, totals;
-    prep.reserve(rows.size());
-    infer.reserve(rows.size());
-    post.reserve(rows.size());
-    totals.reserve(rows.size());
-    for (const auto& row : rows) {
-        prep.push_back(row.preprocess_ms);
-        infer.push_back(row.inference_ms);
-        post.push_back(row.postprocess_ms);
-        totals.push_back(row.total_ms);
-    }
-    const double mean = totals.empty()
-        ? 0.0
-        : std::accumulate(totals.begin(), totals.end(), 0.0) / totals.size();
-    const auto stats_json = [](const std::vector<double>& values) {
-        const double avg = values.empty()
-            ? 0.0
-            : std::accumulate(values.begin(), values.end(), 0.0) / values.size();
-        std::ostringstream s;
-        s << std::setprecision(10)
-          << "{\"count\":" << values.size()
-          << ",\"mean_ms\":" << avg
-          << ",\"p50_ms\":" << percentile(values, 50.0)
-          << ",\"p95_ms\":" << percentile(values, 95.0)
-          << ",\"p99_ms\":" << percentile(values, 99.0)
-          << ",\"fps\":" << (avg > 0.0 ? 1000.0 / avg : 0.0) << "}";
-        return s.str();
-    };
-    out << std::setprecision(10);
-    out << "{\n"
-        << "  \"schema_version\": 1,\n"
-        << "  \"status\": \"" << (failed_frames == 0 ? "completed" : "partial") << "\",\n"
-        << "  \"model\": \"" << json_escape(model) << "\",\n"
-        << "  \"source\": \"" << json_escape(source) << "\",\n"
-        << "  \"protocol\": {\n"
-        << "    \"backend\": \"" << json_escape(backend) << "\",\n"
-        << "    \"execution_provider\": \"" << json_escape(execution_provider) << "\",\n"
-        << "    \"profile\": \"" << json_escape(profile) << "\",\n"
-        << "    \"imgsz\": " << cfg.imgsz << ",\n"
-        << "    \"conf\": " << cfg.conf_thresh << ",\n"
-        << "    \"iou\": " << cfg.iou_thresh << ",\n"
-        << "    \"small_conf\": " << cfg.small_conf_thresh << ",\n"
-        << "    \"small_area\": " << cfg.small_area << ",\n"
-        << "    \"max_det\": " << cfg.max_det << ",\n"
-        << "    \"multi_label\": " << (cfg.multi_label ? "true" : "false") << ",\n"
-        << "    \"letterbox\": " << (cfg.stretch ? "false" : "true") << ",\n"
-        << "    \"nms_mode\": \""
-        << (cfg.nms_mode == NmsMode::ClusterWeighted ? "cluster_weighted" : "standard") << "\",\n"
-        << "    \"cw_sigma\": " << cfg.cw_sigma << ",\n"
-        << "    \"class_count\": " << cfg.num_classes() << ",\n"
-        << "    \"warmup\": " << warmup << ",\n"
-        << "    \"runs\": " << runs << ",\n"
-        << "    \"threads\": " << threads << "\n"
-        << "  },\n"
-        << "  \"host\": {\n"
-        << "    \"os\": \"" << host_os() << "\",\n"
-        << "    \"architecture\": \"" << host_arch() << "\",\n"
-        << "    \"compiler\": \"" << json_escape(compiler_id()) << "\",\n"
-        << "    \"cpu\": \"" << json_escape(cpu_model()) << "\",\n"
-        << "    \"logical_cpus\": " << std::thread::hardware_concurrency() << ",\n"
-        << "    \"build_date\": \"" << build_date() << "\"\n"
-        << "  },\n"
-        << "  \"summary\": {\n"
-        << "    \"frames\": " << frames << ",\n"
-        << "    \"timed_images\": " << rows.size() << ",\n"
-        << "    \"failed_inputs\": " << failed_frames << ",\n"
-        << "    \"mean_ms\": " << mean << ",\n"
-        << "    \"p50_ms\": " << percentile(totals, 50.0) << ",\n"
-        << "    \"p95_ms\": " << percentile(totals, 95.0) << ",\n"
-        << "    \"p99_ms\": " << percentile(totals, 99.0) << ",\n"
-        << "    \"fps\": " << (mean > 0.0 ? 1000.0 / mean : 0.0) << ",\n"
-        << "    \"wall_seconds\": " << wall_sec << ",\n"
-        << "    \"timing_ms\": {\n"
-        << "      \"preprocess\": " << stats_json(prep) << ",\n"
-        << "      \"inference\": " << stats_json(infer) << ",\n"
-        << "      \"postprocess\": " << stats_json(post) << ",\n"
-        << "      \"total\": " << stats_json(totals) << "\n"
-        << "    }\n"
-        << "  },\n"
-        << "  \"timing_csv\": ";
-    if (csv_path.empty()) out << "null\n";
-    else out << "\"" << json_escape(csv_path) << "\"\n";
-    out << "}\n";
-    return out.good();
-}
-
-static bool write_benchmark_csv(const std::string& path, const std::vector<BenchmarkRow>& rows,
-                                int warmup, int runs, int threads, int imgsz,
-                                float conf, float iou) {
-    std::ofstream out(fs::u8path(path));
-    if (!out) return false;
-    out << "image,preprocess_ms,inference_ms,postprocess_ms,total_ms,detections,mean_ms,p50_ms,p95_ms,p99_ms,fps\n";
-    std::vector<double> totals;
-    totals.reserve(rows.size());
-    for (const auto& row : rows) {
-        out << csv_escape(row.image) << ',' << row.preprocess_ms << ',' << row.inference_ms << ','
-            << row.postprocess_ms << ',' << row.total_ms << ',' << row.detections << ",,,,,\n";
-        totals.push_back(row.total_ms);
-    }
-    const double sum = std::accumulate(totals.begin(), totals.end(), 0.0);
-    const double mean = totals.empty() ? 0.0 : sum / static_cast<double>(totals.size());
-    // Keep aggregate rows parseable by the shared CSV helper: non-numeric
-    // metadata belongs in the run header on stdout, not in a timing column.
-    (void)warmup;
-    (void)runs;
-    (void)threads;
-    (void)imgsz;
-    (void)conf;
-    (void)iou;
-    out << "#summary,,,,,," << mean << ',' << percentile(totals, 50.0) << ','
-        << percentile(totals, 95.0) << ',' << percentile(totals, 99.0) << ','
-        << (mean > 0.0 ? 1000.0 / mean : 0.0) << '\n';
-    return out.good();
+    return out;
 }
 
 int main(int argc, char** argv) {
-    CLI::App app{"yolomaster_edge - universal YOLO-Master edge runner (ONNX / ncnn / MNN / TensorRT)"};
+    CLI::App app{"yolomaster_edge - universal YOLO-Master edge runner (ONNX / ncnn / MNN)"};
+    // help layout: a wider name column so "--precision TEXT [auto]" and friends keep their
+    // description on the same line with a gap, and a wider paragraph before wrapping
+    app.get_formatter()->column_width(44);
+    app.get_formatter()->right_column_width(72);
+    app.set_version_flag("--version", std::string(YM_VERSION) + " (" + YM_GIT_COMMIT + ")");
     std::string model, source, backend = "auto", classes_opt = "auto", outdir = "runs_edge";
-    std::string profile = "default";
-    std::string device = "cpu", savetxt, csv_path, benchmark_json_path;
-    int imgsz = 0, threads = 4, limit = 0, max_det = 300;
-    int warmup = 0, runs = 1;
+    std::string device = "cpu", savetxt;
+    int imgsz = 0, threads = 4, limit = 0, max_det = 300, warmup = 0;
     float conf = 0.25f, iou = 0.50f;
-    float small_conf = -1.0f, small_area = 32.0f * 32.0f;
-    bool no_save = false, quiet = false, multilabel = false, single_label = false, stretch = false;
+    bool no_save = false, quiet = false, multilabel = false, stretch = false;
     std::string slicing = "off", label_format = "yolo", sampling = "1s", export_labels;
     int tile_size = 0;
     bool slicing_masks = false, cw_nms = false;
     float sigma = 0.1f;
+    std::string precision_s = "auto";
+    std::string bench_mode = "off", bench_json, accuracy;
+    std::string track_mode = "off";
+    int track_buffer = 30;
+    bool cpu_preproc = false, cuda_graph = false;
+    int bench_iters = 50, bench_warmup = 10;
+    double bench_minutes = 2.0;
 
-    app.add_option("-m,--model", model,
-                   "model: .onnx, .mnn, .engine/.trt, ncnn directory, or .param file")->required();
-    app.add_option("-s,--source", source, "image / directory / .txt or .list image list / video / dataset.yaml")->required();
-    app.add_option("-b,--backend", backend, "auto|onnx|ncnn|mnn|trt")->default_str("auto");
-    app.add_option("-d,--device", device,
-                   "backend-dependent: cpu, cuda, vulkan, opencl, trt, or coreml")->default_str("cpu");
-    app.add_option(
-        "--profile", profile,
-        "post-processing profile: default|visdrone|sku110k (thresholds are overridable)")
-        ->default_str("default");
-    app.add_option("--classes", classes_opt, "auto|visdrone|sku110k (auto = from model metadata)")->default_str("auto");
-    auto* imgsz_opt = app.add_option("--imgsz", imgsz, "inference size (0 = from model / profile)");
-    auto* conf_opt = app.add_option("--conf", conf, "confidence threshold")->capture_default_str();
-    auto* iou_opt = app.add_option("--iou", iou, "NMS IoU threshold")->capture_default_str();
-    auto* maxdet_opt = app.add_option("--max-det", max_det, "max detections per image after NMS")
-                           ->capture_default_str();
-    app.add_option(
-        "--small-conf", small_conf,
-        "optional lower confidence for boxes below --small-area (-1 disables)")
-        ->capture_default_str();
-    app.add_option(
-        "--small-area", small_area,
-        "original-image area threshold for --small-conf (pixels^2)")
-        ->capture_default_str();
+    app.add_option("-m,--model", model, "model: .onnx file, or ncnn dir / .param")->required();
+    app.add_option("-s,--source", source, "image / directory / video / dataset.yaml")->required();
+    app.add_option("-b,--backend", backend, "auto|onnx|ncnn|mnn")->default_str("auto");
+    app.add_option("-d,--device", device, "cpu|cuda|trt|coreml (onnx backend; trt=TensorRT EP, coreml=Apple CoreML EP)")->default_str("cpu");
+    app.add_option("--classes", classes_opt, "auto|visdrone|sku (auto = from model metadata)")->default_str("auto");
+    app.add_option("--imgsz", imgsz, "inference size (0 = from model / 640)");
+    app.add_option("--conf", conf, "confidence threshold")->capture_default_str();
+    app.add_option("--iou", iou, "NMS IoU threshold")->capture_default_str();
+    app.add_option("--max-det", max_det, "max detections per image after NMS (tiled runs only; requires --slicing)")->capture_default_str();
     app.add_option("--threads", threads, "CPU threads")->capture_default_str();
+    app.add_option("--precision", precision_s,
+                   "ncnn numeric precision: auto|fp32|fp16|int8 (auto = fp16 for fp16-safe models on armv8.2 CPUs, "
+                   "fp32 pinned for emulated-router mixture graphs; int8 = load the <name>-int8_ncnn sibling)")
+        ->default_str("auto");
     app.add_option("--limit", limit, "cap #inputs (0 = all)");
-    app.add_option("--warmup", warmup, "untimed warm-up inferences per first input (benchmark only)")
-        ->capture_default_str();
-    app.add_option("--runs", runs, "timed repetitions per input (benchmark only)")->capture_default_str();
-    app.add_option("--csv", csv_path, "write per-image benchmark CSV (enables timing summary)");
-    app.add_option("--benchmark-json", benchmark_json_path,
-                   "write benchmark protocol/host/summary JSON sidecar (enables timing summary)");
+    app.add_option("--warmup", warmup, "run the first input N extra times before timing starts (0 = off)");
     app.add_option("--out", outdir, "output dir for annotated results")->capture_default_str();
     app.add_option("--save-txt", savetxt, "dir to write per-image predictions ('class conf x1 y1 x2 y2')");
-    auto* multilabel_opt = app.add_flag(
-        "--multi-label", multilabel,
-        "one detection per class >= conf per anchor (matches ultralytics val mAP)");
-    auto* singlelabel_opt = app.add_flag(
-        "--single-label", single_label,
-        "diagnostic argmax-per-anchor decoding (mutually exclusive with --multi-label)");
+    app.add_flag("--multi-label", multilabel, "one detection per class>conf per anchor (matches ultralytics val mAP)");
     app.add_flag("--stretch", stretch, "preprocess by stretching to square instead of aspect-preserving letterbox");
     app.add_flag("--no-save", no_save, "do not write annotated outputs");
     app.add_flag("--quiet", quiet, "suppress per-image logs");
@@ -400,84 +141,134 @@ int main(int argc, char** argv) {
     app.add_option("--export-labels", export_labels, "dir to write annotation labels (WYSIWYG at the current conf/iou/nms settings)");
     app.add_option("--label-format", label_format, "yolo|coco|voc")->default_str("yolo");
     app.add_option("--sampling", sampling, "video label export: all|1s|N (every Nth frame)")->default_str("1s");
-    CLI11_PARSE(app, argc, argv);
-
-    if (multilabel_opt->count() > 0 && singlelabel_opt->count() > 0) {
-        std::cerr << "--multi-label and --single-label are mutually exclusive\n";
-        return 2;
+    app.add_option("--bench", bench_mode, "off|cold|sustained: benchmark mode (yolomaster-bench/v1 JSON): gray-probe run "
+                   "(cold: --bench-warmup + --bench-iters; sustained: a --bench-minutes loop) plus per-stage stats of the "
+                   "dataset pass; images/dirs/dataset.yaml only")->default_str("off");
+    app.add_option("--bench-iters", bench_iters, "timed probe forwards in the cold run")->capture_default_str();
+    app.add_option("--bench-warmup", bench_warmup, "untimed probe forwards before the timed run")->capture_default_str();
+    app.add_option("--bench-minutes", bench_minutes, "sustained mode: loop duration")->capture_default_str();
+    app.add_option("--bench-json", bench_json, "write the bench result JSON here (default <out>/bench.json)");
+    app.add_option("--accuracy", accuracy, "score the source with the in-process mAP: a YOLO labels dir, or 'auto' to map "
+                   ".../images/... to .../labels/... (dataset.yaml sources). Runs a second pass at the val protocol "
+                   "(conf 0.001, iou 0.7, multi-label, max_det 300); implies --bench cold");
+    app.add_option("--track", track_mode, "off|botsort|bytetrack: multi-object tracking on video sources (ids drawn, "
+                   "--save-txt gains a 7th column track_id); botsort adds camera motion compensation")->default_str("off");
+    app.add_option("--track-buffer", track_buffer, "frames a lost track is kept before its id retires")->capture_default_str();
+    app.add_flag("--cpu-preproc", cpu_preproc, "TensorRT / ORT-CUDA: preprocess on the CPU instead of the CUDA kernel (parity runs)");
+    app.add_flag("--cuda-graph", cuda_graph, "TensorRT: capture the per-frame stream work into a CUDA graph and replay it");
+    try {
+        app.parse(argc, argv);
+    } catch (const CLI::CallForHelp &) {
+        std::cout << colorize_help(app.help());
+        return 0;
+    } catch (const CLI::ParseError &e) {
+        return app.exit(e);
     }
-    if (singlelabel_opt->count() > 0) multilabel = false;
-
-    profile = lower_ascii(profile);
-    classes_opt = lower_ascii(classes_opt);
-    if (classes_opt == "sku") classes_opt = "sku110k";
-    if (classes_opt != "auto" && classes_opt != "visdrone" && classes_opt != "sku110k") {
-        std::cerr << "unknown --classes: " << classes_opt
-                  << " (expected auto, visdrone, or sku110k)\n";
-        return 2;
+    track::TrackerConfig tcfg;
+    const bool track_on = track_mode != "off";
+    if (track_on && !track::parse_tracker_kind(track_mode, tcfg.kind)) {
+        std::cerr << "unknown --track mode: " << track_mode << " (off|botsort|bytetrack)\n"; return 2;
     }
-
-    // The generic runner keeps conservative defaults, while the explicit
-    // vertical profiles reproduce the Issue #51 evaluation recipe.  Only
-    // values omitted by the caller are filled in, so deployment-specific
-    // thresholds remain possible and are visible in the run header.
-    // Canonical VisDrone defaults: imgsz = 640, conf = 0.001f,
-    // iou = 0.70f, multi_label = true.
-    if (profile == "visdrone") {
-        if (imgsz_opt->count() == 0) imgsz = 640;
-        if (conf_opt->count() == 0) conf = 0.001f;
-        if (iou_opt->count() == 0) iou = 0.70f;
-        if (maxdet_opt->count() == 0) max_det = 300;
-        if (multilabel_opt->count() == 0 && singlelabel_opt->count() == 0) multilabel = true;
-    } else if (profile == "sku110k") {
-        if (imgsz_opt->count() == 0) imgsz = 1280;
-        if (conf_opt->count() == 0) conf = 0.25f;
-        if (iou_opt->count() == 0) iou = 0.60f;
-        if (maxdet_opt->count() == 0) max_det = 300;
-        // Keep the profile metadata identical to the Python evaluator.  SKU-110K
-        // has one class, so this does not change the decoded boxes, but it makes
-        // the protocol explicit and prevents a cross-backend manifest mismatch.
-        if (multilabel_opt->count() == 0 && singlelabel_opt->count() == 0) multilabel = true;
-    } else if (profile != "default") {
-        std::cerr << "unknown --profile: " << profile << " (expected default, visdrone, or sku110k)\n";
-        return 2;
+    tcfg.track_buffer = track_buffer;
+    if (bench_mode != "off" && bench_mode != "cold" && bench_mode != "sustained") {
+        std::cerr << "unknown --bench mode: " << bench_mode << " (off|cold|sustained)\n"; return 2;
     }
-    if (!std::isfinite(conf) || conf < 0.f || conf > 1.f ||
-        !std::isfinite(iou) || iou < 0.f || iou > 1.f ||
-        !std::isfinite(small_conf) || small_conf < -1.f || small_conf > 1.f ||
-        !std::isfinite(small_area) || small_area < 0.f ||
-        max_det <= 0 || threads <= 0 || warmup < 0 || runs <= 0 || limit < 0) {
-        std::cerr << "conf/iou must be in [0,1], small-conf in [-1,1], small-area "
-                     "non-negative, max-det/threads/runs positive, and warmup/limit "
-                     "non-negative\n";
-        return 2;
+    if (!accuracy.empty() && bench_mode == "off") bench_mode = "cold";
+    const bool bench_on = bench_mode != "off";
+
+    Precision precision = Precision::Auto;
+    if (!parse_precision(precision_s, precision)) {
+        std::cerr << "unknown --precision: " << precision_s << " (auto|fp32|fp16|int8)\n"; return 2;
     }
 
     SliceMode slice_mode = SliceMode::Off;
     if (slicing == "dense") slice_mode = SliceMode::Dense;
     else if (slicing == "sparse") slice_mode = SliceMode::Sparse;
     else if (slicing != "off") { std::cerr << "unknown --slicing mode: " << slicing << "\n"; return 2; }
+    // the adjustable cap is a tiled-inference feature (merged tile pools can legitimately
+    // exceed 300 dets); single-pass runs keep the ultralytics default
+    if (app.count("--max-det") && slice_mode == SliceMode::Off) {
+        std::cerr << "--max-det is only available with tiled inference (add --slicing dense|sparse)\n";
+        return 2;
+    }
     annot::Format lfmt = annot::Format::YoloTXT;
     if (label_format == "coco") lfmt = annot::Format::CocoJSON;
     else if (label_format == "voc") lfmt = annot::Format::PascalVOC;
     else if (label_format != "yolo") { std::cerr << "unknown --label-format: " << label_format << "\n"; return 2; }
 
+    // ---- backend auto-detect from the model path ----
+    if (backend == "auto") {
+        std::error_code ec;
+        if (fs::is_directory(model, ec) || ends_with(model, ".param")) backend = "ncnn";
+        else if (ends_with(model, ".onnx")) {
+#if defined(USE_ORT)
+            backend = "onnx";
+#elif defined(USE_TRT)
+            backend = "trt";     // a TensorRT-only build compiles the .onnx into an engine
+#else
+            backend = "onnx";
+#endif
+        }
+        else if (ends_with(model, ".mnn")) backend = "mnn";
+        else if (ends_with(model, ".engine") || ends_with(model, ".trt")) backend = "trt";
+        else { std::cerr << "cannot infer backend from '" << model << "'; pass --backend\n"; return 2; }
+    }
+
     // ---- construct backend ----
     std::unique_ptr<Backend> be;
-    std::string resolved_backend, backend_error;
-    be = make_backend(model, backend, threads, device, resolved_backend, backend_error);
-    if (!be) {
-        std::cerr << backend_error << "\n";
-        return 3;
+    try {
+        if (backend == "onnx") {
+#ifdef USE_ORT
+            OrtOptions oo; oo.device = device; oo.threads = threads; oo.gpu_preproc = !cpu_preproc;
+            be = std::make_unique<OrtBackend>(model, oo);
+#else
+            std::cerr << "built without ONNXRuntime backend\n"; return 2;
+#endif
+        } else if (backend == "ncnn") {
+#ifdef USE_NCNN
+            // --precision int8 selects the pre-quantized "<name>-int8_ncnn" sibling; a missing
+            // sibling is a hard error so an int8 number can never come from a float model.
+            const std::string m = (precision == Precision::Int8) ? meta::ncnn_int8_sibling(model) : model;
+            std::string param = m, bin;
+            std::error_code ec;
+            if (fs::is_directory(m, ec)) {
+                param = (fs::path(m) / "model.ncnn.param").string();
+                bin = (fs::path(m) / "model.ncnn.bin").string();
+            } else bin = param.substr(0, param.rfind('.')) + ".bin";
+            if (!fs::exists(param, ec)) {
+                std::cerr << (precision == Precision::Int8 ? "int8 model not found: " : "ncnn model not found: ")
+                          << param << "\n";
+                return 2;
+            }
+            be = std::make_unique<NcnnBackend>(param, bin, threads, false, precision);
+#else
+            std::cerr << "built without ncnn backend\n"; return 2;
+#endif
+        } else if (backend == "mnn") {
+#ifdef USE_MNN
+            be = std::make_unique<MnnBackend>(model, threads, device == "cuda" ? "cuda" : "cpu", precision);
+#else
+            std::cerr << "built without MNN backend (rebuild with -DUSE_MNN=ON)\n"; return 2;
+#endif
+        } else if (backend == "trt") {
+#ifdef USE_TRT
+            // .engine loads as-is; .onnx is built (fp32, or fp16 with --precision fp16) and cached
+            TrtOptions topt;
+            topt.fp16 = (precision == Precision::Fp16);
+            topt.gpu_preproc = !cpu_preproc; topt.cuda_graph = cuda_graph;
+            be = std::make_unique<TrtBackend>(model, topt);
+#else
+            std::cerr << "built without TensorRT backend (rebuild with -DUSE_TRT=ON)\n"; return 2;
+#endif
+        } else { std::cerr << "unknown backend: " << backend << "\n"; return 2; }
+    } catch (const std::exception& e) {
+        std::cerr << "backend init failed: " << e.what() << "\n"; return 3;
     }
-    backend = resolved_backend;
 
     // ---- resolve config: --flag > model metadata > default ----
     Config cfg;
     cfg.conf_thresh = conf;
     cfg.iou_thresh = iou;
-    cfg.small_conf_thresh = small_conf;
-    cfg.small_area = small_area;
     cfg.max_det = max_det;
     cfg.multi_label = multilabel;
     cfg.stretch = stretch;
@@ -485,73 +276,39 @@ int main(int argc, char** argv) {
     cfg.cw_sigma = std::min(0.5f, std::max(0.01f, sigma));
     int want = imgsz > 0 ? imgsz : (be->meta_imgsz > 0 ? be->meta_imgsz : 640);
     if (be->fixed_imgsz > 0 && want != be->fixed_imgsz) {
-        // A caller-supplied size, or a canonical evaluation profile, is part
-        // of the protocol and must not be silently rewritten to fit a model.
-        // Generic runs with no explicit size may still adopt a model's static
-        // input as a convenience.
-        const bool canonical_profile = profile == "visdrone" || profile == "sku110k";
-        if (imgsz_opt->count() > 0 || canonical_profile) {
-            std::cerr << "model requires fixed imgsz=" << be->fixed_imgsz
-                      << "; requested imgsz=" << want << " is incompatible\n";
-            return 2;
-        }
-        std::cout << "[model] using fixed imgsz=" << be->fixed_imgsz
-                  << " (model constraint; no explicit --imgsz supplied)\n";
+        std::cerr << "[warn] model requires fixed imgsz=" << be->fixed_imgsz
+                  << "; overriding requested imgsz=" << want << "\n";
         want = be->fixed_imgsz;
     }
     cfg.imgsz = want;
+    // tracking wants the low-score detections for its second association: unless the user pinned
+    // --conf, the detector floor drops to the tracker's low threshold (ultralytics does the same)
+    if (track_on && !app.count("--conf")) cfg.conf_thresh = tcfg.track_low_thresh;
     std::string classes_src;
-    const std::vector<std::string>* profile_names = nullptr;
-    if (profile == "visdrone") profile_names = &visdrone_classes();
-    else if (profile == "sku110k") profile_names = &sku110k_classes();
-
-    if (profile_names) {
-        // An explicit profile defines both thresholds and the class ABI.  Do
-        // not let ``--classes auto`` silently select (for example) COCO-80
-        // metadata from a VisDrone run; that would decode the output with the
-        // wrong feature count and invalidate the metric.
-        if (!be->meta_names.empty() && be->meta_names.size() != profile_names->size()) {
-            std::cerr << "model metadata declares " << be->meta_names.size()
-                      << " classes, but --profile " << profile << " requires "
-                      << profile_names->size() << "; use a matching model or --profile default\n";
-            return 2;
-        }
-        if (classes_opt != "auto" && classes_opt != profile) {
-            std::cerr << "--profile " << profile << " conflicts with --classes " << classes_opt << "\n";
-            return 2;
-        }
-        cfg.class_names = *profile_names;
-        classes_src = "profile:" + profile;
-    } else if (classes_opt == "visdrone") {
-        cfg.class_names = visdrone_classes(); classes_src = "flag:visdrone";
-    } else if (classes_opt == "sku110k") {
-        cfg.class_names = sku110k_classes(); classes_src = "flag:sku110k";
-    } else if (!be->meta_names.empty()) {
-        cfg.class_names = be->meta_names; classes_src = "model-metadata";
-    } else {
-        cfg.class_names = visdrone_classes(); classes_src = "fallback:visdrone";
-    }
+    if (classes_opt == "visdrone") { cfg.class_names = visdrone_classes(); classes_src = "flag:visdrone"; }
+    else if (classes_opt == "sku" || classes_opt == "sku110k") { cfg.class_names = sku110k_classes(); classes_src = "flag:sku"; }
+    else if (!be->meta_names.empty()) { cfg.class_names = be->meta_names; classes_src = "model-metadata"; }
+    else { cfg.class_names = visdrone_classes(); classes_src = "fallback:visdrone"; }
 
     std::cout << "[model] " << model << "  backend=" << backend << "  ep=" << be->active_ep
-              << "  profile=" << profile
               << "  imgsz=" << cfg.imgsz << "  nc=" << cfg.num_classes() << " (" << classes_src << ")"
-              << "  conf=" << cfg.conf_thresh << "  iou=" << cfg.iou_thresh
-              << "  small_conf=" << cfg.small_conf_thresh
-              << "  small_area=" << cfg.small_area
-              << "  max_det=" << cfg.max_det << "  multi_label=" << (cfg.multi_label ? "true" : "false")
-              << "  threads=" << threads;
-    if (!csv_path.empty() || !benchmark_json_path.empty()) {
-        std::cout << "  warmup=" << warmup << "  runs=" << runs;
-        if (!csv_path.empty()) std::cout << "  csv=" << csv_path;
-        if (!benchmark_json_path.empty()) std::cout << "  benchmark_json=" << benchmark_json_path;
-    }
-    std::cout << "\n";
+              << "  conf=" << cfg.conf_thresh << "  iou=" << cfg.iou_thresh << "  max_det=" << cfg.max_det
+              << (be->ep_note.empty() ? "" : "  note=" + be->ep_note) << "\n";
 
     if (!no_save) { std::error_code ec; fs::create_directories(outdir, ec); }
     if (!savetxt.empty()) { std::error_code ec; fs::create_directories(savetxt, ec); }
 
     // ---- run over the source ----
     const SourceKind kind = classify_source(source);
+    std::vector<std::string> imgs;                 // image sources (bench / accuracy re-use the list)
+    if (bench_on && kind == SourceKind::Video) {
+        std::cerr << "--bench / --accuracy apply to images, directories and dataset.yaml sources only\n"; return 2;
+    }
+    if (track_on && kind != SourceKind::Video) {
+        std::cerr << "--track applies to video sources only\n"; return 2;
+    }
+    std::unique_ptr<track::Tracker> tracker;   // created once the capture fps is known
+    std::vector<int> track_ids;                // parallel to `dets` inside run_one when tracking
     if (slice_mode != SliceMode::Off && kind == SourceKind::Video) {
         std::cerr << "[warn] slicing applies to images and folders only - video runs single-pass\n";
         slice_mode = SliceMode::Off;
@@ -589,13 +346,10 @@ int main(int argc, char** argv) {
     };
 
     auto t_start = std::chrono::high_resolution_clock::now();
-    long frames = 0, failed_frames = 0, total_dets = 0;
+    long frames = 0, total_dets = 0;
     double sum_pre = 0, sum_inf = 0, sum_post = 0;
-    std::vector<BenchmarkRow> benchmark_rows;
-    const bool benchmark_requested = !csv_path.empty() || !benchmark_json_path.empty();
-    const int timed_runs = benchmark_requested ? runs : 1;
-    bool warmed_up = false;
-    std::vector<std::string> failures;
+    bench::Samples samples;                        // per-frame stage samples (bench JSON)
+    bench::BenchResult bres;
 
     // Video sources: annotated output becomes ONE mp4 (per-frame jpgs would overwrite each
     // other - "11.mp4#930" stems to "11"), and --save-txt gets frame-indexed names.
@@ -610,94 +364,58 @@ int main(int argc, char** argv) {
     // coco_file/coco_id: the COCO doc's file_name (may carry "frames/") and explicit image
     // id (0 = sequence). export=false skips label emission (non-sampled video frames).
     auto run_one = [&](const cv::Mat& img, const std::string& tag,
-                       bool do_export = true, const std::string& coco_file = "", int coco_id = 0) -> bool {
-        auto record_failure = [&](const std::string& reason) {
-            ++failed_frames;
-            failures.push_back(tag + ": " + reason);
-        };
-        if (img.empty()) {
-            std::cerr << "  [skip] unreadable: " << tag << "\n";
-            record_failure("unreadable image");
-            return false;
-        }
-        if (!warmed_up && benchmark_requested && warmup > 0) {
-            try {
-                for (int i = 0; i < warmup; ++i) {
-                    if (slice_mode != SliceMode::Off) {
-                        (void)sliced_candidates(*be, img, cfg, sconf);
-                    } else {
-                        (void)be->infer(img, cfg);
-                    }
-                }
-                warmed_up = true;
-            } catch (const std::exception& e) {
-                std::cerr << "  [skip] warm-up failed on " << tag << ": " << e.what() << "\n";
-                record_failure(std::string("warm-up error: ") + e.what());
-                return false;
-            }
-        }
-
+                       bool do_export = true, const std::string& coco_file = "", int coco_id = 0) {
+        if (img.empty()) { std::cerr << "  [skip] unreadable: " << tag << "\n"; return; }
         std::vector<Detection> dets;
         std::string slice_note;
-        double image_pre = 0.0, image_inf = 0.0, image_post = 0.0;
         try {
-            for (int repeat = 0; repeat < timed_runs; ++repeat) {
-                if (slice_mode != SliceMode::Off) {
-                    const SliceOutput so = sliced_candidates(*be, img, cfg, sconf);
-                    dets = nms_and_cap(be->candidates, cfg, img.cols, img.rows);
-                    tstats.add(so.tiles_run, so.tiles_total, so.tile_size_used,
-                               so.used_fallback, so.capped);
-                    slice_note = "  tiles=" + std::to_string(so.tiles_run) + "/"
-                               + std::to_string(so.tiles_total) + " @" + std::to_string(so.tile_size_used) + "px"
-                               + (so.used_fallback ? " [fallback]" : "") + (so.capped ? " [capped]" : "");
-                    // sliced_candidates aggregates all model forwards, including
-                    // preprocessing and postprocessing for each tile.  Read the
-                    // stage sums from SliceOutput so the CSV row describes the
-                    // complete image rather than the final tile only.
-                    image_pre += so.pre_ms;
-                    image_inf += so.infer_ms;
-                    image_post += so.post_ms;
-                } else {
-                    dets = be->infer(img, cfg);
-                    image_pre += be->pre_ms;
-                    image_inf += be->infer_ms;
-                    image_post += be->post_ms;
-                }
+            if (slice_mode != SliceMode::Off) {
+                const SliceOutput so = sliced_candidates(*be, img, cfg, sconf);
+                dets = nms_and_cap(be->candidates, cfg, img.cols, img.rows);
+                tstats.add(so.tiles_run, so.tiles_total, so.tile_size_used,
+                           so.used_fallback, so.capped);
+                slice_note = "  tiles=" + std::to_string(so.tiles_run) + "/"
+                           + std::to_string(so.tiles_total) + " @" + std::to_string(so.tile_size_used) + "px"
+                           + (so.used_fallback ? " [fallback]" : "") + (so.capped ? " [capped]" : "");
+            } else {
+                dets = be->infer(img, cfg);
             }
         } catch (const std::exception& e) {
             std::cerr << "  [skip] inference error on " << tag << ": " << e.what() << "\n";
-            record_failure(std::string("inference error: ") + e.what());
-            return false;
+            return;
         }
-        image_pre /= timed_runs;
-        image_inf /= timed_runs;
-        image_post /= timed_runs;
-        if (benchmark_requested) {
-            benchmark_rows.push_back({tag, image_pre, image_inf, image_post,
-                                      image_pre + image_inf + image_post,
-                                      static_cast<int>(dets.size())});
+        std::vector<track::Track> tracks;
+        track_ids.clear();
+        if (tracker) {
+            tracks = tracker->update(dets, &img);
+            std::vector<Detection> tracked;
+            tracked.reserve(tracks.size());
+            for (const auto& t : tracks) {
+                Detection d;
+                d.class_id = t.class_id; d.conf = t.conf; d.box = t.box; d.mask_coeffs = t.mask_coeffs;
+                d.cand_index = t.det_index >= 0 && t.det_index < static_cast<int>(dets.size()) ? dets[t.det_index].cand_index : -1;
+                tracked.push_back(std::move(d));
+                track_ids.push_back(t.id);
+            }
+            dets.swap(tracked);
         }
         if (!export_labels.empty() && do_export) {
-            try {
-                AnnotationSink& s = ensure_sink();
-                annot::Image aimg;
-                aimg.name = fs::path(tag).stem().string();
-                if (coco_id > 0) aimg.name = fs::path(coco_file).stem().string();
-                aimg.width = img.cols; aimg.height = img.rows;
-                aimg.instances = annotation_instances(dets, be->is_seg(), be->proto, be->proto_c,
-                                                      be->proto_h, be->proto_w, be->cand_lb, cfg.imgsz);
-                s.add(aimg, coco_file.empty() ? fs::path(tag).filename().string() : coco_file, coco_id);
-            } catch (const std::exception& e) {
-                std::cerr << "  [skip] label export error on " << tag << ": " << e.what() << "\n";
-                record_failure(std::string("label export error: ") + e.what());
-                return false;
-            }
+            AnnotationSink& s = ensure_sink();
+            annot::Image aimg;
+            aimg.name = fs::path(tag).stem().string();
+            if (coco_id > 0) aimg.name = fs::path(coco_file).stem().string();
+            aimg.width = img.cols; aimg.height = img.rows;
+            aimg.instances = annotation_instances(dets, be->is_seg(), be->proto, be->proto_c,
+                                                  be->proto_h, be->proto_w, be->cand_lb, cfg.imgsz);
+            s.add(aimg, coco_file.empty() ? fs::path(tag).filename().string() : coco_file, coco_id);
         }
         frames++; total_dets += static_cast<long>(dets.size());
-        sum_pre += image_pre; sum_inf += image_inf; sum_post += image_post;
+        sum_pre += be->pre_ms; sum_inf += be->infer_ms; sum_post += be->post_ms;
+        samples.add(*be, dets.size());
         if (!quiet)
             std::cout << "  " << tag << "  dets=" << dets.size()
-                      << "  infer=" << image_inf << "ms" << slice_note << "\n";
+                      << (tracker ? "  tracks=" + std::to_string(tracks.size()) : std::string())
+                      << "  infer=" << be->infer_ms << "ms" << slice_note << "\n";
         if (!no_save) {
             cv::Mat vis = img.clone();
             if (be->is_seg()) {                       // alpha-composite segmentation masks under the boxes
@@ -715,7 +433,7 @@ int main(int argc, char** argv) {
                     }
                 }
             }
-            draw(vis, dets, cfg);
+            if (tracker) track::draw_tracks(vis, tracks, cfg); else draw(vis, dets, cfg);
 #ifdef HAVE_VIDEOIO
             if (video_mode) {                         // one annotated mp4, not overwriting jpgs
                 if (!vwriter.isOpened()) {
@@ -727,22 +445,10 @@ int main(int argc, char** argv) {
                         std::cerr << "  [warn] cannot open " << vwriter_path << " for writing\n";
                 }
                 if (vwriter.isOpened()) vwriter.write(vis);
-                else {
-                    record_failure("annotated video writer is not open");
-                    return false;
-                }
-            } else {
+            } else
 #endif
-                const std::string output_path = (fs::path(outdir) /
-                    (unique_stem(out_stems, fs::path(tag).stem().string()) + ".jpg")).string();
-                if (!write_jpg(output_path, vis)) {
-                    std::cerr << "  [skip] failed to write annotated image: " << output_path << "\n";
-                    record_failure("annotated image write failed");
-                    return false;
-                }
-#ifdef HAVE_VIDEOIO
-            }
-#endif
+            imwrite_jpg((fs::path(outdir) /
+                (unique_stem(out_stems, fs::path(tag).stem().string()) + ".jpg")).string(), vis);
         }
         if (!savetxt.empty()) {                       // 'class conf x1 y1 x2 y2' (pixel xyxy)
             std::string tstem = fs::path(tag).stem().string();
@@ -752,24 +458,16 @@ int main(int argc, char** argv) {
                               coco_id - 1);
                 tstem = b;
             }
-            const std::string txt_path = (fs::path(savetxt) /
-                (unique_stem(txt_stems, tstem) + ".txt")).string();
-            std::ofstream f(fs::u8path(txt_path));
-            if (!f) {
-                std::cerr << "  [skip] failed to write predictions: " << txt_path << "\n";
-                record_failure("prediction write failed");
-                return false;
-            }
-            for (const auto& d : dets)
+            std::ofstream f((fs::path(savetxt) /
+                (unique_stem(txt_stems, tstem) + ".txt")).string());
+            for (size_t i = 0; i < dets.size(); ++i) {
+                const auto& d = dets[i];
                 f << d.class_id << ' ' << d.conf << ' ' << d.box.x << ' ' << d.box.y << ' '
-                  << (d.box.x + d.box.width) << ' ' << (d.box.y + d.box.height) << '\n';
-            if (!f.good()) {
-                std::cerr << "  [skip] failed while writing predictions: " << txt_path << "\n";
-                record_failure("prediction write failed");
-                return false;
+                  << (d.box.x + d.box.width) << ' ' << (d.box.y + d.box.height);
+                if (tracker && i < track_ids.size()) f << ' ' << track_ids[i];
+                f << '\n';
             }
         }
-        return true;
     };
 
     if (kind == SourceKind::Video) {
@@ -778,6 +476,13 @@ int main(int argc, char** argv) {
         if (!cap.isOpened()) { std::cerr << "cannot open video: " << source << "\n"; return 4; }
         const double fps_probe = cap.get(cv::CAP_PROP_FPS);
         src_fps = (fps_probe > 1.0 && fps_probe < 1000.0) ? fps_probe : 30.0;
+        if (track_on) {
+            tcfg.fps = src_fps;
+            tracker = std::make_unique<track::Tracker>(tcfg);
+            std::cout << "[track] " << track::tracker_kind_name(tcfg.kind) << "  buffer=" << tcfg.track_buffer
+                      << " frames  gmc=" << ((tcfg.kind == track::TrackerConfig::Kind::BotSort && track::gmc_available()) ? "on" : "off")
+                      << "  conf_floor=" << cfg.conf_thresh << "\n";
+        }
         // label-export sampling stride: all=1, 1s=round(fps), N=every Nth
         int stride = 1;
         if (!export_labels.empty()) {
@@ -798,14 +503,7 @@ int main(int argc, char** argv) {
             if (sampled) {
                 char fn[64];
                 std::snprintf(fn, sizeof(fn), "%s_%06ld.jpg", vstem.c_str(), idx);
-                const std::string frame_path = (fs::path(frames_dir) / fn).string();
-                if (!write_jpg(frame_path, frame)) {
-                    std::cerr << "  [skip] failed to write sampled frame: " << frame_path << "\n";
-                    ++failed_frames;
-                    failures.push_back(source + "#" + std::to_string(idx) + ": sampled frame write failed");
-                    ++idx;
-                    continue;
-                }
+                write_jpg((fs::path(frames_dir) / fn).string(), frame);
                 coco_file = std::string("frames/") + fn;
             }
             run_one(frame, source + "#" + std::to_string(idx), sampled, coco_file,
@@ -813,22 +511,21 @@ int main(int argc, char** argv) {
             ++idx;
         }
 #else
-        std::cerr << "video source not supported in this portable build; use image/dir/list/dataset\n";
+        std::cerr << "video source not supported in this portable build; use image/dir/dataset\n";
         return 4;
 #endif
     } else {
-        std::vector<std::string> imgs;
-        try {
-            imgs = gather_images(source, limit);
-        } catch (const std::exception& e) {
-            std::cerr << "cannot resolve source: " << e.what() << "\n";
-            return 4;
-        }
+        imgs = gather_images(source, limit);
         if (imgs.empty()) { std::cerr << "no inputs resolved from source: " << source << "\n"; return 4; }
-        std::string stem_error;
-        if (!validate_unique_stems(imgs, stem_error)) {
-            std::cerr << stem_error << "\n";
-            return 4;
+        if (bench_on) {     // the probe run doubles as the warm-up of the dataset pass
+            bres.has_cold = true;
+            bres.cold = bench::cold_run(*be, cfg, bench_warmup, bench_iters);
+            std::cout << "[bench] cold probe " << bres.cold.probe_mode << ": infer median=" << bres.cold.infer_ms.median
+                      << "ms p90=" << bres.cold.infer_ms.p90 << " min=" << bres.cold.infer_ms.min
+                      << " (n=" << bres.cold.infer_ms.n << ")\n";
+        } else if (warmup > 0) {   // untimed forwards on the first input (lazy allocations, cuDNN autotune, TRT context)
+            cv::Mat w = imread_bgr(imgs.front());
+            for (int i = 0; i < warmup && !w.empty(); ++i) { try { (void)be->infer(w, cfg); } catch (...) { break; } }
         }
         for (const auto& p : imgs) run_one(imread_bgr(p), p);
     }
@@ -847,13 +544,77 @@ int main(int argc, char** argv) {
         std::cout << "[slicing] mode=" << slicing << "  tiles=" << tstats.tiles_run << "/"
                   << tstats.tiles_total << "  size=" << tstats.tile_size_label()
                   << "  fallbacks=" << tstats.fallbacks << "  capped=" << tstats.capped << "\n";
+    if (bench_on) {
+        if (bench_mode == "sustained") {
+            bres.has_sustained = true;
+            bres.sustained = bench::sustained_loop(*be, cfg, bench_warmup, bench_minutes, bench_iters);
+            std::cout << "[bench] sustained " << bres.sustained.duration_s << "s " << bres.sustained.probe_mode
+                      << ": cold median=" << bres.sustained.cold_median_ms << "ms sustained median="
+                      << bres.sustained.sustained_median_ms << "ms throttle=" << bres.sustained.throttle_pct << "%\n";
+        }
+        if (!accuracy.empty()) {
+            // second pass at the val protocol; boxes and confs rounded the way --save-txt prints them so
+            // the in-process number equals scoring the txt dump with scripts/eval_map*.py
+            Config cv = cfg;
+            cv.conf_thresh = 0.001f; cv.iou_thresh = 0.7f; cv.multi_label = true; cv.max_det = 300;
+            const std::string labels_dir = (accuracy == "auto") ? std::string() : accuracy;
+            std::vector<metrics::ImageEval> evals;
+            evals.reserve(imgs.size());
+            std::vector<double> acc_infer;
+            for (const auto& p : imgs) {
+                cv::Mat img = imread_bgr(p);
+                if (img.empty()) continue;
+                std::vector<Detection> dets;
+                try {
+                    if (slice_mode != SliceMode::Off) {
+                        (void)sliced_candidates(*be, img, cv, sconf);
+                        dets = nms_and_cap(be->candidates, cv, img.cols, img.rows);
+                    } else dets = be->infer(img, cv);
+                } catch (const std::exception& e) {
+                    std::cerr << "  [skip] accuracy pass error on " << p << ": " << e.what() << "\n"; continue;
+                }
+                acc_infer.push_back(be->infer_ms);
+                metrics::ImageEval ev;
+                metrics::load_yolo_labels(metrics::label_path_for(p, labels_dir), img.cols, img.rows, ev.gts);
+                ev.preds = metrics::from_detections(dets, /*txt_rounding=*/true);
+                evals.push_back(std::move(ev));
+            }
+            bres.accuracy.present = true;
+            bres.accuracy.conf = cv.conf_thresh; bres.accuracy.iou = cv.iou_thresh;
+            bres.accuracy.max_det = cv.max_det; bres.accuracy.multi_label = cv.multi_label;
+            bres.accuracy.labels = labels_dir.empty() ? "auto" : labels_dir;
+            bres.accuracy.map = metrics::evaluate(evals);
+            bres.accuracy.infer_ms = bench::reduce(acc_infer);
+            std::printf("[accuracy] images=%d  mAP50=%.4f  mAP50-95=%.4f\n", bres.accuracy.map.images,
+                        bres.accuracy.map.map50, bres.accuracy.map.map5095);
+        }
+        bres.tool = "cli";
+        bres.timestamp = bench::timestamp_utc();
+        bres.model = bench::model_info(*be, model, backend, precision_s, cfg);
+        bres.env = bench::collect_env(*be, threads);
+        bres.protocol.mode = bench_mode;
+        bres.protocol.conf = cfg.conf_thresh; bres.protocol.iou = cfg.iou_thresh;
+        bres.protocol.max_det = cfg.max_det; bres.protocol.multi_label = cfg.multi_label;
+        bres.protocol.slicing = slicing; bres.protocol.tile_size = tile_size;
+        bres.protocol.warmup = bench_warmup; bres.protocol.iters = bench_iters; bres.protocol.minutes = bench_minutes;
+        bres.protocol.probe_mode = bres.has_cold ? bres.cold.probe_mode : bres.sustained.probe_mode;
+        bres.protocol.dataset = fs::path(source).stem().string();
+        bres.protocol.image_count = static_cast<int>(imgs.size());
+        bres.protocol.image_list_sha256 = bench::image_list_sha256(imgs);
+        bres.has_dataset = true;
+        bres.dataset.frames = frames; bres.dataset.total_dets = total_dets;
+        bres.dataset.pre_ms = bench::reduce(samples.pre); bres.dataset.infer_ms = bench::reduce(samples.infer);
+        bres.dataset.post_ms = bench::reduce(samples.post); bres.dataset.total_ms = bench::reduce(samples.total);
+        bres.dataset.model_fps = 1000.0 / avg; bres.dataset.wall_s = wall;
+        const std::string jpath = bench_json.empty() ? (fs::path(outdir) / "bench.json").string() : bench_json;
+        { std::error_code ec; fs::create_directories(fs::path(jpath).parent_path(), ec); }
+        std::ofstream jf(jpath);
+        jf << bench::to_json(bres).dump(2) << "\n";
+        std::cout << "[bench] json -> " << jpath << "\n";
+    }
     if (sink) {
         const AnnotationSink::Result r = sink->finish();
-        if (!r.error.empty()) {
-            std::cerr << "[labels] export failed: " << r.error << "\n";
-            ++failed_frames;
-            failures.push_back("annotation sink: " + r.error);
-        }
+        if (!r.error.empty()) std::cerr << "[labels] export failed: " << r.error << "\n";
         else std::cout << "[labels] " << annot::label(lfmt) << "  images=" << r.images
                        << "  instances=" << r.instances << " -> " << export_labels << "/\n";
     }
@@ -865,49 +626,6 @@ int main(int argc, char** argv) {
         } else
 #endif
         std::cout << "[saved] annotated -> " << outdir << "/\n";
-    }
-    if (!csv_path.empty()) {
-        if (!write_benchmark_csv(csv_path, benchmark_rows, warmup, runs, threads, cfg.imgsz,
-                                 cfg.conf_thresh, cfg.iou_thresh)) {
-            std::cerr << "[benchmark] failed to write CSV: " << csv_path << "\n";
-            ++failed_frames;
-            failures.push_back("benchmark CSV write failed: " + csv_path);
-        }
-    }
-    if (!benchmark_json_path.empty()) {
-        if (!write_benchmark_json(benchmark_json_path, benchmark_rows, warmup, runs, threads,
-                                  model, source, backend, be->active_ep, profile, cfg,
-                                  csv_path, frames, failed_frames, wall)) {
-            std::cerr << "[benchmark] failed to write JSON sidecar: " << benchmark_json_path << "\n";
-            ++failed_frames;
-            failures.push_back("benchmark JSON write failed: " + benchmark_json_path);
-        }
-    }
-    if (benchmark_requested && !quiet) {
-        std::vector<double> totals;
-        totals.reserve(benchmark_rows.size());
-        for (const auto& row : benchmark_rows) totals.push_back(row.total_ms);
-        const double total_mean = totals.empty()
-            ? 0.0
-            : std::accumulate(totals.begin(), totals.end(), 0.0) / totals.size();
-        std::cout << "[benchmark] images=" << benchmark_rows.size()
-                  << "  mean=" << total_mean << "ms"
-                  << "  p50=" << percentile(totals, 50.0)
-                  << "  p95=" << percentile(totals, 95.0)
-                  << "  p99=" << percentile(totals, 99.0)
-                  << "  fps=" << (total_mean > 0.0 ? 1000.0 / total_mean : 0.0);
-        if (!csv_path.empty()) std::cout << "  csv=" << csv_path;
-        if (!benchmark_json_path.empty()) std::cout << "  json=" << benchmark_json_path;
-        std::cout << "\n";
-    }
-    if (failed_frames > 0) {
-        std::cerr << "[summary] failed=" << failed_frames << " of "
-                  << (frames + failed_frames) << " input(s)\n";
-        const size_t shown = std::min<size_t>(failures.size(), 8);
-        for (size_t i = 0; i < shown; ++i) std::cerr << "  [failed] " << failures[i] << "\n";
-        if (failures.size() > shown)
-            std::cerr << "  [failed] ... " << (failures.size() - shown) << " more\n";
-        return 6;
     }
     return 0;
 }

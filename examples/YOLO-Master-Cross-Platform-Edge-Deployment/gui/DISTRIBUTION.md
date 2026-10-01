@@ -1,58 +1,45 @@
-YOLO-Master - Windows Runner (GUI)
-==================================
+YOLO-Master Windows Runner 1.1.0
+================================
 
-Self-contained build. Unzip anywhere and run yolomaster_gui.exe - no install,
-no admin, no runtime downloads.
+On-device YOLO-Master detection and segmentation. Self-contained: unzip anywhere
+and run yolomaster_gui.exe. No installer, no admin rights, nothing else to set up.
 
-System requirements
--------------------
-- Windows 10 (1703+) or Windows 11, 64-bit.
-- An NVIDIA GPU, GeForce RTX 30-series or newer (Ampere / Ada / Blackwell), with
-  a current NVIDIA driver. The driver already provides Vulkan and OpenCL - no
-  CUDA toolkit or cuDNN install is needed.
-- Works on machines without a discrete GPU too, on CPU (just slower).
+Two bundles are published:
 
-GPU acceleration
-----------------
-Set Device -> GPU in the app, then load a model:
-  - ncnn model  -> runs on the GPU via Vulkan   (EP label: ncnn-Vulkan)
-  - .mnn model  -> runs on the GPU via OpenCL    (EP label: MNN-OpenCL)
-  - .onnx model -> CPU only in this build (see note)
+* YOLO-Master-Windows-<version>.zip (lean, ~150 MB)
+  Runs everywhere (Windows 10/11 x64). CPU inference via ONNX Runtime / ncnn /
+  MNN; GPU inference via ncnn (Vulkan) and MNN (OpenCL) using nothing but your
+  graphics driver.
 
-Both Vulkan and OpenCL are supplied by your NVIDIA driver, so GPU inference works
-on any RTX 30/40/50 card with no extra downloads. Confirm it is really on the GPU
-by watching GPU-Util rise in `nvidia-smi` while inferring.
+* YOLO-Master-Windows-CUDA-<version>.zip (~2 GB)
+  Adds ONNX Runtime's CUDA execution provider with the cuDNN and CUDA runtime
+  DLLs bundled, so ONNX runs on NVIDIA GPUs with only a driver installed.
+  Choose this only if you want maximum ONNX throughput on an NVIDIA card.
 
-Note on ONNX + CUDA: ONNX Runtime's CUDA provider plus cuDNN would add several GB
-to the download, so it is intentionally NOT bundled. ONNX still runs on CPU here.
-If you specifically need ONNX on the GPU, build from source and point the build at
-the ONNX Runtime GPU package + a matching CUDA/cuDNN install (see gui/README.md).
-For GPU inference in the shipped build, use the ncnn or MNN model instead.
-
-What is in the bundle
----------------------
-  yolomaster_gui.exe            the app
-  onnxruntime.dll               ONNX Runtime (CPU)
-  ncnn.dll (+ deps)             ncnn (Vulkan-enabled)
-  MNN.dll (+ deps)              MNN (OpenCL/Vulkan-enabled)
-  opencv_world*.dll             image / video / camera I/O
-  opencv_videoio_ffmpeg*.dll    video decode (mp4/avi/mov/mkv)
-  vcruntime140*.dll, msvcp140.dll, vcomp140.dll   MSVC runtime (app-local)
-  assets\                       About-page logos + avatar
-  models\                       bundled models (v0.1-seg-N segmentation is the
-                                default and auto-loads on launch)
-
-Getting started
----------------
+Quick start
+-----------
 1. Unzip.
-2. Run yolomaster_gui.exe. The bundled YOLO-Master v0.1-seg-N (segmentation,
-   COCO-80) loads automatically - the MODEL card should show it on startup.
-3. Open image / video / folder, or Live Webcam.
-4. Optional: Browse to a different model (.onnx / .mnn / ncnn folder), and set
-   Device -> GPU (use the ncnn or MNN model for GPU in this bundle).
+2. Run yolomaster_gui.exe. The bundled v0.1-seg-N model loads automatically.
+3. Open an image, folder or video - or start the webcam.
+
+If Windows SmartScreen warns about an unrecognized app: More info -> Run anyway.
+
+What's in 1.1.0
+---------------
+* Slicing (Sparse SAHI + dense tiling) for small-object detection on large
+  images, with adjustable tile size and per-run statistics.
+* Cluster-Weighted NMS (mode picker + sigma) for refined box coordinates.
+* Zoom and pan on images and paused video (mouse wheel, drag, Ctrl+0 to reset).
+* Annotation export: YOLO TXT, COCO JSON and Pascal VOC XML for images, folders
+  and videos (with frame sampling), plus rendered image / annotated video export.
+
+See gui/CHANGELOG-1.1.0.md in the source repository for the complete list.
 
 Notes
 -----
-- First launch may show a Windows SmartScreen prompt because the exe is not code-
-  signed ("More info" -> "Run anyway"). Signing requires a code-signing certificate.
-- License: AGPL-3.0. See the About page for full terms and acknowledgements.
+* Backends: ONNX Runtime, ncnn and MNN are all included; the model picker
+  auto-detects the format. Bundled models live in models/.
+* The Device combo switches CPU/GPU per backend (ONNX: CUDA build only;
+  ncnn: Vulkan; MNN: OpenCL).
+* Source code, CLI and the macOS runner: https://github.com/skywalker-lt/yolo-master-edge
+  License: AGPL-3.0. (c) 2026 Thomas Li.

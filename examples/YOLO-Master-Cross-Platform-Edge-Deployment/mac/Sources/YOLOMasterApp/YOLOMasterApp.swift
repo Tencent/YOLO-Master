@@ -30,7 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct YOLOMasterApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     var body: some Scene {
-        WindowGroup("YOLO-Master CoreML Runner") { ContentView().frame(minWidth: 1120, minHeight: 720) }
+        WindowGroup("YOLO-Master") { ContentView().frame(minWidth: 1120, minHeight: 720) }
             .windowStyle(.titleBar)
     }
 }
@@ -107,6 +107,8 @@ final class InferenceEngine: ObservableObject, @unchecked Sendable {   // state 
     @Published var tileStats: TileStats?       // tiled modes: tiles run/total (+fallback/cap), nil when off
 
     private var detector: Detector?
+    /// Preprocessing device applied to every detector the engine drives (the sidebar Preprocess picker).
+    var preprocDevice: PreprocDevice = .gpu
     private var resultsTiled = false           // current image/folder cache was built tiled
     private var tiledMasksKept = false         // tiled cache retained global-pass masks (keepGlobalMasks)
     private var currentRaw: Detector.RawOutput?    // cached forward pass for the shown image (seg masks need protos)
@@ -127,11 +129,22 @@ final class InferenceEngine: ObservableObject, @unchecked Sendable {   // state 
     @Published private(set) var videoSize: CGSize = .zero
     private var videoInput: URL?
     private let queue = DispatchQueue(label: "com.yolomaster.inference")
+    // ---- tracking over the cached video: a pure function of (cached candidates, per-frame camera
+    // motion recorded during inference, conf / IoU / NMS settings, tracker kind), recomputed off-main
+    // whenever one of them changes and never touching the video again ----
+    @Published var trackKind: TrackerKind? = nil        // nil = off
+    @Published private(set) var trackGen = 0             // bumped when a tracked pass lands
+    @Published private(set) var trackCount = 0           // distinct ids in the current tracked pass
+    private var videoMotion: MotionLog? = nil
+    private var videoTracks: [[Detection]]? = nil
+    private var videoTracksKey = ""
+    private var trackCancel: OSAllocatedUnfairLock<Bool>?
 
     func resetResults() {
         hasResults = false; folderCache = []; folderInput = nil; videoCache = []; videoInput = nil; videoURL = nil; videoSize = .zero; outputURL = nil
         resultImage = nil; detCount = 0; currentCG = nil; currentCands = []; currentRaw = nil
         videoRaws = []; videoDet = nil
+        videoMotion = nil; videoTracks = nil; videoTracksKey = ""; trackCount = 0
         infer = nil; classCounts = []; tileStats = nil; resultsTiled = false; tiledMasksKept = false
         imageInput = nil
         baked = []; bakedKey = ""; bakeGen += 1; detsCacheKey = ""; detsCacheVal = []
@@ -142,20 +155,20 @@ final class InferenceEngine: ObservableObject, @unchecked Sendable {   // state 
 
     // ---- image / video-frame: forward one (or tiled), cache candidates, render ----
     func previewURL(model: URL, image: URL, compute: ComputeMode, conf: Double, iou: Double, style: BoxStyle, label: LabelMode, overlay: SegOverlay, preprocess: Detector.PreprocessMode,
-                    tiling: TilingConfig = TilingConfig(), nmsMode: NMSMode = .standard, sigma: Double = 0.1) {
+                    tiling: TilingConfig = TilingConfig(), nmsMode: NMSMode = .standard, sigma: Double = 0.1, maxDet: Int = 300) {
         guard let cg = loadCGImage(image) else { publish(error: "Could not read image."); return }
         imageInput = image
-        preview(model: model, cg: cg, compute: compute, conf: conf, iou: iou, style: style, label: label, overlay: overlay, preprocess: preprocess, tiling: tiling, nmsMode: nmsMode, sigma: sigma)
+        preview(model: model, cg: cg, compute: compute, conf: conf, iou: iou, style: style, label: label, overlay: overlay, preprocess: preprocess, tiling: tiling, nmsMode: nmsMode, sigma: sigma, maxDet: maxDet)
     }
     func preview(model: URL, cg: CGImage, compute: ComputeMode, conf: Double, iou: Double, style: BoxStyle, label: LabelMode, overlay: SegOverlay, preprocess: Detector.PreprocessMode,
-                 tiling: TilingConfig = TilingConfig(), nmsMode: NMSMode = .standard, sigma: Double = 0.1) {
+                 tiling: TilingConfig = TilingConfig(), nmsMode: NMSMode = .standard, sigma: Double = 0.1, maxDet: Int = 300) {
         busy = true; progress = nil; status = tiling.mode == .off ? "Inferring…" : "Inferring (tiled)…"
         let k = model.path + "|" + compute.rawValue
         queue.async { [weak self] in
             guard let self else { return }
             do {
                 let det = try self.reuseDetector(model: model, compute: compute, key: k)
-                det.preprocess = preprocess
+                det.preprocess = preprocess; det.preprocDevice = self.preprocDevice
                 let s: InferSummary
                 var stats: TileStats? = nil
                 if tiling.mode == .off {
@@ -163,7 +176,7 @@ final class InferenceEngine: ObservableObject, @unchecked Sendable {   // state 
                     self.currentCG = cg; self.currentCands = det.candidates(raw); self.currentMs = raw.inferMs
                     self.currentRaw = det.isSegment ? raw : nil
                     self.resultsTiled = false
-                    s = InferSummary([raw.inferMs], wallMs: raw.inferMs)
+                    s = InferSummary([raw.inferMs], wallMs: raw.inferMs + raw.preMs, pre: [raw.preMs])
                 } else {
                     let t0 = Date()
                     let tiled = try det.tiledCandidates(cg, config: tiling)
@@ -177,14 +190,14 @@ final class InferenceEngine: ObservableObject, @unchecked Sendable {   // state 
                 self.detNames = det.classNames
                 let info = StatModelInfo(name: model.lastPathComponent, imgsz: det.imgsz, nc: det.nc, compute: compute.label)
                 DispatchQueue.main.async { self.modelInfo = info; self.infer = s; self.modelIsSegment = det.isSegment; self.tileStats = stats }
-                self.render(conf: conf, iou: iou, style: style, label: label, overlay: overlay, nmsMode: nmsMode, sigma: sigma)
+                self.render(conf: conf, iou: iou, style: style, label: label, overlay: overlay, nmsMode: nmsMode, sigma: sigma, maxDet: maxDet)
             } catch { self.publish(error: "Inference failed: \(error.localizedDescription)") }
         }
     }
 
     // ---- folder: infer ALL once (progress), cache candidates ----
     func runFolder(model: URL, input: URL, compute: ComputeMode, conf: Double, iou: Double, style: BoxStyle, label: LabelMode, overlay: SegOverlay, preprocess: Detector.PreprocessMode,
-                   tiling: TilingConfig = TilingConfig(), nmsMode: NMSMode = .standard, sigma: Double = 0.1) {
+                   tiling: TilingConfig = TilingConfig(), nmsMode: NMSMode = .standard, sigma: Double = 0.1, maxDet: Int = 300) {
         busy = true; exporting = false; hasResults = false; progress = 0; outputURL = nil
         status = tiling.mode == .off ? "Inferring folder…" : "Inferring folder (tiled)…"
         let k = model.path + "|" + compute.rawValue
@@ -192,7 +205,7 @@ final class InferenceEngine: ObservableObject, @unchecked Sendable {   // state 
             guard let self else { return }
             do {
                 let det = try self.reuseDetector(model: model, compute: compute, key: k)
-                det.preprocess = preprocess
+                det.preprocess = preprocess; det.preprocDevice = self.preprocDevice
                 self.detNames = det.classNames
                 let (items, summary, stats) = inferFolder(det, input: input, confFloor: 0.05, tiling: tiling) { done, total in
                     DispatchQueue.main.async {
@@ -214,14 +227,14 @@ final class InferenceEngine: ObservableObject, @unchecked Sendable {   // state 
                     self.tileStats = stats
                     self.status = "Inferred \(items.count) images - browse & tune, then Export"
                 }
-                self.render(conf: conf, iou: iou, style: style, label: label, overlay: overlay, nmsMode: nmsMode, sigma: sigma)
+                self.render(conf: conf, iou: iou, style: style, label: label, overlay: overlay, nmsMode: nmsMode, sigma: sigma, maxDet: maxDet)
             } catch { self.publish(error: "Inference failed: \(error.localizedDescription)") }
         }
     }
 
     // ---- show a cached folder item (instant; re-forwards only for seg masks, never when tiled) ----
     func showFolder(index i: Int, url: URL, conf: Double, iou: Double, style: BoxStyle, label: LabelMode, overlay: SegOverlay,
-                    nmsMode: NMSMode = .standard, sigma: Double = 0.1) {
+                    nmsMode: NMSMode = .standard, sigma: Double = 0.1, maxDet: Int = 300) {
         queue.async { [weak self] in
             guard let self, let cg = loadCGImage(url) else { return }
             self.currentCG = cg
@@ -229,23 +242,23 @@ final class InferenceEngine: ObservableObject, @unchecked Sendable {   // state 
             self.currentMs = 0
             let wantMasks = self.detector?.isSegment == true && (!self.resultsTiled || self.tiledMasksKept)
             self.currentRaw = wantMasks ? try? self.detector?.forward(cg) : nil
-            self.render(conf: conf, iou: iou, style: style, label: label, overlay: overlay, nmsMode: nmsMode, sigma: sigma)
+            self.render(conf: conf, iou: iou, style: style, label: label, overlay: overlay, nmsMode: nmsMode, sigma: sigma, maxDet: maxDet)
         }
     }
 
     // ---- tuning: cheap re-NMS + redraw of the current frame ----
     private var pendingRestyle: DispatchWorkItem?
     func restyle(conf: Double, iou: Double, style: BoxStyle, label: LabelMode, overlay: SegOverlay,
-                 nmsMode: NMSMode = .standard, sigma: Double = 0.1) {
+                 nmsMode: NMSMode = .standard, sigma: Double = 0.1, maxDet: Int = 300) {
         pendingRestyle?.cancel()
-        let item = DispatchWorkItem { [weak self] in self?.render(conf: conf, iou: iou, style: style, label: label, overlay: overlay, nmsMode: nmsMode, sigma: sigma) }
+        let item = DispatchWorkItem { [weak self] in self?.render(conf: conf, iou: iou, style: style, label: label, overlay: overlay, nmsMode: nmsMode, sigma: sigma, maxDet: maxDet) }
         pendingRestyle = item
         queue.async(execute: item)
     }
     private func render(conf: Double, iou: Double, style: BoxStyle, label: LabelMode, overlay: SegOverlay,
-                        nmsMode: NMSMode = .standard, sigma: Double = 0.1) {
+                        nmsMode: NMSMode = .standard, sigma: Double = 0.1, maxDet: Int = 300) {
         guard let cg = currentCG, !detNames.isEmpty else { DispatchQueue.main.async { self.busy = false }; return }
-        let dets = Detector.nms(currentCands, conf: Float(conf), iou: CGFloat(iou), mode: nmsMode, sigma: Float(sigma))
+        let dets = Detector.nms(currentCands, conf: Float(conf), iou: CGFloat(iou), maxDet: maxDet, mode: nmsMode, sigma: Float(sigma))
         var masks: [MaskBitmap] = [], drawBoxes = true
         if let det = detector, det.isSegment, let raw = currentRaw, overlay != .boxes {
             masks = dets.compactMap { det.maskImage($0, raw) }
@@ -268,7 +281,7 @@ final class InferenceEngine: ObservableObject, @unchecked Sendable {   // state 
 
     // ---- export ----
     func exportFolder(conf: Double, iou: Double, style: BoxStyle, label: LabelMode, overlay: SegOverlay,
-                      nmsMode: NMSMode = .standard, sigma: Double = 0.1) {
+                      nmsMode: NMSMode = .standard, sigma: Double = 0.1, maxDet: Int = 300) {
         guard let input = folderInput, !folderCache.isEmpty else { return }
         busy = true; exporting = true; progress = 0; outputURL = nil; status = "Exporting folder…"
         let out = input.deletingLastPathComponent().appendingPathComponent(input.lastPathComponent + "_annotated")
@@ -277,7 +290,7 @@ final class InferenceEngine: ObservableObject, @unchecked Sendable {   // state 
         queue.async { [weak self] in
             guard let self else { return }
             let n = exportFolderCached(cache, output: out, names: names, conf: Float(conf), iou: CGFloat(iou), style: style, label: label, detector: det, overlay: ov,
-                                       nmsMode: nmsMode, sigma: Float(sigma)) { done, total in
+                                       nmsMode: nmsMode, sigma: Float(sigma), maxDet: maxDet) { done, total in
                 DispatchQueue.main.async { self.progress = total > 0 ? Double(done)/Double(total) : nil; self.status = "Exporting \(done)/\(total)…" }
             }
             DispatchQueue.main.async {
@@ -288,12 +301,14 @@ final class InferenceEngine: ObservableObject, @unchecked Sendable {   // state 
     }
     // ---- video: infer ALL frames once (progress), cache candidates ----
     func runVideo(model: URL, input: URL, compute: ComputeMode, conf: Double, iou: Double, style: BoxStyle, label: LabelMode, preprocess: Detector.PreprocessMode, overlay: SegOverlay,
-                  nmsMode: NMSMode = .standard, sigma: Double = 0.1) {
+                  nmsMode: NMSMode = .standard, sigma: Double = 0.1, maxDet: Int = 300) {
         busy = true; exporting = false; hasResults = false; progress = 0; outputURL = nil; status = "Inferring video…"
         // Release the PREVIOUS run's per-frame tensors before the new run allocates its own:
         // re-inferring a seg video otherwise holds both generations at once (GBs) and pushes
         // the machine into memory pressure that outlives the run.
         videoCache = []; videoRaws = []; videoDet = nil
+        videoMotion = nil; videoTracks = nil; videoTracksKey = ""; trackCount = 0
+        trackCancel?.withLock { $0 = true }; trackCancel = nil
         baked = []; bakedKey = ""; bakeGen += 1
         bakeCancel?.withLock { $0 = true }; bakeCancel = nil
         detsCacheKey = ""; detsCacheVal = []
@@ -302,9 +317,12 @@ final class InferenceEngine: ObservableObject, @unchecked Sendable {   // state 
             guard let self else { return }
             do {
                 let det = try Detector(modelURL: model, compute: compute)
-                det.preprocess = preprocess
+                det.preprocess = preprocess; det.preprocDevice = self.preprocDevice
                 self.detNames = det.classNames
-                let (frames, raws, summary, fps, size) = try await inferVideo(det, input: input, confFloor: 0.05) { done, est in
+                // camera motion per frame is recorded now (a few ms of Vision per frame) so tracking can be
+                // switched on / re-tuned later without re-reading the video
+                let motion = MotionLog(estimator: VisionCameraMotion())
+                let (frames, raws, summary, fps, size) = try await inferVideo(det, input: input, confFloor: 0.05, motionLog: motion) { done, est in
                     DispatchQueue.main.async {
                         self.progress = est > 0 ? min(1, Double(done) / Double(est)) : nil
                         self.status = "Inferring frame \(done)…"
@@ -314,13 +332,14 @@ final class InferenceEngine: ObservableObject, @unchecked Sendable {   // state 
                 DispatchQueue.main.async {
                     self.videoRunGen += 1
                     self.videoCache = frames; self.videoRaws = raws; self.videoDet = det.isSegment ? det : nil
+                    self.videoMotion = motion
                     self.modelIsSegment = det.isSegment
                     self.videoFps = fps; self.videoInput = input; self.videoURL = input; self.videoSize = size
                     self.modelInfo = info; self.infer = summary; self.hasResults = !frames.isEmpty
                     self.busy = false; self.progress = nil
                     self.status = "Inferred \(frames.count) frames - play / scrub & tune, then Export"
-                    self.setVideoFrameStats(time: 0, conf: conf, iou: iou, nmsMode: nmsMode, sigma: sigma)
-                    self.requestOverlayFrame(time: 0, conf: conf, iou: iou, nmsMode: nmsMode, sigma: sigma,
+                    self.setVideoFrameStats(time: 0, conf: conf, iou: iou, nmsMode: nmsMode, sigma: sigma, maxDet: maxDet)
+                    self.requestOverlayFrame(time: 0, conf: conf, iou: iou, nmsMode: nmsMode, sigma: sigma, maxDet: maxDet,
                                              style: style, label: label, overlay: overlay)
                 }
             } catch { DispatchQueue.main.async { self.status = "Inference failed: \(error.localizedDescription)"; self.busy = false; self.progress = nil } }
@@ -345,24 +364,58 @@ final class InferenceEngine: ObservableObject, @unchecked Sendable {   // state 
     private var detsCacheKey = ""
     private var detsCacheVal: [Detection] = []
     fileprivate var videoRunGen = 0            // bumped when a new video cache is installed
-    func detsAt(time: Double, conf: Double, iou: Double, nmsMode: NMSMode = .standard, sigma: Double = 0.1) -> [Detection] {
+    func detsAt(time: Double, conf: Double, iou: Double, nmsMode: NMSMode = .standard, sigma: Double = 0.1, maxDet: Int = 300) -> [Detection] {
         guard !videoCache.isEmpty else { return [] }
         let idx = videoFrameIndex(time)
-        if idx < baked.count, bakedKey == bakeKey(conf: conf, iou: iou, nmsMode: nmsMode, sigma: sigma),
+        if let tr = currentTracks(conf: conf, iou: iou, nmsMode: nmsMode, sigma: sigma, maxDet: maxDet), idx < tr.count { return tr[idx] }
+        if idx < baked.count, bakedKey == bakeKey(conf: conf, iou: iou, nmsMode: nmsMode, sigma: sigma, maxDet: maxDet),
            let b = baked[idx] { return b }
-        let key = "\(videoRunGen)|\(idx)|\(conf)|\(iou)|\(nmsMode.rawValue)|\(sigma)"
+        let key = "\(videoRunGen)|\(idx)|\(conf)|\(iou)|\(nmsMode.rawValue)|\(sigma)|\(maxDet)"
         if key == detsCacheKey { return detsCacheVal }
-        let dets = Detector.nms(videoCache[idx], conf: Float(conf), iou: CGFloat(iou), mode: nmsMode, sigma: Float(sigma))
+        let dets = Detector.nms(videoCache[idx], conf: Float(conf), iou: CGFloat(iou), maxDet: maxDet, mode: nmsMode, sigma: Float(sigma))
         detsCacheKey = key; detsCacheVal = dets
         return dets
     }
-    private func bakeKey(conf: Double, iou: Double, nmsMode: NMSMode, sigma: Double) -> String {
-        "\(videoRunGen)|\(conf)|\(iou)|\(nmsMode.rawValue)|\(sigma)"
+    private func bakeKey(conf: Double, iou: Double, nmsMode: NMSMode, sigma: Double, maxDet: Int) -> String {
+        "\(videoRunGen)|\(conf)|\(iou)|\(nmsMode.rawValue)|\(sigma)|\(maxDet)"
+    }
+    private func trackKey(conf: Double, iou: Double, nmsMode: NMSMode, sigma: Double, maxDet: Int) -> String {
+        "\(trackKind?.rawValue ?? "off")|" + bakeKey(conf: conf, iou: iou, nmsMode: nmsMode, sigma: sigma, maxDet: maxDet)
+    }
+    /// The tracked per-frame detections for these settings, if the pass for them has landed.
+    private func currentTracks(conf: Double, iou: Double, nmsMode: NMSMode, sigma: Double, maxDet: Int) -> [[Detection]]? {
+        guard trackKind != nil, videoTracksKey == trackKey(conf: conf, iou: iou, nmsMode: nmsMode, sigma: sigma, maxDet: maxDet) else { return nil }
+        return videoTracks
+    }
+    /// (Re)run the tracker over the cached video for these settings, off-main; a newer request
+    /// cancels the running one. Publishes `trackGen` when the pass lands (the view re-renders).
+    func ensureTracked(conf: Double, iou: Double, nmsMode: NMSMode, sigma: Double, maxDet: Int) {
+        let key = trackKey(conf: conf, iou: iou, nmsMode: nmsMode, sigma: sigma, maxDet: maxDet)
+        guard key != videoTracksKey, !videoCache.isEmpty else { return }
+        trackCancel?.withLock { $0 = true }
+        guard let kind = trackKind else { videoTracks = nil; videoTracksKey = key; trackCount = 0; trackGen += 1; return }
+        let token = OSAllocatedUnfairLock(initialState: false)
+        trackCancel = token
+        let cache = videoCache, motions = videoMotion, fps = videoFps
+        status = "Tracking (\(kind.rawValue))…"
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let tracks = trackCached(cache, conf: Float(conf), iou: CGFloat(iou), maxDet: maxDet, nmsMode: nmsMode, sigma: Float(sigma),
+                                     kind: kind, fps: fps, motions: motions, shouldStop: { token.withLock { $0 } })
+            if token.withLock({ $0 }) { return }   // superseded
+            var ids = Set<Int>()
+            for f in tracks { for d in f { if let id = d.trackId { ids.insert(id) } } }
+            DispatchQueue.main.async {
+                guard let self, !token.withLock({ $0 }) else { return }
+                self.videoTracks = tracks; self.videoTracksKey = key; self.trackCount = ids.count
+                self.status = "Tracked \(ids.count) objects (\(kind.rawValue)) - play / scrub, then Export"
+                self.trackGen += 1
+            }
+        }
     }
     /// Re-bake the whole video's post-NMS detections at the given settings (no-op if already
     /// baked for them). Runs on a global queue in 32-frame chunks; a newer bake supersedes.
-    func ensureBaked(conf: Double, iou: Double, nmsMode: NMSMode, sigma: Double) {
-        let key = bakeKey(conf: conf, iou: iou, nmsMode: nmsMode, sigma: sigma)
+    func ensureBaked(conf: Double, iou: Double, nmsMode: NMSMode, sigma: Double, maxDet: Int) {
+        let key = bakeKey(conf: conf, iou: iou, nmsMode: nmsMode, sigma: sigma, maxDet: maxDet)
         guard key != bakedKey, !videoCache.isEmpty else { return }
         bakedKey = key
         bakeGen += 1
@@ -381,7 +434,7 @@ final class InferenceEngine: ObservableObject, @unchecked Sendable {   // state 
             for i in cache.indices {
                 if token.withLock({ $0 }) { return }   // superseded -> stop immediately
                 chunk.append((i, Detector.nms(cache[i], conf: Float(conf), iou: CGFloat(iou),
-                                              mode: nmsMode, sigma: Float(sigma))))
+                                              maxDet: maxDet, mode: nmsMode, sigma: Float(sigma))))
                 if chunk.count == 32 || i == cache.count - 1 {
                     let batch = chunk; chunk = []
                     DispatchQueue.main.async {
@@ -411,20 +464,23 @@ final class InferenceEngine: ObservableObject, @unchecked Sendable {   // state 
     private struct OverlaySnapshot {
         let cache: [[Detection]], raws: [Detector.RawOutput?], det: Detector?, names: [String]
         let fps: Double, size: CGSize
-        let conf: Float, iou: CGFloat, nmsMode: NMSMode, sigma: Float
+        let conf: Float, iou: CGFloat, nmsMode: NMSMode, sigma: Float, maxDet: Int
         let style: BoxStyle, label: LabelMode, overlay: SegOverlay
+        let tracked: [[Detection]]?      // the tracked pass for these settings when tracking is on and it has landed
     }
-    private func overlaySnapshot(conf: Double, iou: Double, nmsMode: NMSMode, sigma: Double,
+    private func overlaySnapshot(conf: Double, iou: Double, nmsMode: NMSMode, sigma: Double, maxDet: Int,
                                  style: BoxStyle, label: LabelMode, overlay: SegOverlay) -> OverlaySnapshot? {
         guard !videoCache.isEmpty, videoSize.width > 0, videoSize.height > 0 else { return nil }
         return OverlaySnapshot(cache: videoCache, raws: videoRaws, det: videoDet, names: detNames,
                                fps: videoFps, size: videoSize,
-                               conf: Float(conf), iou: CGFloat(iou), nmsMode: nmsMode, sigma: Float(sigma),
-                               style: style, label: label, overlay: overlay)
+                               conf: Float(conf), iou: CGFloat(iou), nmsMode: nmsMode, sigma: Float(sigma), maxDet: maxDet,
+                               style: style, label: label, overlay: overlay,
+                               tracked: currentTracks(conf: conf, iou: iou, nmsMode: nmsMode, sigma: sigma, maxDet: maxDet))
     }
     private static func compose(_ s: OverlaySnapshot, idx: Int, maskCap: Int) -> CGImage? {
         guard s.cache.indices.contains(idx) else { return nil }
-        let dets = Detector.nms(s.cache[idx], conf: s.conf, iou: s.iou, mode: s.nmsMode, sigma: s.sigma)
+        let dets = s.tracked.flatMap { idx < $0.count ? $0[idx] : nil }
+            ?? Detector.nms(s.cache[idx], conf: s.conf, iou: s.iou, maxDet: s.maxDet, mode: s.nmsMode, sigma: s.sigma)
         let w = Int(s.size.width), h = Int(s.size.height)
         var base: CGImage? = nil
         if let det = s.det, s.overlay != .boxes, s.raws.indices.contains(idx), let raw = s.raws[idx] {
@@ -443,9 +499,9 @@ final class InferenceEngine: ObservableObject, @unchecked Sendable {   // state 
         return annotate(b, dets, names: s.names, style: s.style, label: s.label, masks: [], drawBoxes: drawBoxes) ?? b
     }
     /// PLAYING: chase the player clock, latest-frame-wins, as fast as compose allows.
-    func startVideoOverlayLoop(player: AVPlayer, conf: Double, iou: Double, nmsMode: NMSMode, sigma: Double,
+    func startVideoOverlayLoop(player: AVPlayer, conf: Double, iou: Double, nmsMode: NMSMode, sigma: Double, maxDet: Int,
                                style: BoxStyle, label: LabelMode, overlay: SegOverlay) {
-        guard let snap = overlaySnapshot(conf: conf, iou: iou, nmsMode: nmsMode, sigma: sigma,
+        guard let snap = overlaySnapshot(conf: conf, iou: iou, nmsMode: nmsMode, sigma: sigma, maxDet: maxDet,
                                          style: style, label: label, overlay: overlay) else { return }
         let gen: Int = overlayGen.withLock { $0 += 1; return $0 }
         overlayQueue.async { [weak self] in
@@ -465,9 +521,9 @@ final class InferenceEngine: ObservableObject, @unchecked Sendable {   // state 
         }
     }
     /// PAUSED / scrub / tuning: compose the shown frame once, full detail (no mask cap).
-    func requestOverlayFrame(time: Double, conf: Double, iou: Double, nmsMode: NMSMode, sigma: Double,
+    func requestOverlayFrame(time: Double, conf: Double, iou: Double, nmsMode: NMSMode, sigma: Double, maxDet: Int,
                              style: BoxStyle, label: LabelMode, overlay: SegOverlay) {
-        guard let snap = overlaySnapshot(conf: conf, iou: iou, nmsMode: nmsMode, sigma: sigma,
+        guard let snap = overlaySnapshot(conf: conf, iou: iou, nmsMode: nmsMode, sigma: sigma, maxDet: maxDet,
                                          style: style, label: label, overlay: overlay) else { return }
         let gen: Int = overlayGen.withLock { $0 }
         let idx = min(max(0, Int((max(0, time) * snap.fps).rounded())), snap.cache.count - 1)
@@ -481,12 +537,12 @@ final class InferenceEngine: ObservableObject, @unchecked Sendable {   // state 
     }
     /// Update the 'this frame' summary stats for the video frame at `time`.
     private var lastVideoStatsAt = Date.distantPast
-    func setVideoFrameStats(time: Double, conf: Double, iou: Double, nmsMode: NMSMode = .standard, sigma: Double = 0.1, throttled: Bool = false) {
+    func setVideoFrameStats(time: Double, conf: Double, iou: Double, nmsMode: NMSMode = .standard, sigma: Double = 0.1, maxDet: Int = 300, throttled: Bool = false) {
         if throttled {   // playback: classCounts rebuild + sidebar diff at 30 Hz starves the Canvas
             guard Date().timeIntervalSince(lastVideoStatsAt) > 0.25 else { return }
             lastVideoStatsAt = Date()
         }
-        let dets = detsAt(time: time, conf: conf, iou: iou, nmsMode: nmsMode, sigma: sigma)
+        let dets = detsAt(time: time, conf: conf, iou: iou, nmsMode: nmsMode, sigma: sigma, maxDet: maxDet)
         detCount = dets.count
         var byClass: [Int: Int] = [:]; for d in dets { byClass[d.cls, default: 0] += 1 }
         classCounts = byClass.sorted { $0.value > $1.value }.map {
@@ -496,16 +552,23 @@ final class InferenceEngine: ObservableObject, @unchecked Sendable {   // state 
 
     // ---- export video from cached candidates (NO inference) ----
     func exportVideo(conf: Double, iou: Double, style: BoxStyle, label: LabelMode, overlay: SegOverlay,
-                     nmsMode: NMSMode = .standard, sigma: Double = 0.1) {
+                     nmsMode: NMSMode = .standard, sigma: Double = 0.1, maxDet: Int = 300) {
         guard let input = videoInput, !videoCache.isEmpty else { return }
         busy = true; exporting = true; progress = 0; outputURL = nil; status = "Exporting video…"
         let out = input.deletingLastPathComponent().appendingPathComponent(input.deletingPathExtension().lastPathComponent + "_annotated.mp4")
         let frames = videoCache, names = detNames, rw = videoRaws, det = videoDet
+        // tracked frames: the landed pass for these settings, else computed here (fast: no inference)
+        var tracked = currentTracks(conf: conf, iou: iou, nmsMode: nmsMode, sigma: sigma, maxDet: maxDet)
+        if tracked == nil, let kind = trackKind {
+            tracked = trackCached(frames, conf: Float(conf), iou: CGFloat(iou), maxDet: maxDet, nmsMode: nmsMode, sigma: Float(sigma),
+                                  kind: kind, fps: videoFps, motions: videoMotion)
+        }
+        let trackedFrames = tracked
         Task { [weak self] in
             guard let self else { return }
             do {
                 let stats = try await exportVideoCached(input: input, output: out, framesCands: frames, names: names, conf: Float(conf), iou: CGFloat(iou), style: style, label: label, raws: rw, detector: det, overlay: overlay,
-                                                        nmsMode: nmsMode, sigma: Float(sigma)) { done, total in
+                                                        nmsMode: nmsMode, sigma: Float(sigma), maxDet: maxDet, tracked: trackedFrames) { done, total in
                     DispatchQueue.main.async { self.progress = total > 0 ? Double(done) / Double(total) : nil; self.status = "Exporting \(done)/\(total)…" }
                 }
                 DispatchQueue.main.async {
@@ -520,7 +583,7 @@ final class InferenceEngine: ObservableObject, @unchecked Sendable {   // state 
     /// Source kind inferred from the caches, mirroring the image/folder/video export methods.
     /// WYSIWYG: exports the cached candidates filtered through the CURRENT tuned parameters.
     func exportAnnotations(format: AnnotationFormat, sampling: VideoSampling,
-                           conf: Double, iou: Double, nmsMode: NMSMode, sigma: Double) {
+                           conf: Double, iou: Double, nmsMode: NMSMode, sigma: Double, maxDet: Int) {
         if let input = videoInput, !videoCache.isEmpty {
             // let the user place the export root (frames/ + labels/ land inside it)
             guard let root = Self.chooseExportDir(
@@ -536,7 +599,7 @@ final class InferenceEngine: ObservableObject, @unchecked Sendable {   // state 
                     let res = try await exportAnnotationsVideo(
                         input: input, root: root, framesCands: frames, names: nm,
                         format: format, sampling: sampling, fps: fps,
-                        conf: Float(conf), iou: CGFloat(iou), nmsMode: nmsMode, sigma: Float(sigma),
+                        conf: Float(conf), iou: CGFloat(iou), nmsMode: nmsMode, sigma: Float(sigma), maxDet: maxDet,
                         raws: rw, detector: det, includePolygons: includePolys) { done, total in
                         DispatchQueue.main.async {
                             self.progress = total > 0 ? Double(done) / Double(total) : nil
@@ -566,7 +629,7 @@ final class InferenceEngine: ObservableObject, @unchecked Sendable {   // state 
                 guard let self else { return }
                 do {
                     let res = try exportAnnotationsFolder(cache, output: out, names: nm, format: format,
-                        conf: Float(conf), iou: CGFloat(iou), nmsMode: nmsMode, sigma: Float(sigma),
+                        conf: Float(conf), iou: CGFloat(iou), nmsMode: nmsMode, sigma: Float(sigma), maxDet: maxDet,
                         detector: det, includePolygons: includePolys) { done, total in
                         DispatchQueue.main.async {
                             self.progress = total > 0 ? Double(done) / Double(total) : nil
@@ -590,7 +653,7 @@ final class InferenceEngine: ObservableObject, @unchecked Sendable {   // state 
             queue.async { [weak self] in
                 guard let self, let cg = self.currentCG else { return }
                 let dets = Detector.nms(self.currentCands, conf: Float(conf), iou: CGFloat(iou),
-                                        mode: nmsMode, sigma: Float(sigma))
+                                        maxDet: maxDet, mode: nmsMode, sigma: Float(sigma))
                 let det = self.detector
                 let includePolys = det?.isSegment == true && (!self.resultsTiled || self.tiledMasksKept)
                 let insts = annotationInstances(dets, detector: det, raw: self.currentRaw, includePolygons: includePolys)
@@ -649,7 +712,7 @@ final class InferenceEngine: ObservableObject, @unchecked Sendable {   // state 
     /// Annotate + save the single video frame shown at `time` (the video overlay is drawn in a Canvas,
     /// not baked into an image, so we re-extract + annotate here).
     func saveVideoFrame(time: Double, conf: Double, iou: Double, style: BoxStyle, label: LabelMode, overlay: SegOverlay,
-                        nmsMode: NMSMode = .standard, sigma: Double = 0.1) {
+                        nmsMode: NMSMode = .standard, sigma: Double = 0.1, maxDet: Int = 300) {
         guard let input = videoInput, !videoCache.isEmpty else { return }
         let idx = videoFrameIndex(time)
         let cands = videoCache[idx]
@@ -657,7 +720,7 @@ final class InferenceEngine: ObservableObject, @unchecked Sendable {   // state 
         let det = videoDet, names = detNames
         Task {
             guard let cg = await extractFrame(input, atSeconds: time) else { return }
-            let dets = Detector.nms(cands, conf: Float(conf), iou: CGFloat(iou), mode: nmsMode, sigma: Float(sigma))
+            let dets = Detector.nms(cands, conf: Float(conf), iou: CGFloat(iou), maxDet: maxDet, mode: nmsMode, sigma: Float(sigma))
             var masks: [MaskBitmap] = [], drawBoxes = true
             if let det, let raw, overlay != .boxes {
                 masks = dets.compactMap { det.maskImage($0, raw) }
@@ -810,6 +873,7 @@ struct VideoStage: View {
     @ObservedObject var pc: PlayerController
     let conf: Double, iou: Double
     let nmsMode: NMSMode, sigma: Double
+    let maxDet: Int
     let overlay: SegOverlay
     let style: BoxStyle, label: LabelMode
     var body: some View {
@@ -851,6 +915,7 @@ struct ContentView: View {
     @State private var tilingMasks = false             // tiled modes: keep global-pass seg masks
     @State private var nmsMode: NMSMode = .standard    // global NMS variant (also the tiled merge)
     @State private var sigma = 0.1                     // CW-NMS gaussian width
+    @State private var maxDet = 300.0                  // NMS keep cap (10...5000)
     @State private var sampling: VideoSampling = .onePerSecond   // annotation-export frame sampling
     @State private var showLabelExport = false    // "Export labels" popover
     @State private var showRenderExport = false   // "Export rendered images" popover
@@ -872,10 +937,21 @@ struct ContentView: View {
     @State private var cameraIsSegment = false   // set by LiveCameraView once its detector is built
     @State private var cameraMirror = true       // live-camera selfie mirror (toggled from the stage)
     @State private var showInfo = false          // About & Licenses sheet
+    @State private var trackMode = "off"         // video: off | bytetrack | botsort (ids over the cached candidates)
+    @State private var preprocDevice: PreprocDevice = .gpu   // letterbox on the Metal GPU (default) or the CPU path
+    // ---- the two major modes: Inference (everything of 1.1) and Bench (its own sidebar + dashboard) ----
+    @State private var appMode: AppMode = .inference
+    @StateObject private var bench = BenchModel()
+    @State private var selectedBenchRecord: UUID?
     @FocusState private var kbFocused: Bool
 
     private enum PickTarget { case model, source }
     private var sourceKind: SourceKind { sourceURL.map(classifySource) ?? .unknown }
+    /// The adjustable NMS cap is a tiled-inference feature (merged tile pools can
+    /// legitimately exceed 300 boxes); every single-pass run keeps the default.
+    private var effectiveMaxDet: Int {
+        (tiling != .off && (sourceKind == .image || sourceKind == .folder) && !cameraOn) ? Int(maxDet) : 300
+    }
     private var modelInfoImgsz: String { engine.modelInfo.map { "\($0.imgsz)×\($0.imgsz)" } ?? "the model's imgsz" }
     private var isSegModel: Bool { cameraOn ? cameraIsSegment : engine.modelIsSegment }   // drives the Overlay control in both modes
     private var kindLabel: String {
@@ -899,15 +975,29 @@ struct ContentView: View {
         HStack(spacing: 0) {
             controls.frame(width: 300).padding(16)
             Divider()
-            if !cameraOn && sourceKind == .folder && engine.hasResults && !engine.exporting {
-                FinderView(images: folderImages, selected: $selectedIndex, mode: $finderMode, iconSize: $iconSize) { selectAndShow($0) }
-                    .frame(width: 380)
-                Divider()
+            if appMode == .bench {
+                BenchDashboard(bench: bench, store: bench.store, selectedRecord: $selectedBenchRecord, brand: brandColor)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                if !cameraOn && sourceKind == .folder && engine.hasResults && !engine.exporting {
+                    FinderView(images: folderImages, selected: $selectedIndex, mode: $finderMode, iconSize: $iconSize) { selectAndShow($0) }
+                        .frame(width: 380)
+                    Divider()
+                }
+                VStack(spacing: 0) {
+                    preview.frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .overlay(alignment: .bottom) { if engine.busy && !cameraOn { progressBar } }
+                    if !cameraOn && sourceKind == .video && engine.hasResults && !engine.exporting { scrubberBar }
+                }
             }
-            VStack(spacing: 0) {
-                preview.frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .overlay(alignment: .bottom) { if engine.busy && !cameraOn { progressBar } }
-                if !cameraOn && sourceKind == .video && engine.hasResults && !engine.exporting { scrubberBar }
+        }
+        .onChange(of: appMode) {
+            // Bench owns the machine while it runs: leave the camera and playback behind, and seed the
+            // bench model list with the model Inference is using
+            if appMode == .bench {
+                if cameraOn { stopCamera() }
+                if pc.isPlaying { pc.pause() }
+                if let m = modelURL { bench.addModel(m) }
             }
         }
         .sheet(isPresented: $showInfo) { InfoView() }
@@ -923,11 +1013,14 @@ struct ContentView: View {
         mainStage
             .onChange(of: conf) { rerender() }
             .onChange(of: iou) { rerender() }
+            .onChange(of: maxDet) { rerender() }
             .onChange(of: nmsMode) { rerender() }
             .onChange(of: sigma) { if nmsMode == .clusterWeighted { rerender() } }
             .onChange(of: style) { rerender() }
             .onChange(of: label) { rerender() }
             .onChange(of: overlay) { rerender() }
+            .onChange(of: trackMode) { engine.trackKind = TrackerKind(rawValue: trackMode); rerender() }
+            .onChange(of: engine.trackGen) { if sourceKind == .video { refreshVideoOverlays() } }   // a tracked pass landed
     }
 
     /// Stage 3: observers that re-infer or re-target the source / follow playback.
@@ -935,6 +1028,12 @@ struct ContentView: View {
         tuningObservers
             .onChange(of: preprocess) {   // preprocessing changes the forward pass -> re-infer (not a cheap re-render)
                 if cameraOn { return }    // LiveCameraView hot-swaps the detector itself
+                guard !engine.busy, engine.hasResults || engine.resultImage != nil else { return }
+                runInfer()
+            }
+            .onChange(of: preprocDevice) {   // same: the tensor changes, so the cached forward passes do
+                engine.preprocDevice = preprocDevice
+                if cameraOn { return }
                 guard !engine.busy, engine.hasResults || engine.resultImage != nil else { return }
                 runInfer()
             }
@@ -957,11 +1056,11 @@ struct ContentView: View {
                 if pc.isPlaying {
                     zoom.reset()   // zoom is a paused-video feature
                     engine.startVideoOverlayLoop(player: pc.player, conf: conf, iou: iou, nmsMode: nmsMode,
-                                                 sigma: sigma, style: style, label: label, overlay: overlay)
+                                                 sigma: sigma, maxDet: effectiveMaxDet, style: style, label: label, overlay: overlay)
                 } else {
                     engine.stopVideoOverlayLoop()
                     engine.requestOverlayFrame(time: pc.displayTime, conf: conf, iou: iou, nmsMode: nmsMode,
-                                               sigma: sigma, style: style, label: label, overlay: overlay)
+                                               sigma: sigma, maxDet: effectiveMaxDet, style: style, label: label, overlay: overlay)
                 }
             }
     }
@@ -1019,17 +1118,17 @@ struct ContentView: View {
         zoom.reset()
         switch sourceKind {
         case .image:  engine.previewURL(model: m, image: s, compute: compute, conf: conf, iou: iou, style: style, label: label, overlay: overlay, preprocess: preprocess,
-                                        tiling: tilingConfig, nmsMode: nmsMode, sigma: sigma)
+                                        tiling: tilingConfig, nmsMode: nmsMode, sigma: sigma, maxDet: effectiveMaxDet)
         case .folder: engine.runFolder(model: m, input: s, compute: compute, conf: conf, iou: iou, style: style, label: label, overlay: overlay, preprocess: preprocess,
-                                       tiling: tilingConfig, nmsMode: nmsMode, sigma: sigma)
+                                       tiling: tilingConfig, nmsMode: nmsMode, sigma: sigma, maxDet: effectiveMaxDet)
         case .video:  engine.runVideo(model: m, input: s, compute: compute, conf: conf, iou: iou, style: style, label: label, preprocess: preprocess, overlay: overlay,
-                                      nmsMode: nmsMode, sigma: sigma)
+                                      nmsMode: nmsMode, sigma: sigma, maxDet: effectiveMaxDet)
         default: break
         }
     }
     // ---- live camera (session lifecycle + detector build handled inside LiveCameraView) ----
     private func toggleVideoPlayback() -> KeyPress.Result {   // extracted so the view body type-checks
-        guard sourceKind == .video, engine.hasResults, !cameraOn else { return .ignored }
+        guard appMode == .inference, sourceKind == .video, engine.hasResults, !cameraOn else { return .ignored }
         pc.togglePlay()
         return .handled
     }
@@ -1040,7 +1139,7 @@ struct ContentView: View {
         guard folderImages.indices.contains(i) else { return }
         selectedIndex = i
         zoom.reset()
-        engine.showFolder(index: i, url: folderImages[i], conf: conf, iou: iou, style: style, label: label, overlay: overlay, nmsMode: nmsMode, sigma: sigma)
+        engine.showFolder(index: i, url: folderImages[i], conf: conf, iou: iou, style: style, label: label, overlay: overlay, nmsMode: nmsMode, sigma: sigma, maxDet: effectiveMaxDet)
     }
     /// Re-derive the shown video frame's stats + seg-mask overlay from the cache. Extracted from
     /// the body's onChange chain: inline, these two many-argument calls blow the SwiftUI
@@ -1048,11 +1147,12 @@ struct ContentView: View {
     private func refreshVideoOverlays() {
         guard sourceKind == .video, engine.hasResults else { return }
         let t: Double = pc.displayTime
-        // Baked-playback contract: keep the whole-video post-NMS bake current for the settings
-        // (cheap key compare when nothing changed; settings are locked during playback anyway).
-        engine.setVideoFrameStats(time: t, conf: conf, iou: iou, nmsMode: nmsMode, sigma: sigma, throttled: pc.isPlaying)
+        // Tracking is a pure function of the cache + settings: keep the tracked pass current (a cheap
+        // key compare when nothing changed; settings are locked during playback anyway).
+        engine.ensureTracked(conf: conf, iou: iou, nmsMode: nmsMode, sigma: sigma, maxDet: effectiveMaxDet)
+        engine.setVideoFrameStats(time: t, conf: conf, iou: iou, nmsMode: nmsMode, sigma: sigma, maxDet: effectiveMaxDet, throttled: pc.isPlaying)
         if !pc.isPlaying {   // paused/scrub: one full-detail compose; the loop owns playback
-            engine.requestOverlayFrame(time: t, conf: conf, iou: iou, nmsMode: nmsMode, sigma: sigma,
+            engine.requestOverlayFrame(time: t, conf: conf, iou: iou, nmsMode: nmsMode, sigma: sigma, maxDet: effectiveMaxDet,
                                        style: style, label: label, overlay: overlay)
         }
     }
@@ -1061,10 +1161,19 @@ struct ContentView: View {
         if sourceKind == .video {
             refreshVideoOverlays()   // overlay redraws on conf/iou/label automatically
         } else {
-            engine.restyle(conf: conf, iou: iou, style: style, label: label, overlay: overlay, nmsMode: nmsMode, sigma: sigma)
+            engine.restyle(conf: conf, iou: iou, style: style, label: label, overlay: overlay, nmsMode: nmsMode, sigma: sigma, maxDet: effectiveMaxDet)
         }
     }
     private func step(_ dir: Int, vertical: Bool) {
+        if appMode == .bench {   // up / down move the inspected cell through the results table / side-by-side bars
+            guard vertical, !bench.running else { return }
+            let cells = selectedBenchRecord.flatMap { id in bench.store.records.first { $0.id == id }?.cells } ?? bench.cells
+            let ids = cells.map(\.id)
+            guard !ids.isEmpty else { return }
+            let i = bench.selectedCellID.flatMap { ids.firstIndex(of: $0) } ?? 0
+            bench.selectedCellID = ids[max(0, min(ids.count - 1, i + dir))]
+            return
+        }
         switch sourceKind {
         case .folder where engine.hasResults && !folderImages.isEmpty:
             // Finder icon-view semantics: left/right move within the CURRENT ROW only (no
@@ -1107,7 +1216,13 @@ struct ContentView: View {
                 Button { showInfo = true } label: { Image(systemName: "info.circle").font(.system(size: 16)) }
                     .buttonStyle(.borderless).help("About & Licenses")
             }
+            SegmentedButtons(options: AppMode.allCases.map { ($0, $0.rawValue) }, selection: $appMode, tint: brandColor)
+            .disabled(engine.busy || bench.running)
 
+            if appMode == .bench {
+                BenchSidebar(bench: bench, store: bench.store, selectedRecord: $selectedBenchRecord, brand: brandColor)
+                Text("© 2026 Thomas Li").font(.system(size: 9)).foregroundStyle(.tertiary)
+            } else {
             ScrollView {
                 VStack(spacing: 14) {
                     sectionBox("Files", "folder") {
@@ -1124,28 +1239,25 @@ struct ContentView: View {
                     }
                     sectionBox("Preprocess", "aspectratio") {
                         segRow("Input fit") {
-                            Picker("", selection: $preprocess) {
-                                Text("Letterbox").tag(Detector.PreprocessMode.letterbox)
-                                Text("Stretch").tag(Detector.PreprocessMode.stretch)
-                            }.pickerStyle(.segmented).labelsHidden().disabled(cameraOn)
+                            SegmentedButtons(options: [(Detector.PreprocessMode.letterbox, "Letterbox"), (Detector.PreprocessMode.stretch, "Stretch")],
+                                             icons: ["rectangle.inset.filled", "arrow.left.and.right.square"], selection: $preprocess, tint: brandColor)
+                                .disabled(cameraOn)
                         }
-                        if cameraOn {
-                            Text("Stop the camera to change the input fit.")
-                                .font(.caption2).foregroundStyle(.secondary)
+                        segRow("Device") {
+                            SegmentedButtons(options: [(PreprocDevice.gpu, "GPU"), (PreprocDevice.cpu, "CPU")], icons: ["rectangle.stack.fill", "cpu"], selection: $preprocDevice, tint: brandColor)
                         }
                     }
                     sectionBox("Slicing", "square.grid.3x3") {
                         segRow("Mode") {
-                            Picker("", selection: $tiling) {
-                                ForEach(TilingMode.allCases, id: \.self) { Text($0.label).tag($0) }
-                            }.pickerStyle(.segmented).labelsHidden()
+                            SegmentedButtons(options: TilingMode.allCases.map { ($0, $0.label) }, selection: $tiling, tint: brandColor)
                                 .disabled(cameraOn || sourceKind == .video)
                         }
                         if tiling != .off && !(cameraOn || sourceKind == .video) {
                             tileSizeRow
                             if engine.modelIsSegment {
-                                Toggle("Masks (global pass)", isOn: $tilingMasks)
-                                    .toggleStyle(.switch).controlSize(.small).font(.callout)
+                                segRow("Masks (global pass)") {
+                                    SegmentedButtons(options: [(false, "Off"), (true, "On")], icons: ["square.dashed", "square.fill.on.square"], selection: $tilingMasks, tint: brandColor)
+                                }
                                 Text("Masks come from the full-image pass; tile detections stay boxes-only.")
                                     .font(.caption2).foregroundStyle(.secondary)
                             }
@@ -1165,15 +1277,31 @@ struct ContentView: View {
                         }
                         sliderRow("Confidence", $conf, 0.05...0.95).disabled(videoTuningLocked)
                         sliderRow("IoU", $iou, 0.10...0.90).disabled(videoTuningLocked)
+                        if tiling != .off {
+                            intSliderRow("Max detections", $maxDet, 10...5000).disabled(videoTuningLocked)
+                            Text("Tiled runs only: caps the merged tile pool after NMS. Single-pass runs keep 300.")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
                         segRow("NMS") {
-                            Picker("", selection: $nmsMode) {
-                                ForEach(NMSMode.allCases, id: \.self) { Text($0.label).tag($0) }
-                            }.pickerStyle(.segmented).labelsHidden().disabled(videoTuningLocked)
+                            SegmentedButtons(options: NMSMode.allCases.map { ($0, $0.label) }, icons: ["rectangle.on.rectangle", "rectangle.3.group"], selection: $nmsMode, tint: brandColor)
+                                .disabled(videoTuningLocked)
                         }
                         if nmsMode == .clusterWeighted {
                             sliderRow("Sigma", $sigma, 0.01...0.5).disabled(videoTuningLocked)
                             Text("Survivor boxes are refined by score-weighted averaging over overlapping candidates.")
                                 .font(.caption2).foregroundStyle(.secondary)
+                        }
+                        if sourceKind == .video && !cameraOn {
+                            segRow("Tracking") {
+                                SegmentedButtons(options: [("off", "Off"), ("bytetrack", "ByteTrack"), ("botsort", "BoT-SORT")], selection: $trackMode, tint: brandColor)
+                                    .disabled(videoTuningLocked)
+                            }
+                            if trackMode != "off" {
+                                Text(trackMode == "botsort"
+                                     ? "Kalman + two-stage IoU association with camera-motion compensation (Vision); ids persist across frames and the export."
+                                     : "Kalman + two-stage IoU association; ids persist across frames and the export.")
+                                    .font(.caption2).foregroundStyle(.secondary)
+                            }
                         }
                     }
                     sectionBox("Appearance", "paintbrush.fill") {
@@ -1183,29 +1311,27 @@ struct ContentView: View {
                         }
                         if isSegModel && (!tiledActive || tilingMasks) {
                             segRow("Overlay") {
-                                Picker("", selection: $overlay) { ForEach(SegOverlay.allCases, id: \.self) { Text($0.rawValue.capitalized).tag($0) } }
-                                    .pickerStyle(.segmented).labelsHidden()
+                                SegmentedButtons(options: SegOverlay.allCases.map { ($0, $0.rawValue.capitalized) }, selection: $overlay, tint: brandColor)
                             }
                         }
                         if !(isSegModel && overlay == .masks) {   // box style is irrelevant with boxes hidden
                             segRow("Box style") {
-                                Picker("", selection: $style) { ForEach(BoxStyle.allCases, id: \.self) { Text($0.rawValue.capitalized).tag($0) } }
-                                    .pickerStyle(.segmented).labelsHidden()
+                                SegmentedButtons(options: BoxStyle.allCases.map { ($0, $0.rawValue.capitalized) }, selection: $style, tint: brandColor)
                             }
                         }
                         segRow("Label") {   // labels stay adjustable even in masks-only mode
-                            Picker("", selection: $label) { ForEach(LabelMode.allCases, id: \.self) { Text($0.rawValue.capitalized).tag($0) } }
-                                .pickerStyle(.segmented).labelsHidden()
+                            SegmentedButtons(options: LabelMode.allCases.map { ($0, $0.rawValue.capitalized) }, selection: $label, tint: brandColor)
                         }
                     }
                     sectionBox("Device", "cpu") {
-                        Picker("", selection: $compute) { ForEach(ComputeMode.allCases, id: \.self) { Text($0.label).tag($0) } }
-                            .pickerStyle(.menu).labelsHidden().frame(maxWidth: .infinity, alignment: .leading).disabled(cameraOn)
+                        MenuButton(options: [ComputeMode.cpuAndGPU, .all, .cpu].map { ($0, $0.label) }, icons: ["rectangle.stack.fill", "sparkles", "cpu"], selection: $compute, tint: brandColor)
+                            .disabled(cameraOn)
                         if cameraOn {
                             Text("Stop the camera to change the compute backend.")
                                 .font(.caption2).foregroundStyle(.secondary)
                         }
                     }
+                    sectionBox("System", "gauge.with.dots.needle.33percent") { MetersStrip(meters: bench.meters) }
                     sectionBox("Inference", "chart.bar.doc.horizontal") { summaryContent }
                 }
             }
@@ -1213,6 +1339,7 @@ struct ContentView: View {
 
             actionRow
             Text("© 2026 Thomas Li").font(.system(size: 9)).foregroundStyle(.tertiary)
+            }
         }
     }
 
@@ -1256,7 +1383,7 @@ struct ContentView: View {
                                 popoverRow("This frame") { showRenderExport = false; engine.save() }
                                 popoverRow("All") {
                                     showRenderExport = false
-                                    engine.exportFolder(conf: conf, iou: iou, style: style, label: label, overlay: overlay, nmsMode: nmsMode, sigma: sigma)
+                                    engine.exportFolder(conf: conf, iou: iou, style: style, label: label, overlay: overlay, nmsMode: nmsMode, sigma: sigma, maxDet: effectiveMaxDet)
                                 }
                             }
                             .padding(8).frame(minWidth: 150)
@@ -1274,11 +1401,11 @@ struct ContentView: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 popoverRow("This frame") {
                                     showRenderExport = false
-                                    engine.saveVideoFrame(time: pc.displayTime, conf: conf, iou: iou, style: style, label: label, overlay: overlay, nmsMode: nmsMode, sigma: sigma)
+                                    engine.saveVideoFrame(time: pc.displayTime, conf: conf, iou: iou, style: style, label: label, overlay: overlay, nmsMode: nmsMode, sigma: sigma, maxDet: effectiveMaxDet)
                                 }
                                 popoverRow("All (annotated video)") {
                                     showRenderExport = false
-                                    engine.exportVideo(conf: conf, iou: iou, style: style, label: label, overlay: overlay, nmsMode: nmsMode, sigma: sigma)
+                                    engine.exportVideo(conf: conf, iou: iou, style: style, label: label, overlay: overlay, nmsMode: nmsMode, sigma: sigma, maxDet: effectiveMaxDet)
                                 }
                             }
                             .padding(8).frame(minWidth: 180)
@@ -1304,7 +1431,7 @@ struct ContentView: View {
                         popoverRow(f.label) {
                             showLabelExport = false
                             engine.exportAnnotations(format: f, sampling: sampling,
-                                                     conf: conf, iou: iou, nmsMode: nmsMode, sigma: sigma)
+                                                     conf: conf, iou: iou, nmsMode: nmsMode, sigma: sigma, maxDet: effectiveMaxDet)
                         }
                     }
                     if sourceKind == .video {
@@ -1349,8 +1476,8 @@ struct ContentView: View {
         ZStack {
             Color(nsColor: .underPageBackgroundColor)
             if cameraOn {
-                LiveCameraView(modelURL: modelURL, compute: compute, preprocess: preprocess,
-                               conf: conf, iou: iou, nmsMode: nmsMode, sigma: sigma,
+                LiveCameraView(modelURL: modelURL, compute: compute, preprocess: preprocess, preprocDevice: preprocDevice,
+                               conf: conf, iou: iou, nmsMode: nmsMode, sigma: sigma, maxDet: effectiveMaxDet,
                                overlay: overlay, style: style, label: label,
                                isSegment: $cameraIsSegment, mirror: $cameraMirror).padding(12)
             } else if let err = sourceError {
@@ -1360,7 +1487,7 @@ struct ContentView: View {
                 }.padding(24)
             } else if sourceKind == .video && engine.hasResults {
                 ZoomContainer(zoom: zoom, enabled: !pc.isPlaying) {
-                    VideoStage(engine: engine, pc: pc, conf: conf, iou: iou, nmsMode: nmsMode, sigma: sigma, overlay: overlay, style: style, label: label).padding(12)
+                    VideoStage(engine: engine, pc: pc, conf: conf, iou: iou, nmsMode: nmsMode, sigma: sigma, maxDet: effectiveMaxDet, overlay: overlay, style: style, label: label).padding(12)
                 }
             } else if let img = engine.resultImage {
                 ZoomContainer(zoom: zoom) {
@@ -1447,6 +1574,21 @@ struct ContentView: View {
             Slider(value: value, in: range)
         }
     }
+    private func intSliderRow(_ title: String, _ value: Binding<Double>, _ range: ClosedRange<Double>, step: Double = 10) -> some View {
+        // no Slider step: parameter - stepped sliders draw tick marks on macOS (an ugly
+        // dashed line under the track at 500 ticks); round in the binding instead.
+        let rounded = Binding<Double>(get: { value.wrappedValue },
+                                      set: { value.wrappedValue = ($0 / step).rounded() * step })
+        return VStack(alignment: .leading, spacing: 3) {
+            HStack {
+                Text(title).font(.callout)
+                Spacer()
+                Text("\(Int(value.wrappedValue))").font(.callout.monospacedDigit()).foregroundStyle(.secondary)
+                    .padding(.horizontal, 7).padding(.vertical, 1).background(.quaternary, in: Capsule())
+            }
+            Slider(value: rounded, in: range)
+        }
+    }
     /// Tile-size slider. Bound: [model imgsz, shortSide/4 of the source] (Kit re-clamps per
     /// image). Commits on slider RELEASE - each change re-runs tiled inference, so per-tick
     /// re-inference during a drag would be a storm of forwards.
@@ -1488,6 +1630,8 @@ struct ContentView: View {
             Divider()
             statRow(isVideoSource ? "Frames" : (s.count > 1 ? "Images" : "Frame"), "\(s.count)")
             statRow("Model-only", speedText(s.meanMs, s.fps))
+            if s.preMeanMs > 0 { statRow("Preprocess", String(format: "%.2f ms", s.preMeanMs)) }
+            if s.postMeanMs > 0 { statRow("Postprocess", String(format: "%.2f ms", s.postMeanMs)) }
             statRow("Overall", speedText(s.wallMeanMs, s.wallFps))
             if s.count > 1 {
                 statRow("Model min/max", String(format: "%.1f / %.1f ms", s.minMs, s.maxMs))
@@ -1502,6 +1646,7 @@ struct ContentView: View {
             }
             if nmsMode == .clusterWeighted { statRow("NMS", nmsMode.label) }
             Divider()
+            if engine.trackKind != nil, isVideoSource { statRow("Tracks", "\(engine.trackCount) ids (\(trackMode))") }
             statRow("Detections", "\(engine.detCount)  (this frame)")
             if !engine.classCounts.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {

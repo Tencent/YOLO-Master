@@ -30,7 +30,7 @@ data class BenchUi(
     val models: List<BundledModel> = emptyList(),
     /** Runtime capability bits of this build/device (probed once, off main); 0 until known. */
     val caps: Int = 0,
-    val mode: BenchMode = BenchMode.Sweep,
+    val mode: BenchMode = BenchMode.Cold,
     /** The active mode's results; the other mode's set is stashed in the ViewModel. */
     val results: List<BenchResult> = emptyList(),
     val phase: BenchPhase = BenchPhase.Idle,
@@ -57,7 +57,7 @@ data class BenchUi(
     /** Catalog order, models that have at least one result (`modelsWithResults`). */
     val modelsWithResults: List<String> get() = models.map { it.id }.filter { id -> results.any { it.modelId == id } }
     val maxMinutes: Int get() = BenchStats.maxSustainedMinutes(selectedCompute)
-    val canStart: Boolean get() = models.isNotEmpty() && (mode == BenchMode.Sweep || selectedModel != null)
+    val canStart: Boolean get() = models.isNotEmpty() && (mode == BenchMode.Cold || selectedModel != null)
     /** The runtimes the sustained target can be run on (the segmented control hides itself when there is one). */
     val runtimeChoices: List<Runtime> get() = runtimesAvailable(selectedModel, caps)
     /** The units of [selectedRuntime] for the sustained target: CPU is ALWAYS offered, the bench measures every unit. */
@@ -159,7 +159,7 @@ class BenchViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- run control ---------------------------------------------------------------------------
 
-    /** `start()` (`BenchView.swift:531-544`): clears the graph; a sweep also clears its results. */
+    /** `start()` (`BenchView.swift:531-544`): clears the graph; a cold run also clears its results. */
     fun start() {
         val u = _ui.value
         if (u.running || !u.canStart) return
@@ -171,8 +171,8 @@ class BenchViewModel(app: Application) : AndroidViewModel(app) {
             it.copy(
                 running = true, paused = false, error = null, liveMs = 0.0, runDuration = 0,
                 sparkSamples = emptyList(), sparkThermal = emptyList(), sparkBaseline = null,
-                results = if (it.mode == BenchMode.Sweep) emptyList() else it.results,
-                expanded = if (it.mode == BenchMode.Sweep) emptySet() else it.expanded,
+                results = if (it.mode == BenchMode.Cold) emptyList() else it.results,
+                expanded = if (it.mode == BenchMode.Cold) emptySet() else it.expanded,
             )
         }
         _events.tryEmit(BenchEvent.Started)
@@ -180,8 +180,8 @@ class BenchViewModel(app: Application) : AndroidViewModel(app) {
         val ctl = control
         val eng = engine
         job = viewModelScope.launch(benchDispatcher) {
-            if (u.mode == BenchMode.Sweep) {
-                val ok = eng.runSweep(u.models, u.warmup, u.iters, ctl, sink)
+            if (u.mode == BenchMode.Cold) {
+                val ok = eng.runCold(u.models, u.warmup, u.iters, ctl, sink)
                 if (ok && myGen == gen) finishRun(sustained = false, durationSec = 0)
             } else {
                 val m = u.selectedModel ?: return@launch
@@ -248,7 +248,7 @@ class BenchViewModel(app: Application) : AndroidViewModel(app) {
             history.add(
                 BenchRun(
                     id = UUID.randomUUID().toString(), name = name, dateMs = System.currentTimeMillis(),
-                    mode = if (sustained) BenchMode.Sustained.label else BenchMode.Sweep.label,
+                    mode = if (sustained) BenchMode.Sustained.label else BenchMode.Cold.label,
                     durationSec = if (sustained) durationSec else 0, results = u.results,
                     thermalStart = runThermalStart, thermalEnd = end, thermalPeak = max(runThermalPeak, end),
                 ),

@@ -14,7 +14,7 @@ import kotlin.math.max
 import kotlin.math.min
 
 /*
- * The bench loops of `BenchView.swift` (runSweep 614-655, runSustained 657-734), split into pure
+ * The bench loops of `BenchView.swift` (runCold 614-655, runSustained 657-734), split into pure
  * statistics (`BenchStats`, unit-tested) and the detector-driving engine. Methodology (iOS header):
  * flagships throttle, so a real-time claim needs BOTH a cold median and a sustained number. The
  * headline metric is `inferOnly` (pure extractor time); each result also carries one forward +
@@ -22,8 +22,8 @@ import kotlin.math.min
  * the empty-scene floor - inference is the number that matters.
  */
 
-/** "Cold Sweep" | "Sustained" (`BenchView.Mode`, `BenchView.swift:104-107`). */
-enum class BenchMode(val label: String) { Sweep("Cold Sweep"), Sustained("Sustained") }
+/** "Cold run" | "Sustained" (`BenchView.Mode`, `BenchView.swift:104-107`). */
+enum class BenchMode(val label: String) { Cold("Cold run"), Sustained("Sustained") }
 
 /** `BenchView.Phase` (`BenchView.swift:108-114`). */
 sealed class BenchPhase {
@@ -88,9 +88,9 @@ object BenchStats {
         return out
     }
 
-    /** Auto run names (`BenchView.swift:570-572`): "<shortID> · <unit> · <n>min" / "Sweep · <n> models". */
+    /** Auto run names (`BenchView.swift:570-572`): "<shortID> · <unit> · <n>min" / "Cold run · <n> models". */
     fun runName(sustained: Boolean, shortID: String?, unit: String, minutes: Int, modelCount: Int): String =
-        if (sustained) "${shortID ?: "run"} · $unit · ${minutes}min" else "Sweep · $modelCount models"
+        if (sustained) "${shortID ?: "run"} · $unit · ${minutes}min" else "Cold run · $modelCount models"
 
     /** CPU inference is slow and hot: sustained CPU stress is capped at 3 minutes (`BenchView.swift:309`); GPU and NPU get 60. */
     fun maxSustainedMinutes(unit: ComputeChoice): Int = if (unit == ComputeChoice.CPU) 3 else 60
@@ -121,7 +121,7 @@ object BenchStats {
 /** What the engine reports while it runs; every call may come from the bench thread. */
 interface BenchSink {
     fun phase(p: BenchPhase)
-    /** A sweep cell finished (the view appends it and taps a light haptic). */
+    /** A cold-run cell finished (the view appends it and taps a light haptic). */
     fun cell(r: BenchResult)
     /** Sustained: the cold baseline is in; the graph starts. */
     fun baseline(coldMedian: Double)
@@ -155,10 +155,10 @@ class BenchEngine(
     }
 
     /**
-     * Cold sweep (`BenchView.swift:614-655`): every model x its runtime·unit cells, warmup untimed
+     * Cold run (`BenchView.swift:614-655`): every model x its runtime·unit cells, warmup untimed
      * then [iters] timed `inferOnly` calls on the gray probe. Returns true when it ran to completion.
      */
-    suspend fun runSweep(models: List<BundledModel>, warmup: Int, iters: Int, control: BenchControl, sink: BenchSink): Boolean {
+    suspend fun runCold(models: List<BundledModel>, warmup: Int, iters: Int, control: BenchControl, sink: BenchSink): Boolean {
         val img = Detector.grayProbe(640)
         try {
             val total = models.sumOf { BenchStats.cellsFor(it, caps).size }

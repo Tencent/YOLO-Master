@@ -1,23 +1,21 @@
 #include "ort_backend.hpp"
+#ifdef HAVE_CUDA_PREPROC
+#include "cuda_preproc.hpp"
+#include <cuda_runtime_api.h>
+#endif
 #include <algorithm>
 #include <array>
 #include <chrono>
-#include <cstdint>
-#include <cstring>
 #include <cstdlib>
-#include <cmath>
+#include <cstring>
+#include <fstream>
 #include <iostream>
-#include <limits>
-#include <sstream>
+#include <mutex>
 #include <stdexcept>
 #include <unordered_map>
-#include <vector>
 
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
+#ifdef __ANDROID__
+#include <android/log.h>
 #endif
 
 namespace yolomaster {
@@ -29,166 +27,268 @@ static double ms_since(const clk::time_point& t) {
 
 // ORT takes the model path as wchar_t* on Windows, char* elsewhere (ORTCHAR_T).
 #ifdef _WIN32
-static std::wstring ort_path(const std::string& s) {
-    if (s.empty()) return {};
-    const int needed = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
-                                           s.data(), static_cast<int>(s.size()),
-                                           nullptr, 0);
-    if (needed <= 0)
-        throw std::runtime_error("model path is not valid UTF-8");
-    std::wstring wide(static_cast<size_t>(needed), L'\0');
-    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
-                            s.data(), static_cast<int>(s.size()),
-                            wide.data(), needed) != needed)
-        throw std::runtime_error("failed to convert model path to UTF-16");
-    return wide;
-}
+static std::wstring ort_path(const std::string& s) { return std::wstring(s.begin(), s.end()); }
 #else
 static const std::string& ort_path(const std::string& s) { return s; }
 #endif
 
-// ORT exposes FP16 tensors as 16-bit storage.  Keep the conversion local so
-// the runtime accepts both FP32 and ``--half`` exports without depending on a
-// particular Ort::Float16_t constructor (which changed between ORT releases).
-static float half_to_float(uint16_t bits) {
-    const uint32_t sign = (bits & 0x8000u) << 16;
-    const uint32_t exp = (bits >> 10) & 0x1fu;
-    const uint32_t frac = bits & 0x03ffu;
-    uint32_t value;
-    if (exp == 0) {
-        if (frac == 0) value = sign;
-        else {
-            uint32_t mant = frac;
-            uint32_t e = 0;
-            while ((mant & 0x0400u) == 0) { mant <<= 1; ++e; }
-            mant &= 0x03ffu;
-            // Half subnormals have an implicit exponent of -14 before the
-            // leading-bit normalization (not -15).  Using 127-15 here
-            // underestimates every non-zero subnormal by a factor of two.
-            const int exponent = 127 - 14 - static_cast<int>(e);
-            value = sign | (static_cast<uint32_t>(exponent) << 23) | (mant << 13);
-        }
-    } else if (exp == 31) {
-        value = sign | 0x7f800000u | (frac << 13);
-    } else {
-        value = sign | ((exp + (127u - 15u)) << 23) | (frac << 13);
-    }
-    float result;
-    std::memcpy(&result, &value, sizeof(result));
-    return result;
+// The QNN EP exists only in the Android arm64 build of ORT (the onnxruntime-android-qnn AAR);
+// requesting it anywhere else is answered with a note, never a crash.
+#if defined(__ANDROID__) && defined(__aarch64__)
+#define YM_ORT_HAS_QNN 1
+#else
+#define YM_ORT_HAS_QNN 0
+#endif
+
+namespace {
+
+// ORT keeps ONE logging manager per process (the first Ort::Env's sink wins for every later Env
+// while that one is alive), so placement capture cannot rely on the sink's `param`. Session
+// construction is serialized here and the backend under construction is the capture target.
+std::mutex g_init_mu;
+OrtBackend* g_capturing = nullptr;
+std::mutex g_capture_mu;   // guards g_capturing against a sink call racing a ctor exit
+
+bool file_exists(const std::string& p) { return !p.empty() && std::ifstream(p).good(); }
+
+std::string lower(std::string s) {
+    for (char& c : s) c = (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c;
+    return s;
 }
 
-static uint16_t float_to_half(float value) {
-    uint32_t bits;
-    std::memcpy(&bits, &value, sizeof(bits));
-    const uint32_t sign = (bits >> 16) & 0x8000u;
-    const uint32_t exponent_bits = (bits >> 23) & 0xffu;
-    uint32_t fraction = bits & 0x7fffffu;
-
-    if (exponent_bits == 0xffu) {
-        // Preserve infinities and emit a quiet, non-zero payload for NaNs.
-        return static_cast<uint16_t>(
-            sign | 0x7c00u | (fraction ? (0x0200u | (fraction >> 13)) : 0u));
-    }
-
-    int exponent = static_cast<int>(exponent_bits) - 127;
-    if (exponent > 15) return static_cast<uint16_t>(sign | 0x7c00u);
-    if (exponent >= -14) {
-        // Round the 23-bit float mantissa to ten bits using round-to-nearest,
-        // ties-to-even.  Carrying out of the mantissa increments the exponent.
-        fraction += 0x0fffu + ((fraction >> 13) & 1u);
-        if (fraction & 0x800000u) {
-            fraction = 0;
-            if (++exponent > 15) return static_cast<uint16_t>(sign | 0x7c00u);
-        }
-        return static_cast<uint16_t>(
-            sign | (static_cast<uint32_t>(exponent + 15) << 10) |
-            (fraction >> 13));
-    }
-    // Values at exponent -25 can round to the smallest half subnormal
-    // (2^-24); only smaller exponents are guaranteed to round to zero.
-    if (exponent < -25) return static_cast<uint16_t>(sign);
-
-    // Half subnormal: restore float's implicit leading bit, shift to the
-    // half-subnormal exponent, then apply the same ties-to-even rule.
-    const uint32_t mantissa = fraction | 0x800000u;
-    const int shift = -exponent - 1;  // 14 bits at exp=-14, 24 at exp=-24
-    uint32_t rounded = mantissa >> shift;
-    const uint32_t remainder_mask = (1u << shift) - 1u;
-    const uint32_t remainder = mantissa & remainder_mask;
-    const uint32_t halfway = 1u << (shift - 1);
-    if (remainder > halfway || (remainder == halfway && (rounded & 1u))) ++rounded;
-    return static_cast<uint16_t>(sign | rounded);
+// First integer after `key` in `msg` (-1 when absent).
+int int_after(const std::string& msg, const char* key) {
+    const size_t p = msg.find(key);
+    if (p == std::string::npos) return -1;
+    size_t q = p + std::strlen(key);
+    while (q < msg.size() && (msg[q] == ' ' || msg[q] == ':')) ++q;
+    if (q >= msg.size() || msg[q] < '0' || msg[q] > '9') return -1;
+    return std::atoi(msg.c_str() + q);
 }
 
-static std::vector<float> tensor_to_float(const Ort::Value& value) {
-    const auto info = value.GetTensorTypeAndShapeInfo();
-    const size_t count = info.GetElementCount();
-    std::vector<float> output(count);
-    if (info.GetElementType() == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
-        const float* data = value.GetTensorData<float>();
-        std::copy(data, data + count, output.begin());
-    } else if (info.GetElementType() == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16) {
-        const uint16_t* data = value.GetTensorData<uint16_t>();
-        for (size_t i = 0; i < count; ++i) output[i] = half_to_float(data[i]);
-    } else {
-        throw std::runtime_error("ONNX tensor must use FP32 or FP16 elements");
-    }
-    if (!std::all_of(output.begin(), output.end(), [](float v) { return std::isfinite(v); }))
-        throw std::runtime_error("ONNX tensor contains NaN or Inf");
-    return output;
-}
+}  // namespace
 
 OrtBackend::OrtBackend(const std::string& model_path, int threads, const std::string& device)
-    : env_(ORT_LOGGING_LEVEL_WARNING, "yolomaster") {
-    opts_.SetIntraOpNumThreads(threads);
-    opts_.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+    : OrtBackend(model_path, [&] { OrtOptions o; o.threads = threads; o.device = device; return o; }()) {}
 
-    if (device == "trt" || device == "tensorrt") {
+OrtBackend::OrtBackend(const std::string& model_path, const OrtOptions& opt)
+    : log_tag_(opt.log_tag),
+      // INFO so the partitioner's placement summary reaches the sink at init. Per-Run logging is
+      // dialed back to WARNING through RunOptions (see forward_raw), so the steady state is quiet.
+      env_(ORT_LOGGING_LEVEL_INFO, opt.log_tag.c_str(), &OrtBackend::log_sink, this),
+      mem_(Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeCPU)) {
+    want_gpu_preproc_ = opt.gpu_preproc;
+    std::lock_guard<std::mutex> init_lock(g_init_mu);
+    {
+        std::lock_guard<std::mutex> lk(g_capture_mu);
+        g_capturing = this;
+        capturing_ = true;
+    }
+    try {
+        build_session(model_path, opt);
+    } catch (...) {
+        std::lock_guard<std::mutex> lk(g_capture_mu);
+        g_capturing = nullptr;
+        capturing_ = false;
+        throw;
+    }
+    std::lock_guard<std::mutex> lk(g_capture_mu);
+    g_capturing = nullptr;
+    capturing_ = false;
+}
+
+OrtBackend::~OrtBackend() {
+#ifdef HAVE_CUDA_PREPROC
+    teardown_gpu_io();
+#endif
+    std::lock_guard<std::mutex> lk(g_capture_mu);
+    if (g_capturing == this) g_capturing = nullptr;
+}
+
+void OrtBackend::log(int prio, const std::string& msg) const {
+#ifdef __ANDROID__
+    __android_log_print(prio, log_tag_.c_str(), "%s", msg.c_str());
+#else
+    (void)prio;
+    std::cerr << "[" << log_tag_ << "] " << msg << "\n";
+#endif
+}
+
+void ORT_API_CALL OrtBackend::log_sink(void* /*param: not trusted, see g_capturing*/, OrtLoggingLevel severity,
+                                       const char* /*category*/, const char* /*logid*/,
+                                       const char* /*code_location*/, const char* message) {
+    std::lock_guard<std::mutex> lk(g_capture_mu);
+    if (g_capturing) g_capturing->on_log(severity, message ? message : "");
+#ifdef __ANDROID__
+    else if (severity >= ORT_LOGGING_LEVEL_WARNING)
+        __android_log_print(severity >= ORT_LOGGING_LEVEL_ERROR ? ANDROID_LOG_ERROR : ANDROID_LOG_WARN, "YMOrt",
+                            "%s", message ? message : "");
+#else
+    else if (severity >= ORT_LOGGING_LEVEL_WARNING) std::cerr << "[ort] " << (message ? message : "") << "\n";
+#endif
+}
+
+// Placement lines ORT emits while the session is built (onnxruntime/core/framework/session_state.cc
+// and the QNN EP's GetCapability):
+//   INFO    "All nodes placed on [QNNExecutionProvider]. Number of nodes: 312"
+//   INFO    "Number of partitions supported by QNN EP: 1, number of nodes in the graph: 312,
+//            number of nodes supported by QNN: 312"
+//   VERBOSE " [CPUExecutionProvider]. Number of nodes: 4" (one per EP, under "Node placements")
+// The per-EP VERBOSE lines are the most precise (post-partition) and win when present; the QNN
+// summary is the INFO-level fallback; "All nodes placed" settles the single-EP case.
+void OrtBackend::on_log(OrtLoggingLevel severity, const char* message) {
+    const std::string msg = message;
+    if (severity >= ORT_LOGGING_LEVEL_ERROR) last_ort_error_ = msg;
+    if (!capturing_) return;
+    // Forward the init-time diagnostics (INFO and up): they are the M0 evidence (backend
+    // libraries found, HTP arch, context binary, placement) and stop after init.
+#ifdef __ANDROID__
+    const int prio = severity >= ORT_LOGGING_LEVEL_ERROR ? ANDROID_LOG_ERROR
+                   : severity >= ORT_LOGGING_LEVEL_WARNING ? ANDROID_LOG_WARN : ANDROID_LOG_INFO;
+    if (severity >= ORT_LOGGING_LEVEL_INFO) __android_log_print(prio, log_tag_.c_str(), "%s", msg.c_str());
+#else
+    if (severity >= ORT_LOGGING_LEVEL_WARNING) std::cerr << "[ort] " << msg << "\n";
+#endif
+    if (msg.rfind("All nodes placed on [", 0) == 0) {
+        const int n = int_after(msg, "Number of nodes");
+        if (n >= 0) {
+            nodes_total_ = n;
+            nodes_on_cpu_ = (msg.find("[CPUExecutionProvider]") != std::string::npos) ? n : 0;
+        }
+        return;
+    }
+    if (msg.rfind("Number of partitions supported by QNN EP", 0) == 0) {
+        const int total = int_after(msg, "number of nodes in the graph");
+        const int on_qnn = int_after(msg, "number of nodes supported by QNN");
+        if (total >= 0 && on_qnn >= 0 && ep_nodes_ < 0 && cpu_nodes_ < 0) {
+            nodes_total_ = total;
+            nodes_on_cpu_ = total - on_qnn;
+        }
+        return;
+    }
+    // " [XExecutionProvider]. Number of nodes: k" (VERBOSE per-EP breakdown)
+    if (msg.size() > 2 && msg[0] == ' ' && msg[1] == '[' && msg.find("]. Number of nodes") != std::string::npos) {
+        const int n = int_after(msg, "Number of nodes");
+        if (n < 0) return;
+        if (msg.find("[CPUExecutionProvider]") != std::string::npos) cpu_nodes_ = n;
+        else ep_nodes_ = (ep_nodes_ < 0 ? 0 : ep_nodes_) + n;
+        nodes_on_cpu_ = cpu_nodes_ < 0 ? 0 : cpu_nodes_;
+        nodes_total_ = nodes_on_cpu_ + (ep_nodes_ < 0 ? 0 : ep_nodes_);
+    }
+}
+
+void OrtBackend::build_session(const std::string& model_path, const OrtOptions& opt) {
+    const std::string device = lower(opt.device);
+    auto note = [this](const std::string& s) { if (!ep_note.empty()) ep_note += "; "; ep_note += s; };
+
+    // "a16w8" / "a8w8" from the file name (scripts/quantize_onnx_qnn.py names the siblings
+    // model-a16w8.onnx / model-a8w8.onnx); the exporter's `ym_quant` metadata overrides below.
+    {
+        const std::string lp = lower(model_path);
+        if (lp.find("a16w8") != std::string::npos) quant_ = "a16w8";
+        else if (lp.find("a8w8") != std::string::npos) quant_ = "a8w8";
+    }
+
+    std::string path_to_open = model_path;
+    bool want_qnn = false, qnn_ok = false;
+
+    if (device == "qnn" || device == "npu" || device == "htp") {
+        want_qnn = true;
+#if YM_ORT_HAS_QNN
+        try {
+            // fp32 graphs run on the HTP as fp16 (enable_htp_fp16_precision); QDQ graphs keep
+            // float I/O because the CPU EP takes the input quantize / output dequantize
+            // (offload_graph_io_quantization), so forward_raw never has to build u8/u16 tensors.
+            // htp_arch stays at auto: the driver picks the skel it finds (V81 on the S26).
+            std::unordered_map<std::string, std::string> qo = {
+                {"backend_type", "htp"},
+                {"htp_performance_mode", opt.htp_perf.empty() ? "burst" : opt.htp_perf},
+                {"htp_graph_finalization_optimization_mode", "3"},
+                {"enable_htp_fp16_precision", "1"},
+                // Strict sessions forbid any CPU node, and ORT rejects offloading the I/O Q/DQ to
+                // another EP in that mode (it logs a conflict); QNN places those nodes itself.
+                {"offload_graph_io_quantization", opt.strict_htp ? "0" : "1"},
+                {"qnn_context_priority", "high"},
+            };
+            opts_.AppendExecutionProvider("QNN", qo);
+            qnn_ok = true;
+        } catch (const std::exception& e) {
+            if (opt.strict_htp) throw std::runtime_error(std::string("QNN EP unavailable: ") + e.what());
+            note(std::string("QNN EP unavailable: ") + e.what());
+            log(6, ep_note);
+        }
+#else
+        if (opt.strict_htp) throw std::runtime_error("QNN EP is Android-arm64 only in this build");
+        note("QNN EP is Android-arm64 only; using the CPU EP");
+#endif
+        if (qnn_ok) {
+            // Extended/layout fusions can synthesize ops the HTP refuses (NhwcConv, FusedConv):
+            // BASIC keeps the graph in the plain ONNX vocabulary the QNN builders cover.
+            opts_.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_BASIC);
+            // The CPU EP only gets what the HTP declined; two threads, no spinning (the Live
+            // loop shares the two prime cores with the camera and the UI).
+            opts_.SetIntraOpNumThreads(std::max(1, std::min(opt.threads, 2)));
+            opts_.AddConfigEntry("session.intra_op.allow_spinning", "0");
+            if (opt.strict_htp) opts_.AddConfigEntry("session.disable_cpu_ep_fallback", "1");
+            if (!opt.ctx_cache_path.empty()) {
+                if (file_exists(opt.ctx_cache_path)) {
+                    // Pre-compiled HTP context: open it instead of the ONNX (no graph finalization).
+                    path_to_open = opt.ctx_cache_path;
+                    log(4, "opening EPContext cache " + opt.ctx_cache_path);
+                } else {
+                    opts_.AddConfigEntry("ep.context_enable", "1");
+                    opts_.AddConfigEntry("ep.context_file_path", opt.ctx_cache_path.c_str());
+                    opts_.AddConfigEntry("ep.context_embed_mode", "1");
+                    log(4, "generating EPContext cache " + opt.ctx_cache_path);
+                }
+            }
+        }
+    }
+#ifndef __ANDROID__
+    else if (device == "trt" || device == "tensorrt") {
         // ONNXRuntime TensorRT EP: builds+caches a TRT engine internally (near-native TRT),
         // honors QDQ nodes for INT8 + FP16 elsewhere, and auto-falls-back to CUDA/CPU for
         // unsupported subgraphs. Portable: ship the .onnx; the engine cache builds on first run.
-        OrtTensorRTProviderOptionsV2* trt = nullptr;
         try {
+            OrtTensorRTProviderOptionsV2* trt = nullptr;
             Ort::ThrowOnError(Ort::GetApi().CreateTensorRTProviderOptions(&trt));
             const char* keys[] = {"trt_fp16_enable", "trt_int8_enable",
                                   "trt_engine_cache_enable", "trt_engine_cache_path"};
-            // Do not force INT8 for an arbitrary ONNX model.  TensorRT INT8
-            // requires a calibrated/QDQ graph; enabling it unconditionally can
-            // change the accuracy protocol or make engine construction fail.
-            // Q/DQ nodes in an explicitly quantized model are still honored by
-            // TensorRT when this option is disabled.
-            const char* vals[] = {"1", "0", "1", "trt_engine_cache"};
+            const char* vals[] = {"1", "1", "1", "trt_engine_cache"};
             Ort::ThrowOnError(Ort::GetApi().UpdateTensorRTProviderOptions(trt, keys, vals, 4));
             opts_.AppendExecutionProvider_TensorRT_V2(*trt);
             Ort::GetApi().ReleaseTensorRTProviderOptions(trt);
-            trt = nullptr;
-            active_ep = "TensorRT-EP";
+            active_ep = "ort-TensorRT";
         } catch (const std::exception& e) {
-            if (trt) Ort::GetApi().ReleaseTensorRTProviderOptions(trt);
             std::cerr << "[ort] TensorRT EP unavailable (" << e.what() << "); trying CUDA\n";
-            ep_note = std::string("TensorRT EP unavailable: ") + e.what();
         }
         // CUDA fallback for TRT-unsupported nodes (and if the TRT EP failed to load)
         try {
             OrtCUDAProviderOptions cuda{}; cuda.device_id = 0;
             opts_.AppendExecutionProvider_CUDA(cuda);
-            if (active_ep != "TensorRT-EP") active_ep = "CUDA";
+            if (active_ep != "ort-TensorRT") active_ep = "ort-CUDA";
         } catch (const std::exception& e) {
-            if (active_ep != "TensorRT-EP") { std::cerr << "[ort] CUDA EP unavailable; using CPU\n"; active_ep = "CPU"; }
-            if (active_ep == "CPU" && ep_note.empty())
-                ep_note = std::string("CUDA EP unavailable: ") + e.what();
+            if (active_ep != "ort-TensorRT") { std::cerr << "[ort] CUDA EP unavailable; using CPU\n"; active_ep.clear(); }
         }
-    } else if (device == "cuda") {
+    } else if (device == "cuda" || device == "gpu") {
         try {                                    // graceful fallback if CUDA EP can't load
             OrtCUDAProviderOptions cuda{};
             cuda.device_id = 0;
+#ifdef HAVE_CUDA_PREPROC
+            if (want_gpu_preproc_) {             // EP work ordered after our preprocessing kernel
+                cudaStream_t st = nullptr;
+                if (cudaStreamCreateWithFlags(&st, cudaStreamNonBlocking) == cudaSuccess) {
+                    cuda_stream_ = st;
+                    cuda.has_user_compute_stream = 1;
+                    cuda.user_compute_stream = st;
+                }
+            }
+#endif
             opts_.AppendExecutionProvider_CUDA(cuda);
-            active_ep = "CUDA";
+            active_ep = "ort-CUDA";
         } catch (const std::exception& e) {
             std::cerr << "[ort] CUDA EP unavailable (" << e.what() << "); using CPU\n";
-            active_ep = "CPU";
-            ep_note = std::string("CUDA EP failed: ") + e.what();
+            note(std::string("CUDA EP failed: ") + e.what());
         }
     } else if (device == "coreml") {
         // Apple CoreML EP (macOS): ORT partitions the graph, runs supported subgraphs on ANE/GPU
@@ -201,335 +301,336 @@ OrtBackend::OrtBackend(const std::string& model_path, int threads, const std::st
                 {"RequireStaticInputShapes", "1"},
             };
             opts_.AppendExecutionProvider("CoreML", co);
-            active_ep = "CoreML";
+            active_ep = "ort-CoreML";
         } catch (const std::exception& e) {
             std::cerr << "[ort] CoreML EP unavailable (" << e.what() << "); using CPU\n";
-            active_ep = "CPU";
-            ep_note = std::string("CoreML EP unavailable: ") + e.what();
         }
     }
-    // Provider registration can succeed even when provider initialization is
-    // deferred until the session is constructed (for example, a CUDA/TensorRT
-    // library may be missing at runtime).  Retry with a clean CPU-only option
-    // set so the documented accelerator fallback also covers that case.
-    auto create_session = [&](Ort::SessionOptions& options) {
-#ifdef _WIN32
-        const std::wstring wide = ort_path(model_path);
-        return std::make_unique<Ort::Session>(env_, wide.c_str(), options);
-#else
-        return std::make_unique<Ort::Session>(env_, model_path.c_str(), options);
 #endif
+    if (!qnn_ok) {
+        // CPU EP (alone or behind CUDA/TRT/CoreML): the historical desktop settings.
+        opts_.SetIntraOpNumThreads(std::max(1, opt.threads));
+        opts_.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+#ifdef __ANDROID__
+        opts_.AddConfigEntry("session.intra_op.allow_spinning", "0");   // phones: never burn a core waiting
+#endif
+    }
+    opts_.SetLogSeverityLevel(ORT_LOGGING_LEVEL_INFO);   // the session logger carries the placement lines
+
+    auto open = [&](const std::string& p) {
+        session_ = std::make_unique<Ort::Session>(env_, ort_path(p).c_str(), opts_);
     };
     try {
-        session_ = create_session(opts_);
-    } catch (const std::exception& first_error) {
-        if (device == "cpu" || device.empty()) throw;
-        const std::string requested_ep = active_ep;
-        Ort::SessionOptions cpu_opts;
-        cpu_opts.SetIntraOpNumThreads(threads);
-        cpu_opts.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
-        try {
-            session_ = create_session(cpu_opts);
-        } catch (const std::exception& cpu_error) {
-            throw std::runtime_error(
-                std::string("ONNX session initialization failed for ") + requested_ep +
-                ": " + first_error.what() + "; CPU fallback failed: " + cpu_error.what());
+        open(path_to_open);
+    } catch (const Ort::Exception& e) {
+        std::string why = e.what();
+        if (!last_ort_error_.empty() && why.find(last_ort_error_) == std::string::npos) why += " | " + last_ort_error_;
+        if (qnn_ok && !opt.strict_htp) {
+            // The HTP could not take the graph (driver, skel, context binary): fall back to a
+            // plain CPU session so the caller still has a working model, and say so.
+            log(6, "QNN session failed (" + why + "); retrying on the CPU EP");
+            note("QNN session failed: " + why);
+            opts_ = Ort::SessionOptions();
+            opts_.SetIntraOpNumThreads(std::max(1, opt.threads));
+            opts_.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+            opts_.SetLogSeverityLevel(ORT_LOGGING_LEVEL_INFO);
+            nodes_total_ = nodes_on_cpu_ = 0; ep_nodes_ = cpu_nodes_ = -1;
+            qnn_ok = false;
+            open(model_path);
+        } else {
+            throw std::runtime_error(why);
         }
-        active_ep = "CPU";
-        ep_note = requested_ep + " unavailable; fell back to CPU: " + first_error.what();
-        std::cerr << "[ort] " << ep_note << "\n";
     }
 
+    read_model_info();
+#ifdef HAVE_CUDA_PREPROC
+    if (active_ep == "ort-CUDA" && want_gpu_preproc_) setup_gpu_io();
+#endif
+
+    // ---- name the result honestly: what runs where, not what was asked for ----
+    const std::string prec = quant_.empty() ? std::string("fp32") : quant_;
+    if (qnn_ok) {
+        // The QNN EP answers GetCapability with nothing when its backend failed to initialise
+        // (missing skel, no DSP, rejected context): the whole graph then silently lands on the
+        // CPU EP. That is a CPU run and is labelled as one.
+        const bool all_cpu = nodes_total_ > 0 && nodes_on_cpu_ >= nodes_total_;
+        if (all_cpu) {
+            active_ep = "ort-CPU-" + prec;
+            note("QNN requested but the HTP took 0/" + std::to_string(nodes_total_) + " nodes");
+        } else {
+            active_ep = "ort-QNN-htp-" + (quant_.empty() ? std::string("fp16") : quant_);
+            if (nodes_on_cpu_ > 0) {
+                active_ep += "-mixed";
+                note("partial HTP: " + std::to_string(nodes_on_cpu_) + "/" + std::to_string(nodes_total_) + " nodes on CPU");
+            }
+        }
+    } else if (active_ep.empty() || active_ep == "cpu") {
+        active_ep = "ort-CPU-" + prec;
+    }
+    if (want_qnn && !qnn_ok && ep_note.empty()) note("QNN not used");
+    log(4, "session ready: " + active_ep + " placement=" + std::to_string(nodes_total_ - nodes_on_cpu_) + "/" +
+               std::to_string(nodes_total_) + " on the EP" + (ep_note.empty() ? "" : " note=" + ep_note));
+}
+
+void OrtBackend::read_model_info() {
     const size_t n_in = session_->GetInputCount();
     const size_t n_out = session_->GetOutputCount();
-    if (n_in != 1)
-        throw std::runtime_error("ONNX runner requires exactly one tensor input (found " +
-                                 std::to_string(n_in) + ")");
-    if (n_out == 0)
-        throw std::runtime_error("ONNX model must expose at least one output");
     for (size_t i = 0; i < n_in; ++i)
         in_names_s_.push_back(session_->GetInputNameAllocated(i, alloc_).get());
     for (size_t i = 0; i < n_out; ++i)
         out_names_s_.push_back(session_->GetOutputNameAllocated(i, alloc_).get());
     for (auto& s : in_names_s_) in_names_.push_back(s.c_str());
     for (auto& s : out_names_s_) out_names_.push_back(s.c_str());
-    if (in_names_.empty() || out_names_.empty())
-        throw std::runtime_error("ONNX model must expose at least one input and one output");
 
-    const auto input_info = session_->GetInputTypeInfo(0).GetTensorTypeAndShapeInfo();
-    const auto input_shape = input_info.GetShape();
-    if (input_shape.size() != 4)
-        throw std::runtime_error("ONNX input must have rank-4 shape [1,3,H,W]");
-    if (input_shape[0] > 0 && input_shape[0] != 1)
-        throw std::runtime_error("ONNX input batch dimension must be 1");
-    if (input_shape[1] > 0 && input_shape[1] != 3)
-        throw std::runtime_error("ONNX input channel dimension must be 3");
-    for (size_t axis = 2; axis < 4; ++axis) {
-        if (input_shape[axis] == 0 || input_shape[axis] < -1)
-            throw std::runtime_error("ONNX input has an invalid spatial dimension");
-    }
-    if (input_shape[2] > 0 && input_shape[3] > 0 && input_shape[2] != input_shape[3])
-        throw std::runtime_error("ONNX runner requires a square input (H must equal W)");
-    const auto input_type = input_info.GetElementType();
-    if (input_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16) {
-        input_fp16_ = true;
-    } else if (input_type != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
-        throw std::runtime_error("ONNX input must use FP32 or FP16 elements");
-    }
-
-    // detect a static input size (H==W>0) -> hard constraint
+    // Input dtype + static size (H==W>0 -> hard constraint).
     {
-        auto shape = input_shape;
+        // GetTensorTypeAndShapeInfo() is a non-owning view: the TypeInfo must outlive it.
+        Ort::TypeInfo ti = session_->GetInputTypeInfo(0);
+        auto info = ti.GetTensorTypeAndShapeInfo();
+        const ONNXTensorElementDataType t = info.GetElementType();
+        if (t == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16) in_fp16_ = true;
+        else if (t != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT)
+            throw std::runtime_error("ONNX input dtype " + std::to_string(static_cast<int>(t)) +
+                                     " is not float/float16 (quantized I/O must be offloaded: offload_graph_io_quantization)");
+        auto shape = info.GetShape();
         if (shape.size() == 4 && shape[2] > 0 && shape[2] == shape[3]) {
             fixed_imgsz = static_cast<int>(shape[2]);
             meta_imgsz = fixed_imgsz;   // authoritative over the metadata string
         }
     }
 
-    // auto-read ultralytics-embedded metadata (class names + imgsz)
+    // auto-read ultralytics-embedded metadata (class names + imgsz + our export stamps)
     Ort::ModelMetadata md = session_->GetModelMetadata();
     if (auto v = md.LookupCustomMetadataMapAllocated("names", alloc_))
         meta_names = meta::parse_names_dict(v.get());
     if (auto v = md.LookupCustomMetadataMapAllocated("imgsz", alloc_)) {
         const std::string s = v.get();
         const size_t p = s.find_first_of("0123456789");
-        if (p != std::string::npos) {
-            const int metadata_imgsz = std::atoi(s.c_str() + p);
-            if (metadata_imgsz > 0 && fixed_imgsz == 0) {
-                meta_imgsz = metadata_imgsz;
-            } else if (metadata_imgsz > 0 && metadata_imgsz != fixed_imgsz) {
-                std::cerr << "[ort] metadata imgsz=" << metadata_imgsz
-                          << " differs from static input=" << fixed_imgsz
-                          << "; using the static input shape\n";
-            }
-        }
+        if (p != std::string::npos && fixed_imgsz == 0) meta_imgsz = std::atoi(s.c_str() + p);
+    }
+    if (auto v = md.LookupCustomMetadataMapAllocated("end2end", alloc_)) {
+        const std::string s = v.get();
+        end2end_ = s.find("rue") != std::string::npos || s == "1";
+        if (end2end_) log(4, "end2end model: NMS-free [num_det,6] output");
+    }
+    if (auto v = md.LookupCustomMetadataMapAllocated("task", alloc_)) task_ = v.get();
+    if (auto v = md.LookupCustomMetadataMapAllocated("ym_quant", alloc_)) {
+        const std::string s = lower(v.get());
+        if (s == "a16w8" || s == "a8w8") quant_ = s;
+        else if (s.empty()) quant_.clear();
     }
 }
 
-std::vector<Detection> OrtBackend::infer(const cv::Mat& bgr, const Config& cfg) {
-    // ---- preprocess: letterbox -> NCHW float RGB /255 ----
-    if (cfg.imgsz <= 0)
-        throw std::runtime_error("ONNX inference requires a positive image size");
-    auto t0 = clk::now();
-    const auto runtime_input_shape = session_->GetInputTypeInfo(0).GetTensorTypeAndShapeInfo().GetShape();
-    if (runtime_input_shape.size() != 4 ||
-        (runtime_input_shape[0] > 0 && runtime_input_shape[0] != 1) ||
-        (runtime_input_shape[1] > 0 && runtime_input_shape[1] != 3)) {
-        throw std::runtime_error("ONNX input shape changed to an unsupported layout; expected [1,3,H,W]");
-    }
-    if (runtime_input_shape[2] > 0 && runtime_input_shape[2] != cfg.imgsz)
-        throw std::runtime_error("ONNX input height is fixed at " + std::to_string(runtime_input_shape[2]) +
-                                 "; requested imgsz=" + std::to_string(cfg.imgsz));
-    if (runtime_input_shape[3] > 0 && runtime_input_shape[3] != cfg.imgsz)
-        throw std::runtime_error("ONNX input width is fixed at " + std::to_string(runtime_input_shape[3]) +
-                                 "; requested imgsz=" + std::to_string(cfg.imgsz));
+// One decoded output, host-resident whatever path produced it.
+struct OrtOut { std::vector<int64_t> shape; ONNXTensorElementDataType type; const float* f32 = nullptr; const Ort::Float16_t* f16 = nullptr; };
+
+void OrtBackend::forward_raw(const cv::Mat& bgr, const Config& cfg, bool decode) {
     LetterboxInfo lb;
-    cv::Mat padded = preprocess(bgr, cfg.imgsz, cfg.stretch, lb);   // imgsz x imgsz, CV_8UC3 BGR
-    // NCHW float RGB /255 (replaces cv::dnn::blobFromImage with swapRB=true)
-    const int sz = cfg.imgsz;
-    const size_t hw = static_cast<size_t>(sz) * static_cast<size_t>(sz);
-    std::vector<float> blob(3 * hw);
-    for (int y = 0; y < sz; ++y) {
-        const uint8_t* row = padded.ptr<uint8_t>(y);
-        for (int x = 0; x < sz; ++x) {
-            const uint8_t* px = row + x * 3;          // BGR
-            const size_t idx = static_cast<size_t>(y) * sz + x;
-            blob[idx]          = px[2] * (1.0f / 255); // R
-            blob[hw + idx]     = px[1] * (1.0f / 255); // G
-            blob[2 * hw + idx] = px[0] * (1.0f / 255); // B
+    std::vector<OrtOut> outs_h;
+    std::vector<Ort::Value> outs;
+    Ort::RunOptions ro;
+    ro.SetRunLogSeverityLevel(ORT_LOGGING_LEVEL_WARNING);   // the session is at INFO for init; runs stay quiet
+#ifdef HAVE_CUDA_PREPROC
+    if (gpu_io_) {
+        // ---- GPU preprocess + device-bound I/O: pre_ms = host staging + raw H2D + kernel, infer_ms = Run + D2H ----
+        auto t0 = clk::now();
+        cudaStream_t st = static_cast<cudaStream_t>(cuda_stream_);
+        int ow = 0, oh = 0;
+        letterbox_params(bgr.cols, bgr.rows, cfg.imgsz, cfg.stretch, lb, ow, oh);
+        const size_t raw_bytes = static_cast<size_t>(bgr.step) * bgr.rows;
+        if (raw_bytes > raw_cap_) {
+            if (h_raw_) cudaFreeHost(h_raw_);
+            if (d_raw_) cudaFree(d_raw_);
+            const size_t cap = std::max(raw_bytes, raw_cap_ * 3 / 2);
+            if (cudaHostAlloc(reinterpret_cast<void**>(&h_raw_), cap, cudaHostAllocDefault) != cudaSuccess ||
+                cudaMalloc(reinterpret_cast<void**>(&d_raw_), cap) != cudaSuccess)
+                throw std::runtime_error("CUDA: raw frame buffer allocation failed");
+            raw_cap_ = cap;
         }
+        if (bgr.isContinuous()) std::memcpy(h_raw_, bgr.data, raw_bytes);
+        else for (int y = 0; y < bgr.rows; ++y) std::memcpy(h_raw_ + static_cast<size_t>(y) * bgr.step, bgr.ptr(y), bgr.step);
+        auto* pp = static_cast<cuda::PreprocParams*>(h_params_);
+        pp->src_w = bgr.cols; pp->src_h = bgr.rows; pp->src_stride = static_cast<int>(bgr.step); pp->imgsz = cfg.imgsz;
+        pp->fx = static_cast<float>(bgr.cols) / ow; pp->fy = static_cast<float>(bgr.rows) / oh;
+        pp->pad_x = lb.pad_x; pp->pad_y = lb.pad_y; pp->out_w = ow; pp->out_h = oh;
+        cudaMemcpyAsync(d_raw_, h_raw_, raw_bytes, cudaMemcpyHostToDevice, st);
+        cudaMemcpyAsync(d_params_, h_params_, sizeof(cuda::PreprocParams), cudaMemcpyHostToDevice, st);
+        if (in_fp16_) cuda::preprocess_nchw_cuda_fp16(d_raw_, static_cast<const cuda::PreprocParams*>(d_params_), d_in_, cfg.imgsz, st);
+        else cuda::preprocess_nchw_cuda(d_raw_, static_cast<const cuda::PreprocParams*>(d_params_), static_cast<float*>(d_in_), cfg.imgsz, st);
+        cudaEventRecord(static_cast<cudaEvent_t>(ev1_), st);
+        // ---- inference on the same stream, outputs stay on the device until the D2H below ----
+        session_->Run(ro, *binding_);
+        outs = binding_->GetOutputValues();
+        outs_h.resize(outs.size());
+        out_host_.resize(outs.size()); out_host16_.resize(outs.size());
+        for (size_t i = 0; i < outs.size(); ++i) {
+            auto info = outs[i].GetTensorTypeAndShapeInfo();
+            outs_h[i].shape = info.GetShape(); outs_h[i].type = info.GetElementType();
+            size_t count = 1; for (auto d : outs_h[i].shape) count *= static_cast<size_t>(std::max<int64_t>(d, 0));
+            if (outs_h[i].type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
+                out_host_[i].resize(count);
+                cudaMemcpyAsync(out_host_[i].data(), outs[i].GetTensorData<float>(), count * sizeof(float), cudaMemcpyDeviceToHost, st);
+                outs_h[i].f32 = out_host_[i].data();
+            } else if (outs_h[i].type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16) {
+                out_host16_[i].resize(count);
+                cudaMemcpyAsync(out_host16_[i].data(), outs[i].GetTensorData<Ort::Float16_t>(), count * sizeof(Ort::Float16_t), cudaMemcpyDeviceToHost, st);
+                outs_h[i].f16 = out_host16_[i].data();
+            }
+        }
+        cudaEventRecord(static_cast<cudaEvent_t>(ev2_), st);
+        cudaStreamSynchronize(st);
+        float ms12 = 0.f;
+        cudaEventElapsedTime(&ms12, static_cast<cudaEvent_t>(ev1_), static_cast<cudaEvent_t>(ev2_));
+        const double host_ms = ms_since(t0);
+        infer_ms = ms12;
+        pre_ms = std::max(0.0, host_ms - ms12);
+    } else
+#endif
+    {
+    // ---- preprocess: letterbox -> NCHW float RGB /255 (the ncnn path's from_pixels + normalize) ----
+    auto t0 = clk::now();
+    blob_.resize(static_cast<size_t>(3) * cfg.imgsz * cfg.imgsz);
+    preprocess_nchw(bgr, cfg.imgsz, cfg.stretch, blob_.data(), lb);
+    std::array<int64_t, 4> in_shape{1, 3, cfg.imgsz, cfg.imgsz};
+    Ort::Value in_tensor{nullptr};
+    if (in_fp16_) {
+        blob16_.resize(blob_.size());
+        for (size_t i = 0; i < blob_.size(); ++i) blob16_[i] = Ort::Float16_t(blob_[i]);
+        in_tensor = Ort::Value::CreateTensor<Ort::Float16_t>(mem_, blob16_.data(), blob16_.size(),
+                                                              in_shape.data(), in_shape.size());
+    } else {
+        in_tensor = Ort::Value::CreateTensor<float>(mem_, blob_.data(), blob_.size(),
+                                                    in_shape.data(), in_shape.size());
     }
     pre_ms = ms_since(t0);
 
     // ---- inference ----
     auto t1 = clk::now();
-    std::array<int64_t, 4> in_shape{1, 3, cfg.imgsz, cfg.imgsz};
-    Ort::MemoryInfo mem = Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeCPU);
-    std::vector<uint16_t> blob16;
-    Ort::Value in_tensor{nullptr};
-    if (input_fp16_) {
-        blob16.resize(blob.size());
-        for (size_t i = 0; i < blob.size(); ++i) blob16[i] = float_to_half(blob[i]);
-        in_tensor = Ort::Value::CreateTensor(
-            mem, blob16.data(), blob16.size() * sizeof(uint16_t),
-            in_shape.data(), in_shape.size(), ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16);
-    } else {
-        in_tensor = Ort::Value::CreateTensor<float>(
-            mem, blob.data(), blob.size(), in_shape.data(), in_shape.size());
-    }
-    auto outs = session_->Run(Ort::RunOptions{nullptr}, in_names_.data(), &in_tensor, 1,
-                              out_names_.data(), out_names_.size());
+    outs = session_->Run(ro, in_names_.data(), &in_tensor, 1, out_names_.data(), out_names_.size());
     infer_ms = ms_since(t1);
+    outs_h.resize(outs.size());
+    for (size_t i = 0; i < outs.size(); ++i) {
+        auto info = outs[i].GetTensorTypeAndShapeInfo();
+        outs_h[i].shape = info.GetShape(); outs_h[i].type = info.GetElementType();
+        if (outs_h[i].type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) outs_h[i].f32 = outs[i].GetTensorData<float>();
+        else if (outs_h[i].type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16) outs_h[i].f16 = outs[i].GetTensorData<Ort::Float16_t>();
+    }
+    }
+
+    // Every path below (re)fills the cached raw state; a bench-only forward leaves it empty so
+    // stale candidates can never be mistaken for this frame's.
+    candidates.clear();
+    cand_orig_w = lb.orig_w; cand_orig_h = lb.orig_h; cand_lb = lb;
+    proto.clear(); proto_c = proto_h = proto_w = 0;
+    if (!decode) { post_ms = 0; return; }
 
     // ---- postprocess: detection is the rank-3 output [1,feat,anchors]; proto (seg) is rank-4 ----
     auto t2 = clk::now();
     int det_i = -1, proto_i = -1;
-    std::vector<int> proto_candidates;
-    struct DetectionCandidate {
-        int index = -1;
-        int features = 0;
-        int anchors = 0;
-        int distance = 0;
-        size_t elements = 0;
-        bool has_objectness = false;
-        int mask_channels = 0;
+    for (size_t i = 0; i < outs_h.size(); ++i) {
+        const size_t r = outs_h[i].shape.size();
+        if (r == 4) proto_i = static_cast<int>(i);
+        else if (r == 3) det_i = static_cast<int>(i);
+    }
+    if (det_i < 0) throw std::runtime_error("ONNX model has no rank-3 detection output");
+    // fp16 outputs (fp16-I/O exports) are widened once; fp32 outputs are read in place.
+    auto as_float = [this](const OrtOut& v, size_t count) -> const float* {
+        if (v.type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) return v.f32;
+        if (v.type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16) {
+            out_f32_.resize(count);
+            for (size_t i = 0; i < count; ++i) out_f32_[i] = v.f16[i].ToFloat();
+            return out_f32_.data();
+        }
+        throw std::runtime_error("ONNX output dtype " + std::to_string(static_cast<int>(v.type)) + " is not float/float16");
     };
-    std::vector<DetectionCandidate> detection_candidates;
-    const int expected_features = std::max(5, 4 + cfg.num_classes());
-    for (size_t i = 0; i < outs.size(); ++i) {
-        auto info = outs[i].GetTensorTypeAndShapeInfo();
-        const auto shape_i = info.GetShape();
-        const auto type = info.GetElementType();
-        if (type != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT &&
-            type != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16)
-            continue;
-        if (shape_i.size() == 4) {
-            if (shape_i[0] != 1 || shape_i[1] <= 0 || shape_i[2] <= 0 || shape_i[3] <= 0)
-                throw std::runtime_error("ONNX rank-4 output has an invalid shape; expected [1,C,H,W]");
-            if (shape_i[1] > std::numeric_limits<int>::max() ||
-                shape_i[2] > std::numeric_limits<int>::max() ||
-                shape_i[3] > std::numeric_limits<int>::max())
-                throw std::runtime_error("ONNX rank-4 output dimensions exceed runner limits");
-            proto_candidates.push_back(static_cast<int>(i));
-        } else if (shape_i.size() == 3 && shape_i[0] == 1 && shape_i[1] > 0 && shape_i[2] > 0) {
-            if (shape_i[1] > std::numeric_limits<int>::max() ||
-                shape_i[2] > std::numeric_limits<int>::max())
-                throw std::runtime_error("ONNX detection output dimensions exceed runner limits");
-            const int dim_a = static_cast<int>(shape_i[1]);
-            const int dim_b = static_cast<int>(shape_i[2]);
-            const int feat = std::min(dim_a, dim_b);
-            const int anchors = std::max(dim_a, dim_b);
-            if (feat < expected_features || anchors < feat) continue;
-            const size_t elements = static_cast<size_t>(dim_a) * static_cast<size_t>(dim_b);
-            detection_candidates.push_back({static_cast<int>(i), feat, anchors,
-                                            std::abs(feat - expected_features), elements,
-                                            false, 0});
-        }
-    }
-    // A rank-3 tensor is a detection head only when its feature count matches
-    // a detector layout, or when its extra channels match a rank-4 prototype.
-    // Merely requiring features >= 4+nc can select an exported intermediate
-    // feature map and yield plausible but invalid detections.
-    detection_candidates.erase(
-        std::remove_if(detection_candidates.begin(), detection_candidates.end(),
-                       [&](DetectionCandidate& candidate) {
-                           if (candidate.features == expected_features) return false;
-                           if (candidate.features == expected_features + 1) {
-                               candidate.has_objectness = true;
-                               return false;
-                           }
-                           bool matched = false;
-                           for (const int proto_index : proto_candidates) {
-                               const auto proto_shape =
-                                   outs[proto_index].GetTensorTypeAndShapeInfo().GetShape();
-                               const int channels = static_cast<int>(proto_shape[1]);
-                               bool objectness = false;
-                               if (candidate.features == expected_features + channels) {
-                                   objectness = false;
-                               } else if (candidate.features == expected_features + 1 + channels) {
-                                   objectness = true;
-                               } else {
-                                   continue;
-                               }
-                               if (matched && (candidate.has_objectness != objectness ||
-                                               candidate.mask_channels != channels)) {
-                                   throw std::runtime_error(
-                                       "ONNX detection layout is ambiguous across prototype outputs");
-                               }
-                               matched = true;
-                               candidate.has_objectness = objectness;
-                               candidate.mask_channels = channels;
-                           }
-                           return !matched;
-                       }),
-        detection_candidates.end());
-    if (detection_candidates.empty())
-        throw std::runtime_error(
-            "ONNX model has no FP32 rank-3 detection output (FP16 is also accepted) "
-            "with a compatible feature dimension");
-    std::sort(detection_candidates.begin(), detection_candidates.end(),
-              [](const DetectionCandidate& a, const DetectionCandidate& b) {
-                  if ((a.mask_channels > 0) != (b.mask_channels > 0))
-                      return a.mask_channels > 0;
-                  if (a.distance != b.distance) return a.distance < b.distance;
-                  if (a.elements != b.elements) return a.elements > b.elements;
-                  return a.index < b.index;
-              });
-    const DetectionCandidate& best_candidate = detection_candidates.front();
-    std::vector<const DetectionCandidate*> tied;
-    for (const DetectionCandidate& candidate : detection_candidates) {
-        if ((candidate.mask_channels > 0) != (best_candidate.mask_channels > 0) ||
-            candidate.distance != best_candidate.distance ||
-            candidate.elements != best_candidate.elements) break;
-        tied.push_back(&candidate);
-    }
-    if (tied.size() > 1) {
-        std::ostringstream msg;
-        msg << "ONNX detection output is ambiguous; equally plausible rank-3 tensors: ";
-        for (size_t j = 0; j < tied.size(); ++j) {
-            if (j) msg << ", ";
-            const int index = tied[j]->index;
-            msg << "'" << (index < static_cast<int>(out_names_s_.size())
-                                ? out_names_s_[index] : std::to_string(index))
-                << "' [1," << outs[index].GetTensorTypeAndShapeInfo().GetShape()[1]
-                << "," << outs[index].GetTensorTypeAndShapeInfo().GetShape()[2] << "]";
-        }
-        msg << "; provide a model with one detection head";
-        throw std::runtime_error(msg.str());
-    }
-    det_i = best_candidate.index;
-    const bool has_objectness = best_candidate.has_objectness;
-    const int mask_channels = best_candidate.mask_channels;
-    auto shape = outs[det_i].GetTensorTypeAndShapeInfo().GetShape();
-    if (shape.size() != 3 || shape[0] != 1 || shape[1] <= 0 || shape[2] <= 0)
-        throw std::runtime_error("ONNX detection output must have shape [1, features, anchors]");
-    const int first = static_cast<int>(shape[1]);
-    const int second = static_cast<int>(shape[2]);
-    const int feat_dim = std::min(first, second);
-    const int num_anchors = std::max(first, second);
-    if (feat_dim < expected_features || num_anchors < feat_dim)
-        throw std::runtime_error("ONNX detection output dimensions are not plausible");
-    std::vector<float> out_values = tensor_to_float(outs[det_i]);
-    const float* out = out_values.data();
-    std::vector<float> transposed;
-    if (first <= second) {
-        candidates = decode_candidates(out, feat_dim, num_anchors, cfg, lb, has_objectness);
+    const auto& shape = outs_h[det_i].shape;   // {1, d1, d2}
+    const int d1 = static_cast<int>(shape[1]);
+    const int d2 = static_cast<int>(shape[2]);
+    const float* out = as_float(outs_h[det_i], static_cast<size_t>(d1) * d2);
+    if (end2end_ || looks_end2end(d1, d2)) {                              // [1, num_det, 6] NMS-free
+        candidates = decode_end2end(out, d1, cfg, lb);
     } else {
-        // Some exporters emit [1, anchors, features].  Normalize that layout
-        // before entering the shared decoder instead of silently swapping box
-        // coordinates and class scores.
-        transposed.resize(static_cast<size_t>(feat_dim) * num_anchors);
-        for (int anchor = 0; anchor < num_anchors; ++anchor)
-            for (int feature = 0; feature < feat_dim; ++feature)
-                transposed[static_cast<size_t>(feature) * num_anchors + anchor] =
-                    out[static_cast<size_t>(anchor) * feat_dim + feature];
-        candidates = decode_candidates(transposed.data(), feat_dim, num_anchors, cfg, lb,
-                                       has_objectness);
-    }
-    cand_orig_w = lb.orig_w; cand_orig_h = lb.orig_h; cand_lb = lb;
-    proto.clear(); proto_c = proto_h = proto_w = 0;
-    // A rank-4 tensor is a segmentation prototype only when its channel count
-    // agrees with the mask-coefficient tail of the selected detection head.
-    // This avoids treating an unrelated feature map as a mask tensor.
-    for (const int candidate : proto_candidates) {
-        const auto candidate_shape = outs[candidate].GetTensorTypeAndShapeInfo().GetShape();
-        if (mask_channels > 0 && candidate_shape[1] == mask_channels) {
-            if (proto_i >= 0)
-                throw std::runtime_error(
-                    "ONNX model has multiple prototype outputs matching the detection head");
-            proto_i = candidate;
+        // feat << anchors always (e.g. 84/116 vs 8400), so the smaller axis is the feature dim;
+        // an anchors-major export is transposed into the channel-major layout decode expects.
+        int feat_dim, num_anchors;
+        std::vector<float> buf;
+        const float* cm = out;
+        if (d1 <= d2) { feat_dim = d1; num_anchors = d2; }
+        else {
+            feat_dim = d2; num_anchors = d1;
+            buf.resize(static_cast<size_t>(feat_dim) * num_anchors);
+            for (int a = 0; a < num_anchors; ++a)
+                for (int f = 0; f < feat_dim; ++f)
+                    buf[static_cast<size_t>(f) * num_anchors + a] = out[static_cast<size_t>(a) * feat_dim + f];
+            cm = buf.data();
         }
+        candidates = decode_candidates(cm, feat_dim, num_anchors, cfg, lb);
     }
-    if (mask_channels > 0 && proto_i < 0)
-        throw std::runtime_error("ONNX detection head declares mask coefficients but no compatible prototype output exists");
     if (proto_i >= 0) {                                                // segmentation model
-        auto ps = outs[proto_i].GetTensorTypeAndShapeInfo().GetShape();  // {1, nm, mh, mw}
+        const auto& ps = outs_h[proto_i].shape;                          // {1, nm, mh, mw}
         proto_c = (int)ps[1]; proto_h = (int)ps[2]; proto_w = (int)ps[3];
-        proto = tensor_to_float(outs[proto_i]);
+        const size_t n = (size_t)proto_c * proto_h * proto_w;
+        const float* pd = as_float(outs_h[proto_i], n);
+        proto.assign(pd, pd + n);
     }
-    auto dets = nms_and_cap(candidates, cfg, lb.orig_w, lb.orig_h);
     post_ms = ms_since(t2);
-    return dets;
 }
+
+std::string OrtBackend::device_name() const {
+#ifdef HAVE_CUDA_PREPROC
+    if (active_ep.find("CUDA") != std::string::npos || active_ep.find("TensorRT") != std::string::npos) {
+        int dev = 0; cudaDeviceProp prop{};
+        if (cudaGetDevice(&dev) == cudaSuccess && cudaGetDeviceProperties(&prop, dev) == cudaSuccess) return prop.name;
+    }
+#endif
+    return "";
+}
+
+#ifdef HAVE_CUDA_PREPROC
+// Bind the input tensor (device, filled by the preprocessing kernel) and every output (device,
+// allocated by ORT) once; Run(binding) then moves nothing across the bus until our own D2H.
+void OrtBackend::setup_gpu_io() {
+    try {
+        cuda_mem_ = std::make_unique<Ort::MemoryInfo>("Cuda", OrtDeviceAllocator, 0, OrtMemTypeDefault);
+        const int sz = fixed_imgsz > 0 ? fixed_imgsz : (meta_imgsz > 0 ? meta_imgsz : 640);
+        const size_t count = static_cast<size_t>(3) * sz * sz;
+        d_in_bytes_ = count * (in_fp16_ ? 2 : 4);
+        if (cudaMalloc(&d_in_, d_in_bytes_) != cudaSuccess) throw std::runtime_error("cudaMalloc input");
+        if (cudaMalloc(&d_params_, sizeof(cuda::PreprocParams)) != cudaSuccess) throw std::runtime_error("cudaMalloc params");
+        if (cudaHostAlloc(&h_params_, sizeof(cuda::PreprocParams), cudaHostAllocDefault) != cudaSuccess) throw std::runtime_error("cudaHostAlloc params");
+        cudaEvent_t e1 = nullptr, e2 = nullptr;
+        cudaEventCreateWithFlags(&e1, cudaEventDefault); cudaEventCreateWithFlags(&e2, cudaEventDefault);
+        ev1_ = e1; ev2_ = e2;
+        binding_ = std::make_unique<Ort::IoBinding>(*session_);
+        std::array<int64_t, 4> in_shape{1, 3, sz, sz};
+        Ort::Value in = in_fp16_
+            ? Ort::Value::CreateTensor(*cuda_mem_, d_in_, d_in_bytes_, in_shape.data(), in_shape.size(), ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16)
+            : Ort::Value::CreateTensor(*cuda_mem_, d_in_, d_in_bytes_, in_shape.data(), in_shape.size(), ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT);
+        binding_->BindInput(in_names_[0], in);
+        for (const char* n : out_names_) binding_->BindOutput(n, *cuda_mem_);
+        gpu_io_ = true;
+        if (fixed_imgsz == 0) fixed_imgsz = sz;   // the bound input has a fixed size now
+        active_ep += "+gpupre";
+    } catch (const std::exception& e) {
+        if (!ep_note.empty()) ep_note += "; ";
+        ep_note += std::string("gpu preprocess disabled: ") + e.what();
+        teardown_gpu_io();
+    }
+}
+
+void OrtBackend::teardown_gpu_io() {
+    gpu_io_ = false;
+    binding_.reset(); cuda_mem_.reset();
+    if (d_in_) { cudaFree(d_in_); d_in_ = nullptr; }
+    if (d_raw_) { cudaFree(d_raw_); d_raw_ = nullptr; }
+    if (h_raw_) { cudaFreeHost(h_raw_); h_raw_ = nullptr; }
+    if (d_params_) { cudaFree(d_params_); d_params_ = nullptr; }
+    if (h_params_) { cudaFreeHost(h_params_); h_params_ = nullptr; }
+    if (ev1_) { cudaEventDestroy(static_cast<cudaEvent_t>(ev1_)); ev1_ = nullptr; }
+    if (ev2_) { cudaEventDestroy(static_cast<cudaEvent_t>(ev2_)); ev2_ = nullptr; }
+    raw_cap_ = 0;
+    if (cuda_stream_) { cudaStreamDestroy(static_cast<cudaStream_t>(cuda_stream_)); cuda_stream_ = nullptr; }
+}
+#endif
 
 } // namespace yolomaster

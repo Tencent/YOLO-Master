@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/Tencent/YOLO-Master/evidence-manifest.schema.json",
+  "$id": "https://github.com/skywalker-lt/yolo-master-edge/evidence-manifest.schema.json",
   "title": "YOLO-Master Issue #51 evidence manifest",
   "type": "object",
   "required": ["schema_version", "status", "dataset", "protocol", "artifacts", "calibration"],
@@ -30,7 +30,7 @@
         "letterbox": {"type": "boolean"},
         "small_conf": {
           "type": "number", "minimum": -1, "maximum": 1,
-          "description": "Optional confidence floor for boxes below small_area; -1 disables the sweep."
+          "description": "Optional confidence floor for boxes below small_area; -1 disables the small-object pass."
         },
         "small_area": {
           "type": "number", "minimum": 0,

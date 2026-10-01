@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/Tencent/YOLO-Master/issue51-environment.schema.json",
+  "$id": "https://github.com/skywalker-lt/yolo-master-edge/issue51-environment.schema.json",
   "title": "YOLO-Master Issue #51 environment record",
   "type": "object",
   "required": ["schema_version", "captured_at_utc", "host", "tools", "sdk_roots", "gpu", "runtime_protocol", "repository"],

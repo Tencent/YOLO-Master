@@ -1,0 +1,26 @@
+services:
+  yolomaster-api:
+    image: ${IMAGE:-yolomaster-api:latest}
+    container_name: yolomaster-api
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8080}:8080"
+    environment:
+      # comma-separated keys turn authentication on (X-API-Key / Authorization: Bearer); empty = open
+      YM_API_KEYS: "${YM_API_KEYS:-}"
+    volumes:
+      - ./cache:/opt/yolomaster/cache/trt
+      # - ./server.json:/opt/yolomaster/server.json:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 30
+      start_period: 180s

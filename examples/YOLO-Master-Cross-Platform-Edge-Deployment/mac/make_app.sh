@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build + package YOLOMaster.app as a redistributable, universal (Apple Silicon + Intel) macOS app.
+# Build + package YOLO-Master.app as a redistributable, universal (Apple Silicon + Intel) macOS app.
 # Run on macOS with the Swift toolchain + Command Line Tools. Usage: mac/make_app.sh [version]
 #
 #   Basic (ad-hoc signed; recipients right-click > Open on first launch):
@@ -16,11 +16,11 @@
 # Note: intentionally NOT using `set -u` -- macOS's stock bash 3.2 aborts on benign expansions.
 set -eo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"          # .../mac
-APP_NAME="YOLO-Master CoreML Runner"           # display + .app bundle name (Finder / Dock / menu bar)
+APP_NAME="YOLO-Master"                         # display + .app bundle name (Finder / Dock / menu bar)
 EXEC_NAME="YOLOMaster"                          # Mach-O filename inside the bundle (no spaces -> simple paths)
-ZIP_SLUG="YOLO-Master-CoreML-Runner"            # zip filename base (no spaces)
+ZIP_SLUG="YOLO-Master-macOS"                    # zip filename base (no spaces)
 BUNDLE_ID="${BUNDLE_ID:-com.yolomaster.coreml}"   # override with BUNDLE_ID=com.you.app to use your own reverse-domain id
-VERSION="${1:-1.1.0}"
+VERSION="${1:-$(tr -d '[:space:]' < "$HERE/../VERSION" 2>/dev/null || echo 1.2.0)}"   # repo VERSION file, like package_linux.sh
 ARCHS="${ARCHS:-arm64 x86_64}"                 # universal by default; override e.g. ARCHS=arm64
 DIST="$HERE/dist"
 APP="$DIST/$APP_NAME.app"

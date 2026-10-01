@@ -72,7 +72,7 @@ mkdir "%STAGE%"
 xcopy "%BUILD%\Release\*" "%STAGE%\" /E /I /Y >nul
 if errorlevel 1 goto :fail
 rem drop build artifacts only -- KEEP every CUDA/cuDNN dll here, unlike package.cmd
-del /q /s "%STAGE%\*.exp" "%STAGE%\*.lib" "%STAGE%\*.pdb" >nul 2>&1
+del /f /q /s "%STAGE%\*.exp" "%STAGE%\*.lib" "%STAGE%\*.pdb" >nul 2>&1
 
 if /i "%FULL%"=="full" (
   echo    + full CUDA set requested, copying extras

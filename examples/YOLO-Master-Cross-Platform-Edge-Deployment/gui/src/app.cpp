@@ -169,10 +169,7 @@ void App::folder_preinfer(std::vector<std::string> paths, Config c, SliceConfig 
                 it.ow = be_->cand_orig_w;   it.oh = be_->cand_orig_h;
                 if (be_->is_seg()) { it.proto = be_->proto; it.pc = be_->proto_c;
                                      it.ph = be_->proto_h; it.pw = be_->proto_w; }
-                // A sliced forward consists of the global pass plus all
-                // selected tiles; model_ms is the aggregate value returned by
-                // sliced_candidates rather than the last tile's value.
-                it.ms = model_ms;
+                it.ms = model_ms;   // sliced: global pass + all tiles (not the last tile's time)
                 it.done = true;
                 fcache_[i] = std::move(it);
                 sum += model_ms; ++n;
@@ -195,13 +192,6 @@ void App::load_folder(const std::string& dir, const Platform& plat) {
     close_folder(&plat);
     load_err_.clear();
     folder_imgs_ = gather_images(dir, 0);   // sorted image paths
-    std::string stem_error;
-    if (!validate_unique_stems(folder_imgs_, stem_error)) {
-        folder_imgs_.clear();
-        cur_idx_ = -1;
-        load_err_ = stem_error;
-        return;
-    }
     folder_path_ = dir;
     if (folder_imgs_.empty()) { cur_idx_ = -1; load_err_ = "no images in: " + dir; return; }
     if (!be_) { folder_imgs_.clear(); load_err_ = "load a model first"; return; }
@@ -225,6 +215,7 @@ void App::overlay_folder_item(int idx, const Platform& plat) {
     if (seg_model_) model_is_seg_ = true;
     inf_ms_ = it.ms; pre_ms_ = 0; post_ms_ = 0;   // this image's model-only time
     Config c = cfg_; c.conf_thresh = conf_; c.iou_thresh = iou_;
+    c.max_det = (slice_mode_ != SliceMode::Off) ? max_det_req_ : cfg_.max_det;
     dets_ = nms_and_cap(it.cands, c, it.ow, it.oh);
     class_counts_.assign(cfg_.num_classes(), 0);
     for (const auto& d : dets_)
@@ -492,9 +483,7 @@ void App::run_inference() {
             // run, so recompute_nms/rebuild_overlay below work unchanged.
             sstats_ = sliced_candidates(*be_, img_bgr_, c, slice_config(), kConfFloor);
             sliced_run_ = true;
-            pre_ms_ = sstats_.pre_ms;
-            inf_ms_ = sstats_.infer_ms;
-            post_ms_ = sstats_.post_ms;   // sums of all forwards
+            pre_ms_ = sstats_.pre_ms; inf_ms_ = sstats_.infer_ms; post_ms_ = sstats_.post_ms;   // sums of all forwards
         } else {
             dets_ = be_->infer(img_bgr_, c);
             sliced_run_ = false;
@@ -513,7 +502,9 @@ void App::recompute_nms() {
     seg_model_ = be_->is_seg();
     cfg_.conf_thresh = conf_;
     cfg_.iou_thresh  = iou_;
-    dets_ = nms_and_cap(be_->candidates, cfg_, be_->cand_orig_w, be_->cand_orig_h);
+    Config c = cfg_;
+    c.max_det = sliced_run_ ? max_det_req_ : cfg_.max_det;   // adjustable cap is tiled-only
+    dets_ = nms_and_cap(be_->candidates, c, be_->cand_orig_w, be_->cand_orig_h);
     class_counts_.assign(cfg_.num_classes(), 0);
     for (const auto& d : dets_)
         if (d.class_id >= 0 && d.class_id < (int)class_counts_.size()) class_counts_[d.class_id]++;
@@ -833,6 +824,9 @@ void App::draw_sidebar(const Platform& plat) {
             } else if (!img_bgr_.empty()) {
                 ceiling = clamped_tile_size(1 << 20, cfg_.imgsz, img_bgr_.cols, img_bgr_.rows);
             }
+            field_label("Max detections");
+            ImGui::SetNextItemWidth(-1);
+            if (ImGui::SliderInt("##maxdet", &max_det_req_, 10, 5000, "%d")) need_renms_ = true;
             field_label("Tile size");
             if (ceiling > cfg_.imgsz) {
                 int ts = tile_size_req_ > 0 ? std::clamp(tile_size_req_, cfg_.imgsz, ceiling)

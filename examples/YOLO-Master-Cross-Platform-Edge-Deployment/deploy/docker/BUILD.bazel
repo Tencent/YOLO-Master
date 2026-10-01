@@ -1,0 +1,38 @@
+load("@rules_oci//oci:defs.bzl", "oci_image", "oci_push", "oci_tarball")
+load(":version.bzl", "SERVER_VERSION")   # written by stage_bundle.sh from cpp/server/SERVER_VERSION
+
+# bundle.tar is produced by stage_bundle.sh: /opt/yolomaster/{bin,lib,models,server.json,entrypoint.sh}
+# with $ORIGIN rpaths, so the image needs no LD_LIBRARY_PATH beyond the CUDA base.
+oci_image(
+    name = "image",
+    base = "@cuda_base",
+    tars = ["bundle.tar"],
+    entrypoint = ["/opt/yolomaster/entrypoint.sh"],
+    env = {
+        "YM_CONFIG": "/opt/yolomaster/server.json",
+        "YM_ENGINE_CACHE": "/opt/yolomaster/cache/trt",
+        "NVIDIA_DRIVER_CAPABILITIES": "compute,utility",
+    },
+    exposed_ports = ["8080/tcp"],
+    workdir = "/opt/yolomaster",
+    labels = {
+        "org.opencontainers.image.title": "yolomaster-api",
+        "org.opencontainers.image.description": "YOLO-Master edge inference API: ONNX Runtime, TensorRT, ncnn, MNN",
+        "org.opencontainers.image.source": "https://github.com/skywalker-lt/yolo-master-edge",
+    },
+)
+
+# docker load < yolomaster-api.tar  (tag: yolomaster-api:<SERVER_VERSION>)
+oci_tarball(
+    name = "tarball",
+    image = ":image",
+    repo_tags = ["yolomaster-api:" + SERVER_VERSION, "yolomaster-api:latest"],
+)
+
+# bazel run //:push -- --repository index.docker.io/<user>/yolomaster-api   (or set DOCKERHUB_USER in push.sh)
+oci_push(
+    name = "push",
+    image = ":image",
+    repository = "index.docker.io/DOCKERHUB_USER/yolomaster-api",
+    remote_tags = [SERVER_VERSION, "latest"],
+)

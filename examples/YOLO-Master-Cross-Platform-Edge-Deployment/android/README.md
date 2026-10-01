@@ -173,7 +173,7 @@ natively - there is no runtime switch to flip; the mode simply selects which dir
 opened. Stage the siblings with `scripts/stage_models.sh` (they are optional: a missing one
 only skips the INT8 rows).
 
-`LatencyBenchTest` sweeps `(model, precision) x threads {1, 2, 4, big}` and logs one parseable
+`LatencyBenchTest` runs `(model, precision) x threads {1, 2, 4, big}` and logs one parseable
 line per configuration (warmup 10, 50 timed end-to-end infers on the real probe):
 
 ```
@@ -219,7 +219,7 @@ app reuses `mac/Sources/YOLOMasterKit`.
 A function-for-function port of the iOS app (`dev/ios`): tabs Live (CameraX preview + async
 overlay, lens stops, tap-to-focus, torch, full-res shutter with the overlay baked and saved to
 `Pictures/YOLO-Master`, stats HUD with the thermal tachometer), Photo (up to 100 images, 3-up
-gallery / zoomable pager, conf/IoU retune from cached raw outputs, export), Bench (cold sweep of
+gallery / zoomable pager, conf/IoU retune from cached raw outputs, export), Bench (cold run of
 every model x GPU/CPU, sustained runs with sparkline + thermal bar, history, CSV share) and
 Settings (about, licenses, privacy, the CPU toggle, custom model import, erase history).
 

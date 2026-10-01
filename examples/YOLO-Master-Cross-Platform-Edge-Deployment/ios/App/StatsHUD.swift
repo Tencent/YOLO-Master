@@ -132,7 +132,7 @@ struct StatsHUD: View {
     private var mainRow: some View {
         HStack(spacing: 14) {
             // ms mode: anything under 30ms rests at the LEFTMOST position;
-            // 30-100ms sweeps left -> right; beyond 100 pegs right.
+            // 30-100ms moves left -> right; beyond 100 pegs right.
             Gauge(value: active ? (mode == .ms ? min(max(fps, 30), 100)
                                                : min(max(fps, 0), 30)) : (mode == .ms ? 30 : 0),
                   in: mode == .ms ? 30...100 : 0...30) {

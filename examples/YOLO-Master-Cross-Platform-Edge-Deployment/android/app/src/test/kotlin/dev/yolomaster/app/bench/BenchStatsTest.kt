@@ -65,7 +65,7 @@ class BenchStatsTest {
     @Test fun runNames() {
         assertEquals("v0.1-s... · GPU · 3min", BenchStats.runName(true, "v0.1-s...", "GPU", 3, 1))
         assertEquals("run · CPU · 1min", BenchStats.runName(true, null, "CPU", 1, 1))
-        assertEquals("Sweep · 7 models", BenchStats.runName(false, null, "GPU", 3, 7))
+        assertEquals("Cold run · 7 models", BenchStats.runName(false, null, "GPU", 3, 7))
     }
 
     @Test fun sustainedCapsAndPresets() {
@@ -102,12 +102,12 @@ class BenchStatsTest {
     @Test fun runsCsvHeaderAndRow() {
         val r = BenchResult(modelId = "p03_v01n-int8_ncnn", compute = "CPU", coldMedian = 20.0, coldP90 = 22.0, coldMin = 19.0)
         val run = BenchRun(
-            id = "abc", name = "Sweep \"x\"", dateMs = 0L, mode = "Cold Sweep", results = listOf(r),
+            id = "abc", name = "Cold \"x\"", dateMs = 0L, mode = "Cold run", results = listOf(r),
             thermalStart = 0, thermalEnd = 1, thermalPeak = 2,
         )
         val lines = BenchHistory.runsCSV(listOf(run)).trimEnd().lines()
         assertEquals("run,date,mode,model,runtime,compute,cold_median_ms,cold_p90_ms,fps_equiv,sustained_ms,throttle_pct,thermal_start,thermal_end,thermal_peak", lines[0])
-        assertEquals("\"Sweep \"\"x\"\"\",1970-01-01T00:00:00Z,Cold Sweep,YOLO-Master-p03_v01n-int8,ncnn,CPU,20.00,22.00,50.0,,,0,1,2", lines[1])
+        assertEquals("\"Cold \"\"x\"\"\",1970-01-01T00:00:00Z,Cold run,YOLO-Master-p03_v01n-int8,ncnn,CPU,20.00,22.00,50.0,,,0,1,2", lines[1])
         assertEquals(r, run.fastest)
     }
 }

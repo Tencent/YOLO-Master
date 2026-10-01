@@ -24,6 +24,12 @@ private func labelTextColor(on bg: CGColor) -> CGColor {
     return lum > 0.62 ? CGColor(gray: 0.05, alpha: 1) : CGColor(gray: 1, alpha: 1)
 }
 
+/// Per-track colour: the same (k*37, k*91, k*173) mod 255 rule as the C++ draw_tracks.
+func trackColor(_ id: Int) -> CGColor {
+    CGColor(red: CGFloat((id * 37) % 255) / 255, green: CGFloat((id * 91) % 255) / 255,
+            blue: CGFloat((id * 173) % 255) / 255, alpha: 1)
+}
+
 /// Draw detections onto `image`, returning a new annotated CGImage.
 /// `masks` (segmentation) are composited under the boxes; pass `drawBoxes: false` to render masks only.
 public func annotate(_ image: CGImage, _ dets: [Detection], names: [String],
@@ -51,7 +57,9 @@ public func annotate(_ image: CGImage, _ dets: [Detection], names: [String],
     let lw = max(CGFloat(2), CGFloat(w) / 640)
     let baseFont = max(CGFloat(12), CGFloat(w) / 95)
     for d in dets {
-        let color = palette[d.cls % palette.count]
+        // tracked detections are coloured by id (the C++ draw_tracks palette rule), so one object
+        // keeps its colour across frames regardless of class
+        let color = d.trackId.map { trackColor($0) } ?? palette[d.cls % palette.count]
         let box = CGRect(x: d.rect.minX, y: CGFloat(h) - d.rect.maxY, width: d.rect.width, height: d.rect.height)
         let r = min(min(box.width, box.height) * 0.14, lw * 5)
         let rpath = CGPath(roundedRect: box, cornerWidth: r, cornerHeight: r, transform: nil)
@@ -84,7 +92,8 @@ public func annotate(_ image: CGImage, _ dets: [Detection], names: [String],
         if label == .off { continue }
         let minMode = label == .min
         let name = d.cls < names.count ? names[d.cls] : "class\(d.cls)"
-        let text = minMode ? name : "\(name)  \(String(format: "%.2f", d.score))"
+        let idPrefix = d.trackId.map { "#\($0) " } ?? ""
+        let text = minMode ? idPrefix + name : "\(idPrefix)\(name)  \(String(format: "%.2f", d.score))"
         let fontSize = minMode ? baseFont * 0.85 : baseFont
         let font = CTFontCreateWithName("HelveticaNeue-Bold" as CFString, fontSize, nil)
         let attr = NSAttributedString(string: text, attributes: [

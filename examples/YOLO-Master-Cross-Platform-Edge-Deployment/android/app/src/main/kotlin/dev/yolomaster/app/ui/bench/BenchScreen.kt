@@ -164,7 +164,7 @@ fun BenchScreen(vm: BenchViewModel = viewModel()) {
                         ) {
                             if (ui.running) ProgressCard(ui, thermal.level, HudColors.thermalColor(thermal.level, thermal.known))
                             if (ui.mode == BenchMode.Sustained && ui.sparkSamples.size > 1) SustainedGraphCard(ui)
-                            if (ui.mode == BenchMode.Sweep) ui.fastest?.let { HeroCard(it) }
+                            if (ui.mode == BenchMode.Cold) ui.fastest?.let { HeroCard(it) }
                             for (mid in ui.modelsWithResults) ModelCard(mid, ui) { vm.toggleExpanded(mid) }
                         }
                     }
@@ -196,7 +196,7 @@ private fun EmptyBench() {
         Spacer(Modifier.height(10.dp))
         Text("No benchmarks yet", style = IosType.title3Bold, color = ios.label)
         Spacer(Modifier.height(4.dp))
-        Text("Run a cold sweep across every model, runtime and compute unit.", style = IosType.subheadline, color = ios.secondaryLabel)
+        Text("Run a cold pass across every model, runtime and compute unit.", style = IosType.subheadline, color = ios.secondaryLabel)
     }
 }
 
@@ -285,7 +285,7 @@ private fun AdvancedCard(ui: BenchUi, vm: BenchViewModel) {
         )
         Text(
             if (ui.mode == BenchMode.Sustained) "In Sustained mode these set the cold baseline the throttle is measured against."
-            else "Per model x unit cell in the cold sweep.",
+            else "Per model x unit cell in the cold run.",
             style = IosType.caption2, color = ios.secondaryLabel, modifier = Modifier.fillMaxWidth(),
         )
     }

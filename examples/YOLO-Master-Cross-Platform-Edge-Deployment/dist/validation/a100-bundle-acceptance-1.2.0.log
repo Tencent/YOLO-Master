@@ -1,0 +1,96 @@
+[00:57:48] host: NVIDIA A100 80GB PCIe, 570.172.08 | "Ubuntu 22.04.5 LTS" | glibc 2.35
+[00:57:48] installed cuDNN/TensorRT packages: 0 | libcudnn/libnvinfer in /usr/lib: 0
+[00:57:49] eval sets: visdrone50 50 images, coco500 500 images, clip /root/bundles/pan.mp4
+[00:57:49] == checksums
+yolomaster-edge-linux-x64-all-cuda12-1.2.0.tar.gz: OK
+yolomaster-edge-linux-x64-mnn-1.2.0.tar.gz: OK
+yolomaster-edge-linux-x64-ncnn-1.2.0.tar.gz: OK
+yolomaster-edge-linux-x64-onnx-cpu-1.2.0.tar.gz: OK
+yolomaster-edge-linux-x64-onnx-cuda12-1.2.0.tar.gz: OK
+yolomaster-edge-linux-x64-trt10-cuda12-1.2.0.tar.gz: OK
+[00:58:28]   PASS  checksums (6 bundles)
+[00:58:28] ================ ncnn
+[00:58:30]   PASS  ncnn --help (clean env)
+[00:58:30]   PASS  ncnn ldd closure
+[00:58:41]   PASS  ncnn ncnn-cpu inference visdrone50: infer=149.311 ms  ep=ncnn-CPU-fp32  outputs=50
+[00:58:59]   PASS  ncnn ncnn-cpu bench cold: median=149.142ms schema OK
+[01:01:46]   PASS  ncnn ncnn-cpu accuracy coco500: mAP50-95=0.4270
+[01:02:03]   PASS  ncnn ncnn-cpu tracking botsort: 90 frames, 7-column txt, video 1
+[01:02:03] ================ mnn
+[01:02:05]   PASS  mnn --help (clean env)
+[01:02:05]   PASS  mnn ldd closure
+[01:02:14]   PASS  mnn mnn-cpu inference visdrone50: infer=99.2179 ms  ep=MNN-CPU  outputs=50
+[01:02:28]   PASS  mnn mnn-cpu bench cold: median=125.283ms schema OK
+[01:04:53]   PASS  mnn mnn-cpu accuracy coco500: mAP50-95=0.4270
+[01:05:09]   PASS  mnn mnn-cpu tracking botsort: 90 frames, 7-column txt, video 1
+[01:05:09] ================ onnx-cpu
+[01:05:10]   PASS  onnx-cpu --help (clean env)
+[01:05:10]   PASS  onnx-cpu ldd closure
+[01:05:24]   PASS  onnx-cpu ort-cpu inference visdrone50: infer=194.167 ms  ep=ort-CPU-fp32  outputs=50
+[01:05:40]   PASS  onnx-cpu ort-cpu bench cold: median=138.069ms schema OK
+[01:07:33]   PASS  onnx-cpu ort-cpu accuracy coco500: mAP50-95=0.4270
+[01:07:50]   PASS  onnx-cpu ort-cpu tracking botsort: 90 frames, 7-column txt, video 1
+[01:07:50] ================ onnx-cuda12
+[01:08:19]   PASS  onnx-cuda12 --help (clean env)
+[01:08:19]   PASS  onnx-cuda12 ldd closure
+[01:08:26]   PASS  onnx-cuda12 ort-cuda inference visdrone50: infer=53.6292 ms  ep=ort-CUDA+gpupre  outputs=50
+[01:08:30]   PASS  onnx-cuda12 ort-cuda bench cold: median=5.50259ms schema OK
+[01:08:46]   PASS  onnx-cuda12 ort-cuda accuracy coco500: mAP50-95=0.4271
+[01:08:54]   PASS  onnx-cuda12 ort-cuda tracking botsort: 90 frames, 7-column txt, video 1
+[01:09:01]   PASS  onnx-cuda12 ort-cuda-cpupre inference visdrone50: infer=47.0106 ms  ep=ort-CUDA  outputs=50
+[01:09:06]   PASS  onnx-cuda12 ort-cuda-cpupre bench cold: median=5.87013ms schema OK
+[01:09:22]   PASS  onnx-cuda12 ort-cuda-cpupre accuracy coco500: mAP50-95=0.4269
+[01:09:30]   PASS  onnx-cuda12 ort-cuda-cpupre tracking botsort: 90 frames, 7-column txt, video 1
+[01:09:42]   PASS  onnx-cuda12 ort-cpu inference visdrone50: infer=162.204 ms  ep=ort-CPU-fp32  outputs=50
+[01:09:57]   PASS  onnx-cuda12 ort-cpu bench cold: median=125.66ms schema OK
+[01:12:14]   PASS  onnx-cuda12 ort-cpu accuracy coco500: mAP50-95=0.4270
+[01:12:30]   PASS  onnx-cuda12 ort-cpu tracking botsort: 90 frames, 7-column txt, video 1
+[01:12:30] ================ trt10-cuda12
+[01:13:05]   PASS  trt10-cuda12 --help (clean env)
+[01:13:05]   PASS  trt10-cuda12 ldd closure
+[01:21:47]   PASS  trt10-cuda12 trt-fp16 inference visdrone50: infer=2.59839 ms  ep=TRT-CUDA-fp16  outputs=50
+[01:21:49]   PASS  trt10-cuda12 trt-fp16 bench cold: median=2.48192ms schema OK
+[01:21:59]   PASS  trt10-cuda12 trt-fp16 accuracy coco500: mAP50-95=0.4268
+[01:22:05]   PASS  trt10-cuda12 trt-fp16 tracking botsort: 90 frames, 7-column txt, video 1
+[01:25:29]   PASS  trt10-cuda12 trt-fp32-graph inference visdrone50: infer=2.48134 ms  ep=TRT-CUDA-fp32  outputs=50
+[01:25:31]   PASS  trt10-cuda12 trt-fp32-graph bench cold: median=2.4401ms schema OK
+[01:25:40]   PASS  trt10-cuda12 trt-fp32-graph accuracy coco500: mAP50-95=0.4271
+[01:25:46]   PASS  trt10-cuda12 trt-fp32-graph tracking botsort: 90 frames, 7-column txt, video 1
+[01:25:46] ================ all-cuda12
+[01:26:46]   PASS  all-cuda12 --help (clean env)
+[01:26:46]   PASS  all-cuda12 ldd closure
+[01:35:28]   PASS  all-cuda12 trt-fp16 inference visdrone50: infer=2.62682 ms  ep=TRT-CUDA-fp16  outputs=50
+[01:35:30]   PASS  all-cuda12 trt-fp16 bench cold: median=2.53174ms schema OK
+[01:35:39]   PASS  all-cuda12 trt-fp16 accuracy coco500: mAP50-95=0.4271
+[01:35:45]   PASS  all-cuda12 trt-fp16 tracking botsort: 90 frames, 7-column txt, video 1
+[01:35:53]   PASS  all-cuda12 ort-cuda inference visdrone50: infer=57.4678 ms  ep=ort-CUDA+gpupre  outputs=50
+[01:35:58]   PASS  all-cuda12 ort-cuda bench cold: median=6.1215ms schema OK
+[01:36:13]   PASS  all-cuda12 ort-cuda accuracy coco500: mAP50-95=0.4271
+[01:36:22]   PASS  all-cuda12 ort-cuda tracking botsort: 90 frames, 7-column txt, video 1
+[01:36:35]   PASS  all-cuda12 ncnn-cpu inference visdrone50: infer=185.101 ms  ep=ncnn-CPU-fp32  outputs=50
+[01:36:52]   PASS  all-cuda12 ncnn-cpu bench cold: median=144.154ms schema OK
+[01:39:47]   PASS  all-cuda12 ncnn-cpu accuracy coco500: mAP50-95=0.4270
+[01:40:07]   PASS  all-cuda12 ncnn-cpu tracking botsort: 90 frames, 7-column txt, video 1
+[01:40:17]   PASS  all-cuda12 mnn-cpu inference visdrone50: infer=127.535 ms  ep=MNN-CPU  outputs=50
+[01:40:33]   PASS  all-cuda12 mnn-cpu bench cold: median=130.942ms schema OK
+[01:42:22]   PASS  all-cuda12 mnn-cpu accuracy coco500: mAP50-95=0.4270
+[01:42:38]   PASS  all-cuda12 mnn-cpu tracking botsort: 90 frames, 7-column txt, video 1
+[01:42:38] ================ extras
+[01:43:10]   PASS  trt sustained 30 s: throttle=0.12467%
+[01:43:12]   PASS  trt dense slicing (5 images)
+[01:43:15]   PASS  ort-cuda --export-labels coco (5 images)
+[01:43:17]   PASS  trt engine cache reused (2 engine files)
+[01:43:17] ================ accuracy table (coco500, v0.1-seg-N boxes, val protocol)
+all-cuda12,mnn-cpu,0.4270
+all-cuda12,ncnn-cpu,0.4270
+all-cuda12,ort-cuda,0.4271
+all-cuda12,trt-fp16,0.4271
+mnn,mnn-cpu,0.4270
+ncnn,ncnn-cpu,0.4270
+onnx-cpu,ort-cpu,0.4270
+onnx-cuda12,ort-cpu,0.4270
+onnx-cuda12,ort-cuda,0.4271
+onnx-cuda12,ort-cuda-cpupre,0.4269
+trt10-cuda12,trt-fp16,0.4268
+trt10-cuda12,trt-fp32-graph,0.4271
+[01:43:17] RESULT: 65 passed, 0 failed

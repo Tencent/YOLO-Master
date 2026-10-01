@@ -173,7 +173,7 @@ fun HistorySheet(history: BenchHistory, onDismiss: () -> Unit) {
                         Spacer(Modifier.height(10.dp))
                         Text("No saved runs", style = IosType.title3Bold, color = ios.label)
                         Spacer(Modifier.height(4.dp))
-                        Text("Completed cold sweeps and sustained runs are saved here.", style = IosType.subheadline, color = ios.secondaryLabel)
+                        Text("Completed cold and sustained runs are saved here.", style = IosType.subheadline, color = ios.secondaryLabel)
                     }
                 } else {
                     OutlinedTextField(

@@ -32,7 +32,7 @@ the ANE only exist on-device.)
   switch in the tuning panel and a mask-compose stage bar in the HUD. Same
   decode + SGEMM mask math as macOS, shared through the Kit.
 - **Bench tab** - the criterion harness:
-  - *cold sweep*: every bundled model x every compute unit, 50-iter median +
+  - *cold run*: every bundled model x every compute unit, 50-iter median +
     p90 after warmup;
   - *sustained pass*: N-minute loop reporting the last-quarter median - the
     thermal steady state. Flagship phones throttle; a real-time claim needs
@@ -45,7 +45,7 @@ Same .mlpackage files as macOS (converted with the iOS 17 deployment target).
 On M4 Max: fp16 GPU 14.3ms / ANE 18.3ms; W8 = identical speed, smaller bundle
 (15 -> 12MB); W8A8 slower everywhere (ANE fusion breaks) - do not ship A8.
 On A-series the ANE/GPU ranking is expected to flip (near-desktop ANE, small
-GPU): verify with the cold sweep, then W8-on-ANE is the likely shipping pick.
+GPU): verify with the cold run, then W8-on-ANE is the likely shipping pick.
 
 ## Xcode-native alternative for per-op numbers
 

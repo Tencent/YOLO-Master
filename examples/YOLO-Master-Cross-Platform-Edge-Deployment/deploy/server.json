@@ -1,0 +1,26 @@
+{
+  "host": "0.0.0.0",
+  "port": 8080,
+  "loop_threads": 2,
+  "max_body_mb": 32,
+  "max_pixels": 50000000,
+  "max_queue": 64,
+  "request_timeout_ms": 10000,
+  "ws_max_payload_mb": 16,
+  "engine_cache_dir": "/opt/yolomaster/cache/trt",
+  "log_level": "info",
+  "cors": true,
+  "access_log": true,
+  "log_format": "plain",
+  "api_keys": [],
+  "auth_exempt": ["/healthz", "/readyz"],
+  "rate_limit": {"rps": 0, "burst": 0},
+  "models": [
+    {"id": "v01n-trt",       "path": "/opt/yolomaster/models/v01n/model.onnx",          "backend": "trt",  "device": "cuda", "precision": "fp16", "workers": 1},
+    {"id": "v01n-ort",       "path": "/opt/yolomaster/models/v01n/model-fp16.onnx",     "backend": "onnx", "device": "cuda", "workers": 1, "preload": false},
+    {"id": "v01n-ncnn",      "path": "/opt/yolomaster/models/v01n/ncnn",                "backend": "ncnn", "device": "cpu",  "threads": 8, "workers": 2, "preload": false},
+    {"id": "v01n-mnn",       "path": "/opt/yolomaster/models/v01n/model.mnn",           "backend": "mnn",  "device": "cpu",  "threads": 8, "workers": 2, "preload": false},
+    {"id": "v01n-pruned-trt","path": "/opt/yolomaster/models/v01n-pruned/model.onnx",   "backend": "trt",  "device": "cuda", "precision": "fp16", "workers": 1, "preload": false},
+    {"id": "esmoen-trt",     "path": "/opt/yolomaster/models/esmoen/model.onnx",        "backend": "trt",  "device": "cuda", "precision": "fp16", "workers": 1, "preload": false}
+  ]
+}

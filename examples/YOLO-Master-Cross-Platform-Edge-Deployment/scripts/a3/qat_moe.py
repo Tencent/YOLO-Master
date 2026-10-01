@@ -39,7 +39,7 @@ SENSITIVE_SETS = {
     # implicit-PTQ-era full sensitive set (the original deliverable)
     "default": ("*model.0.*", "*model.1.*", "*routing*", "*router*", "*dfl*"),
     # explicit per-channel QDQ may not need most exclusions: fewer FP16 islands
-    # = fewer reformats = faster engines. Sweep these for the latency target.
+    # = fewer reformats = faster engines. Try these for the latency target.
     "dfl": ("*dfl*",),
     "none": (),
 }

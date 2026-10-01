@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# One-command signed + notarized release of YOLOMaster.app.
-# Usage:  mac/scripts/release.sh [version]      (default version 1.0.0)
+# One-command signed + notarized release of YOLO-Master.app.
+# Usage:  mac/scripts/release.sh [version]      (default: the repo VERSION file)
 #
 # Prereqs (one-time):
 #   1. A "Developer ID Application" certificate in your login keychain
@@ -12,10 +12,10 @@
 #             BUNDLE_ID=com.you.app                     ARCHS="arm64 x86_64"
 set -eo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"        # .../mac
-VERSION="${1:-1.1.0}"
+VERSION="${1:-$(tr -d '[:space:]' < "$HERE/../VERSION" 2>/dev/null || echo 1.2.0)}"
 PROFILE="${NOTARY_PROFILE:-ac-notary}"
 
-echo "== release: YOLO-Master CoreML Runner $VERSION =="
+echo "== release: YOLO-Master for macOS $VERSION =="
 
 # auto-detect the Developer ID Application identity unless one was passed in.
 # `|| true` + awk-with-exit avoids a SIGPIPE/pipefail interaction that used to kill the script silently.
@@ -36,11 +36,11 @@ echo
 
 CODESIGN_ID="$CODESIGN_ID" NOTARY_PROFILE="$PROFILE" "$HERE/make_app.sh" "$VERSION"
 
-APP="$HERE/dist/YOLO-Master CoreML Runner.app"
+APP="$HERE/dist/YOLO-Master.app"
 echo
 echo "== verifying =="
 codesign --verify --deep --strict --verbose=2 "$APP" && echo "codesign: OK"
 xcrun stapler validate "$APP" && echo "staple: OK"
 spctl -a -vvv --type exec "$APP"    # expect: source=Notarized Developer ID
 echo
-echo "shippable: $HERE/dist/YOLO-Master-CoreML-Runner-$VERSION.zip"
+echo "shippable: $HERE/dist/YOLO-Master-macOS-$VERSION.zip"
