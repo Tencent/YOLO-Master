@@ -364,6 +364,9 @@ def train_one(args: argparse.Namespace, dataset: DatasetSpec, spec: ModelSpec, p
         for event, fn in _make_wandb_callbacks(run_name, dataset, spec, args, dense_eval).items():
             model.add_callback(event, fn)
 
+    extra = {}
+    if getattr(args, "router_decay", None) is not None:  # only forwarded when set, so the default run is unchanged
+        extra["moe_router_weight_decay"] = args.router_decay
     start = time.time()
     model.train(
         data=dataset.data,
@@ -390,6 +393,7 @@ def train_one(args: argparse.Namespace, dataset: DatasetSpec, spec: ModelSpec, p
         amp=args.amp,
         resume=resume,
         verbose=args.verbose,
+        **extra,
     )
     return {"model": spec.name, "status": "resumed" if resume else "ok", "duration_s": f"{time.time() - start:.1f}"}
 
@@ -412,6 +416,14 @@ def build_parser(dataset: DatasetSpec, models=MODELS) -> argparse.ArgumentParser
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--patience", type=int, default=0, help="0 disables early stopping.")
     p.add_argument("--amp", action=argparse.BooleanOptionalAction, default=True)
+    p.add_argument(
+        "--router-decay",
+        type=float,
+        default=None,
+        help="Weight decay for the router parameter group (ultralytics key moe_router_weight_decay; scaled by batch/nbs "
+        "like weight_decay). Unset keeps the trainer's current behaviour (router group at weight_decay). "
+        "Diagnostic for the constant-router issue, e.g. --router-decay 0.",
+    )
     p.add_argument(
         "--cache",
         nargs="?",

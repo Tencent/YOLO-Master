@@ -328,6 +328,7 @@ moe_router_z_loss: 0.1 # (float) Router z-loss coefficient (0.1 = prevent unifor
 moe_weight_threshold: 0.01 # (float) Weight threshold for conditional computation in MoE
 moe_expert_warmup_epochs: 3 # (int) Epochs to freeze experts while router learns (was 5, too long)
 moe_router_lr_scale: 0.5 # (float) Router LR as fraction of base LR (was 0.1, too small to correct collapse)
+moe_router_weight_decay: # (float, optional) weight decay of the router parameter group (parameters named routing/router), scaled by batch/nbs like weight_decay; unset keeps the router group at weight_decay
 moe_collapse_threshold: 0.8 # (float) If max expert usage > threshold, trigger collapse recovery
 moe_dynamic_gini_target: 0.25 # (float) target expert-usage Gini for dynamic balance scheduling
 moe_dynamic_gini_alpha: 1.0 # (float) exponential response gain for Gini scheduling

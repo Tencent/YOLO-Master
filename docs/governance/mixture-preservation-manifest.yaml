@@ -10720,6 +10720,10 @@ config_keys:
   default: 0.5
   value_type: float
   target_status: ported
+- name: moe_router_weight_decay
+  default: null
+  value_type: float
+  target_status: ported
 - name: moe_router_z_loss
   default: 0.1
   value_type: float

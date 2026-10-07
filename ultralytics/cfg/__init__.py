@@ -245,6 +245,7 @@ MIXTURE_FLOAT_KEYS = frozenset(
         "moe_map_saturation_threshold",
         "moe_noise_std",
         "moe_router_lr_scale",
+        "moe_router_weight_decay",
         "moe_router_z_loss",
         "moe_temperature",
         "moe_weight_threshold",

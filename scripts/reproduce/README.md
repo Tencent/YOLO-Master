@@ -146,6 +146,7 @@ python scripts/reproduce/reproduce_brain_tumor.py --model EsMoE-N --epochs <epoc
 | `--model {v0.1-N,EsMoE-N,both}` | `both` | which model to train |
 | `--no-sparse-eval` | **off** | **opt-in** correct evaluation for `EsMoE-N` **(see Known issue 1 below)**. Off = reproduce the model exactly as shipped. No-op for `v0.1-N`. |
 | `--epochs / --imgsz / --batch` | `300 / 640 / 64` | training hyps |
+| `--router-decay <float>` | unset | weight decay of the router parameter group (ultralytics key `moe_router_weight_decay`, scaled by batch/nbs like `weight_decay`). Unset = the trainer's current behaviour (router group at `weight_decay`). Diagnostic for the constant-router issue: `--router-decay 0` removes decay from router weights, biases and norms. |
 | `--wandb / --no-wandb` | on | stream per-epoch metrics to Weights & Biases |
 | `--wandb-entity <e>` | **default** | W&B entity/team to log under |
 | `--wandb-mode {online,offline,disabled}` | `online` | W&B mode. To use `online` , you must login first. |
