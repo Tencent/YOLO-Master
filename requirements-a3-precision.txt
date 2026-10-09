@@ -1,0 +1,7 @@
+# A3 five-family ONNX precision harness (install after the project itself).
+onnx>=1.16.0,<2.0.0
+onnxruntime-gpu>=1.18.0
+opencv-python-headless>=4.8.0
+numpy>=1.24.0,<3.0.0
+PyYAML>=6.0
+scipy>=1.10.0

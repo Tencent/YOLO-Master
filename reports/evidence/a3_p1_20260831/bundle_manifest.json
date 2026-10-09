@@ -1,0 +1,234 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-08-31T23:02:29.221852+08:00",
+  "workspace": "/mnt/workspace",
+  "repository": "/mnt/workspace/YOLO-Master",
+  "purpose": "A3 P1 ES-MoE and MoT INT8 PTQ delivery archive",
+  "claim_boundary": "Equivalent INT8 quantization experiments; masked-dense execution is not true conditional sparse execution.",
+  "file_count": 37,
+  "total_bytes": 80585611,
+  "files": [
+    {
+      "relative_path": "YOLO-Master/examples/artifacts/esmoe_ort_int8_qoperator_u8s8/ESMOE_INT8_FINAL.json",
+      "size_bytes": 2554,
+      "size_mb": 0.002436,
+      "sha256": "d2d1ed45dcfb280b945ff84ecc6c688c1b8025a184ccdc2ff8a4039c341ea9b0"
+    },
+    {
+      "relative_path": "YOLO-Master/examples/artifacts/esmoe_ort_int8_qoperator_u8s8/esmoe_qoperator_u8s8_int8.onnx",
+      "size_bytes": 3537994,
+      "size_mb": 3.374094,
+      "sha256": "c2308774af0121154921ea211c89bc26b2f495c2fbb81d0aeae3aba64f1721f9"
+    },
+    {
+      "relative_path": "YOLO-Master/examples/artifacts/mot_v10_ort_int8_qdq_s8s8/MOT_INT8_ARTIFACT.json",
+      "size_bytes": 532,
+      "size_mb": 0.000507,
+      "sha256": "4658203b441ee23b5691ce6cd254fccb5eaa4178228734c6ea958f4683c2f591"
+    },
+    {
+      "relative_path": "YOLO-Master/examples/artifacts/mot_v10_ort_int8_qdq_s8s8/mot_v10_qdq_s8s8_int8.onnx",
+      "size_bytes": 8923490,
+      "size_mb": 8.510103,
+      "sha256": "463ce6aeb9b573cd46d5cfdc9646d7fd96d75aba5768d433c408e78f8cebbb73"
+    },
+    {
+      "relative_path": "YOLO-Master/examples/artifacts/mot_v10_visdrone_50e/best_for_quantization.pt",
+      "size_bytes": 8726013,
+      "size_mb": 8.321774,
+      "sha256": "5f6ff684f74c773de5cdf0a2e4a51773317829bbeccc48c5c13f0ed3a2f3d417"
+    },
+    {
+      "relative_path": "YOLO-Master/examples/artifacts/mot_v10_visdrone_50e/training_manifest.json",
+      "size_bytes": 946,
+      "size_mb": 0.000902,
+      "sha256": "0e77ee5866e8c7a16730e202213a62547076222626d56a5ae1c4042848021cfb"
+    },
+    {
+      "relative_path": "YOLO-Master/examples/exports/best_for_export_dense_fallback_topk_mask.onnx",
+      "size_bytes": 11568490,
+      "size_mb": 11.032572,
+      "sha256": "c5b25ae666c352eb050aa29b9897f8265bbb17a371e65a85aa4acc1127469397"
+    },
+    {
+      "relative_path": "YOLO-Master/examples/exports/mnn_dense_fallback/ort_ptq_to_mnn_runs/20260831_114542/QDQ_S8S8/int8_model.json",
+      "size_bytes": 29398098,
+      "size_mb": 28.036211,
+      "sha256": "f5ca1e0b0d37982d271c21762c7002bedecd65df1833c919113d934327dae43a"
+    },
+    {
+      "relative_path": "YOLO-Master/examples/exports/mnn_dense_fallback/ort_ptq_to_mnn_runs/20260831_114542/QDQ_S8S8/mnnconvert.log",
+      "size_bytes": 2864,
+      "size_mb": 0.002731,
+      "sha256": "fd2fb729106932553b269a6b530693385c6b6ece743ba8957c9550d6a1d134ff"
+    },
+    {
+      "relative_path": "YOLO-Master/examples/exports/mnn_dense_fallback/ort_ptq_to_mnn_runs/20260831_114542/QOperator_U8S8/mnnconvert.log",
+      "size_bytes": 2316,
+      "size_mb": 0.002209,
+      "sha256": "e98b5ff2ce0da5fe19edf32120790d2dfacb0bb6382bf0dd181a963269f9c239"
+    },
+    {
+      "relative_path": "YOLO-Master/examples/exports/mnn_dense_fallback/ort_ptq_to_mnn_runs/20260831_114542/ort_ptq_to_mnn_manifest.json",
+      "size_bytes": 7677,
+      "size_mb": 0.007321,
+      "sha256": "d2f62c5e3c5ac70aeeca64467aac7a508282cd7d433dcc35f21fceabf55ab7e8"
+    },
+    {
+      "relative_path": "YOLO-Master/examples/exports/mnn_dense_fallback/ptq_runs/20260831_113537/calibration_selection.json",
+      "size_bytes": 21842,
+      "size_mb": 0.02083,
+      "sha256": "2ee976d2a1cf1842c9729fb97bdb95e6b411ed1019b1412950407078bbc98f18"
+    },
+    {
+      "relative_path": "YOLO-Master/examples/exports/mnn_dense_fallback/ptq_runs/20260831_113537/mnn_int8_ptq.log",
+      "size_bytes": 127,
+      "size_mb": 0.000121,
+      "sha256": "2548297635ea110e958f493168ea2e9e5405c470cc3881caf88a24915c4fc84f"
+    },
+    {
+      "relative_path": "YOLO-Master/examples/exports/mnn_dense_fallback/ptq_runs/20260831_113537/quant_config.json",
+      "size_bytes": 556,
+      "size_mb": 0.00053,
+      "sha256": "a5c1ccd911010fc06f53117e81469eff4b5f9e55dae84b769c94fe04cf258a85"
+    },
+    {
+      "relative_path": "YOLO-Master/examples/exports/mnn_dense_fallback/ptq_runs/retry_20260831_114123/ptq_crash_resolution.json",
+      "size_bytes": 4463,
+      "size_mb": 0.004256,
+      "sha256": "119d43e32cd1fa389d2a2f3c862a68f9166f7c0da7a6f325c6ef6dacdaa6aceb"
+    },
+    {
+      "relative_path": "YOLO-Master/examples/exports/mnn_dense_fallback/ptq_runs/retry_20260831_114123/smoke_ema_n10/quant.log",
+      "size_bytes": 127,
+      "size_mb": 0.000121,
+      "sha256": "2548297635ea110e958f493168ea2e9e5405c470cc3881caf88a24915c4fc84f"
+    },
+    {
+      "relative_path": "YOLO-Master/examples/exports/mnn_dense_fallback/ptq_runs/retry_20260831_114123/smoke_ema_n10/quant_config.json",
+      "size_bytes": 455,
+      "size_mb": 0.000434,
+      "sha256": "6eb0d681b8629f21c16e809de4be2a7bcf35090c8d07a568996c50049993f921"
+    },
+    {
+      "relative_path": "YOLO-Master/examples/exports/mnn_dense_fallback/ptq_runs/retry_20260831_114123/smoke_kl_n10/quant.log",
+      "size_bytes": 127,
+      "size_mb": 0.000121,
+      "sha256": "2548297635ea110e958f493168ea2e9e5405c470cc3881caf88a24915c4fc84f"
+    },
+    {
+      "relative_path": "YOLO-Master/examples/exports/mnn_dense_fallback/ptq_runs/retry_20260831_114123/smoke_kl_n10/quant_config.json",
+      "size_bytes": 454,
+      "size_mb": 0.000433,
+      "sha256": "f10286ef233319eb3a42481430357ebc1043c5cb4a5e1eddf92204a1279b25be"
+    },
+    {
+      "relative_path": "YOLO-Master/examples/exports/mnn_dense_fallback/ptq_runs/retry_20260831_114127/ptq_crash_resolution.json",
+      "size_bytes": 4463,
+      "size_mb": 0.004256,
+      "sha256": "6f1ac8da21777ad173669e5b5313553ea8eee164a607f66f5fd79d4c79d420f7"
+    },
+    {
+      "relative_path": "YOLO-Master/examples/exports/mnn_dense_fallback/ptq_runs/retry_20260831_114127/smoke_ema_n10/quant.log",
+      "size_bytes": 127,
+      "size_mb": 0.000121,
+      "sha256": "2548297635ea110e958f493168ea2e9e5405c470cc3881caf88a24915c4fc84f"
+    },
+    {
+      "relative_path": "YOLO-Master/examples/exports/mnn_dense_fallback/ptq_runs/retry_20260831_114127/smoke_ema_n10/quant_config.json",
+      "size_bytes": 455,
+      "size_mb": 0.000434,
+      "sha256": "6eb0d681b8629f21c16e809de4be2a7bcf35090c8d07a568996c50049993f921"
+    },
+    {
+      "relative_path": "YOLO-Master/examples/exports/mnn_dense_fallback/ptq_runs/retry_20260831_114127/smoke_kl_n10/quant.log",
+      "size_bytes": 127,
+      "size_mb": 0.000121,
+      "sha256": "2548297635ea110e958f493168ea2e9e5405c470cc3881caf88a24915c4fc84f"
+    },
+    {
+      "relative_path": "YOLO-Master/examples/exports/mnn_dense_fallback/ptq_runs/retry_20260831_114127/smoke_kl_n10/quant_config.json",
+      "size_bytes": 454,
+      "size_mb": 0.000433,
+      "sha256": "f10286ef233319eb3a42481430357ebc1043c5cb4a5e1eddf92204a1279b25be"
+    },
+    {
+      "relative_path": "YOLO-Master/examples/exports/mot_v10_visdrone_fp32/MOT_FP32_ONNX_EXPORT.json",
+      "size_bytes": 2499,
+      "size_mb": 0.002383,
+      "sha256": "ae2cb573f0d3bf2d11a3f868820e9c0dfdf54c34caf0990752cfb14cd896b5fd"
+    },
+    {
+      "relative_path": "YOLO-Master/examples/exports/mot_v10_visdrone_fp32/mot_v10_masked_topk_fp32.onnx",
+      "size_bytes": 18342650,
+      "size_mb": 17.492914,
+      "sha256": "ef8344b88801bd7216dd9bfa75f7b65d0d114671694bb2041372bc9a46a6a023"
+    },
+    {
+      "relative_path": "YOLO-Master/examples/exports/mot_v10_visdrone_int8/MOT_ORT_INT8_PTQ_MANIFEST.json",
+      "size_bytes": 3187,
+      "size_mb": 0.003039,
+      "sha256": "625008db43ac16dac80f37a12fd68c235d87ffbe82a5a117afd13a27c9d72d36"
+    },
+    {
+      "relative_path": "YOLO-Master/examples/exports/mot_v10_visdrone_int8/calibration_images_seed42.txt",
+      "size_bytes": 19500,
+      "size_mb": 0.018597,
+      "sha256": "a6a69481c643ea57cb5937f4b1e2942112e1d867446452c963bad9042c88d01d"
+    },
+    {
+      "relative_path": "YOLO-Master/examples/results/consistency_sparse_onnx_fp32/FP32_ONNX_GATE.json",
+      "size_bytes": 786,
+      "size_mb": 0.00075,
+      "sha256": "de7ea157876c8bd54b2f6be074a2b8ccd3397f469aacd52328c883904ba4ae55"
+    },
+    {
+      "relative_path": "YOLO-Master/examples/results/consistency_sparse_onnx_fp32/full_metrics.json",
+      "size_bytes": 931,
+      "size_mb": 0.000888,
+      "sha256": "bd19b5bb5758cf39c893037925661bb37997a6c058c2258358d10d9db5c39ba1"
+    },
+    {
+      "relative_path": "YOLO-Master/examples/results/consistency_sparse_onnx_fp32/summary.json",
+      "size_bytes": 392,
+      "size_mb": 0.000374,
+      "sha256": "c7cae8c05c0efc0646ca47a28228d678030d6ebef707b3972f540a6a867c5bfb"
+    },
+    {
+      "relative_path": "YOLO-Master/examples/results/esmoe_ort_int8_equivalent/FULL_548_CPU_METRICS.json",
+      "size_bytes": 2128,
+      "size_mb": 0.002029,
+      "sha256": "803b42d7092fec7d2f0193d67d5aba92cf386ff03281312a9672b6eb703d9184"
+    },
+    {
+      "relative_path": "YOLO-Master/examples/results/esmoe_ort_int8_equivalent/INT8_ONNX_SELECTION.json",
+      "size_bytes": 844,
+      "size_mb": 0.000805,
+      "sha256": "6eb6b73304684d97dc154b3357e8989898e74bc18d69b54d1334c33282fb513a"
+    },
+    {
+      "relative_path": "YOLO-Master/examples/results/mot_v10_fp32_onnx/MOT_FP32_ONNX_GATE.json",
+      "size_bytes": 1596,
+      "size_mb": 0.001522,
+      "sha256": "c0d50a658a33b21629772eca9f4b362db8e545b21af6bc4c0a5c8a9df863920f"
+    },
+    {
+      "relative_path": "YOLO-Master/examples/results/mot_v10_fp32_onnx/THREE_IMAGE_RAW_CHECK.json",
+      "size_bytes": 1987,
+      "size_mb": 0.001895,
+      "sha256": "4b41e0923e970177e3c036d14cced0e39f024dccb984c2af0c7dd29ec5aaf386"
+    },
+    {
+      "relative_path": "YOLO-Master/examples/results/mot_v10_ort_int8/MOT_FP32_INT8_FULL_548_CPU_METRICS.json",
+      "size_bytes": 1255,
+      "size_mb": 0.001197,
+      "sha256": "e580da200925c3975bfbff5dfb4f7c2b9429bcca1740822c8b8ea3f6c4e5dcbc"
+    },
+    {
+      "relative_path": "YOLO-Master/examples/results/mot_v10_ort_int8/MOT_INT8_FINAL_GATE.json",
+      "size_bytes": 3105,
+      "size_mb": 0.002961,
+      "sha256": "ed238cbeb2df6c30a3c2915743b81091770c7c4e7fcde61285a0ad916faa26da"
+    }
+  ]
+}

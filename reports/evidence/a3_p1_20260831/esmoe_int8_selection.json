@@ -1,0 +1,13 @@
+{
+  "family": "ES-MoE",
+  "experiment_type": "equivalent INT8 PTQ",
+  "backend": "ONNX Runtime CPU",
+  "fp32_onnx": "/mnt/workspace/YOLO-Master/examples/exports/best_for_export_dense_fallback_topk_mask.onnx",
+  "int8_onnx": "/mnt/workspace/YOLO-Master/examples/exports/mnn_dense_fallback/ort_ptq_to_mnn_runs/20260831_114542/QDQ_S8S8/dense_fallback_conv_int8_ptq.onnx",
+  "fp32_size_mb": 11.032571792602539,
+  "int8_size_mb": 3.6195974349975586,
+  "int8_smoke_latency_ms": 126.14995967596771,
+  "mnn_int8_status": "compatibility_failure",
+  "mnn_native_failure": "/mnt/workspace/YOLO-Master/examples/exports/mnn_dense_fallback/ptq_runs/retry_20260831_114127/ptq_crash_resolution.json",
+  "mnn_cross_tool_failure": "/mnt/workspace/YOLO-Master/examples/exports/mnn_dense_fallback/ort_ptq_to_mnn_runs/20260831_114542/ort_ptq_to_mnn_manifest.json"
+}

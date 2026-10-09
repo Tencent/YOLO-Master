@@ -17,6 +17,7 @@ from ultralytics.nn.modules.routing_protocol import (
     publish_aux_loss as _publish_aux_loss,
     routing_finite_diagnostics,
 )
+from ultralytics.nn.modules.utils import robust_deepcopy
 from ultralytics.utils.ops import make_divisible
 
 
@@ -256,6 +257,16 @@ class _LatentAuxMixin:
         self._last_routing_summary: torch.Tensor | None = None
         self.last_routing_snapshot: dict[str, Any] = {}
         self.last_routing_diagnostics: dict[str, Any] = {}
+
+    def __deepcopy__(self, memo):
+        """Copy parameters/configuration while discarding live autograd routing state."""
+        clone = robust_deepcopy(self, memo)
+        clone._last_routing_logits = None
+        clone._last_routing_probs = None
+        clone._last_routing_summary = None
+        clone.last_routing_snapshot = {}
+        clone.last_routing_diagnostics = {}
+        return clone
 
     @property
     def aux_loss(self) -> torch.Tensor:

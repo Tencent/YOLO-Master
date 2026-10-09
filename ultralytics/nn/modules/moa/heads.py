@@ -35,7 +35,9 @@ def _init_conv_weights(module: nn.Module) -> None:
 def _flash_attn(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, scale: float) -> torch.Tensor:
     """Scaled dot-product attention; uses F.sdpa when available (torch ≥ 2.0)."""
     sdpa = getattr(F, "scaled_dot_product_attention", None)
-    if callable(sdpa):
+    # Legacy ONNX tracing cannot encode the explicit float scale in SDPA.
+    # Keep the fused path for eager execution and use primitive ops for export.
+    if callable(sdpa) and not torch.onnx.is_in_onnx_export():
         try:
             accepts_scale = "scale" in inspect.signature(sdpa).parameters
         except (TypeError, ValueError):

@@ -1,0 +1,118 @@
+{
+  "schema_version": 1,
+  "family": "MoT",
+  "experiment": "ONNX Runtime static INT8 PTQ",
+  "source_fp32_onnx": "/mnt/workspace/YOLO-Master/examples/exports/mot_v10_visdrone_fp32/mot_v10_masked_topk_fp32.onnx",
+  "source_fp32_size_mb": 17.4929141998291,
+  "calibration": {
+    "dataset": "VisDrone train",
+    "images": 300,
+    "seed": 42,
+    "imgsz": 640,
+    "method": "MinMax",
+    "list": "/mnt/workspace/YOLO-Master/examples/exports/mot_v10_visdrone_int8/calibration_images_seed42.txt"
+  },
+  "quantization_scope": {
+    "quantized_ops": [
+      "Conv"
+    ],
+    "kept_fp32_by_design": [
+      "TopK",
+      "Softmax",
+      "MatMul",
+      "attention",
+      "routing control"
+    ],
+    "reason": "先完成稳定可运行的混合 INT8 PTQ；路由控制和 Transformer 注意力保留 FP32，并在后续记录专家选择一致率"
+  },
+  "attempts": [
+    {
+      "name": "qdq_s8s8",
+      "output": "/mnt/workspace/YOLO-Master/examples/exports/mot_v10_visdrone_int8/mot_v10_qdq_s8s8_int8.onnx",
+      "status": "PASS",
+      "size_mb": 8.510103225708008,
+      "sha256": "463ce6aeb9b573cd46d5cfdc9646d7fd96d75aba5768d433c408e78f8cebbb73",
+      "providers": [
+        "CPUExecutionProvider"
+      ],
+      "output_shapes": [
+        [
+          1,
+          14,
+          8400
+        ]
+      ],
+      "finite": true,
+      "nonzero": true,
+      "smoke_latency_ms": 211.67588233947754,
+      "operator_counts": {
+        "Constant": 1865,
+        "QuantizeLinear": 431,
+        "DequantizeLinear": 804,
+        "Tanh": 15,
+        "Sigmoid": 145,
+        "Identity": 16,
+        "ConstantOfShape": 22,
+        "Mod": 48,
+        "Sub": 62,
+        "Mul": 411,
+        "Cast": 164,
+        "Conv": 232,
+        "Equal": 20,
+        "Div": 80,
+        "Where": 19,
+        "Unsqueeze": 394,
+        "Concat": 182,
+        "Shape": 214,
+        "Gather": 116,
+        "Reshape": 375,
+        "Expand": 10,
+        "Slice": 130,
+        "Transpose": 164,
+        "Split": 29,
+        "Add": 292,
+        "GlobalAveragePool": 9,
+        "Flatten": 3,
+        "MatMul": 112,
+        "Gemm": 3,
+        "AveragePool": 12,
+        "InstanceNormalization": 70,
+        "ReduceMean": 18,
+        "Sqrt": 3,
+        "Clip": 33,
+        "IsNaN": 3,
+        "Greater": 4,
+        "IsInf": 6,
+        "And": 6,
+        "Less": 3,
+        "Round": 3,
+        "LessOrEqual": 3,
+        "Softmax": 36,
+        "TopK": 9,
+        "ReduceSum": 20,
+        "GatherElements": 4,
+        "Resize": 8,
+        "Squeeze": 38,
+        "Pad": 6,
+        "LayerNormalization": 24,
+        "GridSample": 6,
+        "Erf": 12,
+        "Range": 3
+      },
+      "quantized_conv_evidence": {
+        "QLinearConv": 0,
+        "QuantizeLinear": 431,
+        "DequantizeLinear": 804
+      },
+      "elapsed_seconds": 106.7944549806416
+    },
+    {
+      "name": "qoperator_u8s8",
+      "output": "/mnt/workspace/YOLO-Master/examples/exports/mot_v10_visdrone_int8/mot_v10_qoperator_u8s8_int8.onnx",
+      "status": "FAILED",
+      "error": "AttributeError(\"'NoneType' object has no attribute 'data_type'\")",
+      "elapsed_seconds": 87.50465543195605
+    }
+  ],
+  "created_at": "2026-08-31 21:09:51"
+}

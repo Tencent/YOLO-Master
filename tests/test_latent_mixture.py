@@ -1,3 +1,4 @@
+import copy
 from pathlib import Path
 from unittest.mock import patch
 
@@ -116,6 +117,31 @@ def test_latent_mixture_publishes_single_train_aux_and_snapshot():
     assert snapshot["ddp_balance_synced"] is False
     assert snapshot["mean_router_probs"].requires_grad is False
     assert torch.allclose(snapshot["mean_router_probs"].sum(), torch.tensor(1.0), atol=1e-5)
+
+
+def test_latent_mixture_deepcopy_is_safe_after_graph_connected_forward():
+    module = LatentMixture(
+        [8, 8],
+        8,
+        num_experts=2,
+        residual_init=0.01,
+        balance_loss_coeff=0.1,
+        router_z_loss_coeff=0.01,
+    ).train()
+    inputs = [torch.randn(2, 8, 4, 4), torch.randn(2, 8, 4, 4)]
+
+    module(inputs)
+    assert module.routing_logits is not None
+    assert module.routing_logits.grad_fn is not None
+
+    clone = copy.deepcopy(module)
+
+    assert clone.routing_logits is None
+    assert clone.routing_probs is None
+    assert clone.routing_summary is None
+    assert clone.last_routing_snapshot == {}
+    assert clone.last_routing_diagnostics == {}
+    assert set(clone.state_dict()) == set(module.state_dict())
 
 
 def test_latent_balance_uses_ddp_global_value_with_local_gradient():

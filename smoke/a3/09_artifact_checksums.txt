@@ -1,0 +1,44 @@
+# SHA256 校验值（产物证据）
+
+> 提交日期：2026-08-24
+> 锁定版本：main @ e9ac08b
+> 对应规则：3.2 "产物校验值" 属可接受证据
+
+## 推理权重
+
+| 文件 | 大小 | SHA256 |
+|---|---|---|
+| `yolo_master_n.pt` | 5,700,000 B (≈ 5.7 MB) | `29e1b93f09b16c8cf7c402f36dcaafc19d4812155631ed45b769e941e4c88c32` |
+| `yolo_master_n.onnx` | 11,100,000 B (≈ 10.6 MB) | `586cf6feeee5bbadddc2cd7cb5852ed49e06f4008e024859904fffc4394c1055` |
+
+## 配置与数据
+
+| 文件 | 来源 | SHA256 |
+|---|---|---|
+| `04_config_files/coco8_data.yaml` | 本地手写，80 类 COCO 标准 | （待 git commit 后由 blob hash 提供） |
+| `04_config_files/export_settings.json` | 本次提交 | （同上） |
+| `04_config_files/val_settings.json` | 本次提交 | （同上） |
+
+## 结果证据 JSON
+
+| 文件 | 描述 |
+|---|---|
+| `06_result_evidence/val_metrics.json` | PyTorch vs ONNX Runtime 全量指标 |
+| `06_result_evidence/val_pt_plots/*.png` | PT 端可视化（7 张） |
+| `06_result_evidence/val_onnx_plots/*.png` | ORT 端可视化（7 张） |
+| `06_result_evidence/ort_predict_sample/bus_input.jpg` | 输入图（135K） |
+| `06_result_evidence/ort_predict_sample/bus_pred.jpg` | ONNX Runtime 检测结果图 |
+
+## 复现验证
+
+```bash
+# 验证 .pt 完整性
+sha256sum yolo_master_n.pt
+# 预期: 29e1b93f09b16c8cf7c402f36dcaafc19d4812155631ed45b769e941e4c88c32
+
+# 验证 .onnx 完整性
+sha256sum yolo_master_n.onnx
+# 预期: 586cf6feeee5bbadddc2cd7cb5852ed49e06f4008e024859904fffc4394c1055
+```
+
+若 SHA256 不匹配，**说明产物被替换**，需重新走 `03_reproduction_commands.md` 步骤 1-4 重新生成。

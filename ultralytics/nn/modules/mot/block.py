@@ -211,12 +211,19 @@ class MoTBlock(nn.Module):
             ddp_contract_source=self._ddp_contract_source,
             ddp_fallback_reason=ddp_fallback_reason,
             export_router_weights="masked_topk" if self.router.export_masked else "dense_softmax",
+            dynamic_export_available=eager_sparse,
+            dynamic_export_strategy="split_onnx_host_dispatch" if eager_sparse else None,
+            dynamic_export_routing_granularity="spatial_union" if self.router.use_spatial else "sample",
+            dynamic_export_compute_reduction_guaranteed_per_sample=bool(eager_sparse and not self.router.use_spatial),
+            masked_dense_is_dynamic_execution=False,
             sparse_export_limitation=(
                 "MoT eager execution supports Top-K sparse dispatch; ONNX and TorchScript tracing rebuild "
-                "sparse-equivalent masked Top-K router weights (bit-exact with eager dispatch)."
+                "sparse-equivalent masked Top-K router weights (bit-exact with eager dispatch), but the static graph "
+                "can still compute every expert. Use the split dynamic runtime for conditional expert launches."
                 if self.router.export_masked
                 else "MoT eager execution supports Top-K sparse dispatch; ONNX and TorchScript tracing use dense blending "
-                "because expert selection is data-dependent."
+                "because expert selection is data-dependent. Use the split dynamic runtime for conditional expert "
+                "launches; spatial routing can still select the union of every expert for one image."
             ),
         )
         return capabilities
@@ -316,12 +323,11 @@ class MoTBlock(nn.Module):
 
         .. warning::
             The sparse path uses ``torch.nonzero`` which produces **data-dependent
-            control flow**.  This is safe for eager inference and ``torch.compile``
-            (which handles dynamic shapes), but **not** for ONNX/TorchScript
-            ``trace`` — tracing will unroll only the batch seen at trace time.
-            ``torch.onnx.is_in_onnx_export()`` is checked to fall back to dense
-            blending during export.  For TorchScript, use ``torch.jit.script``
-            (not ``trace``) or set ``sparse_train=False`` and eval before export.
+            control flow**. This is safe for eager inference and ``torch.compile``
+            (which handles dynamic shapes), but a normal full-model ONNX/TorchScript
+            trace still falls back to dense blending. True conditional ONNX execution
+            must use ``export_dynamic_expert_bundle`` plus a compatible host runtime;
+            a masked-dense full graph is only a numerical-parity artifact.
         """
         # Export tracing always uses dense blending because nonzero/any control flow is input-dependent.
         exporting = torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()

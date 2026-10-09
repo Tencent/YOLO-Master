@@ -653,7 +653,8 @@ class MoLoRALayer(nn.Module):
             for expert_idx, expert in enumerate(self.experts):
                 out_e = expert(x)
                 shape = (-1,) + (1,) * (out_e.dim() - 1)
-                expert_out = expert_out + out_e * dense_weights[:, expert_idx].view(shape)
+                contribution = out_e * dense_weights[:, expert_idx].to(out_e.dtype).view(shape)
+                expert_out = expert_out + contribution.to(expert_out.dtype)
             return expert_out
         if B < 4 and isinstance(self.base_layer, nn.Linear) and self._can_vectorize_linear_experts():
             return self._compute_vectorized_linear_experts(x, top_k_weights, top_k_indices, out_template)
@@ -673,7 +674,8 @@ class MoLoRALayer(nn.Module):
             out_e = self.experts[e](x_e)
             weights = (top_k_weights[batch_idx] * mask[batch_idx].to(top_k_weights.dtype)).sum(dim=1)
             shape = (-1,) + (1,) * (out_e.dim() - 1)
-            expert_out = expert_out.index_add(0, batch_idx, out_e * weights.view(shape))
+            contribution = out_e * weights.to(out_e.dtype).view(shape)
+            expert_out = expert_out.index_add(0, batch_idx, contribution.to(expert_out.dtype))
         self._last_dispatch_stats = {
             "mode": "grouped_sparse" if grouped else "dense_small_batch",
             "expert_calls": calls,

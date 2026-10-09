@@ -1,0 +1,54 @@
+{
+  "family": "MoT",
+  "stage": "FP32 PyTorch vs FP32 ONNX",
+  "routing": "dynamic masked Top-K",
+  "images": 548,
+  "pytorch": {
+    "mAP50": 0.05515352029611055,
+    "mAP50-95": 0.030617320515067086,
+    "per_class_AP50": {
+      "0": 0.0510269186462375,
+      "1": 0.150332121473656,
+      "2": 0.037573376568971924,
+      "3": 0.036479441062501214,
+      "4": 0.06717956331756403,
+      "5": 0.004714641975561203,
+      "6": 0.09392209932439252,
+      "7": 0.0
+    },
+    "latency_ms": 49.349612335463725,
+    "fps": 20.26358369752335,
+    "size_mb": 8.32177448272705,
+    "model_path": "/mnt/workspace/YOLO-Master/examples/artifacts/mot_v10_visdrone_50e/best_for_quantization.pt"
+  },
+  "onnx": {
+    "mAP50": 0.05510710992688844,
+    "mAP50-95": 0.030589198979472904,
+    "per_class_AP50": {
+      "0": 0.05102539293975702,
+      "1": 0.15012676831217509,
+      "2": 0.037532535184524915,
+      "3": 0.03672773716377784,
+      "4": 0.06682680487890047,
+      "5": 0.004700977679096716,
+      "6": 0.0939166632568755,
+      "7": 0.0
+    },
+    "latency_ms": 161.27092311716208,
+    "fps": 6.200745805079243,
+    "size_mb": 17.4929141998291,
+    "model_path": "/mnt/workspace/YOLO-Master/examples/exports/mot_v10_visdrone_fp32/mot_v10_masked_topk_fp32.onnx"
+  },
+  "delta": {
+    "raw_mAP50-95": -2.8121535594182595e-05,
+    "percentage_points": -0.0028121535594182595,
+    "absolute_percentage_points": 0.0028121535594182595,
+    "target_percentage_points": 0.5
+  },
+  "checks": {
+    "pytorch_nonzero": true,
+    "onnx_nonzero": true,
+    "accuracy_pass": true,
+    "final_pass": true
+  }
+}

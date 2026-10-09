@@ -1,0 +1,47 @@
+{
+  "_comment": "锁定版本 + 导出/推理关键参数。本文件作为 smoke/a3 配置不可变证据提交。",
+  "lock": {
+    "branch": "main",
+    "commit": "e9ac08b2bd135c379206b8f77df9714b8800cbe0",
+    "remote": "https://ghfast.top/https://github.com/Tencent/YOLO-Master",
+    "tag": "rhino-2026-0824-a3-baseline"
+  },
+  "model": {
+    "weights_url": "https://hf-mirror.com/gatilin/YOLO-Master-ckpts-v0/resolve/main/YOLO-Master-EsMoE-N/YOLO-Master-EsMoE-N.pt",
+    "weights_sha256": "29e1b93f09b16c8cf7c402f36dcaafc19d4812155631ed45b769e941e4c88c32",
+    "size_bytes": 5700000,
+    "params": 2683380,
+    "gflops": 8.7,
+    "layers": 231
+  },
+  "export": {
+    "format": "onnx",
+    "imgsz": 640,
+    "opset": 19,
+    "onnx_version": "1.22.0",
+    "onnxslim_version": "0.1.96",
+    "device": "cpu",
+    "elapsed_s": 21.9,
+    "onnx_size_bytes": 11100000,
+    "onnx_sha256": "586cf6feeee5bbadddc2cd7cb5852ed49e06f4008e024859904fffc4394c1055"
+  },
+  "runtime": {
+    "backend": "onnxruntime",
+    "version": "1.29.0",
+    "provider": "CPUExecutionProvider",
+    "device": "cpu"
+  },
+  "preflight_test": {
+    "file": "tests/test_export_preflight.py",
+    "test_count": 3,
+    "expected_pass": 3,
+    "elapsed_s": 1.51
+  },
+  "dataset": {
+    "name": "coco8",
+    "url": "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco8.zip",
+    "train_images": 4,
+    "val_images": 4,
+    "val_instances": 17
+  }
+}

@@ -45,7 +45,13 @@ def _ap_from_pr(rec: np.ndarray, prec: np.ndarray) -> float:
     rec = np.concatenate([[0.0], rec, [1.0]])
     for i in range(len(prec) - 1, 0, -1):
         prec[i - 1] = max(prec[i - 1], prec[i])
-    ap = np.trapz(np.interp(rec_idx, rec, prec), rec_idx)
+    # NumPy 2.x exposes ``trapezoid`` while newer releases may remove the
+    # deprecated ``trapz`` alias. Keep compatibility with both old and new
+    # environments used by the edge-evaluation example.
+    integrate = getattr(np, "trapezoid", None)
+    if integrate is None:
+        integrate = getattr(np, "trapz")
+    ap = integrate(np.interp(rec_idx, rec, prec), rec_idx)
     return float(ap)
 
 
@@ -70,19 +76,22 @@ def _class_ap_at_iou(
     tp = np.zeros(nd, dtype=np.float32)
     fp = np.zeros(nd, dtype=np.float32)
     used = {iid: np.zeros(len(gts_by_img.get(iid, [])), dtype=bool) for iid in image_ids}
-    for rank in order:
-        iid, _, box = dets[rank]
+    # TP/FP must be accumulated in descending-confidence order. ``order``
+    # contains indices into the original detection list, while ``position`` is
+    # the rank used by the precision/recall cumulative sums below.
+    for position, det_index in enumerate(order):
+        iid, _, box = dets[det_index]
         gts = gts_by_img.get(iid)
         if gts is None or len(gts) == 0:
-            fp[rank] = 1
+            fp[position] = 1
             continue
         ious = _iou_matrix(box[None], gts)[0]
         best = int(ious.argmax())
         if ious[best] >= iou_thr and not used[iid][best]:
-            tp[rank] = 1
+            tp[position] = 1
             used[iid][best] = True
         else:
-            fp[rank] = 1
+            fp[position] = 1
     tp_cum = np.cumsum(tp)
     fp_cum = np.cumsum(fp)
     rec = tp_cum / ng
