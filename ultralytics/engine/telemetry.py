@@ -20,10 +20,16 @@ import torch
 
 from ultralytics.nn.modules.moe.diagnostics import routing_runtime_metrics
 from ultralytics.utils import LOGGER, RANK
+from ultralytics.utils.routing_telemetry import collect_routing_snapshot, routing_snapshot_scalars
 from ultralytics.utils.torch_utils import unwrap_model
 
 TELEMETRY_ENV = "YOLO_TRAIN_TELEMETRY"
 TELEMETRY_LOSS_STEPS_ENV = "YOLO_TRAIN_TELEMETRY_LOSS_STEPS"
+TELEMETRY_ROUTING_INTERVAL_ENV = "YOLO_TRAIN_TELEMETRY_ROUTING_INTERVAL"
+TELEMETRY_ROUTING_ENABLED_ENV = "YOLO_TRAIN_TELEMETRY_ROUTING_ENABLED"
+TELEMETRY_WARMUP_STEPS_ENV = "YOLO_TRAIN_TELEMETRY_WARMUP_STEPS"
+TELEMETRY_MAX_STEPS_ENV = "YOLO_TRAIN_TELEMETRY_MAX_STEPS"
+TELEMETRY_RAW_STEPS_ENV = "YOLO_TRAIN_TELEMETRY_RAW_STEPS"
 TELEMETRY_SCHEMA_VERSION = 1
 
 
@@ -203,18 +209,36 @@ def aggregate_rank_records(records: list[dict[str, Any]]) -> dict[str, Any]:
 class TrainingTelemetry:
     """Collect opt-in step timing, memory, routing, and DDP-consistency evidence."""
 
-    def __init__(self, enabled: bool = False, loss_steps: int = 20):
+    def __init__(
+        self,
+        enabled: bool = False,
+        loss_steps: int = 20,
+        routing_interval: int = 1,
+        routing_enabled: bool = True,
+        warmup_steps: int = 0,
+        max_steps: int = 0,
+        raw_steps: bool = False,
+    ):
         self.enabled = bool(enabled)
         self.loss_steps = max(int(loss_steps), 0)
+        self.routing_interval = max(int(routing_interval), 1)
+        self.routing_enabled = bool(routing_enabled)
+        self.warmup_steps = max(int(warmup_steps), 0)
+        self.max_steps = max(int(max_steps), 0)
+        self.raw_steps = bool(raw_steps)
         self._started = False
         self._step_started_at: float | None = None
         self._durations_seconds: list[float] = []
+        self._instrumented_durations_seconds: list[float] = []
         self._samples = 0
         self._losses: list[float] = []
         self._memory: dict[str, Any] = {}
         self._optimizer_state_bytes_max = 0
         self._optimizer_samples = 0
+        self._batches_seen = 0
+        self._snapshot_force_state: dict[torch.nn.Module, tuple[bool, Any]] = {}
         self._routing_observations = 0
+        self._routing_snapshot_bytes_max = 0
         self._routing_summary = {
             "routed_layers_max": 0,
             "collapsed_layers_max": 0,
@@ -225,13 +249,43 @@ class TrainingTelemetry:
         self._last_routing: dict[str, Any] = {}
 
     @classmethod
-    def from_environment(cls) -> "TrainingTelemetry":
+    def from_environment(cls) -> TrainingTelemetry:
         """Construct telemetry from the DDP-inherited environment contract."""
         try:
             loss_steps = int(os.getenv(TELEMETRY_LOSS_STEPS_ENV, "20"))
         except ValueError:
             loss_steps = 20
-        return cls(enabled=_env_flag(TELEMETRY_ENV), loss_steps=loss_steps)
+        try:
+            routing_interval = int(os.getenv(TELEMETRY_ROUTING_INTERVAL_ENV, "1"))
+        except ValueError:
+            routing_interval = 1
+        try:
+            warmup_steps = int(os.getenv(TELEMETRY_WARMUP_STEPS_ENV, "0"))
+        except ValueError:
+            warmup_steps = 0
+        try:
+            max_steps = int(os.getenv(TELEMETRY_MAX_STEPS_ENV, "0"))
+        except ValueError:
+            max_steps = 0
+        return cls(
+            enabled=_env_flag(TELEMETRY_ENV),
+            loss_steps=loss_steps,
+            routing_interval=routing_interval,
+            routing_enabled=_env_flag(TELEMETRY_ROUTING_ENABLED_ENV, True),
+            warmup_steps=warmup_steps,
+            max_steps=max_steps,
+            raw_steps=_env_flag(TELEMETRY_RAW_STEPS_ENV),
+        )
+
+    def _measurement_active(self) -> bool:
+        """Return whether the current zero-based batch belongs to the retained timing window."""
+        if self._batches_seen < self.warmup_steps:
+            return False
+        return not self.max_steps or self._batches_seen < self.warmup_steps + self.max_steps
+
+    def _routing_sample_active(self) -> bool:
+        """Return whether the current batch requests and collects a routing snapshot."""
+        return self.routing_enabled and self._batches_seen % self.routing_interval == 0
 
     def on_pretrain_routine_end(self, trainer) -> None:
         """Start the measurement window after model, optimizer, and loaders are initialized."""
@@ -244,19 +298,41 @@ class TrainingTelemetry:
     def on_train_batch_start(self, trainer) -> None:
         """Synchronize supported accelerators immediately before timing a train step."""
         if self._started:
+            if self._routing_sample_active():
+                self._force_snapshot_producers(unwrap_model(trainer.model))
             sync_device(trainer.device)
             self._step_started_at = time.perf_counter()
+
+    def _force_snapshot_producers(self, model: torch.nn.Module) -> None:
+        """Ask routed producers for a fresh snapshot only on telemetry sample steps."""
+        self._restore_snapshot_producers()
+        for module in model.modules():
+            if not hasattr(module, "last_routing_snapshot"):
+                continue
+            existed = hasattr(module, "_moe_force_snapshot")
+            previous = getattr(module, "_moe_force_snapshot", None)
+            self._snapshot_force_state[module] = (existed, previous)
+            module._moe_force_snapshot = True
+
+    def _restore_snapshot_producers(self) -> None:
+        """Restore producer force flags without disturbing another controller's state."""
+        for module, (existed, previous) in self._snapshot_force_state.items():
+            if existed:
+                module._moe_force_snapshot = previous
+            elif hasattr(module, "_moe_force_snapshot"):
+                delattr(module, "_moe_force_snapshot")
+        self._snapshot_force_state.clear()
 
     def on_train_batch_end(self, trainer) -> None:
         """Record one local-rank step after the optimizer update and callbacks complete."""
         if not self._started or self._step_started_at is None:
             return
         sync_device(trainer.device)
-        self._durations_seconds.append(time.perf_counter() - self._step_started_at)
-        self._step_started_at = None
+        model_duration = time.perf_counter() - self._step_started_at
+        measurement_active = self._measurement_active()
         batch = getattr(trainer, "batch", {})
         image = batch.get("img") if isinstance(batch, dict) else None
-        if isinstance(image, torch.Tensor) and image.ndim:
+        if measurement_active and isinstance(image, torch.Tensor) and image.ndim:
             self._samples += int(image.shape[0])
         if len(self._losses) < self.loss_steps:
             loss = _finite_loss(getattr(trainer, "loss_items", None))
@@ -278,29 +354,57 @@ class TrainingTelemetry:
                 int(self._memory.get("sampled_current_memory_bytes_max") or 0),
                 int(sample["sampled_current_memory_bytes"]),
             )
-        if len(self._durations_seconds) == 1 or len(self._durations_seconds) % 32 == 0:
+        if not self._durations_seconds or len(self._durations_seconds) % 32 == 0:
             optimizer = getattr(trainer, "optimizer", None)
             if optimizer is not None:
                 self._optimizer_samples += 1
                 self._optimizer_state_bytes_max = max(
                     self._optimizer_state_bytes_max, _tensor_storage_bytes(getattr(optimizer, "state", {}))
                 )
-        try:
-            routing = routing_runtime_metrics(unwrap_model(trainer.model))
-        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
-            self._last_routing = {"error": f"{type(exc).__name__}: {exc}"}
-        else:
-            self._routing_observations += 1
-            self._last_routing = routing
-            self._routing_summary["routed_layers_max"] = max(
-                self._routing_summary["routed_layers_max"], int(routing.get("routed_layers", 0))
-            )
-            self._routing_summary["collapsed_layers_max"] = max(
-                self._routing_summary["collapsed_layers_max"], int(routing.get("collapsed_layers", 0))
-            )
-            self._routing_summary["mean_gini_sum"] += float(routing.get("mean_gini", 0.0))
-            self._routing_summary["mean_dominant_share_sum"] += float(routing.get("mean_dominant_share", 0.0))
-            self._routing_summary["expert_calls_sum"] += int(routing.get("expert_calls", 0))
+        sampled_routing = self._routing_sample_active()
+        self._batches_seen += 1
+        if sampled_routing:
+            try:
+                model = unwrap_model(trainer.model)
+                routing = collect_routing_snapshot(model)
+                runtime = routing_runtime_metrics(model)
+                routing.update(
+                    collapsed_layers=int(runtime.get("collapsed_layers", 0)),
+                    mean_gini=float(runtime.get("mean_gini", 0.0)),
+                    mean_dominant_share=float(runtime.get("mean_dominant_share", 0.0)),
+                    expert_calls=int(runtime.get("expert_calls", 0)),
+                )
+            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                self._last_routing = {"error": f"{type(exc).__name__}: {exc}"}
+            else:
+                self._routing_observations += 1
+                self._last_routing = routing
+                self._routing_snapshot_bytes_max = max(
+                    self._routing_snapshot_bytes_max,
+                    len(json.dumps(routing, sort_keys=True, separators=(",", ":")).encode()),
+                )
+                self._routing_summary["routed_layers_max"] = max(
+                    self._routing_summary["routed_layers_max"], int(routing.get("routed_layers", 0))
+                )
+                self._routing_summary["collapsed_layers_max"] = max(
+                    self._routing_summary["collapsed_layers_max"], int(routing.get("collapsed_layers", 0))
+                )
+                self._routing_summary["mean_gini_sum"] += float(routing.get("mean_gini", 0.0))
+                self._routing_summary["mean_dominant_share_sum"] += float(routing.get("mean_dominant_share", 0.0))
+                self._routing_summary["expert_calls_sum"] += int(routing.get("expert_calls", 0))
+            finally:
+                self._restore_snapshot_producers()
+        sync_device(trainer.device)
+        if measurement_active:
+            self._durations_seconds.append(model_duration)
+            self._instrumented_durations_seconds.append(time.perf_counter() - self._step_started_at)
+        self._step_started_at = None
+
+    def tensorboard_scalars(self) -> dict[str, float]:
+        """Return the latest routing observation as stable logger scalar keys."""
+        if not self.enabled or not self._last_routing or "error" in self._last_routing:
+            return {}
+        return routing_snapshot_scalars(self._last_routing)
 
     def _record(self, trainer) -> dict[str, Any]:
         """Build a JSON-safe rank-local record with measurement semantics included."""
@@ -312,9 +416,10 @@ class TrainingTelemetry:
             )
         total_seconds = sum(self._durations_seconds)
         count = len(self._durations_seconds)
+        instrumented_total_seconds = sum(self._instrumented_durations_seconds)
         routing_count = self._routing_observations
         metadata = {
-            "rank": RANK if RANK >= 0 else 0,
+            "rank": max(RANK, 0),
             "world_size": max(int(getattr(trainer, "world_size", 1) or 1), 1),
             "requested_device": str(getattr(getattr(trainer, "args", None), "device", "")),
             "resolved_device": str(getattr(trainer, "device", "")),
@@ -336,6 +441,28 @@ class TrainingTelemetry:
                 "mean_milliseconds": total_seconds / count * 1000.0 if count else None,
                 "p50_milliseconds": (_percentile(self._durations_seconds, 0.50) or 0.0) * 1000.0 if count else None,
                 "p95_milliseconds": (_percentile(self._durations_seconds, 0.95) or 0.0) * 1000.0 if count else None,
+                "raw_milliseconds": [value * 1000.0 for value in self._durations_seconds] if self.raw_steps else None,
+            },
+            "instrumented_steps": {
+                "measurement": "train_batch_plus_telemetry_callback",
+                "warmup_steps": self.warmup_steps,
+                "max_steps": self.max_steps or None,
+                "count": count,
+                "samples": self._samples,
+                "total_seconds": instrumented_total_seconds,
+                "samples_per_second": self._samples / instrumented_total_seconds
+                if instrumented_total_seconds > 0
+                else None,
+                "mean_milliseconds": instrumented_total_seconds / count * 1000.0 if count else None,
+                "p50_milliseconds": (_percentile(self._instrumented_durations_seconds, 0.50) or 0.0) * 1000.0
+                if count
+                else None,
+                "p95_milliseconds": (_percentile(self._instrumented_durations_seconds, 0.95) or 0.0) * 1000.0
+                if count
+                else None,
+                "raw_milliseconds": [value * 1000.0 for value in self._instrumented_durations_seconds]
+                if self.raw_steps
+                else None,
             },
             "loss": {"first_steps": self._losses, "measurement": "sum_of_trainer_loss_items"},
             "memory": self._memory,
@@ -345,7 +472,11 @@ class TrainingTelemetry:
                 "sampled_max_tensor_storage_bytes": self._optimizer_state_bytes_max,
             },
             "routing": {
+                "enabled": self.routing_enabled,
                 "observations": routing_count,
+                "sampling_interval_steps": self.routing_interval,
+                "snapshot_bytes_max": self._routing_snapshot_bytes_max,
+                "batches_seen": self._batches_seen,
                 "routed_layers_max": self._routing_summary["routed_layers_max"],
                 "collapsed_layers_max": self._routing_summary["collapsed_layers_max"],
                 "mean_gini": self._routing_summary["mean_gini_sum"] / routing_count if routing_count else None,
@@ -362,6 +493,7 @@ class TrainingTelemetry:
 
     def on_teardown(self, trainer) -> None:
         """Write rank-local and rank-aggregated artifacts before DDP is destroyed."""
+        self._restore_snapshot_producers()
         if not self.enabled or not self._started:
             return
         record = self._record(trainer)
@@ -392,6 +524,11 @@ class TrainingTelemetry:
 __all__ = (
     "TELEMETRY_ENV",
     "TELEMETRY_LOSS_STEPS_ENV",
+    "TELEMETRY_MAX_STEPS_ENV",
+    "TELEMETRY_RAW_STEPS_ENV",
+    "TELEMETRY_ROUTING_ENABLED_ENV",
+    "TELEMETRY_ROUTING_INTERVAL_ENV",
+    "TELEMETRY_WARMUP_STEPS_ENV",
     "TrainingTelemetry",
     "aggregate_rank_records",
     "device_memory_sample",

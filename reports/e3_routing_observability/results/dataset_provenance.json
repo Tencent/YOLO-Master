@@ -1,0 +1,26 @@
+{
+  "schema_version": "e3.dataset_provenance.v1",
+  "name": "African Wildlife",
+  "configuration": "african-wildlife.yaml",
+  "documentation": "https://docs.ultralytics.com/datasets/detect/african-wildlife/",
+  "download": "https://github.com/ultralytics/assets/releases/download/v0.0.0/african-wildlife.zip",
+  "redistribution_license": "not_specified_by_source",
+  "redistribution_policy": "No source or annotated prediction images from this dataset are committed in the PR branch.",
+  "fingerprint": {
+    "sha256": "5ad22e83d41b55d9465b83e326d7a5f8f0d30745d591dc2ad198e8cbb758020e",
+    "splits": {
+      "train": {
+        "images": 1052,
+        "sha256": "2c3a3c95458147196c9f22228cfc2809f6ad83440889743af9b88e03ce8701c8"
+      },
+      "val": {
+        "images": 225,
+        "sha256": "f51b4a4e0d5a56823dbba327fcead693517d8381adbdbcf368dd10429f5b29a6"
+      },
+      "test": {
+        "images": 227,
+        "sha256": "ae5e3b53f8c9ca1f12a45522187e1020007aee002a116a8bfe25aec14b121b7b"
+      }
+    }
+  }
+}

@@ -1,0 +1,880 @@
+{
+  "schema_version": "e3.overhead_benchmark.v1",
+  "environment": {
+    "amp": false,
+    "batch": 2,
+    "data": "african-wildlife.yaml",
+    "device": "0",
+    "epochs": 1,
+    "imgsz": 640,
+    "measured_steps": 200,
+    "native_data": true,
+    "platform": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+    "python": "3.12.14",
+    "rounds": 5,
+    "routing_interval_steps": 100,
+    "seed": 0,
+    "tensorboard": true,
+    "train_images": 1052,
+    "warmup_steps": 50,
+    "workers": 4
+  },
+  "git": {
+    "branch": "feat/e3-routing-smoke",
+    "commit": "bad5b336db8453e82ac4bd8dec4b92332c9d7350",
+    "dirty": false
+  },
+  "passed": true,
+  "families": {
+    "latent": {
+      "mean_overhead_percent": 2.671405964859248,
+      "paired_bootstrap_95_ci_percent": [
+        -1.1950072491128925,
+        5.617557494726672
+      ],
+      "pairs": [
+        {
+          "baseline_mean_milliseconds": 361.45870720501534,
+          "e3_mean_milliseconds": 381.1258935700471,
+          "overhead_percent": 5.441060340504325,
+          "pair": 1
+        },
+        {
+          "baseline_mean_milliseconds": 381.94509504502093,
+          "e3_mean_milliseconds": 402.4675469000067,
+          "overhead_percent": 5.373141878564178,
+          "pair": 2
+        },
+        {
+          "baseline_mean_milliseconds": 363.2036559999324,
+          "e3_mean_milliseconds": 366.41981374499665,
+          "overhead_percent": 0.8854970735935721,
+          "pair": 3
+        },
+        {
+          "baseline_mean_milliseconds": 364.99326613493395,
+          "e3_mean_milliseconds": 386.5872257099636,
+          "overhead_percent": 5.916262457030265,
+          "pair": 4
+        },
+        {
+          "baseline_mean_milliseconds": 380.78862620998734,
+          "e3_mean_milliseconds": 364.57109784005297,
+          "overhead_percent": -4.2589319253961,
+          "pair": 5
+        }
+      ],
+      "passed": true,
+      "threshold_percent": 10.0
+    },
+    "moe": {
+      "mean_overhead_percent": -1.82143135537208,
+      "paired_bootstrap_95_ci_percent": [
+        -3.67196464503848,
+        0.16614220903980498
+      ],
+      "pairs": [
+        {
+          "baseline_mean_milliseconds": 348.77897623988247,
+          "e3_mean_milliseconds": 353.54326393497104,
+          "overhead_percent": 1.3659905039149485,
+          "pair": 1
+        },
+        {
+          "baseline_mean_milliseconds": 350.37891749505434,
+          "e3_mean_milliseconds": 334.1449828999248,
+          "overhead_percent": -4.633250970460769,
+          "pair": 2
+        },
+        {
+          "baseline_mean_milliseconds": 330.7058956349738,
+          "e3_mean_milliseconds": 326.1427297150294,
+          "overhead_percent": -1.3798259965044877,
+          "pair": 3
+        },
+        {
+          "baseline_mean_milliseconds": 347.8721696750381,
+          "e3_mean_milliseconds": 334.4873599399125,
+          "overhead_percent": -3.8476230356768433,
+          "pair": 4
+        },
+        {
+          "baseline_mean_milliseconds": 348.2721486800074,
+          "e3_mean_milliseconds": 346.1391653849205,
+          "overhead_percent": -0.6124472781332492,
+          "pair": 5
+        }
+      ],
+      "passed": true,
+      "threshold_percent": 10.0
+    },
+    "mot": {
+      "mean_overhead_percent": 0.07399515357925653,
+      "paired_bootstrap_95_ci_percent": [
+        -2.5608850582190925,
+        2.47595916730103
+      ],
+      "pairs": [
+        {
+          "baseline_mean_milliseconds": 261.7524033899281,
+          "e3_mean_milliseconds": 263.8777278798898,
+          "overhead_percent": 0.8119598759884751,
+          "pair": 1
+        },
+        {
+          "baseline_mean_milliseconds": 247.57221658000162,
+          "e3_mean_milliseconds": 258.0373660900477,
+          "overhead_percent": 4.227109832683648,
+          "pair": 2
+        },
+        {
+          "baseline_mean_milliseconds": 254.73684737998153,
+          "e3_mean_milliseconds": 257.5608490000195,
+          "overhead_percent": 1.1085956543324613,
+          "pair": 3
+        },
+        {
+          "baseline_mean_milliseconds": 260.34205076993203,
+          "e3_mean_milliseconds": 248.552087424996,
+          "overhead_percent": -4.528643494229443,
+          "pair": 4
+        },
+        {
+          "baseline_mean_milliseconds": 265.8981011749802,
+          "e3_mean_milliseconds": 262.57691130994317,
+          "overhead_percent": -1.2490461008788587,
+          "pair": 5
+        }
+      ],
+      "passed": true,
+      "threshold_percent": 10.0
+    }
+  },
+  "runs": [
+    {
+      "family": "latent",
+      "condition": "baseline",
+      "pair": 1,
+      "count": 200,
+      "mean_milliseconds": 361.45870720501534,
+      "median_milliseconds": 341.4237859997229,
+      "p95_milliseconds": 429.3962671996269,
+      "samples": 400,
+      "samples_per_second": 5.53313548721797,
+      "memory": {
+        "device_total_memory_bytes": 8585216000,
+        "is_true_peak": true,
+        "measurement": "cuda_max_memory_allocated",
+        "peak_device_memory_bytes": 4468985856,
+        "peak_device_memory_fraction": 0.5205443702290077,
+        "sampled_current_memory_bytes": null
+      },
+      "routing_observations": 0,
+      "routing_families": [],
+      "invalid_layers": null,
+      "unsupported_layers": null
+    },
+    {
+      "family": "latent",
+      "condition": "e3",
+      "pair": 1,
+      "count": 200,
+      "mean_milliseconds": 381.1258935700471,
+      "median_milliseconds": 365.4510070005017,
+      "p95_milliseconds": 473.54652930002874,
+      "samples": 400,
+      "samples_per_second": 5.247609867872754,
+      "memory": {
+        "device_total_memory_bytes": 8585216000,
+        "is_true_peak": true,
+        "measurement": "cuda_max_memory_allocated",
+        "peak_device_memory_bytes": 4468985856,
+        "peak_device_memory_fraction": 0.5205443702290077,
+        "sampled_current_memory_bytes": null
+      },
+      "routing_observations": 6,
+      "routing_families": [
+        "latent",
+        "moe"
+      ],
+      "invalid_layers": 0,
+      "unsupported_layers": 0
+    },
+    {
+      "family": "latent",
+      "condition": "e3",
+      "pair": 2,
+      "count": 200,
+      "mean_milliseconds": 402.4675469000067,
+      "median_milliseconds": 371.16556000000855,
+      "p95_milliseconds": 513.2213466003121,
+      "samples": 400,
+      "samples_per_second": 4.9693447717833035,
+      "memory": {
+        "device_total_memory_bytes": 8585216000,
+        "is_true_peak": true,
+        "measurement": "cuda_max_memory_allocated",
+        "peak_device_memory_bytes": 4468985856,
+        "peak_device_memory_fraction": 0.5205443702290077,
+        "sampled_current_memory_bytes": null
+      },
+      "routing_observations": 6,
+      "routing_families": [
+        "latent",
+        "moe"
+      ],
+      "invalid_layers": 0,
+      "unsupported_layers": 0
+    },
+    {
+      "family": "latent",
+      "condition": "baseline",
+      "pair": 2,
+      "count": 200,
+      "mean_milliseconds": 381.94509504502093,
+      "median_milliseconds": 354.871309000373,
+      "p95_milliseconds": 482.4981536494761,
+      "samples": 400,
+      "samples_per_second": 5.236354716806232,
+      "memory": {
+        "device_total_memory_bytes": 8585216000,
+        "is_true_peak": true,
+        "measurement": "cuda_max_memory_allocated",
+        "peak_device_memory_bytes": 4468985856,
+        "peak_device_memory_fraction": 0.5205443702290077,
+        "sampled_current_memory_bytes": null
+      },
+      "routing_observations": 0,
+      "routing_families": [],
+      "invalid_layers": null,
+      "unsupported_layers": null
+    },
+    {
+      "family": "latent",
+      "condition": "baseline",
+      "pair": 3,
+      "count": 200,
+      "mean_milliseconds": 363.2036559999324,
+      "median_milliseconds": 343.88777499862044,
+      "p95_milliseconds": 421.9091597007718,
+      "samples": 400,
+      "samples_per_second": 5.506552500122335,
+      "memory": {
+        "device_total_memory_bytes": 8585216000,
+        "is_true_peak": true,
+        "measurement": "cuda_max_memory_allocated",
+        "peak_device_memory_bytes": 4468985856,
+        "peak_device_memory_fraction": 0.5205443702290077,
+        "sampled_current_memory_bytes": null
+      },
+      "routing_observations": 0,
+      "routing_families": [],
+      "invalid_layers": null,
+      "unsupported_layers": null
+    },
+    {
+      "family": "latent",
+      "condition": "e3",
+      "pair": 3,
+      "count": 200,
+      "mean_milliseconds": 366.41981374499665,
+      "median_milliseconds": 345.9070574999714,
+      "p95_milliseconds": 434.80136389953253,
+      "samples": 400,
+      "samples_per_second": 5.458220120683388,
+      "memory": {
+        "device_total_memory_bytes": 8585216000,
+        "is_true_peak": true,
+        "measurement": "cuda_max_memory_allocated",
+        "peak_device_memory_bytes": 4468985856,
+        "peak_device_memory_fraction": 0.5205443702290077,
+        "sampled_current_memory_bytes": null
+      },
+      "routing_observations": 6,
+      "routing_families": [
+        "latent",
+        "moe"
+      ],
+      "invalid_layers": 0,
+      "unsupported_layers": 0
+    },
+    {
+      "family": "latent",
+      "condition": "e3",
+      "pair": 4,
+      "count": 200,
+      "mean_milliseconds": 386.5872257099636,
+      "median_milliseconds": 383.63900249987637,
+      "p95_milliseconds": 483.5922652508088,
+      "samples": 400,
+      "samples_per_second": 5.173476687769545,
+      "memory": {
+        "device_total_memory_bytes": 8585216000,
+        "is_true_peak": true,
+        "measurement": "cuda_max_memory_allocated",
+        "peak_device_memory_bytes": 4468985856,
+        "peak_device_memory_fraction": 0.5205443702290077,
+        "sampled_current_memory_bytes": null
+      },
+      "routing_observations": 6,
+      "routing_families": [
+        "latent",
+        "moe"
+      ],
+      "invalid_layers": 0,
+      "unsupported_layers": 0
+    },
+    {
+      "family": "latent",
+      "condition": "baseline",
+      "pair": 4,
+      "count": 200,
+      "mean_milliseconds": 364.99326613493395,
+      "median_milliseconds": 341.8304574997819,
+      "p95_milliseconds": 428.2364827005039,
+      "samples": 400,
+      "samples_per_second": 5.479553146771267,
+      "memory": {
+        "device_total_memory_bytes": 8585216000,
+        "is_true_peak": true,
+        "measurement": "cuda_max_memory_allocated",
+        "peak_device_memory_bytes": 4468985856,
+        "peak_device_memory_fraction": 0.5205443702290077,
+        "sampled_current_memory_bytes": null
+      },
+      "routing_observations": 0,
+      "routing_families": [],
+      "invalid_layers": null,
+      "unsupported_layers": null
+    },
+    {
+      "family": "latent",
+      "condition": "baseline",
+      "pair": 5,
+      "count": 200,
+      "mean_milliseconds": 380.78862620998734,
+      "median_milliseconds": 345.466428500913,
+      "p95_milliseconds": 506.51775355063353,
+      "samples": 400,
+      "samples_per_second": 5.25225771553663,
+      "memory": {
+        "device_total_memory_bytes": 8585216000,
+        "is_true_peak": true,
+        "measurement": "cuda_max_memory_allocated",
+        "peak_device_memory_bytes": 4468985856,
+        "peak_device_memory_fraction": 0.5205443702290077,
+        "sampled_current_memory_bytes": null
+      },
+      "routing_observations": 0,
+      "routing_families": [],
+      "invalid_layers": null,
+      "unsupported_layers": null
+    },
+    {
+      "family": "latent",
+      "condition": "e3",
+      "pair": 5,
+      "count": 200,
+      "mean_milliseconds": 364.57109784005297,
+      "median_milliseconds": 341.9264670010307,
+      "p95_milliseconds": 440.10859630034247,
+      "samples": 400,
+      "samples_per_second": 5.485898393617185,
+      "memory": {
+        "device_total_memory_bytes": 8585216000,
+        "is_true_peak": true,
+        "measurement": "cuda_max_memory_allocated",
+        "peak_device_memory_bytes": 4468985856,
+        "peak_device_memory_fraction": 0.5205443702290077,
+        "sampled_current_memory_bytes": null
+      },
+      "routing_observations": 6,
+      "routing_families": [
+        "latent",
+        "moe"
+      ],
+      "invalid_layers": 0,
+      "unsupported_layers": 0
+    },
+    {
+      "family": "moe",
+      "condition": "baseline",
+      "pair": 1,
+      "count": 200,
+      "mean_milliseconds": 348.77897623988247,
+      "median_milliseconds": 341.0652900001878,
+      "p95_milliseconds": 429.871127298702,
+      "samples": 400,
+      "samples_per_second": 5.734290585865027,
+      "memory": {
+        "device_total_memory_bytes": 8585216000,
+        "is_true_peak": true,
+        "measurement": "cuda_max_memory_allocated",
+        "peak_device_memory_bytes": 4451097088,
+        "peak_device_memory_fraction": 0.5184606989503817,
+        "sampled_current_memory_bytes": null
+      },
+      "routing_observations": 0,
+      "routing_families": [],
+      "invalid_layers": null,
+      "unsupported_layers": null
+    },
+    {
+      "family": "moe",
+      "condition": "e3",
+      "pair": 1,
+      "count": 200,
+      "mean_milliseconds": 353.54326393497104,
+      "median_milliseconds": 349.1335489998164,
+      "p95_milliseconds": 438.09585605013126,
+      "samples": 400,
+      "samples_per_second": 5.6570162806662045,
+      "memory": {
+        "device_total_memory_bytes": 8585216000,
+        "is_true_peak": true,
+        "measurement": "cuda_max_memory_allocated",
+        "peak_device_memory_bytes": 4451106304,
+        "peak_device_memory_fraction": 0.5184617724236641,
+        "sampled_current_memory_bytes": null
+      },
+      "routing_observations": 6,
+      "routing_families": [
+        "moe"
+      ],
+      "invalid_layers": 0,
+      "unsupported_layers": 0
+    },
+    {
+      "family": "moe",
+      "condition": "e3",
+      "pair": 2,
+      "count": 200,
+      "mean_milliseconds": 334.1449828999248,
+      "median_milliseconds": 313.66154349962017,
+      "p95_milliseconds": 411.51235110055484,
+      "samples": 400,
+      "samples_per_second": 5.9854257952422785,
+      "memory": {
+        "device_total_memory_bytes": 8585216000,
+        "is_true_peak": true,
+        "measurement": "cuda_max_memory_allocated",
+        "peak_device_memory_bytes": 4451106304,
+        "peak_device_memory_fraction": 0.5184617724236641,
+        "sampled_current_memory_bytes": null
+      },
+      "routing_observations": 6,
+      "routing_families": [
+        "moe"
+      ],
+      "invalid_layers": 0,
+      "unsupported_layers": 0
+    },
+    {
+      "family": "moe",
+      "condition": "baseline",
+      "pair": 2,
+      "count": 200,
+      "mean_milliseconds": 350.37891749505434,
+      "median_milliseconds": 328.4852775004765,
+      "p95_milliseconds": 475.6007187996147,
+      "samples": 400,
+      "samples_per_second": 5.7081059964980065,
+      "memory": {
+        "device_total_memory_bytes": 8585216000,
+        "is_true_peak": true,
+        "measurement": "cuda_max_memory_allocated",
+        "peak_device_memory_bytes": 4451097088,
+        "peak_device_memory_fraction": 0.5184606989503817,
+        "sampled_current_memory_bytes": null
+      },
+      "routing_observations": 0,
+      "routing_families": [],
+      "invalid_layers": null,
+      "unsupported_layers": null
+    },
+    {
+      "family": "moe",
+      "condition": "baseline",
+      "pair": 3,
+      "count": 200,
+      "mean_milliseconds": 330.7058956349738,
+      "median_milliseconds": 312.1321649987294,
+      "p95_milliseconds": 388.60367915149254,
+      "samples": 400,
+      "samples_per_second": 6.0476696254836595,
+      "memory": {
+        "device_total_memory_bytes": 8585216000,
+        "is_true_peak": true,
+        "measurement": "cuda_max_memory_allocated",
+        "peak_device_memory_bytes": 4451097088,
+        "peak_device_memory_fraction": 0.5184606989503817,
+        "sampled_current_memory_bytes": null
+      },
+      "routing_observations": 0,
+      "routing_families": [],
+      "invalid_layers": null,
+      "unsupported_layers": null
+    },
+    {
+      "family": "moe",
+      "condition": "e3",
+      "pair": 3,
+      "count": 200,
+      "mean_milliseconds": 326.1427297150294,
+      "median_milliseconds": 312.77522450000106,
+      "p95_milliseconds": 374.7908428004848,
+      "samples": 400,
+      "samples_per_second": 6.132284480931157,
+      "memory": {
+        "device_total_memory_bytes": 8585216000,
+        "is_true_peak": true,
+        "measurement": "cuda_max_memory_allocated",
+        "peak_device_memory_bytes": 4451106304,
+        "peak_device_memory_fraction": 0.5184617724236641,
+        "sampled_current_memory_bytes": null
+      },
+      "routing_observations": 6,
+      "routing_families": [
+        "moe"
+      ],
+      "invalid_layers": 0,
+      "unsupported_layers": 0
+    },
+    {
+      "family": "moe",
+      "condition": "e3",
+      "pair": 4,
+      "count": 200,
+      "mean_milliseconds": 334.4873599399125,
+      "median_milliseconds": 314.31187049838627,
+      "p95_milliseconds": 404.11274475118256,
+      "samples": 400,
+      "samples_per_second": 5.979299188941792,
+      "memory": {
+        "device_total_memory_bytes": 8585216000,
+        "is_true_peak": true,
+        "measurement": "cuda_max_memory_allocated",
+        "peak_device_memory_bytes": 4451106304,
+        "peak_device_memory_fraction": 0.5184617724236641,
+        "sampled_current_memory_bytes": null
+      },
+      "routing_observations": 6,
+      "routing_families": [
+        "moe"
+      ],
+      "invalid_layers": 0,
+      "unsupported_layers": 0
+    },
+    {
+      "family": "moe",
+      "condition": "baseline",
+      "pair": 4,
+      "count": 200,
+      "mean_milliseconds": 347.8721696750381,
+      "median_milliseconds": 322.60895400031586,
+      "p95_milliseconds": 444.10198089908585,
+      "samples": 400,
+      "samples_per_second": 5.749238295976029,
+      "memory": {
+        "device_total_memory_bytes": 8585216000,
+        "is_true_peak": true,
+        "measurement": "cuda_max_memory_allocated",
+        "peak_device_memory_bytes": 4451097088,
+        "peak_device_memory_fraction": 0.5184606989503817,
+        "sampled_current_memory_bytes": null
+      },
+      "routing_observations": 0,
+      "routing_families": [],
+      "invalid_layers": null,
+      "unsupported_layers": null
+    },
+    {
+      "family": "moe",
+      "condition": "baseline",
+      "pair": 5,
+      "count": 200,
+      "mean_milliseconds": 348.2721486800074,
+      "median_milliseconds": 345.4538980004145,
+      "p95_milliseconds": 428.39553795029127,
+      "samples": 400,
+      "samples_per_second": 5.742635486587821,
+      "memory": {
+        "device_total_memory_bytes": 8585216000,
+        "is_true_peak": true,
+        "measurement": "cuda_max_memory_allocated",
+        "peak_device_memory_bytes": 4451097088,
+        "peak_device_memory_fraction": 0.5184606989503817,
+        "sampled_current_memory_bytes": null
+      },
+      "routing_observations": 0,
+      "routing_families": [],
+      "invalid_layers": null,
+      "unsupported_layers": null
+    },
+    {
+      "family": "moe",
+      "condition": "e3",
+      "pair": 5,
+      "count": 200,
+      "mean_milliseconds": 346.1391653849205,
+      "median_milliseconds": 323.3889149996685,
+      "p95_milliseconds": 441.68200140047674,
+      "samples": 400,
+      "samples_per_second": 5.778022830140936,
+      "memory": {
+        "device_total_memory_bytes": 8585216000,
+        "is_true_peak": true,
+        "measurement": "cuda_max_memory_allocated",
+        "peak_device_memory_bytes": 4451106304,
+        "peak_device_memory_fraction": 0.5184617724236641,
+        "sampled_current_memory_bytes": null
+      },
+      "routing_observations": 6,
+      "routing_families": [
+        "moe"
+      ],
+      "invalid_layers": 0,
+      "unsupported_layers": 0
+    },
+    {
+      "family": "mot",
+      "condition": "baseline",
+      "pair": 1,
+      "count": 200,
+      "mean_milliseconds": 261.7524033899281,
+      "median_milliseconds": 251.81192349919002,
+      "p95_milliseconds": 329.75026269996306,
+      "samples": 400,
+      "samples_per_second": 7.640808543104891,
+      "memory": {
+        "device_total_memory_bytes": 8585216000,
+        "is_true_peak": true,
+        "measurement": "cuda_max_memory_allocated",
+        "peak_device_memory_bytes": 5925953024,
+        "peak_device_memory_fraction": 0.6902508945610687,
+        "sampled_current_memory_bytes": null
+      },
+      "routing_observations": 0,
+      "routing_families": [],
+      "invalid_layers": null,
+      "unsupported_layers": null
+    },
+    {
+      "family": "mot",
+      "condition": "e3",
+      "pair": 1,
+      "count": 200,
+      "mean_milliseconds": 263.8777278798898,
+      "median_milliseconds": 260.76322799872287,
+      "p95_milliseconds": 328.7246070503897,
+      "samples": 400,
+      "samples_per_second": 7.579267928630746,
+      "memory": {
+        "device_total_memory_bytes": 8585216000,
+        "is_true_peak": true,
+        "measurement": "cuda_max_memory_allocated",
+        "peak_device_memory_bytes": 5925953024,
+        "peak_device_memory_fraction": 0.6902508945610687,
+        "sampled_current_memory_bytes": null
+      },
+      "routing_observations": 6,
+      "routing_families": [
+        "mot"
+      ],
+      "invalid_layers": 0,
+      "unsupported_layers": 0
+    },
+    {
+      "family": "mot",
+      "condition": "e3",
+      "pair": 2,
+      "count": 200,
+      "mean_milliseconds": 258.0373660900477,
+      "median_milliseconds": 250.98774200068874,
+      "p95_milliseconds": 300.7137403000342,
+      "samples": 400,
+      "samples_per_second": 7.750815435397278,
+      "memory": {
+        "device_total_memory_bytes": 8585216000,
+        "is_true_peak": true,
+        "measurement": "cuda_max_memory_allocated",
+        "peak_device_memory_bytes": 5936105472,
+        "peak_device_memory_fraction": 0.6914334446564886,
+        "sampled_current_memory_bytes": null
+      },
+      "routing_observations": 6,
+      "routing_families": [
+        "mot"
+      ],
+      "invalid_layers": 0,
+      "unsupported_layers": 0
+    },
+    {
+      "family": "mot",
+      "condition": "baseline",
+      "pair": 2,
+      "count": 200,
+      "mean_milliseconds": 247.57221658000162,
+      "median_milliseconds": 235.77485050009273,
+      "p95_milliseconds": 283.7496241507324,
+      "samples": 400,
+      "samples_per_second": 8.078450916780119,
+      "memory": {
+        "device_total_memory_bytes": 8585216000,
+        "is_true_peak": true,
+        "measurement": "cuda_max_memory_allocated",
+        "peak_device_memory_bytes": 5925953024,
+        "peak_device_memory_fraction": 0.6902508945610687,
+        "sampled_current_memory_bytes": null
+      },
+      "routing_observations": 0,
+      "routing_families": [],
+      "invalid_layers": null,
+      "unsupported_layers": null
+    },
+    {
+      "family": "mot",
+      "condition": "baseline",
+      "pair": 3,
+      "count": 200,
+      "mean_milliseconds": 254.73684737998153,
+      "median_milliseconds": 241.56023549949168,
+      "p95_milliseconds": 293.21446570111215,
+      "samples": 400,
+      "samples_per_second": 7.851239506849489,
+      "memory": {
+        "device_total_memory_bytes": 8585216000,
+        "is_true_peak": true,
+        "measurement": "cuda_max_memory_allocated",
+        "peak_device_memory_bytes": 5925953024,
+        "peak_device_memory_fraction": 0.6902508945610687,
+        "sampled_current_memory_bytes": null
+      },
+      "routing_observations": 0,
+      "routing_families": [],
+      "invalid_layers": null,
+      "unsupported_layers": null
+    },
+    {
+      "family": "mot",
+      "condition": "e3",
+      "pair": 3,
+      "count": 200,
+      "mean_milliseconds": 257.5608490000195,
+      "median_milliseconds": 241.23532399971737,
+      "p95_milliseconds": 329.25477429962484,
+      "samples": 400,
+      "samples_per_second": 7.765155332283628,
+      "memory": {
+        "device_total_memory_bytes": 8585216000,
+        "is_true_peak": true,
+        "measurement": "cuda_max_memory_allocated",
+        "peak_device_memory_bytes": 5925953024,
+        "peak_device_memory_fraction": 0.6902508945610687,
+        "sampled_current_memory_bytes": null
+      },
+      "routing_observations": 6,
+      "routing_families": [
+        "mot"
+      ],
+      "invalid_layers": 0,
+      "unsupported_layers": 0
+    },
+    {
+      "family": "mot",
+      "condition": "e3",
+      "pair": 4,
+      "count": 200,
+      "mean_milliseconds": 248.552087424996,
+      "median_milliseconds": 236.7349269989063,
+      "p95_milliseconds": 284.51760434909374,
+      "samples": 400,
+      "samples_per_second": 8.046603111323808,
+      "memory": {
+        "device_total_memory_bytes": 8585216000,
+        "is_true_peak": true,
+        "measurement": "cuda_max_memory_allocated",
+        "peak_device_memory_bytes": 5925953024,
+        "peak_device_memory_fraction": 0.6902508945610687,
+        "sampled_current_memory_bytes": null
+      },
+      "routing_observations": 6,
+      "routing_families": [
+        "mot"
+      ],
+      "invalid_layers": 0,
+      "unsupported_layers": 0
+    },
+    {
+      "family": "mot",
+      "condition": "baseline",
+      "pair": 4,
+      "count": 200,
+      "mean_milliseconds": 260.34205076993203,
+      "median_milliseconds": 249.34007699994254,
+      "p95_milliseconds": 313.27360119976214,
+      "samples": 400,
+      "samples_per_second": 7.682201143016379,
+      "memory": {
+        "device_total_memory_bytes": 8585216000,
+        "is_true_peak": true,
+        "measurement": "cuda_max_memory_allocated",
+        "peak_device_memory_bytes": 5925953024,
+        "peak_device_memory_fraction": 0.6902508945610687,
+        "sampled_current_memory_bytes": null
+      },
+      "routing_observations": 0,
+      "routing_families": [],
+      "invalid_layers": null,
+      "unsupported_layers": null
+    },
+    {
+      "family": "mot",
+      "condition": "baseline",
+      "pair": 5,
+      "count": 200,
+      "mean_milliseconds": 265.8981011749802,
+      "median_milliseconds": 254.02329200005624,
+      "p95_milliseconds": 343.5682267999254,
+      "samples": 400,
+      "samples_per_second": 7.5216783841711425,
+      "memory": {
+        "device_total_memory_bytes": 8585216000,
+        "is_true_peak": true,
+        "measurement": "cuda_max_memory_allocated",
+        "peak_device_memory_bytes": 5925953024,
+        "peak_device_memory_fraction": 0.6902508945610687,
+        "sampled_current_memory_bytes": null
+      },
+      "routing_observations": 0,
+      "routing_families": [],
+      "invalid_layers": null,
+      "unsupported_layers": null
+    },
+    {
+      "family": "mot",
+      "condition": "e3",
+      "pair": 5,
+      "count": 200,
+      "mean_milliseconds": 262.57691130994317,
+      "median_milliseconds": 259.9856910001108,
+      "p95_milliseconds": 311.4764105004724,
+      "samples": 400,
+      "samples_per_second": 7.616815926512365,
+      "memory": {
+        "device_total_memory_bytes": 8585216000,
+        "is_true_peak": true,
+        "measurement": "cuda_max_memory_allocated",
+        "peak_device_memory_bytes": 5925953024,
+        "peak_device_memory_fraction": 0.6902508945610687,
+        "sampled_current_memory_bytes": null
+      },
+      "routing_observations": 6,
+      "routing_families": [
+        "mot"
+      ],
+      "invalid_layers": 0,
+      "unsupported_layers": 0
+    }
+  ]
+}

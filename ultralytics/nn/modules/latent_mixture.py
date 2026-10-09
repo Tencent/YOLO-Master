@@ -7,18 +7,21 @@ from dataclasses import dataclass
 from typing import Any, Sequence
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 
 from ultralytics.nn.modules._numeric import all_reduce_mean, disabled_autocast, should_reduce_ddp
 from ultralytics.nn.modules.routing_protocol import (
     export_capabilities as _export_routing_capabilities,
+)
+from ultralytics.nn.modules.routing_protocol import (
     graph_connected_finite_zero,
-    publish_aux_loss as _publish_aux_loss,
     routing_finite_diagnostics,
 )
+from ultralytics.nn.modules.routing_protocol import (
+    publish_aux_loss as _publish_aux_loss,
+)
 from ultralytics.utils.ops import make_divisible
-
 
 _ROUTER_LOGIT_LIMIT = 30.0
 
@@ -31,7 +34,7 @@ class LatentRoutingContext:
     probs: torch.Tensor
 
 
-def _positive_int(value: int | float, name: str) -> int:
+def _positive_int(value: float, name: str) -> int:
     value = int(value)
     if value <= 0:
         raise ValueError(f"{name} must be positive, got {value}")
@@ -98,9 +101,12 @@ def _validate_inputs(
             raise ValueError(f"input {i} has invalid spatial size {tuple(x.shape[2:])}")
         if require_same_spatial and tuple(x.shape[2:]) != (height, width):
             raise ValueError(f"input {i} spatial size {tuple(x.shape[2:])} does not match input 0 {(height, width)}")
-        if not torch.jit.is_tracing() and not torch.onnx.is_in_onnx_export():
-            if not bool(torch.isfinite(x.detach()).all().item()):
-                raise FloatingPointError(f"input {i} contains non-finite values")
+        if (
+            not torch.jit.is_tracing()
+            and not torch.onnx.is_in_onnx_export()
+            and not bool(torch.isfinite(x.detach()).all().item())
+        ):
+            raise FloatingPointError(f"input {i} contains non-finite values")
         checked.append(x)
     return checked
 
@@ -114,7 +120,7 @@ class DenseChannelExpert(nn.Module):
         expert_ratio = float(expert_ratio)
         if not 0.0 < expert_ratio <= 1.0:
             raise ValueError(f"expert_ratio must be in (0, 1], got {expert_ratio}")
-        hidden = make_divisible(max(8, int(round(channels * expert_ratio))), 8)
+        hidden = make_divisible(max(8, round(channels * expert_ratio)), 8)
         self.net = nn.Sequential(
             nn.Conv2d(channels, hidden, 1, bias=False),
             nn.GroupNorm(1, hidden),
@@ -211,7 +217,7 @@ class LatentRouter(nn.Module):
         for buffer in self.buffers(recurse=True):
             buffer.data = buffer.data.float()
 
-    def _apply(self, fn):  # noqa: D401
+    def _apply(self, fn):
         """Keep router math in FP32 after device/dtype transforms."""
         super()._apply(fn)
         self._cast_fp32()
@@ -256,6 +262,16 @@ class _LatentAuxMixin:
         self._last_routing_summary: torch.Tensor | None = None
         self.last_routing_snapshot: dict[str, Any] = {}
         self.last_routing_diagnostics: dict[str, Any] = {}
+
+    def __deepcopy__(self, memo):
+        """Copy persistent module state without retaining live routing autograd tensors."""
+        from ultralytics.nn.modules.utils import robust_deepcopy
+
+        copied = robust_deepcopy(self, memo)
+        copied._last_routing_logits = None
+        copied._last_routing_probs = None
+        copied._last_routing_summary = None
+        return copied
 
     @property
     def aux_loss(self) -> torch.Tensor:
@@ -550,7 +566,7 @@ class LatentMixture(_LatentAuxMixin, nn.Module):
         """Restore and validate non-parameter routing configuration."""
 
         if not isinstance(state, dict):
-            raise ValueError("LatentMixture extra state must be a dictionary")
+            raise TypeError("LatentMixture extra state must be a dictionary")
         if int(state.get("schema_version", 0)) != 1:
             raise ValueError("Unsupported LatentMixture extra-state schema")
         mode = str(state.get("value_fusion_mode", self.value_fusion_mode))

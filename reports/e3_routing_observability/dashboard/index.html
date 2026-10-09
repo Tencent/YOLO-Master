@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light" />
+    <meta name="description" content="YOLO-Master E3 路由观测：查看专家负载、路由均衡度、空间路由与训练开销。" />
+    <title>E3 路由观测 · YOLO-Master</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#workspace">跳到工作区</a>
+    <header class="app-header">
+      <div class="product-lockup">
+        <span class="product-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <div><strong>E3 路由观测</strong><small>YOLO-Master</small></div>
+      </div>
+      <div class="header-actions">
+        <span class="connection"><i></i><span id="connection-text">正在连接本地数据服务</span></span>
+        <button class="icon-button" id="refresh-button" type="button" aria-label="刷新运行目录" title="刷新运行目录"><span aria-hidden="true">↻</span></button>
+      </div>
+    </header>
+
+    <div class="app-shell">
+      <aside class="run-sidebar" aria-label="运行工作区">
+        <div class="sidebar-heading"><strong>运行记录</strong><b id="run-count">0</b></div>
+        <label class="search-field"><span aria-hidden="true">⌕</span><input id="run-search" type="search" placeholder="搜索名称、路径、设备" autocomplete="off" /></label>
+        <div class="status-filters" role="group" aria-label="运行状态筛选">
+          <button class="active" type="button" data-status="all">全部</button>
+          <button type="button" data-status="healthy">正常</button>
+          <button type="button" data-status="warning">关注</button>
+          <button type="button" data-status="empty">无路由</button>
+        </div>
+        <div class="run-list" id="run-list" aria-live="polite"></div>
+      </aside>
+
+      <main class="workspace" id="workspace">
+        <div class="workspace-empty" id="workspace-empty"><span class="empty-symbol" aria-hidden="true">◎</span><h1>选择一条运行记录</h1><p>查看这次运行的路由负载、层级状态和训练开销。</p></div>
+
+        <div class="workspace-content" id="workspace-content" hidden>
+          <section class="run-header">
+            <div class="run-title">
+              <div class="breadcrumb"><span>当前运行</span><i>·</i><span id="run-path">—</span></div>
+              <div class="title-line"><h1 id="run-title">—</h1><span class="health-badge" id="run-status">—</span></div>
+              <div class="run-meta" id="run-meta"></div>
+            </div>
+            <div class="run-actions"><button class="secondary-button" id="copy-path" type="button">复制相对路径</button></div>
+          </section>
+
+          <nav class="view-tabs" aria-label="诊断页面">
+            <button class="active" type="button" data-view="overview">运行概览</button>
+            <button type="button" data-view="matrix">专家负载</button>
+            <button type="button" data-view="balance">均衡分析</button>
+            <button type="button" data-view="spatial">空间路由</button>
+            <button type="button" data-view="layers">层级负载 <b id="layer-tab-count">0</b></button>
+            <button type="button" data-view="benchmark">训练开销</button>
+            <button type="button" data-view="evidence">原始数据</button>
+          </nav>
+
+          <section class="view active" id="view-overview">
+            <div class="metric-row" id="metric-row"></div>
+            <div class="overview-grid">
+              <article class="panel family-panel">
+                <div class="panel-heading"><div><h2>路由族</h2><p>本次运行实际采集到的模块</p></div></div>
+                <div id="family-overview"></div>
+              </article>
+              <article class="panel entropy-panel">
+                <div class="panel-heading"><div><h2>负载最集中的层</h2><p>均衡度越接近 1，专家使用越平均</p></div><button class="text-button" type="button" data-open-view="layers">查看全部</button></div>
+                <div id="entropy-overview"></div>
+              </article>
+            </div>
+            <div class="overview-details-grid" id="overview-details-grid">
+              <article class="panel" id="training-summary-panel">
+                <div class="panel-heading"><div><h2>训练采集验证</h2><p>确认训练过程中确实产生了路由数据和日志</p></div></div>
+                <div class="training-summary" id="training-summary"></div>
+              </article>
+              <article class="panel" id="performance-summary-panel">
+                <div class="panel-heading"><div><h2>性能门结果</h2><p>开启路由采集带来的平均训练开销</p></div><button class="text-button" type="button" data-open-view="benchmark">查看详情</button></div>
+                <div class="performance-summary" id="performance-summary"></div>
+              </article>
+            </div>
+            <article class="panel finding-panel" id="finding-panel" hidden>
+              <div class="panel-heading"><div><h2>需要处理</h2></div></div>
+              <div class="finding-list" id="finding-list"></div>
+            </article>
+          </section>
+
+          <section class="view" id="view-matrix" hidden>
+            <div class="conditional-empty" id="matrix-empty" hidden><span aria-hidden="true">◇</span><h2>当前没有专家负载数据</h2><p>请选择包含路由快照的运行记录。</p></div>
+            <article class="panel matrix-panel" id="matrix-content">
+              <div class="panel-heading"><div><h2>跨层专家负载偏差</h2><p>相对该层均匀份额：橙色偏低，蓝色偏高；悬停可看实际负载</p></div><div class="matrix-legend"><span>偏低</span><i></i><span>均匀</span><i></i><span>偏高</span></div></div>
+              <div class="load-matrix-scroll"><div class="load-matrix" id="load-matrix"></div></div>
+            </article>
+          </section>
+
+          <section class="view" id="view-balance" hidden>
+            <div class="conditional-empty" id="balance-empty" hidden><span aria-hidden="true">◇</span><h2>当前没有均衡度数据</h2><p>请选择包含路由快照的运行记录。</p></div>
+            <article class="panel balance-panel" id="balance-content">
+              <div class="panel-heading"><div><h2>路由均衡二维分布</h2><p>横轴按对数尺度展开熵缺口，纵轴比较相对峰谷差；点击圆点查看层详情</p></div></div>
+              <div class="balance-chart" id="balance-chart"></div>
+            </article>
+          </section>
+
+          <section class="view" id="view-spatial" hidden>
+            <div class="conditional-empty" id="spatial-empty" hidden><span aria-hidden="true">◇</span><h2>当前没有空间路由图</h2><p>请选择带有空间叠图的可视化运行记录。</p></div>
+            <article class="panel visual-artifacts-panel" id="visual-artifacts-panel">
+              <div class="panel-heading"><div><h2>空间路由证据</h2><p>每个空间路由族只展示一张精选复合图：原图、置信度、Top-1 分配和逐专家响应</p></div></div>
+              <div class="visual-explorer" id="visual-gallery"></div>
+            </article>
+          </section>
+
+          <section class="view" id="view-layers" hidden>
+            <div class="layer-toolbar">
+              <label>路由族<select id="family-filter"><option value="all">全部</option></select></label>
+              <label>健康状态<select id="layer-status-filter"><option value="all">全部</option><option value="healthy">正常</option><option value="warning">关注</option></select></label>
+              <label class="layer-search">查找层<input id="layer-search" type="search" placeholder="层名或模块类型" /></label>
+            </div>
+            <div class="layer-layout">
+              <article class="panel table-panel">
+                <div class="table-scroll">
+                  <table>
+                    <thead><tr><th>路由层</th><th>路由族</th><th>专家数</th><th title="1 表示最均衡，越低表示越集中">均衡度</th><th title="使用最多与最少专家之间的差值">最大负载差</th><th>辅助损失</th><th>状态</th></tr></thead>
+                    <tbody id="layer-table"></tbody>
+                  </table>
+                </div>
+                <div class="table-empty" id="layer-table-empty" hidden>没有符合当前筛选条件的路由层</div>
+              </article>
+              <aside class="panel inspector" id="layer-inspector"><div class="inspector-empty">从表格选择一个路由层</div></aside>
+            </div>
+          </section>
+
+          <section class="view" id="view-benchmark" hidden>
+            <div class="conditional-empty" id="benchmark-empty" hidden><span aria-hidden="true">◇</span><h2>这条记录没有开销对照</h2><p id="benchmark-empty-copy">仍可查看路由数据。完成配对测试后，结果会显示在这里。</p><button class="secondary-button" id="benchmark-locate" type="button" hidden>打开性能测试记录</button></div>
+            <div id="benchmark-content">
+              <div class="benchmark-toolbar"><div id="benchmark-families"></div><span>正值表示开启采集后更慢；红线是验收上限</span></div>
+              <div class="benchmark-grid">
+                <article class="panel benchmark-chart-panel"><div class="panel-heading"><div><h2 id="benchmark-title">5 轮配对结果</h2><p>每轮均比较相同条件下关闭和开启采集</p></div></div><div class="pair-chart" id="pair-chart"></div></article>
+                <aside class="panel benchmark-summary" id="benchmark-summary"></aside>
+              </div>
+            </div>
+          </section>
+
+          <section class="view" id="view-evidence" hidden>
+            <article class="panel provenance-panel"><div class="panel-heading"><div><h2>运行信息</h2><p>复现实验所需的配置、环境与版本</p></div></div><dl id="provenance-list"></dl><details class="limitations" id="limitations"><summary>查看数据适用边界</summary><ul id="limitations-list"></ul></details></article>
+            <article class="panel evidence-panel"><div class="panel-heading"><div><h2>源文件</h2><p>打开未经页面加工的 JSON 数据</p></div><small>只读</small></div><div class="evidence-list" id="evidence-list"></div></article>
+          </section>
+        </div>
+      </main>
+    </div>
+
+    <div class="toast" id="toast" role="status" hidden></div>
+    <div class="fatal-state" id="fatal-state" hidden><strong>无法连接路由数据服务</strong><p id="fatal-message">请确认本地服务仍在运行。</p><button type="button" id="retry-button">重新连接</button></div>
+    <script src="/app.js" defer></script>
+  </body>
+</html>

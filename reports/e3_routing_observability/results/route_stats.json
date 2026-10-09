@@ -1,0 +1,632 @@
+{
+  "schema_version": "e3.routing_snapshot.v1",
+  "scope": "Rhino-Bird 2026-08-24 admission smoke",
+  "dataset": "coco8.yaml",
+  "sample": {
+    "path": "images/val/000000000036.jpg",
+    "sha256": "4c28394898302bef227834d63498a0fc54e4295f11c590c8a8ebcba51347bc03"
+  },
+  "imgsz": 320,
+  "device": "mps",
+  "seed": 0,
+  "weights": "random_initialization_from_yaml",
+  "families": {
+    "moe": {
+      "model": "ultralytics/cfg/models/26/yolo26-master-n.yaml",
+      "model_sha256": "135ae1f18197f42039dbd67d4e6104cd531c7d9d65ede77c8edb4d0afa11a223",
+      "captured_layers": 6,
+      "layers": [
+        {
+          "layer_name": "model.4.m.0.0.mlp.routing",
+          "module_type": "EfficientSpatialRouter",
+          "family": "moe",
+          "num_experts": 4,
+          "top_k": 2,
+          "routing_axis": "spatial",
+          "probability_shape": [
+            1,
+            4,
+            10,
+            10
+          ],
+          "expert_usage": [
+            0.25000351667404175,
+            0.25000718235969543,
+            0.2499849945306778,
+            0.2500043213367462
+          ],
+          "mean_router_probs": [
+            0.25000351667404175,
+            0.25000718235969543,
+            0.2499849945306778,
+            0.2500043213367462
+          ],
+          "entropy": 1.3862943649291992,
+          "normalized_entropy": 1.0,
+          "dispatch_policy": "unknown",
+          "aux_loss": {
+            "status": "not_configured",
+            "observed": 0.0,
+            "configured": false,
+            "balance_loss_coeff": 0.0,
+            "router_z_loss_coeff": 0.0,
+            "training_only": true
+          }
+        },
+        {
+          "layer_name": "model.4.m.0.1.mlp.routing",
+          "module_type": "EfficientSpatialRouter",
+          "family": "moe",
+          "num_experts": 4,
+          "top_k": 2,
+          "routing_axis": "spatial",
+          "probability_shape": [
+            1,
+            4,
+            10,
+            10
+          ],
+          "expert_usage": [
+            0.20501388609409332,
+            0.3534433841705322,
+            0.14428353309631348,
+            0.29725924134254456
+          ],
+          "mean_router_probs": [
+            0.20501388609409332,
+            0.3534433841705322,
+            0.14428353309631348,
+            0.29725924134254456
+          ],
+          "entropy": 1.3324228525161743,
+          "normalized_entropy": 0.9611399208461057,
+          "dispatch_policy": "unknown",
+          "aux_loss": {
+            "status": "not_configured",
+            "observed": 0.0,
+            "configured": false,
+            "balance_loss_coeff": 0.0,
+            "router_z_loss_coeff": 0.0,
+            "training_only": true
+          }
+        },
+        {
+          "layer_name": "model.6.m.0.0.mlp.routing",
+          "module_type": "EfficientSpatialRouter",
+          "family": "moe",
+          "num_experts": 8,
+          "top_k": 2,
+          "routing_axis": "spatial",
+          "probability_shape": [
+            1,
+            8,
+            5,
+            5
+          ],
+          "expert_usage": [
+            0.1243491917848587,
+            0.12476498633623123,
+            0.1245952621102333,
+            0.12485054135322571,
+            0.12522466480731964,
+            0.1252804398536682,
+            0.1253877431154251,
+            0.12554720044136047
+          ],
+          "mean_router_probs": [
+            0.1243491917848587,
+            0.12476498633623123,
+            0.1245952621102333,
+            0.12485054135322571,
+            0.12522466480731964,
+            0.1252804398536682,
+            0.1253877431154251,
+            0.12554720044136047
+          ],
+          "entropy": 2.079436779022217,
+          "normalized_entropy": 0.9999977096458239,
+          "dispatch_policy": "unknown",
+          "aux_loss": {
+            "status": "not_configured",
+            "observed": 0.0,
+            "configured": false,
+            "balance_loss_coeff": 0.0,
+            "router_z_loss_coeff": 0.0,
+            "training_only": true
+          }
+        },
+        {
+          "layer_name": "model.6.m.0.1.mlp.routing",
+          "module_type": "EfficientSpatialRouter",
+          "family": "moe",
+          "num_experts": 8,
+          "top_k": 2,
+          "routing_axis": "spatial",
+          "probability_shape": [
+            1,
+            8,
+            5,
+            5
+          ],
+          "expert_usage": [
+            0.11499731987714767,
+            0.13460510969161987,
+            0.17428891360759735,
+            0.08963078260421753,
+            0.11873548477888107,
+            0.1752718836069107,
+            0.08955313265323639,
+            0.10291744023561478
+          ],
+          "mean_router_probs": [
+            0.11499731987714767,
+            0.13460510969161987,
+            0.17428891360759735,
+            0.08963078260421753,
+            0.11873548477888107,
+            0.1752718836069107,
+            0.08955313265323639,
+            0.10291744023561478
+          ],
+          "entropy": 2.047675609588623,
+          "normalized_entropy": 0.9847238157675973,
+          "dispatch_policy": "unknown",
+          "aux_loss": {
+            "status": "not_configured",
+            "observed": 0.0,
+            "configured": false,
+            "balance_loss_coeff": 0.0,
+            "router_z_loss_coeff": 0.0,
+            "training_only": true
+          }
+        },
+        {
+          "layer_name": "model.8.m.0.0.mlp.routing",
+          "module_type": "EfficientSpatialRouter",
+          "family": "moe",
+          "num_experts": 16,
+          "top_k": 2,
+          "routing_axis": "spatial",
+          "probability_shape": [
+            1,
+            16,
+            2,
+            2
+          ],
+          "expert_usage": [
+            0.06255315244197845,
+            0.06250360608100891,
+            0.06251116842031479,
+            0.06254947185516357,
+            0.06222258508205414,
+            0.06241566687822342,
+            0.06252102553844452,
+            0.062687449157238,
+            0.06226908415555954,
+            0.06264238059520721,
+            0.06255035102367401,
+            0.062483690679073334,
+            0.062494583427906036,
+            0.062489598989486694,
+            0.06271499395370483,
+            0.06239118427038193
+          ],
+          "mean_router_probs": [
+            0.06255315244197845,
+            0.06250360608100891,
+            0.06251116842031479,
+            0.06254947185516357,
+            0.06222258508205414,
+            0.06241566687822342,
+            0.06252102553844452,
+            0.062687449157238,
+            0.06226908415555954,
+            0.06264238059520721,
+            0.06255035102367401,
+            0.062483690679073334,
+            0.062494583427906036,
+            0.062489598989486694,
+            0.06271499395370483,
+            0.06239118427038193
+          ],
+          "entropy": 2.7725868225097656,
+          "normalized_entropy": 0.9999993148172319,
+          "dispatch_policy": "unknown",
+          "aux_loss": {
+            "status": "not_configured",
+            "observed": 0.0,
+            "configured": false,
+            "balance_loss_coeff": 0.0,
+            "router_z_loss_coeff": 0.0,
+            "training_only": true
+          }
+        },
+        {
+          "layer_name": "model.8.m.0.1.mlp.routing",
+          "module_type": "EfficientSpatialRouter",
+          "family": "moe",
+          "num_experts": 16,
+          "top_k": 2,
+          "routing_axis": "spatial",
+          "probability_shape": [
+            1,
+            16,
+            2,
+            2
+          ],
+          "expert_usage": [
+            0.06792186945676804,
+            0.0772935152053833,
+            0.051773346960544586,
+            0.05073090270161629,
+            0.06837821006774902,
+            0.0564199723303318,
+            0.05925003066658974,
+            0.05473555624485016,
+            0.06022140383720398,
+            0.06737018376588821,
+            0.07800473272800446,
+            0.052227284759283066,
+            0.0674067959189415,
+            0.06980223953723907,
+            0.05153398588299751,
+            0.06692999601364136
+          ],
+          "mean_router_probs": [
+            0.06792186945676804,
+            0.0772935152053833,
+            0.051773346960544586,
+            0.05073090270161629,
+            0.06837821006774902,
+            0.0564199723303318,
+            0.05925003066658974,
+            0.05473555624485016,
+            0.06022140383720398,
+            0.06737018376588821,
+            0.07800473272800446,
+            0.052227284759283066,
+            0.0674067959189415,
+            0.06980223953723907,
+            0.05153398588299751,
+            0.06692999601364136
+          ],
+          "entropy": 2.7627272605895996,
+          "normalized_entropy": 0.9964432295453416,
+          "dispatch_policy": "unknown",
+          "aux_loss": {
+            "status": "not_configured",
+            "observed": 0.0,
+            "configured": false,
+            "balance_loss_coeff": 0.0,
+            "router_z_loss_coeff": 0.0,
+            "training_only": true
+          }
+        }
+      ],
+      "static_figure": "moe_expert_usage.png",
+      "overhead": {
+        "method": "same-process warm forward vs hook registration + captured forward",
+        "warmup": 2,
+        "iterations": 10,
+        "baseline": {
+          "mean_ms": 71.1071,
+          "std_ms": 2.5964454418201988,
+          "min_ms": 67.774625,
+          "max_ms": 74.979041
+        },
+        "instrumented": {
+          "mean_ms": 83.1903499,
+          "std_ms": 3.1061500084764266,
+          "min_ms": 78.703333,
+          "max_ms": 88.24625
+        },
+        "overhead_percent": 16.993028684899254,
+        "visualization_io_excluded": true
+      }
+    },
+    "mot": {
+      "model": "ultralytics/cfg/models/26/yolo26-master-mot-n.yaml",
+      "model_sha256": "739aca4279cd2ae7813f4b0b5a16211efd68c74a1beaacc71d2431101dca6fda",
+      "captured_layers": 4,
+      "layers": [
+        {
+          "layer_name": "model.13.m.0.router",
+          "module_type": "_MoTRouter",
+          "family": "mot",
+          "num_experts": 3,
+          "top_k": 2,
+          "routing_axis": "spatial",
+          "probability_shape": [
+            1,
+            3,
+            20,
+            20
+          ],
+          "expert_usage": [
+            0.3333333432674408,
+            0.3333333432674408,
+            0.3333333432674408
+          ],
+          "mean_router_probs": [
+            0.3333333432674408,
+            0.3333333432674408,
+            0.3333333432674408
+          ],
+          "entropy": 1.0986123085021973,
+          "normalized_entropy": 1.0,
+          "dispatch_policy": "unknown",
+          "aux_loss": {
+            "status": "not_configured",
+            "observed": 0.0,
+            "configured": false,
+            "balance_loss_coeff": 0.0,
+            "router_z_loss_coeff": 0.0,
+            "training_only": true
+          }
+        },
+        {
+          "layer_name": "model.16.m.0.router",
+          "module_type": "_MoTRouter",
+          "family": "mot",
+          "num_experts": 3,
+          "top_k": 2,
+          "routing_axis": "spatial",
+          "probability_shape": [
+            1,
+            3,
+            40,
+            40
+          ],
+          "expert_usage": [
+            0.3333333432674408,
+            0.3333333432674408,
+            0.3333333432674408
+          ],
+          "mean_router_probs": [
+            0.3333333432674408,
+            0.3333333432674408,
+            0.3333333432674408
+          ],
+          "entropy": 1.0986123085021973,
+          "normalized_entropy": 1.0,
+          "dispatch_policy": "unknown",
+          "aux_loss": {
+            "status": "not_configured",
+            "observed": 0.0,
+            "configured": false,
+            "balance_loss_coeff": 0.0,
+            "router_z_loss_coeff": 0.0,
+            "training_only": true
+          }
+        },
+        {
+          "layer_name": "model.19.m.0.router",
+          "module_type": "_MoTRouter",
+          "family": "mot",
+          "num_experts": 3,
+          "top_k": 2,
+          "routing_axis": "spatial",
+          "probability_shape": [
+            1,
+            3,
+            20,
+            20
+          ],
+          "expert_usage": [
+            0.3333333432674408,
+            0.3333333432674408,
+            0.3333333432674408
+          ],
+          "mean_router_probs": [
+            0.3333333432674408,
+            0.3333333432674408,
+            0.3333333432674408
+          ],
+          "entropy": 1.0986123085021973,
+          "normalized_entropy": 1.0,
+          "dispatch_policy": "unknown",
+          "aux_loss": {
+            "status": "not_configured",
+            "observed": 0.0,
+            "configured": false,
+            "balance_loss_coeff": 0.0,
+            "router_z_loss_coeff": 0.0,
+            "training_only": true
+          }
+        },
+        {
+          "layer_name": "model.22.m.0.router",
+          "module_type": "_MoTRouter",
+          "family": "mot",
+          "num_experts": 3,
+          "top_k": 1,
+          "routing_axis": "spatial",
+          "probability_shape": [
+            1,
+            3,
+            10,
+            10
+          ],
+          "expert_usage": [
+            0.3333333432674408,
+            0.3333333432674408,
+            0.3333333432674408
+          ],
+          "mean_router_probs": [
+            0.3333333432674408,
+            0.3333333432674408,
+            0.3333333432674408
+          ],
+          "entropy": 1.0986123085021973,
+          "normalized_entropy": 1.0,
+          "dispatch_policy": "unknown",
+          "aux_loss": {
+            "status": "not_configured",
+            "observed": 0.0,
+            "configured": false,
+            "balance_loss_coeff": 0.0,
+            "router_z_loss_coeff": 0.0,
+            "training_only": true
+          }
+        }
+      ],
+      "static_figure": "mot_expert_usage.png",
+      "overhead": {
+        "method": "same-process warm forward vs hook registration + captured forward",
+        "warmup": 2,
+        "iterations": 10,
+        "baseline": {
+          "mean_ms": 58.3751501,
+          "std_ms": 1.4962187443461483,
+          "min_ms": 56.422417,
+          "max_ms": 60.888375
+        },
+        "instrumented": {
+          "mean_ms": 68.59925009999999,
+          "std_ms": 1.3663922144580802,
+          "min_ms": 66.468625,
+          "max_ms": 70.372166
+        },
+        "overhead_percent": 17.51447316621117,
+        "visualization_io_excluded": true
+      }
+    },
+    "latent": {
+      "model": "ultralytics/cfg/models/26/yolo26-master-latent-n.yaml",
+      "model_sha256": "08307e7ca5e7aa68cb41f4a39d2eb0901e8cd20a9f3784edd2dd96ab0da11219",
+      "captured_layers": 3,
+      "layers": [
+        {
+          "layer_name": "model.23",
+          "module_type": "LatentMixture",
+          "family": "latent",
+          "num_experts": 4,
+          "top_k": 4,
+          "routing_axis": "expert",
+          "probability_shape": [
+            1,
+            4
+          ],
+          "expert_usage": [
+            0.25,
+            0.25,
+            0.25,
+            0.25
+          ],
+          "mean_router_probs": [
+            0.25,
+            0.25,
+            0.25,
+            0.25
+          ],
+          "entropy": 1.3862943649291992,
+          "normalized_entropy": 1.0,
+          "dispatch_policy": "dense",
+          "aux_loss": {
+            "status": "configured_inactive_eval",
+            "observed": 0.0,
+            "configured": true,
+            "balance_loss_coeff": 0.01,
+            "router_z_loss_coeff": 0.001,
+            "training_only": true
+          }
+        },
+        {
+          "layer_name": "model.24",
+          "module_type": "LatentMixture",
+          "family": "latent",
+          "num_experts": 4,
+          "top_k": 4,
+          "routing_axis": "expert",
+          "probability_shape": [
+            1,
+            4
+          ],
+          "expert_usage": [
+            0.25,
+            0.25,
+            0.25,
+            0.25
+          ],
+          "mean_router_probs": [
+            0.25,
+            0.25,
+            0.25,
+            0.25
+          ],
+          "entropy": 1.3862943649291992,
+          "normalized_entropy": 1.0,
+          "dispatch_policy": "dense",
+          "aux_loss": {
+            "status": "configured_inactive_eval",
+            "observed": 0.0,
+            "configured": true,
+            "balance_loss_coeff": 0.01,
+            "router_z_loss_coeff": 0.001,
+            "training_only": true
+          }
+        },
+        {
+          "layer_name": "model.25",
+          "module_type": "LatentMixture",
+          "family": "latent",
+          "num_experts": 4,
+          "top_k": 4,
+          "routing_axis": "expert",
+          "probability_shape": [
+            1,
+            4
+          ],
+          "expert_usage": [
+            0.25,
+            0.25,
+            0.25,
+            0.25
+          ],
+          "mean_router_probs": [
+            0.25,
+            0.25,
+            0.25,
+            0.25
+          ],
+          "entropy": 1.3862943649291992,
+          "normalized_entropy": 1.0,
+          "dispatch_policy": "dense",
+          "aux_loss": {
+            "status": "configured_inactive_eval",
+            "observed": 0.0,
+            "configured": true,
+            "balance_loss_coeff": 0.01,
+            "router_z_loss_coeff": 0.001,
+            "training_only": true
+          }
+        }
+      ],
+      "static_figure": "latent_expert_usage.png",
+      "overhead": {
+        "method": "same-process warm forward vs hook registration + captured forward",
+        "warmup": 2,
+        "iterations": 10,
+        "baseline": {
+          "mean_ms": 99.6480043,
+          "std_ms": 2.2469825480910104,
+          "min_ms": 95.897834,
+          "max_ms": 104.041875
+        },
+        "instrumented": {
+          "mean_ms": 115.5147957,
+          "std_ms": 2.2303327819954495,
+          "min_ms": 112.761125,
+          "max_ms": 119.860041
+        },
+        "overhead_percent": 15.922839108981531,
+        "visualization_io_excluded": true
+      }
+    }
+  },
+  "limitations": [
+    "This smoke validates collection, schema, and visualization plumbing; random YAML initialization is not a trained routing-quality result.",
+    "Auxiliary routing losses are training-only and are reported as configured_inactive_eval during this inference smoke.",
+    "This admission snapshot ran on MPS; current CUDA training evidence is recorded separately."
+  ]
+}
