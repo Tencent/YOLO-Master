@@ -7,6 +7,7 @@ timestamps, final manifests and logical slot release after process-tree cleanup.
 from __future__ import annotations
 
 import atexit
+import math
 import os
 import queue
 import threading
@@ -22,6 +23,7 @@ from studio.admission import AdmissionPolicy
 from studio.artifacts import IMAGE_EXTENSIONS, ArtifactResolver
 from studio.job_logs import JobLogs, sanitize_log_text, sanitize_snapshot_value
 from studio.job_store import JobStore
+from studio.training_shutdown import CHECKPOINT_ID
 from studio.worker_runtime import ManagedWorker, execute_job
 
 MAX_PENDING_JOBS = 100
@@ -83,6 +85,7 @@ class JobsManager:
         gpu_concurrency=None,
         max_pending_jobs=None,
         stop_grace_seconds=None,
+        shutdown_grace_seconds=None,
     ):
         self._jobs = {}
         self._logs = JobLogs()
@@ -107,6 +110,14 @@ class JobsManager:
         )
         if not 0 <= self._stop_grace <= 30:
             raise ValueError("Stop grace must be between 0 and 30 seconds")
+        self._shutdown_grace = (
+            float(os.environ.get("STUDIO_SHUTDOWN_GRACE_SECONDS", "60"))
+            if shutdown_grace_seconds is None
+            else float(shutdown_grace_seconds)
+        )
+        if not math.isfinite(self._shutdown_grace) or not 0 <= self._shutdown_grace <= 3600:
+            raise ValueError("Shutdown grace must be finite and between 0 and 3600 seconds")
+        self._shutdown_deadline = None
         self._queues = {resource: queue.Queue() for resource in self._limits}
         self._supervisors = []
         self._workers = {}
@@ -185,6 +196,7 @@ class JobsManager:
             except Exception as exc:
                 self._fail_job(job, "EXECUTION_FAILED", "Supervisor launch failed")
                 self._closing = True
+                self._shutdown_deadline = time.monotonic() + self._shutdown_grace
                 for resource, capacity in self._limits.items():
                     for _ in range(capacity):
                         self._queues[resource].put(None)
@@ -275,13 +287,15 @@ class JobsManager:
             job.status = JobStatus.RUNNING
             self._save()
         result = None
+        checkpoint = None
         code, message = None, None
         deadline = time.monotonic() + max(float(job.runtime_tracking.timeout_seconds), 0)
 
-        def receive_log_event(payload):
+        def receive_log_event(payload, *, persist=True):
             with self.lock:
                 self._logs.receive(job_id, payload)
-                self._save()
+                if persist:
+                    self._save()
 
         worker.log_sink = receive_log_event
 
@@ -304,6 +318,9 @@ class JobsManager:
                 if kind == "log":
                     receive_log_event(payload)
                     continue
+                if kind == "shutdown_limit":
+                    self._append_log(job_id, "[SHUTDOWN_LIMIT] DDP checkpoint cooperation unsupported")
+                    continue
                 if kind == "lost":
                     code, message = "WORKER_LOST", "Computation process exited without reporting a result"
                     break
@@ -323,11 +340,45 @@ class JobsManager:
             code, message = "EXECUTION_FAILED", str(exc)
             self._append_log(job_id, traceback.format_exc())
         finally:
+            # Closing/cancel can arrive while receive() returns a provisional
+            # result. Re-arbitrate before choosing any process cleanup policy.
+            with self.lock:
+                current = self._jobs[job_id]
+                if current.status not in TERMINAL_STATUSES:
+                    if current.runtime_tracking.cancel_requested:
+                        code, message = "USER_CANCELLED", "Job execution cancelled by user request"
+                    elif self._closing:
+                        code, message = "SERVICE_SHUTDOWN", "Service is shutting down"
+            if code == "SERVICE_SHUTDOWN" and job.task_type.value == "train":
+                # Per-line atomic writes can block drain beyond the grace/cleanup
+                # budget. Checkpoint confirmation and terminal publication flush
+                # the buffered, ordered/sanitized tail under the same owner lock.
+                worker.log_sink = lambda payload: receive_log_event(payload, persist=False)
+                try:
+                    checkpoint = self._cooperate_training_shutdown(job_id, worker, worker.log_sink)
+                except Exception as exc:  # noqa: BLE001 - shutdown must still clean up on broken IPC
+                    self._append_log(job_id, f"[CHECKPOINT_UNCONFIRMED] {exc}")
             # Never detach a worker or release its resource slot on cleanup failure.
             # Keep RUNNING and a structured reason while retaining/retrying ownership.
             while True:
                 try:
-                    worker.stop(self._stop_grace if code else 0)
+                    with self.lock:
+                        if self._jobs[job_id].runtime_tracking.cancel_requested:
+                            code, message = "USER_CANCELLED", "Job execution cancelled by user request"
+                        grace = (
+                            0
+                            if code == "SERVICE_SHUTDOWN" and job.task_type.value == "train"
+                            else self._stop_grace
+                            if code
+                            else 0
+                        )
+                        if self._closing and code == "USER_CANCELLED":
+                            # Use the original cooperation + stop window, leaving
+                            # the budget's 16 seconds for OS cleanup/handle close.
+                            # Recompute on retries; cancellation never renews it.
+                            remaining = self._shutdown_deadline + self._stop_grace - time.monotonic()
+                            grace = min(grace, max(0, remaining))
+                    worker.stop(grace)
                     break
                 except Exception as exc:  # noqa: BLE001 - retain ownership on OS cleanup failure
                     with self.lock:
@@ -360,6 +411,13 @@ class JobsManager:
                         code, message = "USER_CANCELLED", "Job execution cancelled by user request"
                     elif self._closing:
                         code, message = "SERVICE_SHUTDOWN", "Service is shutting down"
+                    if checkpoint is not None:
+                        # Revalidate after cleanup; a provisional fact never authorizes a live file.
+                        try:
+                            current.output.artifacts = self._artifacts.normalize(current, [checkpoint])
+                        except Exception as exc:  # noqa: BLE001 - do not strand a cleaned job on resolver failure
+                            self._logs.append(job_id, f"[CHECKPOINT_REJECTED] Final containment check failed: {exc}")
+                            current.output.artifacts = []
                     if code == "USER_CANCELLED":
                         self._cancel_job(current, message)
                     elif code:
@@ -389,18 +447,85 @@ class JobsManager:
                             current.status = result.status
                 self._save()
 
+    def _cooperate_training_shutdown(self, job_id, worker, log_sink):
+        """Drain facts until checkpoint ack plus execution exit, or the shared deadline."""
+        try:
+            worker.request_shutdown()
+        except OSError:
+            self._append_log(job_id, "[SHUTDOWN_IPC_CLOSED] Waiting for actual tree exit or deadline")
+        checkpoint = None
+        self._append_log(job_id, "[SHUTDOWN_REQUESTED] Waiting for a safe epoch checkpoint boundary")
+        while time.monotonic() < self._shutdown_deadline:
+            with self.lock:
+                if self._jobs[job_id].runtime_tracking.cancel_requested:
+                    return checkpoint
+            kind, payload = worker.receive()
+            if kind == "log":
+                log_sink(payload)
+                # Keep draining a busy log queue before scanning the whole tree again.
+                continue
+            elif kind == "shutdown_limit":
+                self._append_log(job_id, "[SHUTDOWN_LIMIT] DDP checkpoint cooperation unsupported")
+            elif kind == "checkpoint":
+                with self.lock:
+                    current = self._jobs[job_id]
+                    try:
+                        valid = (
+                            isinstance(payload, dict)
+                            and payload.get("path") == CHECKPOINT_ID
+                            and type(payload.get("epoch")) is int
+                            and payload["epoch"] >= 0
+                            and type(payload.get("size")) is int
+                            and payload["size"] > 0
+                            and self._artifacts.normalize(current, [CHECKPOINT_ID]) == [CHECKPOINT_ID]
+                        )
+                        root = self._artifacts.root(current)
+                        valid = valid and root is not None and (root / CHECKPOINT_ID).stat().st_size == payload["size"]
+                    except Exception as exc:  # noqa: BLE001 - reject invalid facts without cutting grace short
+                        valid = False
+                        self._logs.append(job_id, f"[CHECKPOINT_REJECTED] Validation failed: {exc}")
+                    if valid:
+                        checkpoint = CHECKPOINT_ID
+                        self._logs.append(
+                            job_id, f"[CHECKPOINT_CONFIRMED] epoch={payload['epoch']} artifact={checkpoint}"
+                        )
+                        self._save()
+                if valid:
+                    try:
+                        worker.acknowledge_checkpoint()
+                    except OSError:
+                        self._append_log(
+                            job_id, "[SHUTDOWN_IPC_CLOSED] Checkpoint accepted; waiting for exit or deadline"
+                        )
+                else:
+                    self._append_log(job_id, "[CHECKPOINT_REJECTED] Untrusted or incomplete checkpoint fact")
+            elif kind in {"result", "lost"} and checkpoint is None:
+                self._append_log(job_id, "[CHECKPOINT_UNCONFIRMED] Worker returned without an accepted checkpoint")
+            # Result/EOF is provisional: Python teardown, loaders or descendants
+            # may still be running. Let them exit cooperatively until the deadline.
+            if worker.tree_exited():
+                return checkpoint
+        self._append_log(job_id, "[SHUTDOWN_FORCED] Grace deadline expired; forcing process-tree cleanup")
+        return checkpoint
+
+    @property
+    def shutdown_budget_seconds(self):
+        """Minimum outer caller budget for cooperation and bounded OS cleanup (excluding retries)."""
+        return self._shutdown_grace + self._stop_grace + 16
+
     def shutdown(self) -> None:
         """Reject submissions, end pending jobs and join all owned execution slots."""
         with self.lock:
             if not self._closing:
                 self._closing = True
+                self._shutdown_deadline = time.monotonic() + self._shutdown_grace
                 for job_id, job in self._jobs.items():
                     if job.status == JobStatus.PENDING and job_id not in self._workers:
                         self._fail_job(job, "SERVICE_SHUTDOWN", "Service stopped before worker launch")
                 for resource, capacity in self._limits.items():
                     for _ in range(capacity):
                         self._queues[resource].put(None)
-        deadline = time.monotonic() + self._stop_grace + 15
+        deadline = time.monotonic() + self.shutdown_budget_seconds
         for thread in self._supervisors:
             thread.join(timeout=max(0, deadline - time.monotonic()))
         if any(thread.is_alive() for thread in self._supervisors):

@@ -68,6 +68,9 @@ def mock_yolo_executor(job):
         def __init__(self, *args):
             self.model = SimpleNamespace()
 
+        def add_callback(self, event, callback):
+            self.callback = (event, callback)
+
         def compute(self, **kwargs):
             dummy_executor(job)
 
@@ -108,6 +111,7 @@ def manager(tmp_path):
         cpu_concurrency=2,
         gpu_concurrency=1,
         stop_grace_seconds=0.2,
+        shutdown_grace_seconds=0.2,
     )
     instance._worker_executor = dummy_executor
     yield instance

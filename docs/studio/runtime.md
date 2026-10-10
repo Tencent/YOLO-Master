@@ -66,8 +66,82 @@ cleanup. Shutdown publishes `failed / SERVICE_SHUTDOWN` and never marks the
 parent request as user-cancelled. Arbitration preserves an already-published
 terminal record, then accepted user cancellation, then service closing, then an
 observed timeout, worker failure or result. Stop windows continue to drain IPC
-logs. This bounded process cleanup does not guarantee training checkpoints or
-graceful DDP shutdown.
+logs. Single-process training additionally uses the checkpoint protocol below.
+Cancellation and timeout retain bounded process cleanup without a checkpoint
+promise; DDP checkpoint cooperation is unsupported.
+
+## Training shutdown and recovery
+
+`shutdown()` rejects admission and closes pending jobs, then requests cooperative
+shutdown for running training. A separate stop message/token preserves the
+distinction from user cancellation. The IPC watcher only updates tokens; the
+training thread's `on_fit_epoch_end` callback saves after the epoch's training,
+validation and metrics, before `final_eval()` can strip recovery state.
+
+The callback uses the upstream checkpoint serializer with the online model
+aligned with optimizer state, plus EMA, updates and scaler. It verifies the owned
+job directory and weights containment before writing an exclusive random
+temporary file, flushes/fsyncs and atomically replaces `weights/shutdown.pt`.
+This preserves a recovery copy independently of stripped `last.pt`/`best.pt`.
+It reports a checkpoint fact (relative ID, epoch, size) and waits for the parent
+to validate exact containment and size and acknowledge it. Parent validation
+does not deserialize worker-supplied pickle files. Loading and actual resume are
+separate acceptance checks; a fact/ack alone does not prove either.
+
+Throughout cooperation, the owner drains ordered, sanitized IPC. It buffers log
+updates in memory instead of doing a JSON atomic replacement per line; checkpoint
+confirmation and final publication flush that tail. The existing persistence
+failure boundary still applies. A worker result is provisional: the owner waits
+for actual process-tree exit, including Python teardown and descendants. Only the
+absolute grace deadline permits forced shutdown cleanup. Accepted user
+cancellation can supersede shutdown. The owner rechecks cancellation after
+cooperation and before each cleanup attempt, restoring `stop_grace_seconds`.
+During closing this wait is capped by the first shutdown's cooperation deadline
+plus its reserved stop window; elapsed retries reduce the remaining wait to zero.
+The budget's 16 seconds for OS cleanup and handle closure are not added to this
+cancellation wait. Cancellation never renews the shutdown deadline.
+Cleanup failure retains the owner and slot as `WORKER_STOP_FAILED`; it cannot
+publish a terminal result or claim shutdown succeeded.
+
+After cleanup, the manager revalidates the checkpoint candidate and commits only
+that exact ID to the shutdown manifest. It publishes `failed / SERVICE_SHUTDOWN`,
+including when the checkpoint is saved, acknowledged and resumable. It never
+converts checkpoint success into public `completed` or `USER_CANCELLED`.
+Child dispatcher completion logs remain provisional execution facts. Directory
+contents are not extra download authority. A forced stop can still retain a
+previously confirmed checkpoint, but logs distinguish it from natural tree exit.
+Without confirmation the shutdown manifest grants no checkpoint access.
+
+Set server-owned `STUDIO_SHUTDOWN_GRACE_SECONDS` or constructor
+`shutdown_grace_seconds` (default 60, finite range 0 through 3600). The first
+shutdown request anchors one deadline for all active training jobs. Existing
+`stop_grace_seconds` still controls cancel/timeout cleanup. An outer caller must
+allow at least `manager.shutdown_budget_seconds` (default 78 seconds) and handle
+raised cleanup failures rather than kill the manager early. This budget includes
+the grace and bounded OS cleanup; it does not bound persistent cleanup retries.
+
+This branch has no Service lifespan or Studio launcher. Their real budget and
+shutdown integration remain an explicit acceptance gate for the later layers;
+this Runtime interface does not prove their behavior. No FastAPI/UI/Agent code is
+part of this change.
+
+Single-process CPU and single-device training share the callback protocol.
+Current evidence must name the device tested; CPU training forces dataloader
+workers to zero upstream, so it cannot prove real dataloader child shutdown.
+Multiple devices or `WORLD_SIZE > 1` do not install the outer callback and
+receive no checkpoint guarantee; the owned tree is forcibly cleaned if it is
+still running at the deadline. Rank/collective and real GPU/dataloader evidence
+are separate gates. There is no arbitrary-batch resume or checkpoint promise for
+other task types.
+
+To validate recovery of a trusted local checkpoint, inspect its nonnegative
+`epoch`, online model, optimizer, scaler and EMA fields, load it using
+`YOLO(path)`, then train with `resume=True` and a total epoch count greater than
+`saved_epoch + 1` (at least `saved_epoch + 2`). Verify the next epoch actually executes. Resume follows upstream
+epoch-boundary semantics; it does not preserve an arbitrary in-flight batch,
+exact RNG/dataloader position, or claim bit-identical continuation. Restarting
+the manager preserves the already-published shutdown terminal; it never
+automatically resumes training.
 
 ## Persistence and recovery
 

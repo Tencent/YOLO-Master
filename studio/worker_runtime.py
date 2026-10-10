@@ -22,6 +22,7 @@ import psutil
 
 from core.schema import ErrorInfo, JobRequest, JobStatus
 from core.security import sanitize_log_text
+from studio.training_shutdown import CURRENT_SHUTDOWN, TrainingShutdown
 
 
 def execute_job(job: JobRequest) -> JobRequest:
@@ -37,25 +38,42 @@ def _compute_job(connection, stop, raw_job, executor):
         signal.signal(signal.SIGTERM, signal.SIG_DFL)
     job = JobRequest.model_validate(raw_job)
     stopped = threading.Event()
+    send_lock = threading.Lock()
+
+    def emit(kind, payload):
+        with send_lock:
+            connection.send((kind, payload))
+
+    shutdown = TrainingShutdown(emit, job.output.output_dir, job.job_id)
+    context_token = CURRENT_SHUTDOWN.set(shutdown)
 
     if job.runtime_tracking.stream_logs:
 
         def emit_log(sequence, text, terminal):
             """Send one sanitized log entry over the existing result pipe."""
             try:
-                connection.send(("log", {"seq": sequence, "text": text, "terminal": terminal}))
+                with send_lock:
+                    connection.send(("log", {"seq": sequence, "text": text, "terminal": terminal}))
             except (BrokenPipeError, EOFError, OSError):
                 pass
 
         job._set_log_event_sink(emit_log)
 
     def watch_stop():
-        try:
-            stop.recv_bytes()
-        except EOFError:
-            pass
-        job.runtime_tracking.cancel_requested = True
-        stopped.set()
+        while True:
+            try:
+                command = stop.recv_bytes()
+            except EOFError:
+                command = b"stop"
+            if command == b"shutdown":
+                shutdown.requested.set()
+                stopped.set()
+            elif command == b"checkpoint-accepted":
+                shutdown.acknowledged.set()
+            else:
+                job.runtime_tracking.cancel_requested = True
+                stopped.set()
+                return
 
     threading.Thread(target=watch_stop, daemon=True).start()
     try:
@@ -66,8 +84,13 @@ def _compute_job(connection, stop, raw_job, executor):
         job.append_log(traceback.format_exc())
         result = job
     job._set_log_event_sink(None)
-    connection.send(("result", result.model_dump(mode="json")))
+    CURRENT_SHUTDOWN.reset(context_token)
+    emit("result", result.model_dump(mode="json"))
+    if shutdown.requested.is_set():
+        return
     stopped.wait()
+    if shutdown.requested.is_set():
+        return
     while True:
         time.sleep(1)
 
@@ -153,6 +176,8 @@ def _worker_main(connection, stop, raw_job, executor, parent_pid):
                     os.waitpid(child.pid, os.WNOHANG)
                 except ChildProcessError:
                     pass
+        if compute.exitcode is not None and not psutil.Process().children():
+            return
         time.sleep(0.05)
 
 
@@ -279,6 +304,7 @@ class ManagedWorker:
         self.log_sink = None
         self._messages = queue.Queue(maxsize=256)
         self._reader = None
+        self._next_descendant_capture = 0
 
     def start(self):
         """Create the root, still blocked on the containment handshake."""
@@ -294,6 +320,14 @@ class ManagedWorker:
         reader.start()
         self._reader = reader
 
+    def request_shutdown(self):
+        """Send a distinct service-shutdown request without setting user cancellation."""
+        self._stop_sender.send_bytes(b"shutdown")
+
+    def acknowledge_checkpoint(self):
+        """Release the training callback after the owner validates its checkpoint fact."""
+        self._stop_sender.send_bytes(b"checkpoint-accepted")
+
     def _read_messages(self):
         """Isolate blocking frame reads from supervision, deadlines and OS cleanup."""
         try:
@@ -304,7 +338,11 @@ class ManagedWorker:
 
     def receive(self):
         """Read one queued event without blocking on a partial Pipe frame."""
-        self._capture_descendants()
+        # A full process scan per queued log can starve checkpoint ACKs.
+        # Exit/stop checks still capture immediately; busy IPC samples every poll interval.
+        if time.monotonic() >= self._next_descendant_capture:
+            self._capture_descendants()
+            self._next_descendant_capture = time.monotonic() + 0.05
         try:
             kind, payload = self._messages.get(timeout=0.05)
         except queue.Empty:
@@ -320,10 +358,14 @@ class ManagedWorker:
                 self._descendants[child.pid] = child
 
     def _descendants_alive(self):
+        """Keep ownership of matching identities until reaped, including zombies."""
         for child in self._descendants.values():
             try:
-                if child.is_running() and child.status() != psutil.STATUS_ZOMBIE:
+                if child.is_running():
                     return True
+            except psutil.ZombieProcess:
+                # ZombieProcess subclasses NoSuchProcess but does not prove reap.
+                return True
             except psutil.NoSuchProcess:
                 pass
         return False
@@ -343,14 +385,22 @@ class ManagedWorker:
             except ProcessLookupError:
                 pass
         if self._group_ready:
-            for process in psutil.process_iter(["pid", "status"]):
+            for process in psutil.process_iter(["pid"]):
                 try:
-                    if os.getpgid(process.pid) == self.process.pid and process.status() != psutil.STATUS_ZOMBIE:
+                    # The parent can reap its own root via multiprocessing;
+                    # every other group identity still needs its actual reaper.
+                    if os.getpgid(process.pid) == self.process.pid and (
+                        process.pid != self.process.pid or self.process.is_alive()
+                    ):
                         return True
                 except (ProcessLookupError, psutil.NoSuchProcess):
                     continue
             return False
         return self.process.is_alive()
+
+    def tree_exited(self):
+        """Report actual owned tree exit; a result message alone is not exit evidence."""
+        return not self._group_alive()
 
     def stop(self, grace_seconds):
         """Request stop, wait grace, force kill, and verify tree exit before returning.
@@ -398,7 +448,7 @@ class ManagedWorker:
                 while self._descendants_alive() and time.monotonic() < child_deadline:
                     time.sleep(0.02)
                 if self._descendants_alive():
-                    raise RuntimeError("Worker descendants have not exited; guardian retained")
+                    raise RuntimeError("Worker descendants have not been reaped; guardian retained")
                 try:
                     os.killpg(self.process.pid, signal.SIGKILL)
                 except ProcessLookupError:

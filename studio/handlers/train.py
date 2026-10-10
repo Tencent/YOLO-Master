@@ -23,6 +23,7 @@ from typing import Any
 
 from studio.handlers.base import BaseTaskHandler, PathWhitelistViolationError
 from studio.handlers.registry import TaskHandlerRegistry
+from studio.training_shutdown import install_training_shutdown
 
 
 @TaskHandlerRegistry.register("train")
@@ -241,6 +242,8 @@ class TrainHandler(BaseTaskHandler):
             epochs = int(params["epochs"])
             batch_size = int(params.get("batch_size", 16))
             device = params.get("device", "cpu")
+
+            install_training_shutdown(model, device)
 
             # Execute training with artifact saving
             train_kwargs: dict[str, Any] = {}
