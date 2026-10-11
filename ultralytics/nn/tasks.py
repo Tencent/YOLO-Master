@@ -8,16 +8,16 @@ from copy import deepcopy
 from pathlib import Path
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 from ultralytics.nn.autobackend import check_class_names
+from ultralytics.nn.mixture_loss import build_composite_criterion, compose_native_result
 from ultralytics.nn.mixture_registry import (
     MIXTURE_BASE_MODULES,
     adapt_mixture_args,
     finalize_mixture_module,
     get_mixture_module,
 )
-from ultralytics.nn.mixture_loss import build_composite_criterion, compose_native_result
 from ultralytics.nn.modules import (
     AIFI,
     C1,
@@ -61,9 +61,8 @@ from ultralytics.nn.modules import (
     HGStem,
     ImagePoolingAttn,
     Index,
-    MultiTaskHead,
-    SharedExpertMoE,
     LRPCHead,
+    MultiTaskHead,
     Pose,
     Pose26,
     RepC3,
@@ -76,12 +75,13 @@ from ultralytics.nn.modules import (
     Segment,
     Segment26,
     SemanticSegment,
+    SharedExpertMoE,
+    TextConditionedMoT,
     TorchVision,
     WorldDetect,
     YOLOEDetect,
     YOLOESegment,
     YOLOESegment26,
-    TextConditionedMoT,
     v10Detect,
 )
 from ultralytics.utils import (
@@ -194,7 +194,7 @@ class BaseModel(torch.nn.Module):
         """
         y, dt, embeddings = [], [], []  # outputs
         if self.training:
-            from ultralytics.nn.modules.moe._common import MOE_LOSS_REGISTRY, _MOE_LOSS_REGISTRY_LOCK
+            from ultralytics.nn.modules.moe._common import _MOE_LOSS_REGISTRY_LOCK, MOE_LOSS_REGISTRY
             from ultralytics.nn.modules.routing_protocol import reset_routing_runtime_state
 
             with _MOE_LOSS_REGISTRY_LOCK:
@@ -1282,7 +1282,7 @@ class _P1TextRouterCriterion:
 
     @updates.setter
     def updates(self, value: int) -> None:
-        setattr(self.native_criterion, "updates", int(value))
+        self.native_criterion.updates = int(value)
 
     def __getattr__(self, name):
         if name in {"model", "native_criterion"}:
@@ -1493,6 +1493,35 @@ class YOLOEModel(DetectionModel):
             self._p1_core_training = None
         if hasattr(self, "criterion"):
             self.criterion = None
+
+    def _derive_router_condition(self, tpe, vpe):
+        """Derive a P5 text-router condition from the OVD prompt embeddings.
+
+        The P5 adapter needs a per-sample query vector, but callers historically had to
+        pass ``router_condition`` explicitly, leaving the production inference path with
+        no way to supply it. When the released OVD head is present, the prompt embedding
+        ``tpe`` already encodes the active query set, so it is a sound default source.
+
+        Args:
+            tpe (torch.Tensor | None): Text prompt embeddings of shape ``(K, D)`` or ``(B, K, D)``.
+            vpe (torch.Tensor | None): Visual prompt embeddings, unused here but accepted so
+                the call site can forward every available prompt tensor.
+
+        Returns:
+            (torch.Tensor | None): Mean-pooled condition of shape ``(B, D)`` matching the
+            ``TextConditionedMoT`` contract, detached, or None when no prompt embedding
+            is available.
+        """
+        if tpe is None or not isinstance(tpe, torch.Tensor) or tpe.numel() == 0:
+            return None
+        condition = tpe.detach()
+        if condition.ndim == 3:  # (B, K, D) -> pool the query axis, keep the sample axis
+            condition = condition.mean(dim=1)
+        elif condition.ndim == 2:  # (K, D) -> one shared query set, broadcast over the batch
+            condition = condition.mean(dim=0).unsqueeze(0)
+        if condition.ndim != 2:
+            return None
+        return condition
 
     def _apply_p5_text_router(self, features, router_condition):
         """Apply the optional adapter to only the P5 tensor before YOLOEDetect."""
@@ -1716,7 +1745,7 @@ class YOLOEModel(DetectionModel):
             (torch.Tensor): Model's output tensor.
         """
         if self.training:
-            from ultralytics.nn.modules.moe._common import MOE_LOSS_REGISTRY, _MOE_LOSS_REGISTRY_LOCK
+            from ultralytics.nn.modules.moe._common import _MOE_LOSS_REGISTRY_LOCK, MOE_LOSS_REGISTRY
             from ultralytics.nn.modules.routing_protocol import reset_routing_runtime_state
 
             with _MOE_LOSS_REGISTRY_LOCK:
@@ -1738,6 +1767,8 @@ class YOLOEModel(DetectionModel):
                     assert vpe is not None
                     assert not self.training
                     return vpe
+                if router_condition is None:
+                    router_condition = self._derive_router_condition(tpe, vpe)
                 x = self._apply_p5_text_router(x, router_condition)
                 cls_pe = self.get_cls_pe(m.get_tpe(tpe), vpe).to(device=x[0].device, dtype=x[0].dtype)
                 if cls_pe.shape[0] != b or m.export:

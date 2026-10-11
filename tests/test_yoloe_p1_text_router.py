@@ -21,7 +21,6 @@ from ultralytics.nn.tasks import YOLOEModel, YOLOESegModel
 from ultralytics.utils import DEFAULT_CFG_DICT, IterableSimpleNamespace
 from ultralytics.utils.loss import E2ELoss, v8SegmentationLoss
 
-
 MODEL_CFG = "yoloe-26n.yaml"
 NUM_CLASSES = 65
 TEXT_DIM = 512
@@ -210,7 +209,7 @@ def test_yoloe_adapter_reachability_gradients_aux_and_condition_separation(monke
     assert not second_aux.requires_grad and second_diagnostics["consumed"] == 0
 
     batch = _batch(images, tpe, router_condition)
-    import ultralytics.nn.modules.routing_protocol as routing_protocol
+    from ultralytics.nn.modules import routing_protocol
 
     consume_count = {"value": 0}
     original_collect = routing_protocol.collect_aux_loss
@@ -534,3 +533,40 @@ def test_text_router_hard_attempt_receipt_counts_are_measured_and_eval_is_empty(
         assert snapshot["actual_expert_module_invocations_by_expert"] == [1, 1]
         collect_aux_loss(module, step=current_aux_step(), include_kinds=("mot",))
     assert repair == {"opportunity": 20, "dense": 40, "actual": 20, "action": 20}
+
+
+def test_router_condition_is_derived_from_prompt_embeddings():
+    """The P5 adapter defaults its condition to the active query set.
+
+    Callers previously had to pass ``router_condition`` explicitly, so the production
+    inference path had no way to supply one. Mean-pooling the prompt embedding gives a
+    condition that already encodes the active queries.
+    """
+    model = _model()
+    k, d, b = 5, 8, 2
+
+    single = model._derive_router_condition(torch.arange(k * d, dtype=torch.float32).view(k, d), None)
+    assert single.shape == (1, d)
+
+    batched = model._derive_router_condition(
+        torch.arange(b * k * d, dtype=torch.float32).view(b, k, d), torch.zeros(b, d)
+    )
+    assert batched.shape == (b, d)
+
+    # Batched rows must differ, i.e. the mean is taken per sample rather than pooled
+    # across the batch, which would give every row the same vector.
+    assert not torch.allclose(batched[0], batched[1])
+
+
+def test_router_condition_is_none_without_prompt_embeddings():
+    model = _model()
+    assert model._derive_router_condition(None, None) is None
+    assert model._derive_router_condition(torch.zeros(0, 8), None) is None
+    assert model._derive_router_condition("not a tensor", None) is None
+
+
+def test_router_condition_is_detached():
+    model = _model()
+    tpe = torch.randn(3, 4, requires_grad=True)
+    condition = model._derive_router_condition(tpe, None)
+    assert not condition.requires_grad
