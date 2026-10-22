@@ -101,3 +101,58 @@ def test_incomplete_download_never_replaces_existing_image(tmp_path, monkeypatch
         download_verified_image("https://example.com/image.jpg", path)
     assert path.read_bytes() == b"old content"
     assert not path.with_suffix(".jpg.receipt.json").exists()
+
+
+def test_prepare_resume_keeps_plan_and_reuses_verified_downloads(tmp_path, monkeypatch):
+    import io
+    import json
+    import zipfile
+
+    import cv2
+    import numpy as np
+
+    from scripts import prepare_sparse_supervised_data as preparation
+
+    archive = tmp_path / "labels.zip"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr("coco/train2017.txt", "000001.jpg\n000002.jpg\n")
+        bundle.writestr("coco/val2017.txt", "000101.jpg\n000102.jpg\n000103.jpg\n000104.jpg\n")
+    exclusion = tmp_path / "excluded.json"
+    exclusion.write_text(json.dumps({"calibration": [], "evaluation": []}))
+    output = tmp_path / "data"
+    requests = []
+
+    def response(url, timeout):
+        requests.append(url)
+        color = int(url.rsplit("/", 1)[1].split(".")[0])
+        encoded = cv2.imencode(".jpg", np.full((8, 8, 3), color, dtype=np.uint8))[1].tobytes()
+        body = io.BytesIO(encoded)
+        body.headers = {"Content-Length": str(len(encoded))}
+        return body
+
+    monkeypatch.setattr(preparation.urllib.request, "urlopen", response)
+    argv = [
+        "prepare",
+        "--archive",
+        str(archive),
+        "--exclude-report",
+        str(exclusion),
+        "--output",
+        str(output),
+        "--train-source",
+        "train2017",
+        "--counts",
+        "1",
+        "1",
+        "1",
+    ]
+    monkeypatch.setattr("sys.argv", argv)
+    assert preparation.main() == 0 and len(requests) == 3
+    initial = (output / "manifest.json").read_bytes()
+    monkeypatch.setattr("sys.argv", argv + ["--resume"])
+    assert preparation.main() == 0 and len(requests) == 3
+    assert (output / "manifest.json").read_bytes() == initial
+    monkeypatch.setattr("sys.argv", argv[:-1] + ["2", "--resume"])
+    with pytest.raises(SystemExit):
+        preparation.main()
+    assert (output / "manifest.json").read_bytes() == initial and len(requests) == 3
