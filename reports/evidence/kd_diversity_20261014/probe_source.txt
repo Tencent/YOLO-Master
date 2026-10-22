@@ -1,0 +1,38 @@
+"""Read-only probe of native ES-MoE routing on the existing 512 training images."""
+import hashlib
+import json
+from pathlib import Path
+import torch
+from scripts.evaluate_router_choices import supported_layers
+from scripts.finetune_sparse_detector import verify_manifest
+from ultralytics import YOLO
+from ultralytics.cfg import get_cfg
+from ultralytics.data.build import build_yolo_dataset
+from ultralytics.data.utils import check_det_dataset
+
+base=Path('runs/supervised_sparse');directory=base/'kd_stages_trainval896';manifest=json.loads((directory/'manifest.json').read_text());verify_manifest(manifest)
+weights=Path('runs/weights/YOLO-Master-EsMoE-N.pt');model=YOLO(str(weights)).model.to('mps').float().eval().requires_grad_(False)
+cfg=get_cfg(overrides={'imgsz':320,'task':'detect','rect':False});data=check_det_dataset(str(directory/'dev.yaml'),autodownload=False)
+dataset=build_yolo_dataset(cfg,str(directory/'train.txt'),4,data,mode='val',rect=False)
+loader=torch.utils.data.DataLoader(dataset,batch_size=4,num_workers=0,collate_fn=dataset.collate_fn)
+layers=supported_layers(model);captured={};rows=[];handles=[]
+def hook(name):
+ def capture(module,inputs,output):captured[name]=output[:,:,0,0].detach().cpu().tolist()
+ return capture
+for name,block in layers.items():handles.append(block.routing.register_forward_hook(hook(name)))
+try:
+ with torch.no_grad():
+  for batch in loader:
+   model(batch['img'].to('mps').float()/255)
+   for i,path in enumerate(batch['im_file']):rows.append({'image':Path(path).name,'routing':{name:captured[name][i] for name in layers}})
+finally:
+ for handle in handles:handle.remove()
+assert {r['image'] for r in rows}=={Path(r['image']).name for r in manifest['splits']['train']}
+summary={}
+for name in layers:
+ values=torch.tensor([r['routing'][name] for r in rows],dtype=torch.float64);pairs={}
+ for row in values:
+  pair=','.join(str(i) for i in sorted(row.topk(2).indices.tolist()));pairs[pair]=pairs.get(pair,0)+1
+ summary[name]={'mean':values.mean(0).tolist(),'std':values.std(0,unbiased=False).tolist(),'min':values.min(0).values.tolist(),'max':values.max(0).values.tolist(),'top2_support_counts':pairs}
+result={'scope':'Native checkpoint, existing 512 training images, first spatial router value avoids redundant-map mean rounding; no intervention or deployment claim','weights_sha256':hashlib.sha256(weights.read_bytes()).hexdigest(),'manifest_sha256':hashlib.sha256((directory/'manifest.json').read_bytes()).hexdigest(),'probe_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),'summary':summary,'images':rows}
+(base/'kd_diversity_all_router_probe.json').write_text(json.dumps(result,indent=2));print(summary)
