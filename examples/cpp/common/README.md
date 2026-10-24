@@ -16,4 +16,6 @@ target_include_directories(your_target PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../co
 | `yolo_show.hpp`        | `yolo::ShowRequested`/`yolo::Show` optional display window controlled by `--show`.                                         |
 | `coco_names.hpp`       | `yolo::CocoNames()` the 80 COCO class names, a fallback for models without baked-in `names` metadata.                      |
 
+`Preprocess` reproduces `ultralytics.data.augment.LetterBox(center=True)`: min-side scale, then centered padding with the same 114 grey value the Python pipeline uses. It fills a `yolo::Letterbox` with the resize ratio, the left/top padding offset and the unpadded size; pass that to the `Postprocess*` calls so boxes, keypoints and masks are mapped back to original-image pixels.
+
 Models exported by Ultralytics embed their class `names` (and `imgsz`, `task`, `stride`) in the model metadata, so prefer reading names from the model directly and use `coco_names.hpp` only as a fallback.

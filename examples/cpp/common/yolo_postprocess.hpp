@@ -19,11 +19,30 @@ namespace yolo {
 
 // ---- Pre-processing ---------------------------------------------------------
 
+// Geometry of the letterbox transform. Model-space coordinates map back to the
+// original image as `orig = (model - pad) / scale`, so the padding offset has to
+// be subtracted before the resize ratio is undone.
+struct Letterbox {
+    float scale = 1.0f;  // resize ratio applied to the original image
+    cv::Point2f pad;     // left / top padding in model pixels
+    cv::Size unpad;      // resized size before padding (== original * scale)
+};
+
+// Padding value used by ultralytics.data.augment.LetterBox (grey, not black).
+constexpr int kPadValue = 114;
+
 // Letterbox (detection tasks) or center-crop (classification) a BGR image into a
-// square `imgsz`, return it as RGB and set `scale` (used to map boxes back).
-inline cv::Mat Preprocess(const cv::Mat& image, int imgsz, bool classify, float& scale) {
+// square `imgsz`, return it as RGB and describe the transform in `lb`.
+//
+// The letterbox is centered and padded with 114 grey, matching
+// `ultralytics.data.augment.LetterBox(center=True)` exactly, including its
+// `round(pad / 2 - 0.1)` / `round(pad / 2 + 0.1)` split for odd padding. A
+// top-left letterbox would shift the content and change the tensor the model
+// sees, which shows up as a systematic offset plus drifting confidences when
+// compared against `model.predict()`.
+inline cv::Mat Preprocess(const cv::Mat& image, int imgsz, bool classify, Letterbox& lb) {
+    lb = Letterbox{};
     if (classify) {
-        scale = 1.0f;
         const float r = imgsz / static_cast<float>(std::min(image.cols, image.rows));
         const int rw = static_cast<int>(std::round(image.cols * r));
         const int rh = static_cast<int>(std::round(image.rows * r));
@@ -33,13 +52,28 @@ inline cv::Mat Preprocess(const cv::Mat& image, int imgsz, bool classify, float&
         cv::cvtColor(crop, crop, cv::COLOR_BGR2RGB);
         return crop;
     }
-    scale = std::min(imgsz / static_cast<float>(image.cols), imgsz / static_cast<float>(image.rows));
-    const int new_w = static_cast<int>(std::round(image.cols * scale));
-    const int new_h = static_cast<int>(std::round(image.rows * scale));
+
+    lb.scale = std::min(imgsz / static_cast<float>(image.cols), imgsz / static_cast<float>(image.rows));
+    const int new_w = std::max(1, static_cast<int>(std::round(image.cols * lb.scale)));
+    const int new_h = std::max(1, static_cast<int>(std::round(image.rows * lb.scale)));
+    lb.unpad = cv::Size(new_w, new_h);
+
     cv::Mat resized;
-    cv::resize(image, resized, cv::Size(new_w, new_h));
-    cv::Mat out = cv::Mat::zeros(imgsz, imgsz, CV_8UC3);  // top-left letterbox, pad bottom/right
-    resized.copyTo(out(cv::Rect(0, 0, new_w, new_h)));
+    if (new_w != image.cols || new_h != image.rows) {
+        cv::resize(image, resized, cv::Size(new_w, new_h), 0, 0, cv::INTER_LINEAR);
+    } else {
+        resized = image;
+    }
+
+    const int dw = imgsz - new_w;
+    const int dh = imgsz - new_h;
+    const int left = static_cast<int>(std::round(dw / 2.0 - 0.1));
+    const int top = static_cast<int>(std::round(dh / 2.0 - 0.1));
+    lb.pad = cv::Point2f(static_cast<float>(left), static_cast<float>(top));
+
+    cv::Mat out;
+    cv::copyMakeBorder(resized, out, top, dh - top, left, dw - left, cv::BORDER_CONSTANT,
+                       cv::Scalar(kPadValue, kPadValue, kPadValue));
     cv::cvtColor(out, out, cv::COLOR_BGR2RGB);
     return out;
 }
@@ -92,9 +126,10 @@ inline Task InferTask(const std::vector<std::vector<int64_t>>& shapes, int num_l
 // ---- Post-processing --------------------------------------------------------
 
 inline std::vector<Result> PostprocessDetect(const float* data, const std::vector<int64_t>& shape,
-                                             float scale, float conf_thr, float iou_thr) {
+                                             const Letterbox& lb, float conf_thr, float iou_thr) {
     std::vector<Result> results;
-    const float inv = 1.0f / scale;
+    const float inv = 1.0f / lb.scale;
+    const float px = lb.pad.x, py = lb.pad.y;
     const int dim1 = static_cast<int>(shape[1]);
     const int dim2 = static_cast<int>(shape[2]);
     const bool end2end = dim1 > dim2;
@@ -107,7 +142,7 @@ inline std::vector<Result> PostprocessDetect(const float* data, const std::vecto
             Result r;
             r.class_id = static_cast<int>(row[5]);
             r.confidence = conf;
-            r.box = cv::Rect(static_cast<int>(row[0] * inv), static_cast<int>(row[1] * inv),
+            r.box = cv::Rect(static_cast<int>((row[0] - px) * inv), static_cast<int>((row[1] - py) * inv),
                              static_cast<int>((row[2] - row[0]) * inv), static_cast<int>((row[3] - row[1]) * inv));
             results.push_back(r);
         }
@@ -130,7 +165,7 @@ inline std::vector<Result> PostprocessDetect(const float* data, const std::vecto
         }
         if (best_score < conf_thr) continue;
         const float cx = data[i], cy = data[a + i], w = data[2 * a + i], h = data[3 * a + i];
-        boxes.emplace_back(static_cast<int>((cx - 0.5f * w) * inv), static_cast<int>((cy - 0.5f * h) * inv),
+        boxes.emplace_back(static_cast<int>((cx - 0.5f * w - px) * inv), static_cast<int>((cy - 0.5f * h - py) * inv),
                            static_cast<int>(w * inv), static_cast<int>(h * inv));
         confidences.push_back(best_score);
         class_ids.push_back(best);
@@ -148,9 +183,10 @@ inline std::vector<Result> PostprocessDetect(const float* data, const std::vecto
 }
 
 inline std::vector<Result> PostprocessPose(const float* data, const std::vector<int64_t>& shape,
-                                           float scale, float conf_thr, float iou_thr) {
+                                           const Letterbox& lb, float conf_thr, float iou_thr) {
     std::vector<Result> results;
-    const float inv = 1.0f / scale;
+    const float inv = 1.0f / lb.scale;
+    const float px = lb.pad.x, py = lb.pad.y;
     const int dim1 = static_cast<int>(shape[1]);
     const int dim2 = static_cast<int>(shape[2]);
 
@@ -163,11 +199,11 @@ inline std::vector<Result> PostprocessPose(const float* data, const std::vector<
             Result r;
             r.class_id = static_cast<int>(row[5]);
             r.confidence = conf;
-            r.box = cv::Rect(static_cast<int>(row[0] * inv), static_cast<int>(row[1] * inv),
+            r.box = cv::Rect(static_cast<int>((row[0] - px) * inv), static_cast<int>((row[1] - py) * inv),
                              static_cast<int>((row[2] - row[0]) * inv), static_cast<int>((row[3] - row[1]) * inv));
             for (int k = 0; k < nkpt; ++k) {
                 const float* kp = row + 6 + k * 3;
-                r.keypoints.emplace_back(kp[0] * inv, kp[1] * inv);
+                r.keypoints.emplace_back((kp[0] - px) * inv, (kp[1] - py) * inv);
                 r.keypoint_scores.push_back(kp[2]);
             }
             results.push_back(r);
@@ -186,13 +222,13 @@ inline std::vector<Result> PostprocessPose(const float* data, const std::vector<
         const float conf = data[4 * a + i];
         if (conf < conf_thr) continue;
         const float cx = data[i], cy = data[a + i], w = data[2 * a + i], h = data[3 * a + i];
-        boxes.emplace_back(static_cast<int>((cx - 0.5f * w) * inv), static_cast<int>((cy - 0.5f * h) * inv),
+        boxes.emplace_back(static_cast<int>((cx - 0.5f * w - px) * inv), static_cast<int>((cy - 0.5f * h - py) * inv),
                            static_cast<int>(w * inv), static_cast<int>(h * inv));
         confidences.push_back(conf);
         std::vector<cv::Point2f> kp;
         std::vector<float> ks;
         for (int k = 0; k < nkpt; ++k) {
-            kp.emplace_back(data[(5 + k * 3) * a + i] * inv, data[(5 + k * 3 + 1) * a + i] * inv);
+            kp.emplace_back((data[(5 + k * 3) * a + i] - px) * inv, (data[(5 + k * 3 + 1) * a + i] - py) * inv);
             ks.push_back(data[(5 + k * 3 + 2) * a + i]);
         }
         kpts.push_back(std::move(kp));
@@ -213,9 +249,10 @@ inline std::vector<Result> PostprocessPose(const float* data, const std::vector<
 }
 
 inline std::vector<Result> PostprocessObb(const float* data, const std::vector<int64_t>& shape,
-                                          float scale, float conf_thr, float iou_thr) {
+                                          const Letterbox& lb, float conf_thr, float iou_thr) {
     std::vector<Result> results;
-    const float inv = 1.0f / scale;
+    const float inv = 1.0f / lb.scale;
+    const float px = lb.pad.x, py = lb.pad.y;
     const int dim1 = static_cast<int>(shape[1]);
     const int dim2 = static_cast<int>(shape[2]);
 
@@ -224,7 +261,7 @@ inline std::vector<Result> PostprocessObb(const float* data, const std::vector<i
             const float* row = data + i * dim2;
             const float conf = row[4];
             if (conf < conf_thr) continue;
-            const float cx = row[0] * inv, cy = row[1] * inv, w = row[2] * inv, h = row[3] * inv;
+            const float cx = (row[0] - px) * inv, cy = (row[1] - py) * inv, w = row[2] * inv, h = row[3] * inv;
             Result r;
             r.class_id = static_cast<int>(row[5]);
             r.confidence = conf;
@@ -250,7 +287,8 @@ inline std::vector<Result> PostprocessObb(const float* data, const std::vector<i
             if (s > best_score) { best_score = s; best = c; }
         }
         if (best_score < conf_thr) continue;
-        const float cx = data[i] * inv, cy = data[a + i] * inv, w = data[2 * a + i] * inv, h = data[3 * a + i] * inv;
+        const float cx = (data[i] - px) * inv, cy = (data[a + i] - py) * inv, w = data[2 * a + i] * inv,
+                    h = data[3 * a + i] * inv;
         boxes.emplace_back(static_cast<int>(cx - 0.5f * w), static_cast<int>(cy - 0.5f * h),
                            static_cast<int>(w), static_cast<int>(h));
         confidences.push_back(best_score);
@@ -269,9 +307,10 @@ inline std::vector<Result> PostprocessObb(const float* data, const std::vector<i
 
 inline std::vector<Result> PostprocessSegment(const float* det, const std::vector<int64_t>& det_shape,
                                               const float* protos, const std::vector<int64_t>& proto_shape,
-                                              float scale, float conf_thr, float iou_thr, int imgsz,
+                                              const Letterbox& lb, float conf_thr, float iou_thr, int imgsz,
                                               const cv::Size& orig) {
-    const float inv = 1.0f / scale;
+    const float inv = 1.0f / lb.scale;
+    const float px = lb.pad.x, py = lb.pad.y;
     const int dim1 = static_cast<int>(det_shape[1]);
     const int dim2 = static_cast<int>(det_shape[2]);
     const bool end2end = dim1 > dim2;
@@ -290,7 +329,7 @@ inline std::vector<Result> PostprocessSegment(const float* det, const std::vecto
             const float* row = det + i * dim2;
             const float conf = row[4];
             if (conf < conf_thr) continue;
-            boxes.emplace_back(static_cast<int>(row[0] * inv), static_cast<int>(row[1] * inv),
+            boxes.emplace_back(static_cast<int>((row[0] - px) * inv), static_cast<int>((row[1] - py) * inv),
                                static_cast<int>((row[2] - row[0]) * inv), static_cast<int>((row[3] - row[1]) * inv));
             confidences.push_back(conf);
             class_ids.push_back(static_cast<int>(row[5]));
@@ -308,8 +347,9 @@ inline std::vector<Result> PostprocessSegment(const float* det, const std::vecto
             }
             if (best_score < conf_thr) continue;
             const float cx = det[i], cy = det[a + i], w = det[2 * a + i], h = det[3 * a + i];
-            boxes.emplace_back(static_cast<int>((cx - 0.5f * w) * inv), static_cast<int>((cy - 0.5f * h) * inv),
-                               static_cast<int>(w * inv), static_cast<int>(h * inv));
+            boxes.emplace_back(static_cast<int>((cx - 0.5f * w - px) * inv),
+                               static_cast<int>((cy - 0.5f * h - py) * inv), static_cast<int>(w * inv),
+                               static_cast<int>(h * inv));
             confidences.push_back(best_score);
             class_ids.push_back(best);
             cv::Mat coeff(1, pc, CV_32F);
@@ -326,8 +366,8 @@ inline std::vector<Result> PostprocessSegment(const float* det, const std::vecto
         cv::dnn::NMSBoxes(boxes, confidences, conf_thr, iou_thr, keep);
     }
 
-    const int new_w = static_cast<int>(std::round(orig.width * scale));
-    const int new_h = static_cast<int>(std::round(orig.height * scale));
+    const int new_w = lb.unpad.width;
+    const int new_h = lb.unpad.height;
 
     std::vector<Result> results;
     for (int idx : keep) {
@@ -338,7 +378,9 @@ inline std::vector<Result> PostprocessSegment(const float* det, const std::vecto
         sig = 1.0 / (1.0 + neg);
         cv::Mat full;
         cv::resize(sig, full, cv::Size(imgsz, imgsz), 0, 0, cv::INTER_LINEAR);
-        cv::Mat valid = full(cv::Rect(0, 0, std::min(new_w, imgsz), std::min(new_h, imgsz)));
+        // Drop the letterbox padding before mapping back to the original image.
+        cv::Mat valid = full(cv::Rect(static_cast<int>(px), static_cast<int>(py), std::min(new_w, imgsz),
+                                      std::min(new_h, imgsz)));
         cv::Mat mask_orig;
         cv::resize(valid, mask_orig, orig, 0, 0, cv::INTER_LINEAR);
         cv::Mat binary = mask_orig > 0.5f;
@@ -355,7 +397,7 @@ inline std::vector<Result> PostprocessSegment(const float* det, const std::vecto
     return results;
 }
 
-inline void PostprocessSemantic(const float* data, const std::vector<int64_t>& shape, float scale, int imgsz,
+inline void PostprocessSemantic(const float* data, const std::vector<int64_t>& shape, const Letterbox& lb, int imgsz,
                                 const cv::Size& orig, cv::Mat& out) {
     const int nc = static_cast<int>(shape[1]);
     const int h = static_cast<int>(shape[2]);
@@ -373,9 +415,10 @@ inline void PostprocessSemantic(const float* data, const std::vector<int64_t>& s
             class_map.at<uchar>(y, x) = static_cast<uchar>(best);
         }
     }
-    const int new_w = static_cast<int>(std::round(orig.width * scale));
-    const int new_h = static_cast<int>(std::round(orig.height * scale));
-    cv::Mat valid = class_map(cv::Rect(0, 0, std::min(new_w, w), std::min(new_h, h)));
+    const int new_w = lb.unpad.width;
+    const int new_h = lb.unpad.height;
+    cv::Mat valid = class_map(cv::Rect(static_cast<int>(lb.pad.x), static_cast<int>(lb.pad.y),
+                                       std::min(new_w, w), std::min(new_h, h)));
     cv::resize(valid, out, orig, 0, 0, cv::INTER_NEAREST);
     (void)imgsz;
 }

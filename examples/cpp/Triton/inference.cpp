@@ -65,8 +65,8 @@ void Predictor::load_metadata() {
 }
 
 std::vector<Result> Predictor::predict(const cv::Mat& image, cv::Mat& semantic) {
-    float scale = 1.0f;
-    cv::Mat input = Preprocess(image, imgsz_, task_ == Task::Classify, scale);
+    Letterbox lb;
+    cv::Mat input = Preprocess(image, imgsz_, task_ == Task::Classify, lb);
     std::vector<float> blob = ToBlob(input, imgsz_);
 
     // Build the input tensor in the datatype the model expects (FP16 or FP32).
@@ -143,20 +143,20 @@ std::vector<Result> Predictor::predict(const cv::Mat& image, cv::Mat& semantic) 
 
     switch (task_) {
         case Task::Detect:
-            return PostprocessDetect(data, shp, scale, config_.conf, config_.iou);
+            return PostprocessDetect(data, shp, lb, config_.conf, config_.iou);
         case Task::Pose:
-            return PostprocessPose(data, shp, scale, config_.conf, config_.iou);
+            return PostprocessPose(data, shp, lb, config_.conf, config_.iou);
         case Task::Obb:
-            return PostprocessObb(data, shp, scale, config_.conf, config_.iou);
+            return PostprocessObb(data, shp, lb, config_.conf, config_.iou);
         case Task::Classify:
             return PostprocessClassify(data, shp);
         case Task::Segment: {
             if (aux_idx < 0) return {};
-            return PostprocessSegment(data, shp, storage[aux_idx].data(), shapes[aux_idx], scale, config_.conf,
+            return PostprocessSegment(data, shp, storage[aux_idx].data(), shapes[aux_idx], lb, config_.conf,
                                       config_.iou, imgsz_, image.size());
         }
         case Task::Semantic:
-            PostprocessSemantic(data, shp, scale, imgsz_, image.size(), semantic);
+            PostprocessSemantic(data, shp, lb, imgsz_, image.size(), semantic);
             return {};
         default:
             std::cerr << "[yolo] task '" << TaskName(task_) << "' is not supported." << std::endl;
