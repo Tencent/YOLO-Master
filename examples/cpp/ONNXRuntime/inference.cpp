@@ -128,8 +128,8 @@ void Predictor::load_metadata(Ort::AllocatorWithDefaultOptions& allocator) {
 }
 
 std::vector<Result> Predictor::predict(const cv::Mat& image, cv::Mat& semantic) {
-    float scale = 1.0f;
-    cv::Mat input = Preprocess(image, imgsz_, task_ == Task::Classify, scale);
+    Letterbox lb;
+    cv::Mat input = Preprocess(image, imgsz_, task_ == Task::Classify, lb);
     std::vector<float> blob = ToBlob(input, imgsz_);
 
     std::array<int64_t, 4> input_shape{1, 3, imgsz_, imgsz_};
@@ -164,21 +164,21 @@ std::vector<Result> Predictor::predict(const cv::Mat& image, cv::Mat& semantic) 
 
     switch (task_) {
         case Task::Detect:
-            return PostprocessDetect(data, shape, scale, config_.conf, config_.iou);
+            return PostprocessDetect(data, shape, lb, config_.conf, config_.iou);
         case Task::Pose:
-            return PostprocessPose(data, shape, scale, config_.conf, config_.iou);
+            return PostprocessPose(data, shape, lb, config_.conf, config_.iou);
         case Task::Obb:
-            return PostprocessObb(data, shape, scale, config_.conf, config_.iou);
+            return PostprocessObb(data, shape, lb, config_.conf, config_.iou);
         case Task::Classify:
             return PostprocessClassify(data, shape);
         case Task::Segment: {
             if (aux_idx < 0) return {};
             std::vector<int64_t> pshape = outputs[aux_idx].GetTensorTypeAndShapeInfo().GetShape();
             const float* pdata = OutputAsFloat(outputs[aux_idx], aux_store);
-            return PostprocessSegment(data, shape, pdata, pshape, scale, config_.conf, config_.iou, imgsz_, image.size());
+            return PostprocessSegment(data, shape, pdata, pshape, lb, config_.conf, config_.iou, imgsz_, image.size());
         }
         case Task::Semantic:
-            PostprocessSemantic(data, shape, scale, imgsz_, image.size(), semantic);
+            PostprocessSemantic(data, shape, lb, imgsz_, image.size(), semantic);
             return {};
         default:
             std::cerr << "[yolo] task '" << TaskName(task_) << "' is not supported." << std::endl;

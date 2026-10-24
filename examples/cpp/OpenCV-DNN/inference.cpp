@@ -51,8 +51,8 @@ std::vector<cv::Mat> Predictor::forward(const std::vector<float>& blob) {
 }
 
 std::vector<Result> Predictor::predict(const cv::Mat& image, cv::Mat& semantic) {
-    float scale = 1.0f;
-    cv::Mat input = Preprocess(image, config_.imgsz, task_ == Task::Classify, scale);
+    Letterbox lb;
+    cv::Mat input = Preprocess(image, config_.imgsz, task_ == Task::Classify, lb);
     std::vector<float> blob = ToBlob(input, config_.imgsz);
     std::vector<cv::Mat> outputs = forward(blob);
 
@@ -69,21 +69,21 @@ std::vector<Result> Predictor::predict(const cv::Mat& image, cv::Mat& semantic) 
 
     switch (task_) {
         case Task::Detect:
-            return PostprocessDetect(data, shp, scale, config_.conf, config_.iou);
+            return PostprocessDetect(data, shp, lb, config_.conf, config_.iou);
         case Task::Pose:
-            return PostprocessPose(data, shp, scale, config_.conf, config_.iou);
+            return PostprocessPose(data, shp, lb, config_.conf, config_.iou);
         case Task::Obb:
-            return PostprocessObb(data, shp, scale, config_.conf, config_.iou);
+            return PostprocessObb(data, shp, lb, config_.conf, config_.iou);
         case Task::Classify:
             return PostprocessClassify(data, shp);
         case Task::Segment: {
             if (aux_idx < 0) return {};
             const float* pdata = reinterpret_cast<const float*>(outputs[aux_idx].data);
-            return PostprocessSegment(data, shp, pdata, shapes[aux_idx], scale, config_.conf, config_.iou,
+            return PostprocessSegment(data, shp, pdata, shapes[aux_idx], lb, config_.conf, config_.iou,
                                       config_.imgsz, image.size());
         }
         case Task::Semantic:
-            PostprocessSemantic(data, shp, scale, config_.imgsz, image.size(), semantic);
+            PostprocessSemantic(data, shp, lb, config_.imgsz, image.size(), semantic);
             return {};
         default:
             return {};

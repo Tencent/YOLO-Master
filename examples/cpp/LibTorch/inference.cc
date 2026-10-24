@@ -41,8 +41,8 @@ void Predictor::load_metadata(const std::string& cfg) {
 }
 
 std::vector<Result> Predictor::predict(const cv::Mat& image, cv::Mat& semantic) {
-    float scale = 1.0f;
-    cv::Mat input = Preprocess(image, imgsz_, task_ == Task::Classify, scale);
+    Letterbox lb;
+    cv::Mat input = Preprocess(image, imgsz_, task_ == Task::Classify, lb);
     std::vector<float> blob = ToBlob(input, imgsz_);
 
     torch::NoGradGuard no_grad;
@@ -77,21 +77,21 @@ std::vector<Result> Predictor::predict(const cv::Mat& image, cv::Mat& semantic) 
 
     switch (task_) {
         case Task::Detect:
-            return PostprocessDetect(data, shp, scale, config_.conf, config_.iou);
+            return PostprocessDetect(data, shp, lb, config_.conf, config_.iou);
         case Task::Pose:
-            return PostprocessPose(data, shp, scale, config_.conf, config_.iou);
+            return PostprocessPose(data, shp, lb, config_.conf, config_.iou);
         case Task::Obb:
-            return PostprocessObb(data, shp, scale, config_.conf, config_.iou);
+            return PostprocessObb(data, shp, lb, config_.conf, config_.iou);
         case Task::Classify:
             return PostprocessClassify(data, shp);
         case Task::Segment: {
             if (aux_idx < 0) return {};
             const float* pdata = tensors[aux_idx].data_ptr<float>();
-            return PostprocessSegment(data, shp, pdata, shapes[aux_idx], scale, config_.conf, config_.iou,
+            return PostprocessSegment(data, shp, pdata, shapes[aux_idx], lb, config_.conf, config_.iou,
                                       imgsz_, image.size());
         }
         case Task::Semantic:
-            PostprocessSemantic(tensors[main_idx].data_ptr<float>(), shapes[main_idx], scale, imgsz_,
+            PostprocessSemantic(tensors[main_idx].data_ptr<float>(), shapes[main_idx], lb, imgsz_,
                                 image.size(), semantic);
             return {};
         default:
