@@ -1,26 +1,32 @@
 # Studio Runtime
 
-The runtime runs on a trusted local machine. It adds bounded asynchronous
-execution to the synchronous Core engine without importing HTTP, UI or Agent
-code. There is no authentication or public deployment support here.
+Runtime schedules jobs and runs the synchronous Core engine in managed worker
+processes on a trusted local machine. It owns job state, process cleanup and
+persistence. See [architecture](architecture.md) for the service integration and
+[security](security.md) for deployment limits.
 
 ```python
 from core.schema import JobRequest
 from studio.jobs_manager import JobsManager
 
-manager = JobsManager(
-    storage_path="runs/jobs_state.json",
-    model_roots=["models"],
-    data_roots=["datasets"],
-    output_root="runs",
-)
-try:
-    submitted = manager.submit_job_request(
-        JobRequest(job_id="local-diagnose", task_type="diagnose", output={"output_dir": "runs"})
+def main():
+    manager = JobsManager(
+        storage_path="runs/jobs_state.json",
+        model_roots=["models"],
+        data_roots=["datasets"],
+        output_root="runs",
     )
-    snapshot = manager.get_job(submitted.job_id)
-finally:
-    manager.shutdown()
+    try:
+        submitted = manager.submit_job_request(
+            JobRequest(job_id="local-diagnose", task_type="diagnose", output={"output_dir": "runs"})
+        )
+        snapshot = manager.get_job(submitted.job_id)
+    finally:
+        manager.shutdown()
+
+
+if __name__ == "__main__":
+    main()
 ```
 
 Applications using spawn must construct and call the manager inside an
@@ -36,7 +42,7 @@ parse `cancel_job()`'s compatibility message.
 `JobsManager` alone decides admission registration, status, timestamps, terminal
 publication, restart reconciliation, final manifest and logical slot release.
 `AdmissionPolicy` validates inputs, `JobStore` restores valid records, `JobLogs`
-orders and buffers IPC logs, `ArtifactResolver` resolves manifest entries, and
+orders and buffers inter-process communication (IPC) logs, `ArtifactResolver` resolves manifest entries, and
 `ManagedWorker` reports containment and exit facts. Helpers make no lifecycle
 decisions.
 
@@ -67,8 +73,9 @@ parent request as user-cancelled. Arbitration preserves an already-published
 terminal record, then accepted user cancellation, then service closing, then an
 observed timeout, worker failure or result. Stop windows continue to drain IPC
 logs. Single-process training additionally uses the checkpoint protocol below.
-Cancellation and timeout retain bounded process cleanup without a checkpoint
-promise; DDP checkpoint cooperation is unsupported.
+Cancellation and timeout use bounded process cleanup. Checkpoint cooperation
+applies to single-process training during service shutdown;
+DistributedDataParallel (DDP) uses deadline-based cleanup.
 
 ## Training shutdown and recovery
 
@@ -85,8 +92,9 @@ temporary file, flushes/fsyncs and atomically replaces `weights/shutdown.pt`.
 This preserves a recovery copy independently of stripped `last.pt`/`best.pt`.
 It reports a checkpoint fact (relative ID, epoch, size) and waits for the parent
 to validate exact containment and size and acknowledge it. Parent validation
-does not deserialize worker-supplied pickle files. Loading and actual resume are
-separate acceptance checks; a fact/ack alone does not prove either.
+does not deserialize worker-supplied pickle files. The acknowledgment records
+the checkpoint's location and size. To check recovery, load it and run the
+resume procedure below.
 
 Throughout cooperation, the owner drains ordered, sanitized IPC. It buffers log
 updates in memory instead of doing a JSON atomic replacement per line; checkpoint
@@ -100,8 +108,8 @@ During closing this wait is capped by the first shutdown's cooperation deadline
 plus its reserved stop window; elapsed retries reduce the remaining wait to zero.
 The budget's 16 seconds for OS cleanup and handle closure are not added to this
 cancellation wait. Cancellation never renews the shutdown deadline.
-Cleanup failure retains the owner and slot as `WORKER_STOP_FAILED`; it cannot
-publish a terminal result or claim shutdown succeeded.
+Cleanup failure retains the owner and slot as `WORKER_STOP_FAILED` while cleanup
+retries. `shutdown()` raises if cleanup remains unfinished at its deadline.
 
 After cleanup, the manager revalidates the checkpoint candidate and commits only
 that exact ID to the shutdown manifest. It publishes `failed / SERVICE_SHUTDOWN`,
@@ -120,27 +128,24 @@ allow at least `manager.shutdown_budget_seconds` (default 78 seconds) and handle
 raised cleanup failures rather than kill the manager early. This budget includes
 the grace and bounded OS cleanup; it does not bound persistent cleanup retries.
 
-This branch has no Service lifespan or Studio launcher. Their real budget and
-shutdown integration remain an explicit acceptance gate for the later layers;
-this Runtime interface does not prove their behavior. No FastAPI/UI/Agent code is
-part of this change.
+The [Service lifespan](service.md#history-and-lifecycle) and
+[combined launcher](frontend.md#trusted-local-configuration) consume this shutdown
+budget.
 
 Single-process CPU and single-device training share the callback protocol.
-Current evidence must name the device tested; CPU training forces dataloader
-workers to zero upstream, so it cannot prove real dataloader child shutdown.
-Multiple devices or `WORLD_SIZE > 1` do not install the outer callback and
-receive no checkpoint guarantee; the owned tree is forcibly cleaned if it is
-still running at the deadline. Rank/collective and real GPU/dataloader evidence
-are separate gates. There is no arbitrary-batch resume or checkpoint promise for
-other task types.
+CPU training forces dataloader workers to zero upstream; verification of
+dataloader child shutdown therefore needs a device/configuration that uses them.
+Multiple devices or `WORLD_SIZE > 1` skip the outer checkpoint callback;
+the owned tree is forcibly cleaned if it is still running at the deadline.
+Checkpoint cooperation runs at epoch boundaries in single-process training.
 
 To validate recovery of a trusted local checkpoint, inspect its nonnegative
 `epoch`, online model, optimizer, scaler and EMA fields, load it using
 `YOLO(path)`, then train with `resume=True` and a total epoch count greater than
-`saved_epoch + 1` (at least `saved_epoch + 2`). Verify the next epoch actually executes. Resume follows upstream
-epoch-boundary semantics; it does not preserve an arbitrary in-flight batch,
-exact RNG/dataloader position, or claim bit-identical continuation. Restarting
-the manager preserves the already-published shutdown terminal; it never
+`saved_epoch + 1` (at least `saved_epoch + 2`). Verify the next epoch actually executes.
+Resume follows upstream epoch-boundary semantics; in-flight batches and exact
+RNG/dataloader positions are not retained. Restarting the manager preserves the
+already-published shutdown terminal; it never
 automatically resumes training.
 
 ## Persistence and recovery
@@ -162,11 +167,11 @@ reconciliation before startup succeeds. It never relaunches those jobs or signal
 historical PIDs. With a configured store, submission must persist before starting
 supervisors or entering a queue. A failure raises `StatePersistenceError`
 (`PERSISTENCE_FAILED`) and removes the unaccepted record and submission log;
-the same identifier can be retried. In-memory mode (`storage_path=None`) does not
-promise disk persistence. After acceptance, runtime write failures are exposed
+the same identifier can be retried. In-memory mode (`storage_path=None`) stores
+state only in memory. After acceptance, runtime write failures are exposed
 through `persistence_error`;
 owned process cleanup continues, and later mutations retry persistence. Such a
-failure means the latest in-memory state is not guaranteed durable. Accepted
+failure leaves the disk at its last successfully saved snapshot. Accepted
 cancellation and actual execution results remain valid in memory even when their
 snapshot cannot be written; a later successful mutation clears the error.
 
@@ -178,47 +183,30 @@ to be rejected by the resolver without granting file access.
 
 ## Paths, logs and artifacts
 
-Model, data and output roots come exclusively from constructor configuration or
-`STUDIO_MODEL_ROOTS`, `STUDIO_DATA_ROOTS`, `STUDIO_OUTPUT_ROOT`; root lists use the
-platform path separator. Credential-shaped job identifiers and network URLs with
-userinfo are rejected before registration. Network inputs additionally require a host in
-`STUDIO_NETWORK_INPUT_HOSTS` (comma-separated). Models must be local paths; remote model protocols are rejected. Local model and
-data paths are canonicalized before execution so downstream loaders cannot
-reinterpret URL-like spellings. Client roots, regex rules,
-preloaded artifacts and lifecycle fields cannot expand server authority; shell
-execution remains disabled. Traversal, sibling-prefix escapes, broken symlinks
-and symlink escapes fail closed.
+Model, data and output roots are server configuration; see
+[service settings](service.md#trusted-configuration-and-existing-ui-entry-points).
+Network hosts use comma-separated `STUDIO_NETWORK_INPUT_HOSTS`. Admission
+canonicalizes local model/data paths before execution and rejects credential-shaped
+job IDs and URL userinfo. The [security guide](security.md#paths-and-manifest-authorization)
+describes path containment and artifact authorization.
 
-Artifact IDs are exact job-relative paths, including nested IDs. Files absent
-from the committed manifest are unauthorized even when they exist in the output
-directory. Every resolution rechecks containment and current symlinks. Returned
-absolute paths are internal filesystem references, not download authorization;
-a future transport must use the exact manifest ID and check it again at read time.
+Runtime artifact IDs are exact job-relative paths, including nested names.
+The [HTTP service](api.md#log-cursors-and-artifacts) uses those manifest IDs and
+checks containment and opened-file identity before streaming.
 
 Logs are sanitized, ordered by child sequence and deduplicated. Terminal and
 stop tails remain in an independent buffer, so late logs never mutate a published
 terminal job snapshot. `get_job_log_page(job_id, offset, limit)` returns copied
-entries; `next_offset=None` means the current tail, not a promise that no later
-logs will arrive. A caller continuing after a tail read resumes from
+entries; `next_offset=None` marks the current tail. Later logs remain available
+through subsequent polls. A caller continuing after a tail read resumes from
 `offset + len(logs)`.
 
 ## Verification
 
-```bash
-YOLO_AUTOINSTALL=false python -m pytest tests/studio -q
-python -m pytest --doctest-modules core studio -q
-ruff check core studio tests/studio
-ruff format --check core studio tests/studio
-codespell core studio tests/studio docs/studio/runtime.md
-```
-
-The existing Studio Core workflow explicitly selects `tests/studio` on Ubuntu
-and Windows and therefore also executes these runtime regressions. Broad
-upstream test collection continues to exclude Studio unless explicitly selected.
-Process tests use importable server-owned executors, real child/grandchild
-processes and separate deterministic race tests; parent dispatcher patches are
-not assumed to propagate into spawn children. OS, Python version, skips and
-unverified gates must accompany reported results.
+Use the commands and prerequisites in [testing](testing.md). Process tests use
+importable server-owned executors and real child/grandchild processes, with
+separate deterministic race tests. Parent dispatcher patches do not propagate
+automatically into spawned children.
 
 Implementation references: [Python multiprocessing](https://docs.python.org/3/library/multiprocessing.html)
 and [psutil process APIs](https://psutil.readthedocs.io/).

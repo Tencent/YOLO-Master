@@ -1,12 +1,13 @@
-# F1 Handler Extension Guide
+# Legacy F1 direct-use handler extension guide
 
-This guide targets developers extending the current handler implementation. For
-user-facing submission and REST examples, see `docs/f1_user_manual.md`.
+Use these examples to extend the legacy F1 direct-call implementation.
+For production handler registration, see [Studio Core](../../docs/studio/core.md).
+For job submission, use the [Studio user guide](../../docs/studio/user_guide.md).
 
 ## 1. Understand the ownership boundary
 
 ```text
-client -> FastAPI -> JobsManager -> ManagedWorker -> dispatcher -> handler
+Legacy direct caller -> f1 dispatcher -> f1 registry -> f1 handler
 ```
 
 Handlers own task-specific validation and engine adaptation. They do not own:
@@ -70,9 +71,8 @@ class ExampleHandler(BaseTaskHandler):
         }
 ```
 
-This example demonstrates the method shape only. Registering `example` does not
-make it a public API task until the canonical schema and all public surfaces are
-updated as described in section 6.
+This example demonstrates the method shape. To expose `example` as a public API
+task, update the canonical schema and public surfaces as described in section 6.
 
 ## 3. Validation and error classification
 
@@ -152,8 +152,7 @@ A new public task is a cross-layer contract change. Update all applicable areas:
    Agent-facing capability.
 5. Update REST/Gradio/zero-build/React form validation and presets as needed.
 6. Add handler inventory, dispatcher, API contract, lifecycle, and UI tests.
-7. Update this documentation without claiming support before every public surface
-   accepts the new task.
+7. Document the new task and the public surfaces that accept it.
 
 The dispatcher normally needs no task-specific branch because it uses the
 registry, but the schema and clients are closed over the current five task types.
@@ -210,11 +209,11 @@ ruff format --check f1/ tests/f1/ smoke/ core/ api/ main_engine.py tests/api/ ap
 
 ## 9. Agent/F1 boundary
 
-F1 handlers are not Agent Skill handlers. Production F1 routing ends in
+F1 handlers are not Agent Skill handlers. Legacy direct-use F1 routing ends in
 `f1/handlers/`; Agent CLI dispatch and multimodal skill behavior live under
 `agent/`. Share canonical task names through `core/` only where the code already
-defines an explicit shared contract. Do not route F1 jobs through an Agent worker
-or treat Agent validation as evidence for F1 lifecycle behavior.
+defines an explicit shared contract. F1 lifecycle checks use the F1 runtime and
+its test suite.
 
 ## Current limitations
 
@@ -229,3 +228,6 @@ or treat Agent validation as evidence for F1 lifecycle behavior.
 **Document version**: 1.2.0
 
 **Last synchronized**: 2026-09-15
+
+For current production and compatibility verification selections, see
+[testing and reproduction](../../docs/studio/testing.md).

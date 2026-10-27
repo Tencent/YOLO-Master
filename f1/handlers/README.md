@@ -1,31 +1,30 @@
-# F1 Task Handlers
+# Legacy F1 task handlers
 
 The F1 handler package adapts the canonical job contract to the existing
 Ultralytics YOLO Python API. Handlers validate task parameters, call the engine,
 and return a structured result and artifact manifest. Queueing, process ownership,
-timeouts, terminal publication, and persistence belong to `JobsManager`, not to
-the handler layer.
+timeouts, terminal publication, and persistence belong to `JobsManager`.
 
-This document describes the current handler implementation.
+Use this reference for the legacy `f1.handlers` package. For production
+handlers and registration, see [Studio Core](../../docs/studio/core.md).
 
 ## Runtime position
 
 ```text
-FastAPI -> JobsManager -> ManagedWorker -> dispatcher -> registry -> handler
+Legacy direct caller -> f1 dispatcher -> f1 registry -> f1 handler
                                                                |
                                                                v
                                                     Ultralytics YOLO API
 ```
 
-Production jobs must enter through the FastAPI API and its singleton
-`JobsManager`. Direct dispatcher/handler use is supported for tests and embedding,
-but it does not provide the managed process-tree termination guarantees.
+Direct dispatcher/handler calls support tests and embedding. Use Studio Runtime
+when process-tree cleanup is required; see [architecture](../../docs/studio/architecture.md).
 
 ## Package structure
 
 ```text
 f1/handlers/
-|-- __init__.py       # imports all production handlers and triggers registration
+|-- __init__.py       # imports legacy handlers and triggers registration
 |-- base.py           # BaseTaskHandler and validation/cancellation helpers
 |-- registry.py       # TaskHandlerRegistry
 |-- predict.py        # predict handler
@@ -137,8 +136,8 @@ python -m pytest \
   tests/f1/test_dispatcher.py -v
 ```
 
-The recorded F1 suite and API suite are documented in `f1/README.md`. The CI
-workflow runs the broader `tests/f1/ tests/api/` set plus smoke and Ruff checks.
+For the current compatibility and production selections, see
+[testing](../../docs/studio/testing.md).
 
 See [USAGE.md](USAGE.md) for extension guidance and the Agent/F1 boundary.
 

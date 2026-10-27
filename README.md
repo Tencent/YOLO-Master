@@ -114,7 +114,7 @@ For a deep dive into the design philosophy of MoE modules, detailed routing mech
   - [Training](#training)
   - [Inference](#inference)
   - [Export](#export)
-  - [Gradio Demo](#gradio-demo)
+  - [Studio Task Platform](#studio-task-platform)
 - [Community & Contributing](#-community--contributing)
 - [License](#-license)
 - [Acknowledgements](#-acknowledgements)
@@ -705,18 +705,19 @@ model.export(format="engine", half=True)  # Export to TensorRT
 # formats: onnx, openvino, engine, coreml, saved_model, pb, tflite, edgetpu, tfjs
 ```
 
-### Gradio Demo
+### Studio Task Platform
 
-Launch a local web interface to test the model interactively. This application provides a user-friendly Gradio dashboard for model inference, supporting automatic model scanning, task switching (Detection, Segmentation, Classification), and real-time visualization.
+Launch Studio to submit and manage model tasks in your browser. The platform supports training, validation, prediction, export and environment diagnostics. View job status and logs, cancel tasks, and preview or download results.
+
+Run from the repository root:
 
 ```bash
-python start_studio.py
-# Open http://127.0.0.1:7860 in your browser
+python -m pip install -e ".[studio]"
+python main_engine.py
+# Open http://127.0.0.1:8000 in your browser
 ```
 
-This recommended launcher starts both the FastAPI Studio Job API and the Gradio WebUI. For manual two-process startup,
-run `python main_engine.py` first and then `python app.py` in a second terminal. `python app.py` remains a Gradio-only
-entrypoint and requires the API configured by `F1_STUDIO_API_URL` (default: `http://127.0.0.1:8000`).
+See the [Studio documentation](docs/studio/README.md) and [user guide](docs/studio/user_guide.md) for more startup options and usage instructions.
 
 ## 🤝 Community & Contributing
 

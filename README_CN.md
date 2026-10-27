@@ -111,7 +111,7 @@
   - [训练](#训练)
   - [推理](#推理)
   - [导出](#导出)
-  - [Gradio 演示](#gradio-演示)
+  - [Studio 任务平台](#studio-任务平台)
 - [社区与贡献](#-社区与贡献)
 - [许可证](#-许可证)
 - [致谢](#-致谢)
@@ -692,14 +692,19 @@ model.export(format="engine", half=True)  # 导出为 TensorRT
 # 格式: onnx, openvino, engine, coreml, saved_model, pb, tflite, edgetpu, tfjs
 ```
 
-### Gradio 演示
+### Studio 任务平台
 
-启动本地 Web 界面以交互式测试模型。此应用程序提供了一个用户友好的 Gradio 仪表板，用于模型推理，支持自动模型扫描、任务切换（检测、分割、分类）和实时可视化。
+启动 Studio 任务平台，在浏览器中提交和管理模型任务。支持训练、验证、预测、导出和环境诊断，可查看任务状态和运行日志、取消任务，并预览和下载结果文件。
+
+在仓库根目录运行：
 
 ```bash
-python app.py
-# 在浏览器中打开 http://127.0.0.1:7860
+python -m pip install -e ".[studio]"
+python main_engine.py
+# 在浏览器中打开 http://127.0.0.1:8000
 ```
+
+更多启动方式和操作说明见 [Studio 文档](docs/studio/README.md)和[用户指南](docs/studio/user_guide.md)。
 
 ## 🤝 社区与贡献
 

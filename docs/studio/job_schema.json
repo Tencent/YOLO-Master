@@ -1,0 +1,292 @@
+{
+  "$defs": {
+    "ErrorInfo": {
+      "description": "Structured error attached to a ``FAILED`` job transition.",
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "timestamp": {
+          "title": "Timestamp",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "ErrorInfo",
+      "type": "object"
+    },
+    "JobStatus": {
+      "description": "Lifecycle state of a job, enforced by the dispatcher state machine.",
+      "enum": [
+        "pending",
+        "running",
+        "completed",
+        "failed",
+        "cancelled"
+      ],
+      "title": "JobStatus",
+      "type": "string"
+    },
+    "Metadata": {
+      "description": "Job bookkeeping metadata attached to every ``JobRequest``.",
+      "properties": {
+        "completed_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Completed At"
+        },
+        "created_at": {
+          "title": "Created At",
+          "type": "string"
+        },
+        "created_by": {
+          "default": "anonymous",
+          "title": "Created By",
+          "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "priority": {
+          "default": "normal",
+          "title": "Priority",
+          "type": "string"
+        },
+        "started_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Started At"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tags",
+          "type": "array"
+        }
+      },
+      "title": "Metadata",
+      "type": "object"
+    },
+    "OutputConfig": {
+      "description": "Output destination and artifact-capture policy for a job.",
+      "properties": {
+        "artifacts": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Artifacts",
+          "type": "array"
+        },
+        "output_dir": {
+          "default": "runs/predict/job_20260824_f1_001",
+          "title": "Output Dir",
+          "type": "string"
+        },
+        "save_images": {
+          "default": true,
+          "title": "Save Images",
+          "type": "boolean"
+        },
+        "save_labels": {
+          "default": false,
+          "title": "Save Labels",
+          "type": "boolean"
+        },
+        "save_logs": {
+          "default": true,
+          "title": "Save Logs",
+          "type": "boolean"
+        }
+      },
+      "title": "OutputConfig",
+      "type": "object"
+    },
+    "RuntimeTracking": {
+      "description": "Runtime supervision knobs: streaming, deadline and cancellation.",
+      "properties": {
+        "cancel_requested": {
+          "default": false,
+          "title": "Cancel Requested",
+          "type": "boolean"
+        },
+        "cancellable": {
+          "default": true,
+          "title": "Cancellable",
+          "type": "boolean"
+        },
+        "stream_logs": {
+          "default": true,
+          "title": "Stream Logs",
+          "type": "boolean"
+        },
+        "timeout_seconds": {
+          "default": 300,
+          "title": "Timeout Seconds",
+          "type": "integer"
+        }
+      },
+      "title": "RuntimeTracking",
+      "type": "object"
+    },
+    "SecurityConstraints": {
+      "description": "Fail-closed security policy enforced before and during job execution.\n\nRegex-enhanced whitelisting (P1): ``allowed_path_patterns`` holds additional\nregex patterns accepted by ``BaseTaskHandler._is_path_safe``. Patterns are\nmatched against the normalized resolved POSIX path and must consume the\nentire path string; malformed patterns fail closed. For backward\ncompatibility, entries in ``allowed_paths`` starting with ``^`` are also\ninterpreted as regex patterns by the handler layer.",
+      "properties": {
+        "allow_shell": {
+          "default": false,
+          "title": "Allow Shell",
+          "type": "boolean"
+        },
+        "allowed_path_patterns": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Allowed Path Patterns",
+          "type": "array"
+        },
+        "allowed_paths": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Allowed Paths",
+          "type": "array"
+        },
+        "path_whitelisted": {
+          "default": true,
+          "title": "Path Whitelisted",
+          "type": "boolean"
+        }
+      },
+      "title": "SecurityConstraints",
+      "type": "object"
+    },
+    "TaskType": {
+      "description": "Task identifier accepted by the job dispatcher and handler registry.",
+      "enum": [
+        "predict",
+        "train",
+        "export",
+        "diagnose",
+        "val"
+      ],
+      "title": "TaskType",
+      "type": "string"
+    }
+  },
+  "description": "Strongly typed job submission contract shared by UI, skills and dispatcher.\n\nAttributes:\n    job_id: Unique job identifier (``{task_type}_{timestamp}_{uuid}`` from the UI).\n    task_type: Registered task type resolved by the handler registry.\n    status: Current lifecycle state; transitions are FSM-enforced.\n    metadata: Bookkeeping metadata (author, priority, tags, timestamps).\n    params: Task-specific parameters validated by the resolved handler.\n    output: Output directory and artifact capture configuration.\n    security_constraints: Fail-closed security policy for the job.\n    runtime_tracking: Deadline, streaming and cooperative-cancellation flags.\n    error: Structured failure detail; ``None`` while the job is not FAILED.\n    logs: Sanitized in-memory execution log lines; only written through\n        :meth:`append_log`, which redacts credentials before storage so\n        UI-facing and persisted logs never carry plaintext secrets.",
+  "properties": {
+    "error": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ErrorInfo"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "job_id": {
+      "maxLength": 128,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "title": "Job Id",
+      "type": "string"
+    },
+    "logs": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Logs",
+      "type": "array"
+    },
+    "metadata": {
+      "$ref": "#/$defs/Metadata",
+      "default": {
+        "completed_at": null,
+        "created_by": "anonymous",
+        "description": null,
+        "priority": "normal",
+        "started_at": null,
+        "tags": []
+      }
+    },
+    "output": {
+      "$ref": "#/$defs/OutputConfig",
+      "default": {
+        "artifacts": [],
+        "output_dir": "runs/predict/job_20260824_f1_001",
+        "save_images": true,
+        "save_labels": false,
+        "save_logs": true
+      }
+    },
+    "params": {
+      "additionalProperties": true,
+      "title": "Params",
+      "type": "object"
+    },
+    "runtime_tracking": {
+      "$ref": "#/$defs/RuntimeTracking",
+      "default": {
+        "cancel_requested": false,
+        "cancellable": true,
+        "stream_logs": true,
+        "timeout_seconds": 300
+      }
+    },
+    "security_constraints": {
+      "$ref": "#/$defs/SecurityConstraints",
+      "default": {
+        "allow_shell": false,
+        "allowed_path_patterns": [],
+        "allowed_paths": [],
+        "path_whitelisted": true
+      }
+    },
+    "status": {
+      "$ref": "#/$defs/JobStatus",
+      "default": "pending"
+    },
+    "task_type": {
+      "$ref": "#/$defs/TaskType"
+    }
+  },
+  "required": [
+    "job_id",
+    "task_type"
+  ],
+  "title": "JobRequest",
+  "type": "object"
+}
