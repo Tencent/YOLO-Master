@@ -356,7 +356,8 @@ class MoTBlock(nn.Module):
         B = x.shape[0]
         route_ids = indices if indices is not None else weights.argmax(dim=1, keepdim=True)
         route_mask = torch.zeros_like(weights, dtype=torch.bool)
-        route_mask.scatter_(1, route_ids, True)
+        # Use the tensor-src overload: legacy ONNX alias analysis rejects scatter_.value with a bool scalar.
+        route_mask.scatter_(1, route_ids, torch.ones_like(route_ids, dtype=torch.bool))
         token_mask_sparsity = 1.0 - float(route_mask.float().mean())
         experts_per_sample = route_mask.reshape(B, self.NUM_EXPERTS, -1).any(dim=2).sum(dim=1)
         # Torch 1.8 does not accept a tuple for ``Tensor.any(dim=...)``.
