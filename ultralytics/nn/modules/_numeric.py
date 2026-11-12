@@ -145,7 +145,6 @@ def deterministic_topk_indices(
             ranking_probabilities = probabilities - expert_priority.view(*priority_shape) * tie_tolerance
         return torch.argsort(ranking_probabilities, dim=1, descending=True, stable=True)[:, : int(top_k)]
 
-    # This path is used only for eager sparse inference, not for ONNX tracing.
     available = torch.ones_like(probabilities, dtype=torch.bool)
     expert_ids = torch.arange(num_experts, device=probabilities.device, dtype=torch.long)
     expert_shape = [1, num_experts] + [1] * (probabilities.ndim - 2)
@@ -158,7 +157,8 @@ def deterministic_topk_indices(
         candidate_ids = torch.where(candidates, expert_ids, num_experts)
         selected = candidate_ids.amin(dim=1, keepdim=True)
         selections.append(selected)
-        available = available.scatter(1, selected, False)
+        # Tensor src avoids the bool-scalar overload rejected by legacy ONNX alias analysis.
+        available = available.scatter(1, selected, torch.zeros_like(selected, dtype=torch.bool))
     return torch.cat(selections, dim=1)
 
 

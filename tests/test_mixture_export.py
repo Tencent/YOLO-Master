@@ -26,7 +26,7 @@ from ultralytics.nn.peft.molora.layer import MoLoRALayer
 # ── Helpers ─────────────────────────────────────────────────────────────
 
 
-def _export_onnx(module, dummy, name="module"):
+def _export_onnx(module, dummy, name="module", opset=17):
     """Export module to ONNX and return parsed model (or None if onnx not installed)."""
     module.eval()
     buf = io.BytesIO()
@@ -36,7 +36,7 @@ def _export_onnx(module, dummy, name="module"):
         buf,
         input_names=["input"],
         output_names=["output"],
-        opset_version=17,
+        opset_version=opset,
         do_constant_folding=False,
         dynamo=False,
     )
@@ -149,6 +149,19 @@ class TestMoTOnnxExport:
             conv_count = _count_conv_nodes(model)
             # MoTBlock has 3 experts with conv layers + out_proj
             assert conv_count >= 3, f"MoTBlock only has {conv_count} Conv nodes, expected ≥ 3"
+
+    def test_motblock_onnx_opset12_bool_scatter_regression(self):
+        """Issue #318: bool scalar scatter must not break legacy ONNX export at opset 12."""
+        m = MoTBlock(16, num_heads=4, top_k=2)
+        # Isolate routing from the deformable expert's grid_sampler, which requires opset 16.
+        m.experts = nn.ModuleList(nn.Identity() for _ in range(m.NUM_EXPERTS))
+        dummy = torch.randn(1, 16, 8, 8)
+        model, raw = _export_onnx(m, dummy, "MoTBlock_opset12", opset=12)
+        assert len(raw) > 0, "MoTBlock opset-12 ONNX export failed"
+        if model is not None:
+            import onnx
+
+            onnx.checker.check_model(model)
 
     def test_c2fmot_onnx_export(self):
         m = C2fMoT(64, 64, n=1, num_heads=4, top_k=2)
