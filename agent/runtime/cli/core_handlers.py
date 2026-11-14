@@ -25,6 +25,7 @@ from runtime.cli.executor import (
     parse_detection_cli_metrics,
     parse_predict_cli_output,
     read_results_csv_metrics,
+    strip_ansi,
 )
 from runtime.cli.normalize import is_dry_run, prefer_cli
 
@@ -433,6 +434,19 @@ def run_predict_like(request: dict[str, Any], mode: str, deps: CoreDeps) -> dict
     return payload
 
 
+def cli_export_path(cli_result: dict[str, Any]) -> Path | None:
+    """Resolve the exporter's final artifact, including directory-based formats."""
+    prefix = "Results saved to "
+    for stream in ("stdout", "stderr"):
+        for line in reversed(strip_ansi(cli_result.get(stream, "")).splitlines()):
+            if line.startswith(prefix):
+                candidate = Path(line[len(prefix) :].strip())
+                if not candidate.is_absolute():
+                    candidate = Path(cli_result["cwd"]) / candidate
+                return candidate.resolve() if candidate.exists() else None
+    return None
+
+
 def run_export(request: dict[str, Any], deps: CoreDeps) -> dict[str, Any]:
     params = dict(request["params"])
     device_selection = resolve_device_selection(request, params)
@@ -467,8 +481,13 @@ def run_export(request: dict[str, Any], deps: CoreDeps) -> dict[str, Any]:
         if failed:
             return failed
         save_dir = cli_save_dir(request, values)
+        exported = cli_export_path(cli_result)
+        actual_save_dir = save_dir
         artifacts = []
-        if save_dir and save_dir.exists():
+        if exported is not None:
+            artifacts.append({"kind": "exported_model", "path": str(exported)})
+            actual_save_dir = exported if exported.is_dir() else exported.parent
+        elif save_dir and save_dir.exists():
             for candidate in sorted(save_dir.rglob("*")):
                 if candidate.is_file() and candidate.suffix not in {".csv", ".yaml", ".json", ".txt", ".jpg", ".png"}:
                     artifacts.append({"kind": "exported_model", "path": str(candidate.resolve())})
@@ -485,7 +504,12 @@ def run_export(request: dict[str, Any], deps: CoreDeps) -> dict[str, Any]:
                 cli_info=cli_result["install"],
             ),
             auto_completed={},
-            job={"mode": "sync", "save_dir": json_safe(save_dir), "executor": "cli"},
+            job={
+                "mode": "sync",
+                "save_dir": json_safe(actual_save_dir),
+                "requested_save_dir": json_safe(save_dir),
+                "executor": "cli",
+            },
             logs=cli_logs(cli_result),
         )
 

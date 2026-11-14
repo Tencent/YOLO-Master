@@ -83,6 +83,111 @@ def make_cache(tmp_path, keys=("a", "b"), channels=10):
     return cache
 
 
+def test_nested_cache_keys_keep_same_stem_samples_separate(tmp_path):
+    cache = make_cache(tmp_path, keys=("left/image", "right/image"))
+    wrapper = FoundationDistillationModel(TinyStudent(), None, config(foundation_cache_dir=str(cache)))
+    features, _ = wrapper._teacher_batch_output(
+        {"img": torch.rand(2, 3, 64, 64), "im_file": ["/data/left/image.jpg", "/data/right/image.jpg"]}
+    )
+
+    assert features.dense["p4"][:, 0, 0, 0].tolist() == [1.0, 2.0]
+
+
+def test_nested_text_prototypes_image_is_not_a_reserved_cache_file(tmp_path):
+    cache = make_cache(tmp_path, keys=("nested/text_prototypes",))
+    torch.save({"prompts": ["zero", "one"], "prototypes": torch.ones(2, 10)}, cache / "text_prototypes.pt")
+    wrapper = FoundationDistillationModel(TinyStudent(), None, config(foundation_cache_dir=str(cache)))
+
+    features, _ = wrapper._teacher_batch_output(
+        {"img": torch.rand(1, 3, 64, 64), "im_file": ["/data/nested/text_prototypes.jpg"]}
+    )
+
+    assert features.dense["p4"][0, 0, 0, 0].item() == 1.0
+
+
+def test_offline_extraction_keys_are_consumed_by_training_wrapper(tmp_path):
+    from PIL import Image
+
+    from ultralytics.nn.foundation.offline import extract_foundation_cache, iter_image_samples
+
+    source = tmp_path / "images"
+    for directory in ("left", "right"):
+        (source / directory).mkdir(parents=True)
+        Image.new("RGB", (8, 8), color="white").save(source / directory / "image.png")
+    cache = tmp_path / "cache"
+    summary = extract_foundation_cache(DummyTeacher(), iter_image_samples(source), cache)
+    assert summary["written"] == ["left/image", "right/image"]
+    wrapper = FoundationDistillationModel(TinyStudent(), None, config(foundation_cache_dir=str(cache)))
+    features, _ = wrapper._teacher_batch_output(
+        {
+            "img": torch.rand(2, 3, 64, 64),
+            "im_file": [str(source / directory / "image.png") for directory in ("left", "right")],
+        }
+    )
+    assert features.dense["p4"].shape == (2, 10, 2, 2)
+
+
+@pytest.mark.parametrize("key", ["image", "nested/image"])
+def test_cache_key_cannot_bind_to_different_images_across_batches(tmp_path, key):
+    cache = make_cache(tmp_path, keys=(key,))
+    wrapper = FoundationDistillationModel(TinyStudent(), None, config(foundation_cache_dir=str(cache)))
+    wrapper._teacher_batch_output({"img": torch.rand(1, 3, 64, 64), "im_file": [f"/first/{key}.jpg"]})
+
+    with pytest.raises(ValueError, match="ambiguous|bound"):
+        wrapper._teacher_batch_output({"img": torch.rand(1, 3, 64, 64), "im_file": [f"/second/{key}.jpg"]})
+
+
+def test_legacy_flat_cache_rejects_same_stem_images_in_one_batch(tmp_path):
+    cache = make_cache(tmp_path, keys=("image",))
+    wrapper = FoundationDistillationModel(TinyStudent(), None, config(foundation_cache_dir=str(cache)))
+
+    with pytest.raises(ValueError, match="ambiguous|bound"):
+        wrapper._teacher_batch_output(
+            {"img": torch.rand(2, 3, 64, 64), "im_file": ["/left/image.jpg", "/right/image.jpg"]}
+        )
+    # A rejected batch must not reserve the key for its first image.
+    wrapper._teacher_batch_output({"img": torch.rand(1, 3, 64, 64), "im_file": ["/right/image.jpg"]})
+
+
+def test_cache_key_uses_lexical_suffix_and_canonical_source_identity(tmp_path):
+    cache = make_cache(tmp_path, keys=("nested/image",))
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "image.jpg").touch()
+    alias = tmp_path / "nested"
+    alias.symlink_to(source, target_is_directory=True)
+    wrapper = FoundationDistillationModel(TinyStudent(), None, config(foundation_cache_dir=str(cache)))
+
+    features, _ = wrapper._teacher_batch_output(
+        {"img": torch.rand(1, 3, 64, 64), "im_file": [str(alias / "image.jpg")]}
+    )
+    assert features.dense["p4"][0, 0, 0, 0].item() == 1.0
+
+
+def test_nested_cache_does_not_fall_back_to_flat_entry_with_same_stem(tmp_path):
+    cache = make_cache(tmp_path, keys=("image", "nested/image"))
+    wrapper = FoundationDistillationModel(TinyStudent(), None, config(foundation_cache_dir=str(cache)))
+
+    with pytest.raises(ValueError, match="ambiguous"):
+        wrapper._teacher_batch_output({"img": torch.rand(1, 3, 64, 64), "im_file": ["/other/image.jpg"]})
+
+
+def test_cache_index_is_reused_between_batches(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    cache = make_cache(tmp_path, keys=("nested/image",))
+    wrapper = FoundationDistillationModel(TinyStudent(), None, config(foundation_cache_dir=str(cache)))
+    batch = {"img": torch.rand(1, 3, 64, 64), "im_file": ["/data/nested/image.jpg"]}
+    wrapper._teacher_batch_output(batch)
+
+    def no_rescan(*args, **kwargs):
+        raise AssertionError("cache must not be rescanned for every batch")
+
+    monkeypatch.setattr(Path, "rglob", no_rescan)
+    features, _ = wrapper._teacher_batch_output(batch)
+    assert features.dense["p4"][0, 0, 0, 0].item() == 1.0
+
+
 def test_cache_only_training_without_online_teacher(tmp_path):
     cache = make_cache(tmp_path)
     student = TinyStudent()

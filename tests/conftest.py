@@ -133,26 +133,6 @@ def isolated_model(tmp_path):
     return isolated_model_path(tmp_path, MODEL)
 
 
-def pytest_sessionfinish(session, exitstatus):
-    """Cleanup operations after pytest session.
-
-    Runs only on the pytest controller (or serial run), skipping xdist workers to avoid race conditions where one worker
-    deletes shared assets while another is still reading them.
-    """
-    # Skip on xdist workers - only the controller should clean up shared resources
-    if hasattr(session.config, "workerinput"):
-        return
-
-    try:
-        from ultralytics.utils import WEIGHTS_DIR
-    except ModuleNotFoundError:
-        return
-
-    # Remove files
-    models = [path for x in {"*.onnx", "*.torchscript"} for path in WEIGHTS_DIR.rglob(x)]
-    for file in ["decelera_portrait_min.mov", "bus.jpg", "yolo26n.onnx", "yolo26n.torchscript", *models]:
-        Path(file).unlink(missing_ok=True)
-
-    # Remove directories
-    for directory in [path for x in {"*.mlpackage", "*_openvino_model"} for path in WEIGHTS_DIR.rglob(x)]:
-        shutil.rmtree(directory, ignore_errors=True)
+# Generated artifacts belong in tmp_path (export tests use isolated_model above).
+# Never sweep WEIGHTS_DIR or the caller's working directory at session end: those
+# locations can contain pre-existing models and assets owned by the user.

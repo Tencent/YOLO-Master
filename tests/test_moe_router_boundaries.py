@@ -258,6 +258,16 @@ class TestDynamicRoutingLayerBoundaries:
         with pytest.raises(ShapeMismatchError):
             router(torch.randn(2, IN_CHANNELS // 2, 16, 16))
 
+    def test_nonfinite_internal_output_raises(self, monkeypatch):
+        router = DynamicRoutingLayer(IN_CHANNELS, NUM_EXPERTS, top_k=TOP_K)
+        monkeypatch.setattr(
+            router.routing_network,
+            "forward",
+            lambda _: torch.full((2, NUM_EXPERTS, 1, 1), float("nan")),
+        )
+        with pytest.raises(MoERouterError, match="internal output"):
+            router(_valid_input())
+
 
 def test_capacity_is_per_expert_and_handles_biased_routing():
     from ultralytics.nn.modules.moe.routers import BaseRouter
@@ -326,16 +336,6 @@ def test_capacity_factor_must_be_positive_and_finite(capacity_factor):
     router = BaseRouter(num_experts=4, top_k=1, capacity_factor=capacity_factor)
     with pytest.raises(MoERouterError, match="capacity_factor"):
         router._process_logits(torch.zeros(2, 4), noise_std=0.0, training=True)
-
-    def test_nonfinite_internal_output_raises(self, monkeypatch):
-        router = DynamicRoutingLayer(IN_CHANNELS, NUM_EXPERTS, top_k=TOP_K)
-        monkeypatch.setattr(
-            router.routing_network,
-            "forward",
-            lambda _: torch.full((2, NUM_EXPERTS, 1, 1), float("nan")),
-        )
-        with pytest.raises(MoERouterError, match="internal output"):
-            router(_valid_input())
 
 
 # =============================================================================

@@ -4,6 +4,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from .async_jobs import async_requested
 from .contract import json_safe
 from .progress import append_progress_event, progress_descriptor, progress_file_for_request
 
@@ -135,10 +136,14 @@ def build_stage_request(
     artifacts_override: dict[str, Any],
     deps: PipelineDeps,
 ) -> dict[str, Any]:
-    inputs = {**deepcopy(request.get("inputs", {})), **stage_inputs}
-    if stage not in {"system"} and current_model and not inputs.get("model"):
+    inputs = deepcopy(request.get("inputs", {}))
+    if stage != "system" and current_model:
+        inputs.pop("profile", None)
         inputs["model"] = current_model
+    inputs.update(deepcopy(stage_inputs))
     policy = {**deepcopy(request.get("policy", {})), **stage_policy}
+    # Async belongs to the outer pipeline submission, never to a dependency stage.
+    policy["async"] = False
     return deps.normalize_request(
         {
             "skill": skill,
@@ -181,6 +186,12 @@ def run_experiment_pipeline(request: dict[str, Any], deps: PipelineDeps) -> dict
     stages = requested_stages(params)
     if not stages:
         raise ValueError("`params` must include at least one pipeline stage, e.g. train, val, export, or benchmark.")
+    for stage in stages:
+        _, _, stage_policy, _, _ = split_stage_config(stage_config(params, stage))
+        if async_requested({"policy": stage_policy}):
+            raise ValueError(
+                f"Pipeline stage '{stage}' cannot use policy.async; set async on the whole pipeline instead."
+            )
 
     if deps.is_dry_run(request):
         preview = pipeline_preview(request, params)
@@ -200,6 +211,7 @@ def run_experiment_pipeline(request: dict[str, Any], deps: PipelineDeps) -> dict
     events += 1
 
     stage_payloads: dict[str, Any] = {}
+    stage_input_models: dict[str, Any] = {}
     artifacts: list[dict[str, Any]] = []
     failed_stage: str | None = None
     for stage in stages:
@@ -214,8 +226,6 @@ def run_experiment_pipeline(request: dict[str, Any], deps: PipelineDeps) -> dict
             )
         if not skill:
             raise ValueError(f"Unsupported pipeline stage: {stage}")
-        append_progress_event(progress_path, {"event": "stage_start", "stage": stage, "skill": skill})
-        events += 1
         stage_request = build_stage_request(
             request,
             stage=stage,
@@ -227,10 +237,16 @@ def run_experiment_pipeline(request: dict[str, Any], deps: PipelineDeps) -> dict
             artifacts_override=artifacts_override,
             deps=deps,
         )
+        stage_input_models[stage] = stage_request["inputs"].get("model")
+        append_progress_event(
+            progress_path,
+            {"event": "stage_start", "stage": stage, "skill": skill, "input_model": stage_input_models[stage]},
+        )
+        events += 1
         payload = execute_stage(stage, skill, stage_request, deps)
         stage_payloads[stage] = payload
         artifacts.extend(payload.get("artifacts", []) or [])
-        if payload.get("status") not in {"ok", "partial", "running"}:
+        if payload.get("status") not in {"ok", "partial"}:
             failed_stage = stage
             append_progress_event(
                 progress_path, {"event": "stage_failed", "stage": stage, "status": payload.get("status")}
@@ -254,6 +270,7 @@ def run_experiment_pipeline(request: dict[str, Any], deps: PipelineDeps) -> dict
             "stage_order": stages,
             "failed_stage": failed_stage,
             "current_model": current_model,
+            "stage_input_models": stage_input_models,
         },
         best_checkpoint=current_model,
         artifacts=artifacts,

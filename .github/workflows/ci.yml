@@ -149,12 +149,15 @@ jobs:
         run: |
           python scripts/check_moe_ssot.py
           python tools/config_drift_detector.py
-            python -m torch.distributed.run --standalone --nproc_per_node=2 tests/ddp_moa_mot_smoke.py
+          python -m torch.distributed.run --standalone --nproc_per_node=2 tests/ddp_moa_mot_smoke.py
 
   MixtureP0Regression:
     if: github.event_name == 'pull_request' || github.event_name == 'push'
     timeout-minutes: 20
     runs-on: ubuntu-latest
+    env:
+      YOLO_AUTOINSTALL: "false"
+      OMP_NUM_THREADS: "1"
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
@@ -165,12 +168,20 @@ jobs:
           python-version: "3.11"
           activate-environment: true
       - name: Install package
-        run: uv pip install -e ".[dev]" --torch-backend cpu
+        run: uv pip install -e ".[dev]" onnx onnxruntime --torch-backend cpu
       - name: Run mixture P0/P1 regression gates
         run: |
           python -m pytest -q tests/test_default_config_integrity.py tests/test_master_model_configs.py --tb=long
           python -m pytest -q tests/test_molora_dtype.py tests/test_molora_backend_roundtrip.py \
             tests/test_molora_merge_semantics.py tests/test_adapter_backend_contract.py --tb=long
+      - name: Run routing, adaptation, and orchestration contracts
+        run: |
+          python -m pytest -q tests/test_mixture_routing_contract.py tests/test_moe_router_boundaries.py \
+            tests/test_molora_vpeft_integration.py tests/test_vpeft_capacity_guard.py \
+            tests/test_foundation_cache_training.py tests/test_agent_pipeline.py \
+            tests/test_agent_async_jobs.py tests/test_agent_experiment_manifest.py \
+            tests/test_agent_export_artifacts.py \
+            tests/test_test_artifact_isolation.py tests/test_ci_summary.py --tb=long
 
   Tests:
     if: github.event_name == 'pull_request' || github.event_name == 'push'
@@ -721,11 +732,32 @@ jobs:
 
   Summary:
     runs-on: ubuntu-latest
-    needs: [Benchmarks, Tests, MixtureDDP, SlowTests, IsolatedExports, GPU, RaspberryPi, NVIDIA_Jetson, Conda]
+    needs: [Benchmarks, Tests, MixtureDDP, MixtureP0Regression, SlowTests, IsolatedExports, GPU, RaspberryPi, NVIDIA_Jetson, Conda]
     if: always()
     steps:
+      - name: Validate job results
+        env:
+          CI_EVENT: ${{ github.event_name }}
+          CI_NEEDS: ${{ toJSON(needs) }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import sys
+
+          jobs = json.loads(os.environ["CI_NEEDS"])
+          failed = {name for name, job in jobs.items() if job["result"] in {"failure", "cancelled"}}
+          if os.environ["CI_EVENT"] in {"pull_request", "push"}:
+              required = {"Tests", "MixtureDDP", "MixtureP0Regression"}
+              failed.update(name for name in required if jobs.get(name, {}).get("result") != "success")
+          for name, job in sorted(jobs.items()):
+              print(f"{name}: {job['result']}")
+          if failed:
+              print(f"CI failed: {', '.join(sorted(failed))}")
+              sys.exit(1)
+          PY
       - name: Check for failure and notify
-        if: (needs.Benchmarks.result == 'failure' || needs.Tests.result == 'failure' || needs.MixtureDDP.result == 'failure' || needs.SlowTests.result == 'failure' || needs.IsolatedExports.result == 'failure' || needs.GPU.result == 'failure' || needs.RaspberryPi.result == 'failure' || needs.NVIDIA_Jetson.result == 'failure' || needs.Conda.result == 'failure' ) && github.repository == 'ultralytics/ultralytics' && (github.event_name == 'schedule' || github.event_name == 'push') && github.run_attempt == '1'
+        if: always() && (needs.Benchmarks.result == 'failure' || needs.Tests.result == 'failure' || needs.MixtureDDP.result == 'failure' || needs.MixtureP0Regression.result == 'failure' || needs.SlowTests.result == 'failure' || needs.IsolatedExports.result == 'failure' || needs.GPU.result == 'failure' || needs.RaspberryPi.result == 'failure' || needs.NVIDIA_Jetson.result == 'failure' || needs.Conda.result == 'failure' ) && github.repository == 'ultralytics/ultralytics' && (github.event_name == 'schedule' || github.event_name == 'push') && github.run_attempt == '1'
         uses: slackapi/slack-github-action@v4.0.0
         with:
           webhook-type: incoming-webhook
