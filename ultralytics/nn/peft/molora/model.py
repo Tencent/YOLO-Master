@@ -86,9 +86,7 @@ def get_peft_molora_model(
 
     # Resolve target modules
     target_modules = list(planned_ranks) if plan is not None else getattr(cfg, "target_modules", None)
-    if plan is not None:
-        cfg.target_modules = list(target_modules)
-    elif target_modules is None or not target_modules:
+    if target_modules is None or not target_modules:
         LOGGER.warning("[MoLoRA] No target_modules specified; running auto-detection.")
         target_modules = MoLoRAConfigBuilder.auto_detect_targets(
             model,
@@ -105,36 +103,47 @@ def get_peft_molora_model(
             only_3x3=getattr(cfg, "only_3x3", False),
         )
         if not target_modules:
-            LOGGER.warning("[MoLoRA] Auto-detection found no compatible layers. Returning model unchanged.")
-            return model
-        cfg.target_modules = list(target_modules)
+            raise ValueError("MoLoRA auto-detection found no compatible targets")
 
-    # Pre-build every replacement before changing module ownership. Validation
-    # errors therefore cannot leave a partially wrapped model.
-    modules_dict = dict(model.named_modules())
-    replacements = []
-    original_trainable = {}
+    # Resolve every explicit target before constructing wrappers: construction
+    # freezes base parameters, so skipping an invalid target is not a safe no-op.
+    resolved_targets = []
+    invalid_targets = []
+    seen_targets = set()
     for name in target_modules:
-        if name not in modules_dict:
-            if plan is not None:
-                raise RuntimeError(f"validated PlacementPlan target {name!r} disappeared before MoLoRA injection")
+        if name in seen_targets:
+            invalid_targets.append(f"{name!r} (duplicate)")
             continue
-        base_layer = modules_dict[name]
-        if not isinstance(base_layer, (nn.Conv2d, nn.Linear)):
-            if plan is not None:
-                raise RuntimeError(f"validated PlacementPlan target {name!r} changed type before MoLoRA injection")
+        seen_targets.add(name)
+        base_layer = modules_dict.get(name)
+        if not name or not isinstance(base_layer, (nn.Conv2d, nn.Linear)):
+            invalid_targets.append(f"{name!r} (missing or unsupported; expected Conv2d/Linear)")
             continue
-
-        # Parent module and local attribute name for in-place replacement
         parent_name, child_name = _parent_child_name(name)
         parent = _get_submodule(model, parent_name) if parent_name else model
         if parent is None or not hasattr(parent, child_name):
-            if plan is not None:
-                raise RuntimeError(f"validated PlacementPlan target {name!r} has no writable parent")
+            invalid_targets.append(f"{name!r} (no writable parent)")
             continue
+        resolved_targets.append((name, parent, child_name, base_layer))
+    if invalid_targets:
+        raise ValueError("Invalid MoLoRA targets: " + "; ".join(invalid_targets))
+    if not resolved_targets:
+        raise ValueError("MoLoRA requires at least one compatible target")
+    frozen_experts = list(getattr(cfg, "freeze_experts", None) or [])
+    if any(type(index) is not int or not 0 <= index < cfg.num_experts for index in frozen_experts):
+        raise ValueError(f"MoLoRA freeze_experts must contain indices in [0, {cfg.num_experts})")
 
+    # Pre-build every replacement before changing module ownership. Validation
+    # errors therefore cannot leave a partially wrapped model.
+    replacements = []
+    # Snapshot all targets before any constructor freezes a shared parameter.
+    original_trainable = {
+        parameter: parameter.requires_grad
+        for _, _, _, base_layer in resolved_targets
+        for parameter in base_layer.parameters()
+    }
+    for name, parent, child_name, base_layer in resolved_targets:
         layer_rank = planned_ranks.get(name, cfg.r)
-        original_trainable.update((parameter, parameter.requires_grad) for parameter in base_layer.parameters())
         try:
             molora_layer = MoLoRALayer(
                 base_layer=base_layer,
@@ -163,6 +172,28 @@ def get_peft_molora_model(
             raise
         replacements.append((name, parent, child_name, base_layer, molora_layer))
 
+    # The plan's single-LoRA estimate cannot stand in for MoLoRA's E experts
+    # and router. Count the actual adapter storage, including frozen experts,
+    # before committing any replacements; base parameters are excluded by identity.
+    parameter_budget = None
+    if plan is not None:
+        base_parameters = {id(parameter) for parameter in original_trainable}
+        adapter_parameters = {
+            id(parameter): parameter
+            for _, _, _, _, layer in replacements
+            for parameter in layer.parameters()
+            if id(parameter) not in base_parameters
+        }
+        used = sum(parameter.numel() for parameter in adapter_parameters.values())
+        maximum = int(plan.budget.get("max_adapter_params", 0))
+        if used > maximum:
+            for parameter, requires_grad in original_trainable.items():
+                parameter.requires_grad = requires_grad
+            raise ValueError(
+                f"MoLoRA adapter budget exceeded: {used} parameters (experts and routers) > max_adapter_params={maximum}"
+            )
+        parameter_budget = {"max_adapter_params": maximum, "used_adapter_params": used}
+
     applied = []
     try:
         for name, parent, child_name, base_layer, molora_layer in replacements:
@@ -186,16 +217,17 @@ def get_peft_molora_model(
     LOGGER.info(f"[MoLoRA] Wrapped {wrapped} layers with MoLoRA (E={cfg.num_experts}, K={cfg.top_k}).")
 
     # Attach metadata
+    cfg.target_modules = list(target_modules)
     model.molora_config = cfg  # type: ignore[union-attr]
     model.molora_enabled = True  # type: ignore[union-attr]
     if plan is not None:
         model.molora_placement_plan = plan.to_dict()  # type: ignore[union-attr]
         model.molora_placement_fingerprint = plan.fingerprint  # type: ignore[union-attr]
         model.molora_rank_map = dict(planned_ranks)  # type: ignore[union-attr]
+        model.molora_parameter_budget = parameter_budget  # type: ignore[union-attr]
 
     # Freeze all non-MoLoRA parameters so only adapter weights are trainable
     mark_only_molora_as_trainable(model)
-    frozen_experts = list(getattr(cfg, "freeze_experts", None) or [])
     if frozen_experts:
         for module in model.modules():
             if isinstance(module, MoLoRALayer):

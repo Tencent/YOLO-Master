@@ -446,6 +446,7 @@ def _build_vpeft_placement_plan(model: nn.Module, config: "LoRAConfig") -> Any:
     """Compile a V-PEFT graph into the stable PlacementPlan contract."""
     from ultralytics.vpeft import (
         AlternatingOptimizationSolver,
+        Constraint,
         ConstraintRegistry,
         ComputationGraphBuilder,
         DifferentiableOptimizationSolver,
@@ -465,6 +466,20 @@ def _build_vpeft_placement_plan(model: nn.Module, config: "LoRAConfig") -> Any:
             "exclude_modules": config.exclude_modules,
         }
     )
+
+    class InjectionVariantConstraint(Constraint):
+        """Keep the solver within the single variant supported by this injection call."""
+
+        def __init__(self, requested_variant):
+            super().__init__("C_injection_variant")
+            self.requested_variant = requested_variant
+
+        def is_feasible(self, node_info, variant, rank):
+            return variant.lower() == self.requested_variant
+
+    # AO may otherwise select a cheaper IA3 node and report its cost while the
+    # injection API still constructs the requested LoRA variant at that rank.
+    constraints._register(InjectionVariantConstraint(variant), as_hard=True)
     solver_name = str(getattr(config, "planner_solver", "ao") or "ao").lower()
     solver_cls = {
         "ao": AlternatingOptimizationSolver,

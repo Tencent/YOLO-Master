@@ -158,3 +158,16 @@ def test_capacity_boundary_is_shared_by_guard_and_plan_validation():
         status="ACCEPT",
     )
     plan.validate_model(model)
+
+
+def test_generated_plan_keeps_injected_variant_and_exact_budget_cost():
+    model = nn.Sequential(nn.Linear(8, 8), nn.Linear(8, 8))
+    plan = _build_vpeft_placement_plan(
+        model, LoRAConfig(r=4, alpha=8, backend="fallback", planner_backend="vpeft", adapter_budget=64)
+    )
+
+    assert plan.status == "ACCEPT"
+    assert all(target.variant == "lora" for target in plan.targets)
+    actual_cost = sum(target.rank * 16 for target in plan.targets)
+    assert plan.budget["used_adapter_params"] == actual_cost
+    assert actual_cost <= plan.budget["max_adapter_params"]
