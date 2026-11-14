@@ -12,6 +12,7 @@ import pytest
 from agent.runtime.cli.contract import (
     MANIFEST_LOG_LIMIT,
     MANIFEST_SCHEMA_VERSION,
+    finalize_payload,
     manifest_checksum,
     write_manifest,
 )
@@ -165,3 +166,24 @@ def test_agent_validator_decodes_dispatcher_output_as_utf8(monkeypatch: pytest.M
 
     assert result["passed"] is True
     assert result["payload"]["summary"] == "检测完成"
+
+
+def test_public_results_scrub_bare_request_credentials_without_changing_execution(tmp_path: Path) -> None:
+    """A downstream exception may echo a credential without a key name or Bearer prefix."""
+    secret = "SYNTHETIC_BARE_REQUEST_CREDENTIAL"
+    request = {
+        "skill": "yolo.system",
+        "request_id": "secret-review",
+        "runtime": {"headers": {"Authorization": f"Bearer {secret}"}},
+        "params": {"max_output_tokens": 128},
+        "artifacts": {"project": str(tmp_path)},
+    }
+    execution_payload = {"status": "failed", "summary": f"Provider rejected {secret}", "error": {"message": secret}}
+    finalized = finalize_payload(request, execution_payload)
+    raw = Path(finalized["manifest"]).read_text()
+    assert secret not in raw
+    assert secret not in json.dumps(finalized)
+    assert manifest_checksum(json.loads(raw)) == json.loads(raw)["manifest_sha256"]
+    assert request["runtime"]["headers"]["Authorization"] == f"Bearer {secret}"
+    assert execution_payload["error"]["message"] == secret
+    assert json.loads(raw)["request"]["params"]["max_output_tokens"] == 128

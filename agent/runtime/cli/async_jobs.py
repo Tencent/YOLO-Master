@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -11,11 +12,20 @@ from uuid import uuid4
 
 import psutil
 
-from runtime.cli.contract import _atomic_write_json, ensure_manifest_dir, json_safe, response, write_manifest
+from .contract import (
+    _atomic_write_json,
+    ensure_manifest_dir,
+    json_safe,
+    redact_job_value,
+    request_secret_values,
+    response,
+    write_manifest,
+)
 
 SKILL_ROOT = Path(__file__).resolve().parents[2]
 DISPATCHER = SKILL_ROOT / "scripts" / "run_yolo_master_skill.py"
 WORKER = SKILL_ROOT / "scripts" / "run_async_job.py"
+EXECUTION_REQUEST_NAME = ".execution-request.json"
 
 
 def async_requested(request: dict[str, Any]) -> bool:
@@ -47,7 +57,8 @@ class AsyncJobManager:
     def submit(self, skill: str, request: dict[str, Any], callback_url: str | None = None) -> dict[str, Any]:
         job_id = uuid4().hex[:12]
         job_dir = self._job_dir(job_id, request)
-        job_dir.mkdir(parents=True, exist_ok=False)
+        job_dir.mkdir(mode=0o700, parents=True, exist_ok=False)
+        job_dir.chmod(0o700)
         child_request = json_safe(request)
         child_request["request_id"] = f"{request.get('request_id', skill.replace('.', '-'))}-{job_id}"
         child_request.setdefault("policy", {})
@@ -56,37 +67,77 @@ class AsyncJobManager:
         status_path = job_dir / "status.json"
         stdout_path = job_dir / "stdout.jsonl"
         stderr_path = job_dir / "stderr.log"
-        request_path.write_text(json.dumps(child_request, ensure_ascii=False, indent=2), encoding="utf-8")
-
-        with stdout_path.open("a", encoding="utf-8") as stdout_handle, stderr_path.open(
-            "a", encoding="utf-8"
-        ) as stderr_handle:
-            proc = subprocess.Popen(
-                [sys.executable, str(WORKER), str(job_dir), str(DISPATCHER)],
-                cwd=SKILL_ROOT.parent,
-                stdout=stdout_handle,
-                stderr=stderr_handle,
-                start_new_session=True,
-            )
+        execution_path = job_dir / EXECUTION_REQUEST_NAME
+        secrets = request_secret_values(child_request)
+        proc = None
         try:
-            created = psutil.Process(proc.pid).create_time()
+            progress_path = str((ensure_manifest_dir(child_request) / "progress.jsonl").resolve())
+            _atomic_write_json(request_path, redact_job_value(child_request, secrets))
+            _atomic_write_json(execution_path, child_request)
+            execution_path.chmod(0o600)
+            with os.fdopen(
+                os.open(stdout_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8"
+            ) as stdout_handle, os.fdopen(
+                os.open(stderr_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8"
+            ) as stderr_handle:
+                proc = subprocess.Popen(
+                    [sys.executable, str(WORKER), str(job_dir), str(DISPATCHER), str(execution_path)],
+                    cwd=SKILL_ROOT.parent,
+                    stdout=stdout_handle,
+                    stderr=stderr_handle,
+                    start_new_session=True,
+                )
+            try:
+                created = psutil.Process(proc.pid).create_time()
+            except psutil.NoSuchProcess:
+                created = None  # A fast worker may already have persisted its result.
+            status = {
+                "job_id": job_id,
+                "skill": skill,
+                "status": "running",
+                "pid": proc.pid,
+                "process_create_time": created,
+                "submitted_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                "request_path": str(request_path.resolve()),
+                "stdout_path": str(stdout_path.resolve()),
+                "stderr_path": str(stderr_path.resolve()),
+                "callback_url": redact_job_value(callback_url, secrets),
+                "progress_path": progress_path,
+            }
+            _atomic_write_json(status_path, status)
+            return {**status, "status_path": str(status_path.resolve())}
+        except BaseException:
+            execution_path.unlink(missing_ok=True)
+            if proc is not None:
+                try:
+                    self._terminate_process_tree(psutil.Process(proc.pid))
+                except psutil.NoSuchProcess:
+                    pass
+            raise
+
+    @staticmethod
+    def _terminate_process_tree(process: psutil.Process) -> bool:
+        """Stop an owned supervisor and its descendants before publishing cancellation."""
+        children = process.children(recursive=True)
+        for target in reversed(children):
+            try:
+                target.terminate()
+            except psutil.NoSuchProcess:
+                pass
+        # Let the supervisor reap exited children before stopping the supervisor itself.
+        _, alive = psutil.wait_procs(children, timeout=3)
+        try:
+            process.terminate()
         except psutil.NoSuchProcess:
-            created = None  # A fast worker may already have persisted its result.
-        status = {
-            "job_id": job_id,
-            "skill": skill,
-            "status": "running",
-            "pid": proc.pid,
-            "process_create_time": created,
-            "submitted_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-            "request_path": str(request_path.resolve()),
-            "stdout_path": str(stdout_path.resolve()),
-            "stderr_path": str(stderr_path.resolve()),
-            "callback_url": callback_url,
-            "progress_path": str((ensure_manifest_dir(child_request) / "progress.jsonl").resolve()),
-        }
-        _atomic_write_json(status_path, status)
-        return {**status, "status_path": str(status_path.resolve())}
+            pass
+        alive.append(process)
+        for target in alive:
+            try:
+                target.kill()
+            except psutil.NoSuchProcess:
+                pass
+        _, alive = psutil.wait_procs(alive, timeout=3)
+        return not alive
 
     @staticmethod
     def _process(status: dict[str, Any]) -> psutil.Process | None:
@@ -128,30 +179,12 @@ class AsyncJobManager:
             process = self._process(status)
             if process is None:
                 return {**status, "status": "unknown", "cancelled": False}
-            children = process.children(recursive=True)
-            for target in reversed(children):
-                try:
-                    target.terminate()
-                except psutil.NoSuchProcess:
-                    pass
-            # Let the supervisor reap exited children before terminating the supervisor itself.
-            _, alive = psutil.wait_procs(children, timeout=3)
-            try:
-                process.terminate()
-            except psutil.NoSuchProcess:
-                pass
-            alive.append(process)
-            for target in alive:
-                try:
-                    target.kill()
-                except psutil.NoSuchProcess:
-                    pass
-            _, alive = psutil.wait_procs(alive, timeout=3)
-            if alive:
+            if not self._terminate_process_tree(process):
                 return {**status, "status": "unknown", "cancelled": False}
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             return {**status, "status": "unknown", "cancelled": False}
         result = {"status": "cancelled", "cancelled": True, "cancelled_at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
+        (self._job_dir(job_id, request) / EXECUTION_REQUEST_NAME).unlink(missing_ok=True)
         _atomic_write_json(self._job_dir(job_id, request) / "cancelled.json", result)
         return {**status, **result}
 

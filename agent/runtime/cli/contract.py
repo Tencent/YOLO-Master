@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from core.security import _known_secret_values
 
 SKILL_ROOT = Path(__file__).resolve().parents[2]
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -34,6 +35,7 @@ _INLINE_SECRET_RE = re.compile(
     r"(\s*[:=]\s*)([^\s,;&]+)"
 )
 _BEARER_RE = re.compile(r"(?i)\bBearer\s+[a-z0-9._~+/=-]+")
+_URL_USERINFO_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)([^\s/]*@)")
 
 
 def _sensitive_key(key: Any) -> bool:
@@ -59,6 +61,64 @@ def redact_sensitive(value: Any) -> Any:
     if isinstance(value, str):
         return _redact_inline_secrets(value)
     return value
+
+
+def request_secret_values(value: Any) -> set[str]:
+    """Collect request credentials for scrubbing bare values echoed by child code."""
+    secrets: set[str] = set()
+
+    def visit(item: Any, sensitive: bool = False) -> None:
+        if isinstance(item, dict):
+            for key, child in item.items():
+                name = str(key).lower().replace("-", "_")
+                credential = _sensitive_key(key) or name in {"cookie", "passwd", "access_token"}
+                credential |= name.endswith(("_token", "_access_key", "_private_key"))
+                visit(child, sensitive or credential)
+        elif isinstance(item, (list, tuple)):
+            for child in item:
+                visit(child, sensitive)
+        elif isinstance(item, str):
+            if sensitive and item:
+                secrets.add(item)
+            secrets.update(match.group(3).strip("\"'") for match in _INLINE_SECRET_RE.finditer(item))
+            secrets.update(match.group().split(None, 1)[1] for match in _BEARER_RE.finditer(item))
+            secrets.update(match.group(2)[:-1] for match in _URL_USERINFO_RE.finditer(item))
+
+    visit(value)
+    # JSON output escapes credentials; text output may split multiline credentials.
+    for secret in tuple(secrets):
+        secrets.update(part for part in secret.splitlines() if part)
+        secrets.add(json.dumps(secret, ensure_ascii=False)[1:-1])
+        secrets.add(json.dumps(secret, ensure_ascii=True)[1:-1])
+    return {secret for secret in secrets if secret}
+
+
+def redact_job_value(value: Any, secrets: set[str]) -> Any:
+    """Sanitize public records and streams without changing execution inputs."""
+    # Reuse Core's environment/.env secret discovery, without rescanning every
+    # large log line with its general-purpose quoted-assignment regexes.
+    known = set(secrets) | _known_secret_values()
+    for secret in tuple(known):
+        known.add(json.dumps(secret, ensure_ascii=False)[1:-1])
+        known.add(json.dumps(secret, ensure_ascii=True)[1:-1])
+    known = sorted(known, key=len, reverse=True)
+
+    def scrub(item: Any) -> Any:
+        if isinstance(item, dict):
+            return {key: scrub(child) for key, child in item.items()}
+        if isinstance(item, list):
+            return [scrub(child) for child in item]
+        if isinstance(item, str):
+            for secret in known:
+                if len(secret) >= 4:
+                    item = item.replace(secret, REDACTED)
+                else:
+                    item = re.sub(rf"(?<![A-Za-z0-9]){re.escape(secret)}(?![A-Za-z0-9])", REDACTED, item)
+            item = _URL_USERINFO_RE.sub(lambda match: match.group(1) + REDACTED + "@", item)
+            return item
+        return item
+
+    return scrub(redact_sensitive(value))
 
 
 def _compact_manifest_logs(value: Any) -> Any:
@@ -313,7 +373,7 @@ def write_manifest(request: dict[str, Any], payload: dict[str, Any]) -> Path:
         "request": _request_snapshot(request),
         "result": _manifest_safe({key: value for key, value in payload.items() if key not in represented_fields}),
     }
-    manifest = _manifest_safe(manifest)
+    manifest = redact_job_value(_manifest_safe(manifest), request_secret_values(request))
     manifest["manifest_sha256"] = manifest_checksum(manifest)
     _atomic_write_json(manifest_path, manifest)
     return manifest_path
@@ -324,7 +384,7 @@ def finalize_payload(request: dict[str, Any], payload: dict[str, Any]) -> dict[s
     payload.setdefault("request_id", request.get("request_id"))
     if "manifest" not in payload:
         payload["manifest"] = str(write_manifest(request, payload))
-    return json_safe(payload)
+    return redact_job_value(json_safe(payload), request_secret_values(request))
 
 
 def response(skill: str, status: str, summary: str, **kwargs: Any) -> dict[str, Any]:
