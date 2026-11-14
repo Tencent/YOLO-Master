@@ -275,10 +275,16 @@ class _MoTRouter(FP32RouterMixin, nn.Module):
             weights = F.softmax(logits / temp.float(), dim=1)  # [B, E, H, W]
         dense_weights = weights
 
-        # ONNX and TorchScript tracing use dense blending. Besides being the
-        # documented export semantics, avoiding Top-K/scatter here prevents a
-        # PyTorch 2.9 legacy-exporter alias-analysis failure on bool scatter_.
+        # Static exports still execute every expert, but masked exports must
+        # select the same experts as eager execution, including near-tie rules.
         exporting = torch.jit.is_tracing() or torch.onnx.is_in_onnx_export()
+        if self.top_k < self.num_experts and (not exporting or self.export_masked):
+            topk_idx = deterministic_topk_indices(
+                weights,
+                self.top_k,
+                tie_tolerance=float(getattr(self, "route_tie_tolerance", 1e-6)),
+                tie_break=str(getattr(self, "route_tie_break", DEFAULT_DETERMINISTIC_TOPK)),
+            )
         if exporting:
             if self.export_masked and self.top_k < self.num_experts:
                 # Export-time parity with the eager sparse path: rebuild the
@@ -288,7 +294,6 @@ class _MoTRouter(FP32RouterMixin, nn.Module):
                 # The exported graph stays dense (every expert runs), but its
                 # weights equal the sparse path's, so artifact outputs match
                 # eager sparse execution numerically.
-                _, topk_idx = weights.topk(self.top_k, dim=1)
                 expert_range = torch.arange(self.num_experts, device=weights.device).view(1, -1, 1, 1)
                 mask = torch.zeros_like(weights)
                 for k in range(self.top_k):
@@ -297,15 +302,6 @@ class _MoTRouter(FP32RouterMixin, nn.Module):
             indices = None
         # Top-K mask
         elif self.top_k < self.num_experts:
-            # get top-k indices [B, K, H, W]
-            tie_tolerance = float(getattr(self, "route_tie_tolerance", 1e-6))
-            tie_break = str(getattr(self, "route_tie_break", DEFAULT_DETERMINISTIC_TOPK))
-            topk_idx = deterministic_topk_indices(
-                weights,
-                self.top_k,
-                tie_tolerance=tie_tolerance,
-                tie_break=tie_break,
-            )
             topk_vals = weights.gather(1, topk_idx)
             # renormalize selected weights
             topk_weights = stable_normalize(topk_vals, dim=1)
@@ -321,7 +317,7 @@ class _MoTRouter(FP32RouterMixin, nn.Module):
             indices = (
                 torch.arange(self.num_experts, device=x.device)
                 .view(1, -1, 1, 1)
-                .expand(x.shape[0], -1, x.shape[2], x.shape[3])
+                .expand(weights.shape[0], -1, weights.shape[2], weights.shape[3])
             )
 
         weights = weights.to(dtype=x.dtype)

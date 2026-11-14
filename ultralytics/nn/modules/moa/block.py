@@ -49,7 +49,7 @@ class MoABlock(nn.Module):
     def __init__(
         self,
         dim: int,
-        num_heads: int = 8,
+        num_heads: int = 6,
         mlp_ratio: float = 2.0,
         temperature: float = 1.0,
         attn_drop: float = 0.0,

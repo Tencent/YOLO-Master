@@ -143,7 +143,12 @@ def deterministic_topk_indices(
             )
             priority_shape = [1, num_experts] + [1] * (probabilities.ndim - 2)
             ranking_probabilities = probabilities - expert_priority.view(*priority_shape) * tie_tolerance
-        return torch.argsort(ranking_probabilities, dim=1, descending=True, stable=True)[:, : int(top_k)]
+        if not (torch.onnx.is_in_onnx_export() or torch.jit.is_tracing()):
+            return torch.argsort(ranking_probabilities, dim=1, descending=True, stable=True)[:, : int(top_k)]
+        # Legacy ONNX export cannot represent stable argsort. Repeated maxima
+        # with the lowest ID for exact ties are equivalent to its stable order.
+        probabilities = ranking_probabilities
+        tie_tolerance = 0.0
 
     available = torch.ones_like(probabilities, dtype=torch.bool)
     expert_ids = torch.arange(num_experts, device=probabilities.device, dtype=torch.long)

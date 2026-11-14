@@ -173,7 +173,8 @@ class BaseRouter(nn.Module):
     can handle per step. Capacity follows the standard Top-K convention:
     ``ceil(capacity_factor * tokens * top_k / num_experts)``. Assignments beyond
     an expert's capacity are removed, then tokens with no surviving assignment
-    fall back to expert 0. This prevents a biased router from overloading one expert.
+    fall back to expert 0. Emergency fallback assignments are excluded from the
+    normal capacity budget and remain marked in the overflow diagnostics.
     """
 
     def __init__(self, num_experts, top_k, capacity_factor: Optional[float] = None):
@@ -219,13 +220,18 @@ class BaseRouter(nn.Module):
             if not math.isfinite(float(self.capacity_factor)) or self.capacity_factor <= 0:
                 raise MoERouterError("capacity_factor must be finite and > 0")
             capacity = max(1, math.ceil(self.capacity_factor * B * effective_top_k / self.num_experts))
-            expert_positions = F.one_hot(topk_indices, num_classes=self.num_experts).cumsum(dim=0)
-            assignment_overflow_mask = expert_positions.gather(2, topk_indices.unsqueeze(-1)).squeeze(-1) > capacity
+            # Count assignments in sample-major order across every Top-K slot.
+            # A [B, K, E] cumsum along B would give each rank its own capacity.
+            flat_indices = topk_indices.reshape(-1)
+            expert_positions = F.one_hot(flat_indices, num_classes=self.num_experts).cumsum(dim=0)
+            assignment_positions = expert_positions.gather(1, flat_indices.unsqueeze(-1)).reshape_as(topk_indices)
+            assignment_overflow_mask = assignment_positions > capacity
+            overflow_mask = assignment_overflow_mask.all(dim=1)
             if assignment_overflow_mask.any():
                 topk_vals = topk_vals.masked_fill(assignment_overflow_mask, 0.0)
-                overflow_mask = assignment_overflow_mask.all(dim=1)
                 if overflow_mask.any():
-                    # Keep the established deterministic default-expert fallback.
+                    # Keep the established fallback outside normal capacity;
+                    # its original assignments remain marked as overflow.
                     topk_indices = topk_indices.clone()
                     topk_indices[overflow_mask, 0] = 0
                     fallback_surrogate = probs[overflow_mask, 0]
@@ -260,6 +266,7 @@ class BaseRouter(nn.Module):
                 loss_dict["overflow_fraction"] = overflow_count / max(B * effective_top_k, 1)
                 loss_dict["overflow_mask"] = assignment_overflow_mask.detach().clone()
                 loss_dict["token_overflow_mask"] = overflow_mask.detach().clone()
+                loss_dict["fallback_count"] = int(overflow_mask.sum().item())
                 loss_dict["capacity_limit"] = int(capacity)
                 loss_dict["overflow_policy"] = "per_expert_default_straight_through"
 
