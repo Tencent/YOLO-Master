@@ -35,13 +35,14 @@ from ultralytics.nn.foundation import (
     positive_region_pool,
     semantic_distillation_loss,
 )
-from ultralytics.nn.modules.routing_protocol import publish_aux_loss
+from ultralytics.nn.foundation.offline import FoundationCacheKeyResolver
 from ultralytics.nn.foundation.routing import (
     FoundationTeacherRouter,
     foundation_multiteacher_summary,
     foundation_teacher_summary,
     routing_kd_loss,
 )
+from ultralytics.nn.modules.routing_protocol import publish_aux_loss
 from ultralytics.utils.metrics import bbox_iou
 from ultralytics.utils.tal import dist2bbox, make_anchors
 
@@ -283,21 +284,25 @@ class FoundationDistillationModel(nn.Module):
         """Load one cached sample to discover teacher channel/semantic dimensions without an online teacher."""
         cache_dir = self.cache_dir
         sample = next(
-            (path for path in sorted(cache_dir.rglob("*.pt")) if path.name != "text_prototypes.pt"), None
+            (path for path in sorted(cache_dir.rglob("*.pt")) if path != cache_dir / "text_prototypes.pt"), None
         )
         if sample is None:
             raise FileNotFoundError(f"foundation_cache_dir '{cache_dir}' contains no cached samples.")
         features, _ = load_foundation_features(sample, device=device)
         return features
 
-    @staticmethod
-    def _cache_keys(batch: Mapping[str, Any]) -> list[str] | None:
-        """Derive per-sample cache keys (image file stems) from the batch, or None when unavailable."""
+    def _cache_keys(self, batch: Mapping[str, Any]) -> list[str] | None:
+        """Resolve extraction-relative sample keys, retaining unambiguous legacy flat caches."""
         im_files = batch.get("im_file")
         if not isinstance(im_files, (list, tuple)) or len(im_files) != int(batch["img"].shape[0]):
             return None
-        keys = [Path(str(item)).stem for item in im_files]
-        return keys if all(keys) else None
+        if not all(str(item) for item in im_files):
+            return None
+        resolver = self.__dict__.get("_cache_key_resolver")
+        if resolver is None:
+            resolver = FoundationCacheKeyResolver(self.cache_dir)
+            self.__dict__["_cache_key_resolver"] = resolver
+        return resolver.resolve(im_files)
 
     def _teacher_batch_output(self, batch: Mapping[str, Any]) -> tuple[Any, Any | None]:
         """Resolve teacher features for a batch: offline cache first, online ``encode`` as fallback.
@@ -308,20 +313,23 @@ class FoundationDistillationModel(nn.Module):
         cache_dir = self.cache_dir
         teacher = self.teacher_manager
         if cache_dir is not None:
-            keys = self._cache_keys(batch)
-            if keys is not None:
-                try:
+            try:
+                keys = self._cache_keys(batch)
+                if keys is not None:
                     return load_foundation_batch(
-                        cache_dir, keys, device=batch["img"].device, with_response=self._response_enabled,
+                        cache_dir,
+                        keys,
+                        device=batch["img"].device,
+                        with_response=self._response_enabled,
                         response_only=not self._dense_needed,
                     )
-                except FileNotFoundError:
-                    if teacher is None:
-                        raise
-            elif teacher is None:
-                raise ValueError(
-                    "foundation_cache_dir is set without an online teacher, but the batch carries no 'im_file' keys."
-                )
+                if teacher is None:
+                    raise ValueError(
+                        "foundation_cache_dir is set without an online teacher, but the batch carries no 'im_file' keys."
+                    )
+            except FileNotFoundError:
+                if teacher is None:
+                    raise
         if teacher is None:
             raise RuntimeError("Foundation teacher is unavailable for online encode().")
         if self._response_enabled:
@@ -1580,6 +1588,7 @@ class FoundationDistillationModel(nn.Module):
         self.__dict__["_semantic_text_cache"] = None
         self.__dict__["_route_teachers"] = {}
         self.__dict__["_route_specs"] = []
+        self.__dict__.pop("_cache_key_resolver", None)
 
     def __getstate__(self):
         """Exclude the external teacher and live hook from copies/checkpoints."""
@@ -1637,6 +1646,7 @@ class FoundationDistillationModel(nn.Module):
         state.pop("_route_specs", None)
         state.pop("_semantic_tap", None)
         state.pop("_semantic_text_cache", None)
+        state.pop("_cache_key_resolver", None)
         state.pop("_semantic_prompts", None)
         state.pop("_last_foundation_loss", None)
         state.pop("_last_foundation_metrics", None)

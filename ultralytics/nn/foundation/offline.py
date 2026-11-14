@@ -20,6 +20,62 @@ CACHE_VERSION = 1
 IMAGE_SUFFIXES = (".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp")
 
 
+class FoundationCacheKeyResolver:
+    """Resolve extraction-relative keys while preventing same-stem cache aliasing.
+
+    Nested keys match image-path suffixes. Legacy flat keys remain usable only
+    when unambiguous. Each resolved key binds to one canonical source path for
+    this reader's lifetime. This checks identity, not content or teacher freshness.
+    """
+
+    def __init__(self, cache_dir: str | Path) -> None:
+        self.cache_dir = Path(cache_dir)
+        self._keys_by_stem: dict[str, list[PurePosixPath]] | None = None
+        self._sources: dict[str, str] = {}
+
+    def resolve(self, image_files: Sequence[str | Path]) -> list[str]:
+        """Resolve a whole batch atomically, indexing the immutable cache once."""
+        if self._keys_by_stem is None:
+            self._keys_by_stem = {}
+            for path in sorted(self.cache_dir.rglob("*.pt")):
+                if path == self.cache_dir / "text_prototypes.pt":
+                    continue
+                key = PurePosixPath(path.relative_to(self.cache_dir).with_suffix("").as_posix())
+                self._keys_by_stem.setdefault(key.name, []).append(key)
+
+        resolved = []
+        new_sources = {}
+        for image_file in image_files:
+            image_path = Path(str(image_file)).expanduser()
+            # Extraction keys retain lexical directory names, including symlink
+            # aliases. Canonicalize only the binding, not the matching suffix.
+            image_parts = image_path.with_suffix("").parts
+            candidates = self._keys_by_stem.get(image_parts[-1], [])
+            matches = [key for key in candidates if image_parts[-len(key.parts) :] == key.parts]
+            if not candidates:
+                raise FileNotFoundError(
+                    f"Foundation cache entry for '{image_file}' is missing; re-run offline extraction."
+                )
+            if not matches:
+                raise ValueError(f"Foundation cache key is ambiguous for '{image_file}'; no relative path matches.")
+            depth = max(len(key.parts) for key in matches)
+            matches = [key for key in matches if len(key.parts) == depth]
+            if len(matches) != 1 or (depth == 1 and len(candidates) != 1):
+                raise ValueError(f"Foundation cache key is ambiguous for '{image_file}'; use distinct relative paths.")
+            key = matches[0].as_posix()
+            canonical_source = image_path.resolve().as_posix()
+            bound = new_sources.get(key, self._sources.get(key))
+            if bound is not None and bound != canonical_source:
+                raise ValueError(
+                    f"Foundation cache key '{key}' is already bound to '{bound}', not '{canonical_source}'; "
+                    "re-extract with distinct relative paths."
+                )
+            new_sources[key] = canonical_source
+            resolved.append(key)
+        self._sources.update(new_sources)
+        return resolved
+
+
 def _to_storage(tensor: torch.Tensor, dtype: torch.dtype | None) -> torch.Tensor:
     tensor = tensor.detach().cpu().contiguous()
     if dtype is not None and tensor.is_floating_point():
