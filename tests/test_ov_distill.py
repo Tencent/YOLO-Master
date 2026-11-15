@@ -191,7 +191,7 @@ class TestPipeline:
                 assert rec["bucket"] == "high"
 
     def test_clean_tolerates_non_abstaining_teacher(self, tmp_path):
-        """One of three teachers never abstains (its hallucinated box is voted out): 2 absent votes must still record a negative."""
+        """Require two absent votes when one teacher never abstains and its box is voted out."""
         img = tmp_path / "x.jpg"
         from PIL import Image
 
@@ -211,6 +211,28 @@ class TestPipeline:
         # strict mode (neg_min_absent=3) records nothing
         stats_strict = run_clean(raw=raw, out=tmp_path / "cleaned2.jsonl", iou_thr=0.5, min_votes=2, neg_min_absent=3)
         assert stats_strict["negatives"] == 0
+
+    def test_clean_keeps_failed_teachers_in_reliability_denominator(self, tmp_path):
+        from PIL import Image
+
+        image = tmp_path / "partial.jpg"
+        Image.new("RGB", (100, 100)).save(image)
+        raw = tmp_path / "raw.jsonl"
+        rows = [
+            {"image": str(image), "teacher": "a", "query": "car", "boxes": [[10, 10, 60, 60]], "ok": True},
+            {"image": str(image), "teacher": "b", "query": "car", "boxes": [[10, 10, 60, 60]], "ok": True},
+            {"image": str(image), "teacher": "c", "query": "car", "boxes": [], "ok": False, "error": "timeout"},
+        ]
+        raw.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+
+        run_clean(raw=raw, out=tmp_path / "cleaned.jsonl", min_votes=2)
+
+        rec = json.loads((tmp_path / "cleaned.jsonl").read_text(encoding="utf-8").strip())
+        assert rec["votes"] == 2
+        assert rec["teachers"] == 3
+        assert rec["bucket"] == "medium"
+        assert rec["vote_ratio"] == pytest.approx(2 / 3, abs=1e-4)
+        assert rec["supervision_weight"] == pytest.approx(2 / 3, abs=1e-4)
 
     def test_convert_outputs_yolo_format(self, tmp_path):
         raw = self._annotate(tmp_path)
@@ -245,12 +267,48 @@ class TestPipeline:
             assert w > 0 and h > 0
             assert 0 <= x < img["width"] and 0 <= y < img["height"]
             assert ann["iscrowd"] == 0
+            assert 0.0 < ann["weight"] <= 1.0
+            assert ann["bucket"] == "high"
             for s, e in ann["tokens_positive"]:
                 # matches how GroundingDataset parses caption[t0:t1]
                 assert img["caption"][s:e].strip() == "cat"
         # exactly one caption per image, with no duplicated class names
         for im in payload["images"]:
             assert im["caption"].count("cat") == 1
+            assert im["negative_captions"] == ["zz_absent_ufo"]
+
+    def test_convert_retains_negative_only_images(self, tmp_path):
+        """Confirmed absence is trainable even when the image has no positive pseudo-boxes."""
+        from PIL import Image
+
+        image = tmp_path / "empty.jpg"
+        Image.new("RGB", (100, 80)).save(image)
+        raw = tmp_path / "raw.jsonl"
+        with raw.open("w", encoding="utf-8") as f:
+            for teacher in ("t1", "t2"):
+                f.write(
+                    json.dumps(
+                        {
+                            "image": str(image),
+                            "image_path": str(image),
+                            "teacher": teacher,
+                            "query": "airship",
+                            "boxes": [],
+                            "absent": True,
+                            "ok": True,
+                        }
+                    )
+                    + "\n"
+                )
+        cleaned = tmp_path / "cleaned.jsonl"
+        run_clean(raw=raw, out=cleaned)
+        stats = run_convert(cleaned=cleaned, out=tmp_path / "grounding", fmt="grounding")
+        payload = json.loads((tmp_path / "grounding" / "grounding_train.json").read_text(encoding="utf-8"))
+        assert stats["negative_only_images"] == 1
+        assert stats["confirmed_negatives"] == 1
+        assert payload["images"][0]["caption"] == "airship."
+        assert payload["images"][0]["negative_captions"] == ["airship"]
+        assert payload["annotations"] == []
 
     def test_convert_grounding_bucket_filter(self, tmp_path):
         """bucket filtering: excluding the medium bucket must reduce (or zero out) the box count."""
@@ -372,7 +430,9 @@ class TestDrive20k:
         rows = []
         for img, q in [("/tmp/img1a.jpg", "cat"), ("/tmp/img1a.jpg", "dog"), ("/tmp/img1b.jpg", "car")]:
             rows.append({"image": img, "teacher": TEACHER_NAMES["wevisone"], "query": q, "boxes": [], "ok": True})
-        rows.append({"image": "/tmp/img1a.jpg", "teacher": TEACHER_NAMES["rexomni"], "query": "cat", "boxes": [], "ok": True})
+        rows.append(
+            {"image": "/tmp/img1a.jpg", "teacher": TEACHER_NAMES["rexomni"], "query": "cat", "boxes": [], "ok": True}
+        )
         with (pool / "raw.jsonl").open("w", encoding="utf-8") as f:
             for r in rows:
                 f.write(json.dumps(r) + "\n")
@@ -390,7 +450,15 @@ class TestDrive20k:
                     for img, qs in ((f"/tmp/img{s}a.jpg", ["cat", "dog"]), (f"/tmp/img{s}b.jpg", ["car"])):
                         for q in qs:
                             f.write(
-                                json.dumps({"image": img, "teacher": TEACHER_NAMES[teacher], "query": q, "boxes": [], "ok": True})
+                                json.dumps(
+                                    {
+                                        "image": img,
+                                        "teacher": TEACHER_NAMES[teacher],
+                                        "query": q,
+                                        "boxes": [],
+                                        "ok": True,
+                                    }
+                                )
                                 + "\n"
                             )
         assert pick_next(pool)["teacher"] is None
@@ -536,14 +604,20 @@ class TestOvHoldout:
         seen_names = [n for n in COCO_NAMES if n not in set(unseen)]
         seen_id = COCO_NAMES.index(seen_names[0])
         (labels / "im1.txt").write_text(f"{unseen_id} 0.5 0.5 0.2 0.2\n{seen_id} 0.1 0.1 0.1 0.1\n")
-        # im2: seen classes only; must be excluded
+        # im2: no unseen objects; retain as an empty-label negative image.
         (labels / "im2.txt").write_text(f"{seen_id} 0.5 0.5 0.2 0.2\n")
+        Image.new("RGB", (64, 64)).save(images / "im2.jpg")
+        Image.new("RGB", (64, 64)).save(images / "im3.jpg")
+        (labels / "im3.txt").write_text(f"{unseen_id} 0.5 0.5 0.2 0.2\n")
 
         out = tmp_path / "holdout"
-        yaml_path = build_unseen_val(labels, images, out, unseen)
+        eval_images = {str((images / "im1.jpg").resolve()), str((images / "im2.jpg").resolve())}
+        yaml_path = build_unseen_val(labels, images, out, unseen, eval_images=eval_images)
         new_lab = (out / "val" / "labels" / "im1.txt").read_text().strip()
         assert new_lab == "0 0.5 0.5 0.2 0.2"  # unseen[0] remapped to 0; the seen box removed
-        assert not (out / "val" / "labels" / "im2.txt").exists()
+        assert (out / "val" / "labels" / "im2.txt").read_text() == ""
+        assert (out / "val" / "images" / "im2.jpg").is_symlink()
+        assert not (out / "val" / "labels" / "im3.txt").exists()
         text = yaml_path.read_text()
         assert f"  0: {unseen[0]}" in text
         assert (out / "val" / "images" / "im1.jpg").is_symlink()
