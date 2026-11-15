@@ -418,14 +418,27 @@ class BaseMixTransform(BaseTransform):
             return labels
 
         mix_texts = [*labels["texts"], *(item for x in labels["mix_labels"] for item in x["texts"])]
-        mix_texts = list({tuple(x) for x in mix_texts})
-        text2id = {text: i for i, text in enumerate(mix_texts)}
+        mix_texts = [list(text) for text in dict.fromkeys(tuple(text) for text in mix_texts)]
+        text2id = {tuple(text): i for i, text in enumerate(mix_texts)}
 
         for label in [labels] + labels["mix_labels"]:
-            for i, cls in enumerate(label["cls"].squeeze(-1).tolist()):
-                text = label["texts"][int(cls)]
-                label["cls"][i] = text2id[tuple(text)]
+            classes = label["cls"]
+            class_ids = classes[:, 0] if classes.ndim > 1 else classes
+            for i, class_id in enumerate(class_ids.tolist()):
+                text = label["texts"][int(class_id)]
+                if classes.ndim > 1:
+                    classes[i, 0] = text2id[tuple(text)]
+                else:
+                    classes[i] = text2id[tuple(text)]
             label["texts"] = mix_texts
+        labels["confirmed_negative_texts"] = sorted(
+            {
+                str(text).strip().lower()
+                for label in [labels] + labels["mix_labels"]
+                for text in label.get("confirmed_negative_texts", [])
+                if str(text).strip()
+            }
+        )
         return labels
 
 
@@ -2182,7 +2195,7 @@ class Albumentations(BaseTransform):
             # Compose transforms
             self.contains_spatial = any(transform.__class__.__name__ in spatial_transforms for transform in T)
             self.transform = (
-                A.Compose(T, bbox_params=A.BboxParams(format="yolo", label_fields=["class_labels"]))
+                A.Compose(T, bbox_params=A.BboxParams(format="yolo", label_fields=["class_labels", "instance_weights"]))
                 if self.contains_spatial
                 else A.Compose(T)
             )
@@ -2234,19 +2247,31 @@ class Albumentations(BaseTransform):
             return labels
 
         if self.contains_spatial:
-            cls = labels["cls"]
+            cls = np.asarray(labels["cls"])
+            has_weights = cls.ndim > 1 and cls.shape[1] > 1
+            class_labels = cls[:, 0] if has_weights else cls.reshape(-1)
+            instance_weights = cls[:, 1] if has_weights else np.ones(len(class_labels), dtype=np.float32)
             mask = labels.get("semantic_mask")
-            if len(cls) or mask is not None:
+            if len(class_labels) or mask is not None:
                 labels["instances"].convert_bbox("xywh")
                 labels["instances"].normalize(*im.shape[:2][::-1])
                 bboxes = labels["instances"].bboxes
                 # TODO: add supports of segments and keypoints
                 new = self.transform(
-                    image=im, bboxes=bboxes, class_labels=cls, **({"mask": mask} if mask is not None else {})
+                    image=im,
+                    bboxes=bboxes,
+                    class_labels=class_labels.tolist(),
+                    instance_weights=instance_weights.tolist(),
+                    **({"mask": mask} if mask is not None else {}),
                 )
                 if len(new["class_labels"]) > 0 or mask is not None:  # only box-only samples skip on losing all boxes
                     labels["img"] = new["image"]
-                    labels["cls"] = np.array(new["class_labels"]).reshape(-1, 1)
+                    if has_weights:
+                        labels["cls"] = np.column_stack((new["class_labels"], new["instance_weights"])).astype(
+                            np.float32
+                        )
+                    else:
+                        labels["cls"] = np.array(new["class_labels"]).reshape(-1, 1)
                     bboxes = np.array(new["bboxes"], dtype=np.float32).reshape(-1, 4)
                     if mask is not None:
                         labels["semantic_mask"] = new["mask"]
@@ -2340,10 +2365,19 @@ class Format(BaseTransform):
         h, w = img.shape[:2] if img is not None else (0, 0)
         cls = labels.pop("cls", np.array([]))
         instances = labels.pop("instances", None)
+        labels.pop("confirmed_negative_texts", None)
+        has_gt_weights = np.asarray(cls).ndim > 1 and np.asarray(cls).shape[1] > 1
         if instances is not None:
             instances.convert_bbox(format=self.bbox_format)
             instances.denormalize(w, h)
-        return {"h": h, "w": w, "cls": cls, "instances": instances, "nl": len(instances) if instances else 0}
+        return {
+            "h": h,
+            "w": w,
+            "cls": cls,
+            "instances": instances,
+            "nl": len(instances) if instances else 0,
+            "has_gt_weights": has_gt_weights,
+        }
 
     def apply_image(self, labels: dict[str, Any], params: dict[str, Any] | None = None) -> dict[str, Any]:
         """Format image from Numpy array to PyTorch tensor.
@@ -2386,7 +2420,10 @@ class Format(BaseTransform):
         Returns:
             (dict[str, Any]): Updated labels with formatted instance tensors.
         """
-        cls = params.get("cls", np.array([]))
+        cls = np.asarray(params.get("cls", np.array([])))
+        has_gt_weights = params.get("has_gt_weights", False)
+        gt_weights = cls[:, 1] if has_gt_weights else None
+        cls = cls[:, :1] if cls.ndim > 1 else cls.reshape(-1, 1)
         instances = params.get("instances")
         assert instances is not None, "instances are required for Format.apply_instances"
         h = params.get("h", 0)
@@ -2395,7 +2432,7 @@ class Format(BaseTransform):
 
         if self.return_mask:
             if nl:
-                masks, instances, cls = self._format_segments(instances, cls, w, h)
+                masks, instances, cls, gt_weights = self._format_segments(instances, cls, w, h, gt_weights)
                 masks = torch.from_numpy(masks)
                 cls_tensor = torch.from_numpy(cls.squeeze(1))
                 if not masks.shape[0] or not cls_tensor.numel():
@@ -2407,9 +2444,9 @@ class Format(BaseTransform):
                     sem_masks = (masks * cls_tensor[:, None, None]).max(0).values  # (H, W) from (N, H, W) binary
                     overlap = masks.sum(dim=0) > 1  # (H, W)
                     if overlap.any():
-                        weights = masks.sum(axis=(1, 2))
-                        weighted_masks = masks * weights[:, None, None]  # (N, H, W)
-                        weighted_masks[masks == 0] = weights.max() + 1  # handle background
+                        mask_areas = masks.sum(axis=(1, 2))
+                        weighted_masks = masks * mask_areas[:, None, None]  # (N, H, W)
+                        weighted_masks[masks == 0] = mask_areas.max() + 1  # handle background
                         smallest_idx = weighted_masks.argmin(dim=0)  # (H, W)
                         sem_masks[overlap] = cls_tensor[smallest_idx[overlap]]
             else:
@@ -2417,7 +2454,9 @@ class Format(BaseTransform):
                 sem_masks = torch.zeros(h // self.mask_ratio, w // self.mask_ratio)
             labels["masks"] = masks
             labels["sem_masks"] = sem_masks.float()
-        labels["cls"] = torch.from_numpy(cls) if nl else torch.zeros(nl, 1)
+        labels["cls"] = torch.from_numpy(cls.astype(np.float32, copy=False)) if nl else torch.zeros(nl, 1)
+        if has_gt_weights:
+            labels["gt_weights"] = torch.from_numpy(gt_weights.astype(np.float32, copy=False))
         labels["bboxes"] = torch.from_numpy(instances.bboxes) if nl else torch.zeros((nl, 4))
         if self.return_keypoint:
             labels["keypoints"] = (
@@ -2470,8 +2509,8 @@ class Format(BaseTransform):
         return img
 
     def _format_segments(
-        self, instances: Instances, cls: np.ndarray, w: int, h: int
-    ) -> tuple[np.ndarray, Instances, np.ndarray]:
+        self, instances: Instances, cls: np.ndarray, w: int, h: int, gt_weights: np.ndarray | None = None
+    ) -> tuple[np.ndarray, Instances, np.ndarray, np.ndarray | None]:
         """Convert polygon segments to bitmap masks.
 
         Args:
@@ -2484,6 +2523,7 @@ class Format(BaseTransform):
             masks (np.ndarray): Bitmap masks with shape (N, H, W) or (1, H, W) if mask_overlap is True.
             instances (Instances): Updated instances object with sorted segments if mask_overlap is True.
             cls (np.ndarray): Updated class labels, sorted if mask_overlap is True.
+            gt_weights (np.ndarray | None): Optional per-instance weights, kept aligned with sorted instances.
 
         Notes:
             - If self.mask_overlap is True, masks are overlapped and sorted by area.
@@ -2496,10 +2536,12 @@ class Format(BaseTransform):
             masks = masks[None]  # (640, 640) -> (1, 640, 640)
             instances = instances[sorted_idx]
             cls = cls[sorted_idx]
+            if gt_weights is not None:
+                gt_weights = gt_weights[sorted_idx]
         else:
             masks = polygons2masks((h, w), segments, color=1, downsample_ratio=self.mask_ratio)
 
-        return masks, instances, cls
+        return masks, instances, cls, gt_weights
 
 
 class SemanticFormat(Format):
@@ -2718,28 +2760,46 @@ class RandomLoadText(BaseTransform):
         assert "texts" in labels, "No texts found in labels."
         class_texts = labels["texts"]
         num_classes = len(class_texts)
-        cls = np.asarray(labels.pop("cls"), dtype=int)
+        raw_cls = np.asarray(labels.pop("cls"), dtype=np.float32)
+        if raw_cls.ndim == 1:
+            raw_cls = raw_cls.reshape(-1, 1)
+        has_weights = raw_cls.shape[1] > 1
+        cls = raw_cls[:, 0].astype(int)
+        instance_weights = raw_cls[:, 1] if has_weights else np.ones(len(cls), dtype=np.float32)
         pos_labels = np.unique(cls).tolist()
 
         if len(pos_labels) > self.max_samples:
             pos_labels = random.sample(pos_labels, k=self.max_samples)
 
-        neg_samples = min(min(num_classes, self.max_samples) - len(pos_labels), random.randint(*self.neg_samples))
-        neg_labels = [i for i in range(num_classes) if i not in pos_labels]
-        neg_labels = random.sample(neg_labels, k=neg_samples)
+        confirmed_negative_texts = {
+            str(text).strip().lower() for text in labels.pop("confirmed_negative_texts", []) if str(text).strip()
+        }
+        positive_set = set(pos_labels)
+        forced_negatives = [
+            i
+            for i, prompts in enumerate(class_texts)
+            if i not in positive_set
+            and any(str(prompt).strip().lower() in confirmed_negative_texts for prompt in prompts)
+        ]
+        forced_negatives = forced_negatives[: max(self.max_samples - len(pos_labels), 0)]
+        remaining_capacity = max(self.max_samples - len(pos_labels) - len(forced_negatives), 0)
+        random_negatives = [i for i in range(num_classes) if i not in positive_set and i not in forced_negatives]
+        neg_samples = min(remaining_capacity, random.randint(*self.neg_samples))
+        neg_labels = random.sample(random_negatives, k=min(neg_samples, len(random_negatives)))
 
-        sampled_labels = pos_labels + neg_labels
+        sampled_labels = pos_labels + forced_negatives + neg_labels
         # Randomness
         # random.shuffle(sampled_labels)
 
         label2ids = {label: i for i, label in enumerate(sampled_labels)}
         valid_idx = np.zeros(len(labels["instances"]), dtype=bool)
         new_cls = []
-        for i, label in enumerate(cls.squeeze(-1).tolist()):
+        for i, label in enumerate(cls.tolist()):
             if label not in label2ids:
                 continue
             valid_idx[i] = True
-            new_cls.append([label2ids[label]])
+            row = [label2ids[label], float(instance_weights[i])] if has_weights else [label2ids[label]]
+            new_cls.append(row)
 
         # Randomly select one prompt when there's more than one prompts
         texts = []
@@ -2750,14 +2810,19 @@ class RandomLoadText(BaseTransform):
             texts.append(prompt)
 
         if self.padding:
-            valid_labels = len(pos_labels) + len(neg_labels)
+            valid_labels = len(sampled_labels)
             num_padding = self.max_samples - valid_labels
             if num_padding > 0:
                 texts += random.choices(self.padding_value, k=num_padding)
 
         assert len(texts) == self.max_samples
 
-        return {"valid_idx": valid_idx, "new_cls": np.array(new_cls), "texts": texts}
+        width = 2 if has_weights else 1
+        return {
+            "valid_idx": valid_idx,
+            "new_cls": np.asarray(new_cls, dtype=np.float32).reshape(-1, width),
+            "texts": texts,
+        }
 
     def apply_instances(self, labels: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
         """Filter instances and update class labels based on sampled texts.

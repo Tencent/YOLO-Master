@@ -305,6 +305,10 @@ class YOLODataset(BaseDataset):
             (dict): Collated batch with stacked tensors.
         """
         new_batch = {}
+        if any("gt_weights" in sample for sample in batch):
+            for sample in batch:
+                if "gt_weights" not in sample:
+                    sample["gt_weights"] = torch.ones(len(sample["cls"]), dtype=torch.float32)
         batch = [dict(sorted(b.items())) for b in batch]  # make sure the keys are in the same order
         keys = batch[0].keys()
         values = list(zip(*[list(b.values()) for b in batch]))
@@ -326,7 +330,7 @@ class YOLODataset(BaseDataset):
                 value = torch.stack(value, 0)
             elif k == "visuals":
                 value = torch.nn.utils.rnn.pad_sequence(value, batch_first=True)
-            if k in {"masks", "keypoints", "bboxes", "cls", "segments", "obb"}:
+            if k in {"masks", "keypoints", "bboxes", "cls", "segments", "obb", "gt_weights"}:
                 value = torch.cat(value, 0)
             new_batch[k] = value
         if "batch_idx" in new_batch:
@@ -862,14 +866,23 @@ class GroundingDataset(YOLODataset):
         img_to_anns = defaultdict(list)
         for ann in annotations["annotations"]:
             img_to_anns[ann["image_id"]].append(ann)
-        for img_id, anns in TQDM(img_to_anns.items(), desc=f"Reading annotations {self.json_file}"):
-            img = images[f"{img_id:d}"]
+        image_records = sorted(((int(img_id), img) for img_id, img in images.items()), key=lambda item: item[0])
+        for img_id, img in TQDM(image_records, desc=f"Reading annotations {self.json_file}"):
+            anns = img_to_anns.get(img_id, [])
+            negative_texts = list(
+                dict.fromkeys(
+                    str(text).strip().lower() for text in img.get("negative_captions", []) if str(text).strip()
+                )
+            )
+            if not anns and not negative_texts:
+                continue
             h, w, f = img["height"], img["width"], img["file_name"]
             im_file = Path(self.img_path) / f
             if not im_file.exists():
                 continue
             self.im_files.append(str(im_file))
             bboxes = []
+            instance_weights = []
             segments = []
             cat2id = {}
             texts = []
@@ -895,6 +908,7 @@ class GroundingDataset(YOLODataset):
                 box = [cls, *box.tolist()]
                 if box not in bboxes:
                     bboxes.append(box)
+                    instance_weights.append(max(0.0, min(1.0, float(ann.get("weight", 1.0)))))
                     if ann.get("segmentation") is not None:
                         if len(ann["segmentation"]) == 0:
                             segments.append(box)
@@ -919,16 +933,33 @@ class GroundingDataset(YOLODataset):
                 lb = np.concatenate((classes.reshape(-1, 1), segments2boxes(segments)), 1)  # (cls, xywh)
             lb = np.array(lb, dtype=np.float32)
 
+            positive_texts = set(cat2id)
+            negative_texts = [text for text in negative_texts if text not in positive_texts]
+            for text in negative_texts:
+                cat2id[text] = len(cat2id)
+                texts.append([text])
+            weights = np.asarray(instance_weights, dtype=np.float32)
+            if len(weights) != len(lb):
+                # Grounding detection annotations are box-aligned. Fall back to neutral reliability only for
+                # legacy segmentation JSON where polygon-derived boxes can differ from the original bbox list.
+                weights = np.ones(len(lb), dtype=np.float32)
+            cls_with_weights = (
+                np.column_stack((lb[:, 0], weights)).astype(np.float32)
+                if len(lb)
+                else np.zeros((0, 2), dtype=np.float32)
+            )
+
             x["labels"].append(
                 {
                     "im_file": im_file,
                     "shape": (h, w),
-                    "cls": lb[:, 0:1],  # n, 1
+                    "cls": cls_with_weights,  # n, [class_id, teacher-agreement supervision weight]
                     "bboxes": lb[:, 1:],  # n, 4
                     "segments": segments,
                     "normalized": True,
                     "bbox_format": "xywh",
                     "texts": texts,
+                    "confirmed_negative_texts": negative_texts,
                 }
             )
         x["hash"] = get_hash(self.json_file)
