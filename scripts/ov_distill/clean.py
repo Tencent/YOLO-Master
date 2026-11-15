@@ -13,8 +13,12 @@ Rules (ADR-0007, data pipeline Stage 3):
      IoU >= 0.7 are tagged ``high``, all other kept boxes ``medium``; the
      bucket is written to the record so training can treat hard vs. soft
      labels differently.
+  4. Reliability weighting: ``supervision_weight`` is vote ratio times
+     mean intra-cluster IoU, floored at 0.25. It is an agreement-based
+     training weight, not a calibrated probability.
 
-Input: raw prediction JSONL produced by ``annotate`` (only ok=true records).
+Input: raw prediction JSONL produced by ``annotate``. Failed teacher calls remain in the vote denominator but never
+count as an abstention or a box vote.
 Output: cleaned JSONL + negatives JSONL.
 """
 
@@ -92,13 +96,13 @@ def run_clean(
             if not line:
                 continue
             rec = json.loads(line)
-            if not rec.get("ok"):
-                continue
             key = (rec["image"], rec["query"])
             group = groups[key]
             group["teachers"].add(rec["teacher"])
             if not group["image_path"]:
                 group["image_path"] = rec.get("image_path", rec["image"])
+            if not rec.get("ok"):
+                continue
             if rec.get("absent") or not rec.get("boxes"):
                 group["absent"].add(rec["teacher"])
             for box in rec.get("boxes", []):
@@ -124,6 +128,11 @@ def run_clean(
                     continue
                 box, mean_iou = fuse_cluster(cluster)
                 bucket = "high" if votes == len(teachers) and mean_iou >= 0.7 else "medium"
+                vote_ratio = votes / max(len(teachers), 1)
+                # This is an agreement-based reliability score, not a calibrated probability. A small
+                # floor keeps valid majority-voted boxes useful while still distinguishing softer labels.
+                reliability = vote_ratio * mean_iou
+                supervision_weight = min(1.0, max(0.25, reliability))
                 fo.write(
                     json.dumps(
                         {
@@ -134,6 +143,9 @@ def run_clean(
                             "votes": votes,
                             "teachers": len(teachers),
                             "cluster_iou": round(mean_iou, 4),
+                            "vote_ratio": round(vote_ratio, 4),
+                            "reliability_score": round(reliability, 4),
+                            "supervision_weight": round(supervision_weight, 4),
                             "bucket": bucket,
                         },
                         ensure_ascii=False,

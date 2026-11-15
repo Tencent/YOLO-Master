@@ -12,6 +12,7 @@ Subcommands:
   clean      multi-teacher IoU voting + confidence bucketing + negative extraction
   clip-verify CLIP re-verification: image-text alignment filtering of medium-bucket boxes (GT-calibrated threshold)
   convert    cleaned results -> YOLO grounding training format
+  calibrate-reliability  fit box-level agreement reliability against an independent GT split
   smoke      synthetic images + MockTeacher end-to-end smoke test (no GPU required)
 
 Usage (smoke):
@@ -53,15 +54,22 @@ def parse_args() -> argparse.Namespace:
     p_ann.add_argument(
         "--teachers",
         required=True,
-        help="comma-separated teacher specs: mock:seed / gam:<base_url> / rexomni:<model_path> / wevisone:<model_path> / groundingpi:<model_path> / qwenvl:<model_path>",
+        help=(
+            "comma-separated teacher specs: mock:seed / gam:<base_url> / rexomni:<model_path> / "
+            "wevisone:<model_path> / groundingpi:<model_path> / qwenvl:<model_path>"
+        ),
     )
-    p_ann.add_argument("--out", required=True, help="output prediction JSONL (resumable; completed entries are skipped)")
+    p_ann.add_argument(
+        "--out", required=True, help="output prediction JSONL (resumable; completed entries are skipped)"
+    )
     p_ann.add_argument("--timeout", type=int, default=120, help="per-request timeout in seconds")
 
     p_clean = sub.add_parser("clean", help="multi-teacher cross-validation cleaning")
     p_clean.add_argument("--raw", required=True, help="raw prediction JSONL produced by annotate")
     p_clean.add_argument("--out", required=True, help="cleaned high-confidence annotation JSONL")
-    p_clean.add_argument("--neg-out", default="", help="abstention-negative JSONL path (default: negatives.jsonl next to --out)")
+    p_clean.add_argument(
+        "--neg-out", default="", help="abstention-negative JSONL path (default: negatives.jsonl next to --out)"
+    )
     p_clean.add_argument("--iou", type=float, default=0.5, help="IoU threshold for cross-teacher box clustering")
     p_clean.add_argument("--min-votes", type=int, default=2, help="minimum teacher votes required to keep a box")
     p_clean.add_argument(
@@ -74,17 +82,51 @@ def parse_args() -> argparse.Namespace:
     p_conv = sub.add_parser("convert", help="convert to YOLO grounding training format")
     p_conv.add_argument("--cleaned", required=True, help="annotation JSONL produced by clean")
     p_conv.add_argument("--out", required=True, help="output dataset directory")
-    p_conv.add_argument("--copy-images", action="store_true", help="copy images into the output directory (default: labels only)")
+    p_conv.add_argument(
+        "--copy-images", action="store_true", help="copy images into the output directory (default: labels only)"
+    )
     p_conv.add_argument(
         "--format",
         default="yolo",
         choices=["yolo", "grounding"],
         help="yolo: txt+categories.json; grounding: GoldG single JSON (read directly by GroundingDataset)",
     )
-    p_conv.add_argument("--buckets", default="", help="keep only the given buckets, comma-separated (e.g. high or high,medium)")
     p_conv.add_argument(
-        "--image-root", default="", help="relative root for file_name in grounding format (should match the training img_path)"
+        "--buckets", default="", help="keep only the given buckets, comma-separated (e.g. high or high,medium)"
     )
+    p_conv.add_argument(
+        "--negatives",
+        default="",
+        help="confirmed-absence JSONL from clean (default: negatives.jsonl beside --cleaned; grounding format only)",
+    )
+    p_conv.add_argument(
+        "--image-root",
+        default="",
+        help="relative root for file_name in grounding format (should match the training img_path)",
+    )
+    p_conv.add_argument("--weight-mode", default="agreement", choices=["agreement", "calibrated", "uniform"])
+    p_conv.add_argument(
+        "--calibration-map", default="", help="GT-calibrated mapping JSON (required for calibrated mode)"
+    )
+    p_conv.add_argument(
+        "--include-manifest", default="", help="optional JSONL of images allowed into this training dataset"
+    )
+    p_conv.add_argument(
+        "--class-split", default="", help="optional COCO-80 split JSON; grounding output keeps seen classes only"
+    )
+
+    p_cal = sub.add_parser("calibrate-reliability", help="fit agreement-to-precision mapping on a disjoint GT split")
+    p_cal.add_argument("--cleaned", required=True, help="cleaned box-level annotations JSONL")
+    p_cal.add_argument("--gt-labels", required=True, help="YOLO-format COCO-80 GT label directory")
+    p_cal.add_argument("--calibrate-manifest", required=True, help="GT calibration image manifest")
+    p_cal.add_argument("--train-manifest", required=True, help="training image manifest; must be disjoint")
+    p_cal.add_argument("--class-split", default="", help="optional COCO-80 split; calibrate seen-class prompts only")
+    p_cal.add_argument("--out", required=True, help="output calibration JSON")
+    p_cal.add_argument("--iou", type=float, default=0.5)
+    p_cal.add_argument("--bins", type=int, default=10)
+    p_cal.add_argument("--min-samples", type=int, default=50)
+    p_cal.add_argument("--min-positives", type=int, default=5)
+    p_cal.add_argument("--min-negatives", type=int, default=5)
 
     p_con = sub.add_parser("concepts", help="concept discovery: image directory -> manifest JSONL")
     p_con.add_argument("--images", required=True, help="image directory (recursively scans jpg/jpeg/png/webp/bmp)")
@@ -92,7 +134,9 @@ def parse_args() -> argparse.Namespace:
         "--tagger", required=True, help="tagger spec: mock:seed / file:<path> / vlm:<url>[:<model>] / ram:<ckpt>"
     )
     p_con.add_argument("--out", required=True, help="output manifest JSONL path")
-    p_con.add_argument("--global-vocab", default="", help="global vocabulary file (one phrase per line), used for negative sampling")
+    p_con.add_argument(
+        "--global-vocab", default="", help="global vocabulary file (one phrase per line), used for negative sampling"
+    )
     p_con.add_argument("--neg-per-image", type=int, default=0, help="negative queries injected per image (0 disables)")
     p_con.add_argument("--max-queries", type=int, default=32, help="cap on positive queries per image")
     p_con.add_argument("--seed", type=int, default=0, help="random seed for negative sampling")
@@ -102,15 +146,21 @@ def parse_args() -> argparse.Namespace:
     p_smoke.add_argument("--out", default="runs/ov_distill_smoke", help="smoke output directory")
     p_smoke.add_argument("--num-images", type=int, default=4, help="number of synthetic images")
 
-    p_cv = sub.add_parser("clip-verify", help="CLIP re-verification: filter medium-bucket pseudo-labels by image-text alignment")
+    p_cv = sub.add_parser(
+        "clip-verify", help="CLIP re-verification: filter medium-bucket pseudo-labels by image-text alignment"
+    )
     p_cv.add_argument("--cleaned", required=True, help="annotation JSONL produced by clean")
     p_cv.add_argument("--out", required=True, help="output JSONL (with clip_score; low-score boxes dropped)")
     p_cv.add_argument("--model-dir", default="", help="W-CLIP-Base directory (default: ~/models/clip/W-CLIP-Base)")
     p_cv.add_argument("--buckets", default="medium", help="buckets to verify, comma-separated (default: medium only)")
-    p_cv.add_argument("--threshold", type=float, default=0.0, help="cos x 100 threshold (0 = auto-calibrate against GT)")
+    p_cv.add_argument(
+        "--threshold", type=float, default=0.0, help="cos x 100 threshold (0 = auto-calibrate against GT)"
+    )
     p_cv.add_argument("--calibrate-gt", default="", help="GT label directory for calibration (YOLO txt)")
     p_cv.add_argument("--calibrate-manifest", default="", help="image-subset manifest for calibration")
-    p_cv.add_argument("--calibrate-keep", type=float, default=0.95, help="fraction of true boxes retained by calibration")
+    p_cv.add_argument(
+        "--calibrate-keep", type=float, default=0.95, help="fraction of true boxes retained by calibration"
+    )
     p_cv.add_argument("--batch", type=int, default=64)
     return parser.parse_args()
 
@@ -142,7 +192,29 @@ def main() -> int:
             fmt=args.format,
             buckets={b for b in args.buckets.split(",") if b} or None,
             image_root=Path(args.image_root).resolve() if args.image_root else None,
+            negatives=Path(args.negatives) if args.negatives else None,
+            weight_mode=args.weight_mode,
+            calibration_map=Path(args.calibration_map) if args.calibration_map else None,
+            include_manifest=Path(args.include_manifest) if args.include_manifest else None,
+            class_split=Path(args.class_split) if args.class_split else None,
         )
+    elif args.command == "calibrate-reliability":
+        from scripts.ov_distill.reliability import calibrate_reliability
+
+        result = calibrate_reliability(
+            cleaned=Path(args.cleaned),
+            gt_labels=Path(args.gt_labels),
+            calibrate_manifest=Path(args.calibrate_manifest),
+            train_manifest=Path(args.train_manifest),
+            out=Path(args.out),
+            iou_thr=args.iou,
+            bins=args.bins,
+            min_samples=args.min_samples,
+            min_positives=args.min_positives,
+            min_negatives=args.min_negatives,
+            class_split=Path(args.class_split) if args.class_split else None,
+        )
+        stats = result["statistics"]
     elif args.command == "concepts":
         stats = run_concepts(
             images=Path(args.images),

@@ -405,6 +405,38 @@ class v8DetectionLoss:
             out[..., 1:5] = xywh2xyxy(out[..., 1:5].mul_(scale_tensor))
         return out
 
+    def _get_anchor_weights(
+        self,
+        batch: dict[str, Any],
+        batch_size: int,
+        max_gt: int,
+        target_gt_idx: torch.Tensor,
+        fg_mask: torch.Tensor,
+        dtype: torch.dtype,
+    ) -> torch.Tensor | None:
+        """Map per-ground-truth reliability weights onto assigned anchors; background anchors keep weight 1."""
+        if "gt_weights" not in batch:
+            return None
+        instance_weights = (
+            torch.as_tensor(batch["gt_weights"], device=self.device, dtype=dtype).reshape(-1).clamp(0.0, 1.0)
+        )
+        batch_indices = torch.as_tensor(batch["batch_idx"], device=self.device).long().reshape(-1)
+        if instance_weights.numel() != batch_indices.numel():
+            raise ValueError(
+                f"gt_weights has {instance_weights.numel()} values for {batch_indices.numel()} ground-truth boxes"
+            )
+        anchor_weights = torch.ones_like(fg_mask, dtype=dtype)
+        if max_gt and instance_weights.numel():
+            padded_weights = torch.zeros((batch_size, max_gt), device=self.device, dtype=dtype)
+            offsets = torch.zeros(batch_size + 1, dtype=torch.long, device=self.device)
+            offsets.scatter_add_(0, batch_indices + 1, torch.ones_like(batch_indices))
+            offsets = offsets.cumsum(0)
+            within_idx = torch.arange(len(batch_indices), device=self.device) - offsets[batch_indices]
+            padded_weights[batch_indices, within_idx] = instance_weights
+            assigned_weights = padded_weights.gather(1, target_gt_idx.clamp(0, max_gt - 1))
+            anchor_weights = torch.where(fg_mask, assigned_weights, anchor_weights)
+        return anchor_weights
+
     def bbox_decode(self, anchor_points: torch.Tensor, pred_dist: torch.Tensor) -> torch.Tensor:
         """Decode predicted object bounding box coordinates from anchor points and distribution."""
         if self.use_dfl:
@@ -430,7 +462,12 @@ class v8DetectionLoss:
         imgsz = torch.tensor(preds["feats"][0].shape[2:], device=self.device, dtype=dtype) * self.stride[0]
 
         # Targets
-        targets = torch.cat((batch["batch_idx"].view(-1, 1), batch["cls"].view(-1, 1), batch["bboxes"]), 1)
+        target_classes = batch["cls"]
+        if target_classes.ndim > 1:
+            target_classes = target_classes[:, :1]
+        else:
+            target_classes = target_classes.view(-1, 1)
+        targets = torch.cat((batch["batch_idx"].view(-1, 1), target_classes, batch["bboxes"]), 1)
         targets = self.preprocess(targets.to(self.device), batch_size, scale_tensor=imgsz[[1, 0, 1, 0]])
         gt_labels, gt_bboxes = targets.split((1, 4), 2)  # cls, xyxy
         mask_gt = gt_bboxes.sum(2, keepdim=True).gt_(0.0)
@@ -449,20 +486,27 @@ class v8DetectionLoss:
 
         target_scores_sum = max(target_scores.sum(), 1)
 
+        anchor_weights = self._get_anchor_weights(batch, batch_size, gt_bboxes.shape[1], target_gt_idx, fg_mask, dtype)
+
         # Cls loss with optional class weighting
         bce_loss = self.bce(pred_scores, target_scores.to(dtype))  # (bs, num_anchors, nc)
+        if anchor_weights is not None:
+            bce_loss *= anchor_weights.unsqueeze(-1)
         if self.class_weights is not None:
             bce_loss *= self.class_weights
         loss[1] = bce_loss.sum() / target_scores_sum  # BCE
 
         # Bbox loss
         if fg_mask.sum():
+            weighted_target_scores = (
+                target_scores * anchor_weights.unsqueeze(-1) if anchor_weights is not None else target_scores
+            )
             loss[0], loss[2] = self.bbox_loss(
                 pred_distri,
                 pred_bboxes,
                 anchor_points,
                 target_bboxes / stride_tensor,
-                target_scores,
+                weighted_target_scores,
                 target_scores_sum,
                 fg_mask,
                 imgsz,

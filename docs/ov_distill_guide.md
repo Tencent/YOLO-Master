@@ -148,6 +148,52 @@ python scripts/ov_distill/run_pipeline.py convert \
 负样本无需写入——训练端 `RandomLoadText` 自动按词表采样负样本。
 可用 `--buckets high` 只保留高置信框（硬标签），medium 桶留给软标签蒸馏。
 
+### Step 4.1 · 用独立 GT 图像校准教师一致性权重
+
+`clean` 写出的 `reliability_score` 是教师投票比例 × 框间 IoU 的启发式分数，不能直接解释为正确概率。
+若有人工/数据集 GT，先按图像划分校准集和训练集，两份 manifest 必须不重叠：
+
+```bash
+python scripts/ov_distill/make_class_split.py \
+    --out runs/ov_distill/class_split.json --unseen-ratio 0.25 --seed 0
+
+python scripts/ov_distill/calibrate_reliability.py \
+    --cleaned runs/ov_distill/cleaned.jsonl \
+    --gt-labels /path/to/coco/labels/val2017 \
+    --calibrate-manifest data/ov_pool/calibration.jsonl \
+    --train-manifest data/ov_pool/train.jsonl \
+    --class-split runs/ov_distill/class_split.json \
+    --out runs/ov_distill/reliability_calibrator.json
+```
+
+脚本按类别和图像将伪框与 GT 做 IoU≥0.5 的一对一匹配，再用保序回归把一致性分数映射成经验精度；
+输出包含样本数、Brier、ECE 和分箱精度。默认至少需要 50 个伪框、5 个匹配框和 5 个误检框，避免用极小样本拟合。
+校准图像必须从训练 manifest 中排除。开集实验复用同一份 `class_split.json`：校准器只用 seen 类拟合，
+未知/非 COCO 类名会报错；训练导出也会同时过滤 unseen 类正框和确认负提示。
+
+### Step 4.2 · 加权与等权训练消融
+
+以下命令生成图像/框/负样本完全一致的两份 grounding 数据集：一份使用校准权重，一份所有框权重为 1。
+加 `--run-training` 后，会用相同初始化、训练配置和随机种子依次跑两个 S2 训练：
+
+```bash
+python scripts/ov_distill/ablate_reliability.py \
+    --cleaned runs/ov_distill/cleaned.jsonl \
+    --calibration-map runs/ov_distill/reliability_calibrator.json \
+    --train-manifest data/ov_pool/train.jsonl \
+    --class-split runs/ov_distill/class_split.json \
+    --val-manifest data/ov_pool/independent_eval.jsonl \
+    --image-root /path/to/images \
+    --val-yaml /path/to/independent_eval.yaml \
+    --out runs/ov_distill/reliability_ablation \
+    --epochs 1 --device cuda:0 --run-training
+```
+
+`--run-training` 要求 `--val-manifest`。训练前会核验训练清单、grounding JSON 和验证 YAML：训练 JSON 中的图必须来自训练清单，验证 YAML 与验证清单必须完全一致，训练/验证图像路径不得重叠；校准图像也必须与训练和评估图像均不重叠；grounding JSON 中的正类和负类提示必须都属于共享 split 的 seen 类。
+
+`ablation_manifest.json` 保存两份数据集计数、训练 run 名称和各 run 的最后一行验证指标。若要先只生成数据集并检查权重，去掉 `--run-training`；
+也可以用 `run_pipeline.py convert --weight-mode calibrated|uniform` 单独导出其中一份。
+
 ## 2.5 训练链路冒烟（S2 接线验证）
 
 ```bash
@@ -327,6 +373,8 @@ COCO 官网 `images.cocodataset.org` 本机直连仅 ~8 KB/s（SSL 疑似被中�
 `make_val2017_manifest.py` 从 instances_val2017.json 直读 GT（跳过 iscrowd），
 每图 query = 正样本类别 + 2 个 COCO 词表负样本，`--max-images 1000 --seed 0` 采样子集：
 
+> 该 manifest 的 query 由 GT 类别决定，适用于测教师标注质量，不是无标签训练数据的无偏构造。正式伪标签训练要用不依赖 GT 的固定词表或概念发现，并独立保留评估图像。
+
 - **1000 图 / 4918 query（2918 正 + 2000 负）**
 - 四教师标注（分块续跑，每块 ≤275 s，约 100 块、累计 ~7.5 h MPS）：
   - 批次A（dev 环境）：WeVisOne-VL-2B + GroundingPI-4B，~20 图/块
@@ -388,6 +436,8 @@ data 会崩，故不用官方 resume）。imgsz 384 / batch 8 / MPS ≈ **1.15 i
 gt_labels/val1k.yaml/val/）、`runs/ov_s2_train/`（s2d_*、s2p_* 各块与 val）、
 `weights/yolo26n.pt`（gh-proxy.com 代理下载，5.5 MB）。
 
+> 复核更正：该批训练图像与 `val1k.yaml` 验证图像均来自 val2017，历史 mAP 仅作训练链路/收敛调试参考，不是独立验证结果。后续 S2 训练现要求传入不重叠的 train/val manifests。
+
 ## 8. S2 数据池全量放大：val2017 全量 4952 图三教师标注与再训练（2026-11-10）
 
 ### 8.1 标注规模与轮转策略
@@ -441,6 +491,8 @@ GT 标签由 instances_val2017.json 转出 YOLO 格式至 `runs/ov_s2_5k/gt_labe
 对比千图版 s2p 链（4 epoch → mAP50 0.0024）：**5K 数据 1 个 epoch 即追平，
 4 epoch 达到 5.6 倍**，且曲线仍在爬升——数据池放大收益明确。
 
+> 复核更正：5K 训练池包含 val2017 全量图像，val1k 是其子集；上述 mAP 对比存在图像泄漏，只能作为训练动态记录，不能归因于多教师带来的泛化提升。
+
 ### 8.4 新踩到的坑
 
 - **timeout 杀块 = 整块白训**：ultralytics 只在 epoch 末保存权重，块被 timeout
@@ -453,7 +505,7 @@ GT 标签由 instances_val2017.json 转出 YOLO 格式至 `runs/ov_s2_5k/gt_labe
 gt_labels/dataset_grounding）、`runs/ov_s2_train/s5k_q*`（16 块）与
 `val_s5k_q4/q8/q12/q16`（各轮验证）。
 
-## 9. 链路完善：步级断点 + CLIP 复核 + OV 真·留出评估（2026-11-10）
+## 9. 链路完善：步级断点 + CLIP 复核 + 图像隔离的 OV 评测（2026-11-10）
 
 ### 9.1 步级断点保存（train_s2.py `--save-steps N`）
 
@@ -481,14 +533,25 @@ gt_labels/dataset_grounding）、`runs/ov_s2_train/s5k_q*`（16 块）与
   供训练端质量加权/事后分析用。后续可换 openai ViT-L/14（Azure 直连
   ~10 KB/s 不可行，需镜像或 GPU 机器侧下载），编码器接口已插件化。
 
-### 9.3 OV 真·留出评估（eval_ov_holdout.py）
+### 9.3 OV seen/unseen 评估与历史图像泄漏修正
 
 闭集 mAP 只测"训过的类"，OV 的核心是"文本提示泛化到未见类"。
-新工具把 COCO 80 类确定性划分 seen/unseen（默认 60/20，seed 可复现），
-自动生成 unseen-only 验证集（标签重映射 + 图像软链 + yaml），
-用 `set_classes(unseen)` 文本提示跑 val，输出 unseen mAP。
+先生成并保存唯一的 COCO-80 `class_split.json`（默认 60/20，seed 可复现），训练数据只用 seen 类正框/负提示，
+评估端读取同一份 split 并在独立图像上生成 unseen-only 标签（标签重映射 + 图像软链 + yaml），用 `set_classes(unseen)` 文本提示跑 val。运行时必须传入训练与评估 manifests；脚本会拒绝图像路径重叠，并将没有 unseen 目标的评估图保留为空标签，计入误检统计。
 
-**关键实验（2026-11-10，两条链同配方分块接力至 4 epoch 对齐）**：
+严格运行示例：
+
+```bash
+python scripts/ov_distill/eval_ov_holdout.py \
+    --weights runs/ov_s2_train/s2_e12/weights/best.pt \
+    --labels data/heldout/labels --images data/heldout/images \
+    --train-manifest data/splits/train.jsonl \
+    --eval-manifest data/splits/heldout.jsonl \
+    --class-split runs/ov_distill/class_split.json \
+    --out runs/ov_s2_eval/heldout_unseen --device cuda:0
+```
+
+**历史实验（2026-11-10，两条链同配方分块接力至 4 epoch 对齐）**：
 
 | epoch | s5k 伪留出 mAP50 | seen60 真·留出 mAP50 | s5k mAP50-95 | seen60 mAP50-95 |
 |---|---|---|---|---|
@@ -497,23 +560,16 @@ gt_labels/dataset_grounding）、`runs/ov_s2_train/s5k_q*`（16 块）与
 | 3 | 0.0146 | 0.0024 | 0.0059 | 0.0009 |
 | 4 | **0.0190** | **0.0031** | 0.0086 | 0.0013 |
 
-- 伪留出（s5k 链）：unseen 类其实在训练标签里（全 80 类伪标签）；
-- 真·留出（seen60 链）：训练标签剔除 unseen 20 类共 15260 框（余 18202 框），
-  4 epoch 后 P≈0.004 / R≈0.28；
+- s5k 链的 unseen 类仍出现在训练标签里（全 80 类伪标签）；
+- seen60 链剔除了 unseen 20 类共 15260 框（余 18202 框），但训练与评估图像仍来自同一 val2017 图像池；
 - 完整曲线图：`runs/ov_s2_5k/ov_holdout_curve.png`。
 
-**结论：当前数据量级下，模型的"OV 能力"几乎全部来自伪标签覆盖，
-文本迁移能力尚未涌现**。两条曲线同 epoch 对比：伪留出 4 epoch 达 0.0190
-且仍在上升，真·留出仅 0.0031（约为伪留出的 1/6）——但真·留出曲线
-单调上行（0.0006→0.0031，4 epoch 翻 5 倍），说明文本嵌入空间已开始
-携带少量可迁移信号，只是远未跨过可用阈值。这是 S2 阶段最重要的标尺：
-后续每轮数据池/epoch 放大，都应以真·留出 mAP 为北极星指标。
-seen60 训练集与 unseen 验证集已就位：
+这些结果只反映同图像池上的类别提示/训练动态，不能解释为独立图像泛化或无泄漏的开集指标。s5k 的 unseen 类参与了训练；seen60 虽剔除了这些类的训练框，图像仍与验证图像重叠。新评测脚本要求 train/eval manifests 不重叠后，需重新训练并评估。历史数据路径：
 `runs/ov_s2_5k/dataset_grounding_seen60/`、`runs/ov_s2_5k/ov_holdout*/`。
 
 ### 9.4 收敛性门控实验：LR 平台 + GT oracle（2026-11-11）
 
-放大标注规模前先回答"瓶颈是数据还是配方"。两条对照链同图同配方
+放大标注规模前曾用两条同图同配方
 （4945 图、分块接力、AdamW、warmup=0、imgsz=384、batch=8、from scratch）：
 
 **① s5k 伪标签链续训至 12 epoch（闭集 val1k mAP50）**：
@@ -524,8 +580,8 @@ seen60 训练集与 unseen 验证集已就位：
 
 - epoch 5-7 在恒定 lr0=0.002 下出现平台（~0.0145）——**平台是 LR 造成的，
   不是数据上限**：epoch 8 起阶梯衰减（0.0005→0.0002）后 mAP 翻倍至 0.0289；
-- 伪留出 unseen mAP50 同步翻倍：epoch 4 的 0.0190 → epoch 12 的 **0.0385**
-  （`ov_holdout_s5k_q48/`），闭集改善直接转化为 OV 指标改善；
+- 同图像池上的伪留出 unseen mAP50 从 epoch 4 的 0.0190 升至 epoch 12 的 **0.0385**
+  （`ov_holdout_s5k_q48/`）；因评估图像与训练图像重叠，这只能作为训练动态参考；
 - 高负载期分块两次超时被杀：训练速度从 1.1 it/s 跌至 0.6 it/s，
   靠 `--save-steps` 保命后改用**半分片**（8 块/epoch，~77 步/块）跑完，
   分片文件 `grounding_train_q{1-4}{a,b}.json` 三个数据集均已预生成。
@@ -569,10 +625,10 @@ oracle 数据集 `runs/ov_s2_5k/dataset_grounding_gt/`；
 - 测试 32 → **38 项全绿**（缓存键/阈值校准/假编码器端到端/类划分/标签重映射）；
   ruff 通过
 
-## 10. 数据池放大 5K → 20K：train2017 15K 扩展（2026-11-11 启动）
+## 10. 历史数据池扩展记录与评测隔离要求（2026-11-11 启动）
 
-配方门控（§9.4）闭环后启动数据池放大。新池 = 既有 val2017 5K（已标注）
-+ **train2017 15K 新图**（与评估集 val1k/留出集图像级不相交，协议更干净）。
+配方门控（§9.4）闭环后曾启动数据池放大。历史池包括既有 val2017 5K（已标注）
+和 **train2017 15K 新图**。这批数据把 val2017 用作训练图像，因此 val2017 不能再作为独立评估集；新的无泄漏实验应只用 train2017 生成训练伪标签，并将 val2017 完整留作评估。
 
 ### 10.1 数据就位
 
@@ -582,6 +638,7 @@ oracle 数据集 `runs/ov_s2_5k/dataset_grounding_gt/`；
 - manifest：`make_val2017_manifest.py --instances instances_train2017.json`
   复用（同构脚本直接支持 train2017），15000 图 / 43678 正 query +
   30000 负 query → `runs/ov_s2_20k/manifest.jsonl`
+- 该历史 manifest 的 query 同样由 COCO GT 条件化；重新做无标签训练时需改用固定词表/概念发现来生成 query。
 - 切片：15 个千图片段 `manifest_s{01..15}.jsonl`——按片段轮转四教师，
   每个片段四教师齐后即可清洗出增量训练数据，不必等全量标完
 
@@ -600,3 +657,31 @@ oracle 数据集 `runs/ov_s2_5k/dataset_grounding_gt/`；
 
 - slice 1 / wevisone：1829/4966（37%），其余教师待轮转
 - 产出：`runs/ov_s2_20k/raw.jsonl`（持续增长中）
+
+## 11. 单教师与多教师学生模型对照
+
+`ablate_teacher_supervision.py` 用同一训练 manifest、评估 manifest 和 seen/unseen 划分导出单教师与多教师伪标签。两组都使用 uniform 框权重，避免把可靠性权重校准和教师标签差异混在一起。输出报告记录数据覆盖率、正框数、负样本数、共同图像上的框数和输入文件 SHA-256。
+
+```bash
+python scripts/ov_distill/ablate_teacher_supervision.py \
+    --single-cleaned runs/teacher_single/cleaned.jsonl \
+    --single-negatives runs/teacher_single/negatives.jsonl \
+    --multi-cleaned runs/teacher_ensemble/cleaned.jsonl \
+    --multi-negatives runs/teacher_ensemble/negatives.jsonl \
+    --train-manifest runs/ov_ab/teacher_train.jsonl \
+    --val-manifest runs/ov_ab/heldout_eval.jsonl \
+    --class-split runs/ov_distill/class_split.json \
+    --image-root datasets/coco/train2017 \
+    --out runs/ov_ab/single_vs_ensemble \
+    --run-training \
+    --training-view paired \
+    --val-yaml runs/ov_ab/heldout_eval.yaml \
+    --holdout-images datasets/coco/val2017 \
+    --holdout-labels datasets/coco/labels/val2017 \
+    --init-from yolo26n.pt \
+    --epochs 8 --imgsz 384 --batch 8 --device cuda:0
+```
+
+默认的 `paired` 视图只用两组都产生了监督信号的图像训练，可让两组拥有相同图像数和每 epoch 步数，重点比较共同图像上的标注差异；完整覆盖的导出仍保存在 `data/`，报告会列出每组覆盖率。若将 `--training-view` 设为 `full`，学生使用各自全部可用图像，测试教师方案带来的覆盖收益，但数据量不同会导致每 epoch 优化步数不同。两种视图都会使用相同初始化、seed、训练轮数和参数，并在同一 held-out unseen 类集合上报告 mAP50、mAP50-95、precision 和 recall。
+
+`--run-training` 需要 `--val-yaml` 与 `--val-manifest` 精确对应，并要求 held-out 图片目录直接包含评估图像、标签使用 COCO-80 类别 ID。省略 `--run-training` 时只导出和审计数据集，不会启动训练。现有实验的训练与评估图像必须与两份 manifest 隔离；脚本会在导出和启动训练前再次审计，且拒绝覆盖已有报告、数据导出和训练目录。
