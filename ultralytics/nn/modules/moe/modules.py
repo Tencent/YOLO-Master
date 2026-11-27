@@ -40,7 +40,7 @@ from .routers import (  # noqa: F401 - preserve historical module attributes
     DynamicRoutingLayer,
     AdvancedRoutingLayer,
 )
-from ultralytics.nn.modules.block import ABlock, A2C2f, C3k
+from ultralytics.nn.modules.block import ABlock, A2C2f, C3k, C3k2
 from .loss import (  # noqa: F401 - preserve historical module attributes
     MoELoss,
     all_reduce_mean,
@@ -1360,6 +1360,82 @@ class A2C2fMoE(A2C2f):
         return _robust_deepcopy(self, memo)
 
 
+class C3k2MoE(C3k2):
+    """Pretrained-compatible C3k2 with a zero-gated A2C2f-MoE residual adapter.
+
+    The inherited C3k2 keeps the exact parameter names and tensor shapes used by
+    YOLOE-26 checkpoints. The additional MoE branch starts with a zero residual
+    scale, so loading a C3k2 checkpoint preserves the original function exactly
+    while allowing the gate and experts to adapt during downstream training.
+    """
+
+    def __init__(
+        self,
+        c1: int,
+        c2: int,
+        n: int = 1,
+        c3k: bool = False,
+        e: float = 0.5,
+        attn: bool = False,
+        g: int = 1,
+        shortcut: bool = True,
+        num_experts: int = 4,
+        top_k: int = 2,
+        area: int = 16,
+        expert_type: str = "simple",
+        adapter_e: float = 0.5,
+        mlp_ratio: float = 2.0,
+    ):
+        super().__init__(c1, c2, n, c3k, e, attn, g, shortcut)
+        self.moe_adapter = A2C2fMoE(
+            c2,
+            c2,
+            n=1,
+            a2=True,
+            area=area,
+            residual=False,
+            mlp_ratio=mlp_ratio,
+            e=adapter_e,
+            g=g,
+            shortcut=shortcut,
+            num_experts=num_experts,
+            top_k=top_k,
+            expert_type=expert_type,
+        )
+        self.moe_scale = nn.Parameter(torch.zeros(()))
+        # Hard ceiling on the residual branch. tanh() alone saturates at 1.0, which
+        # lets an adapter-only run overwrite the frozen backbone within ~1 epoch.
+        # Runtime-only knob; not part of the state_dict.
+        self.gate_cap = float(os.getenv("YOLO_MOE_GATE_CAP", "1.0"))
+        # Optional local teacher-preservation regularization for adapter-only
+        # fine-tuning. Training scripts set this runtime-only coefficient; it
+        # does not affect inference or pretrained checkpoint compatibility.
+        self.preserve_coeff = 0.0
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Add a learnable MoE correction without perturbing pretrained init."""
+        base = super().forward(x)
+        if (
+            not self.training
+            and not torch.is_grad_enabled()
+            and not torch.jit.is_tracing()
+            and not torch.onnx.is_in_onnx_export()
+            and self.moe_scale.detach().item() == 0.0
+        ):
+            return base
+        correction = self.moe_adapter(base)
+        residual = (self.gate_cap * torch.tanh(self.moe_scale)).to(dtype=base.dtype) * correction
+        if self.training and self.preserve_coeff > 0:
+            preserve_loss = residual.float().square().mean() * float(self.preserve_coeff)
+            publish_aux_loss(self, preserve_loss, kind="moe", training=True)
+        return base + residual
+
+    @property
+    def aux_loss(self):
+        """Expose adapter routing loss to the model-level MoE loss collector."""
+        return self.moe_adapter.aux_loss
+
+
 # ==========================================
 # Ultimate MoE modules
 # ==========================================
@@ -1839,6 +1915,7 @@ __all__ = [
     "OptimizedMOEImproved",
     "ABlockMoE",
     "A2C2fMoE",
+    "C3k2MoE",
     "HyperUltimateMoE",
     "UltimateOptimizedMoE",
     "MOE",

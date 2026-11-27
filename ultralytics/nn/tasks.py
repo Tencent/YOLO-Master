@@ -1,5 +1,7 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+from __future__ import annotations
 
+import os
 import contextlib
 import pickle
 import re
@@ -43,6 +45,8 @@ from ultralytics.nn.modules import (
     C2fPSA,
     C3Ghost,
     C3k2,
+    C3k2MoE,
+    C3k2TSMoE,
     C3x,
     CBFuse,
     CBLinear,
@@ -159,6 +163,11 @@ class BaseModel(torch.nn.Module):
         Returns:
             (torch.Tensor): Loss if x is a dict (training), or network predictions (inference).
         """
+        txt = getattr(self, "txt_feats", None)
+        if txt is not None:
+            from ultralytics.nn.modules.moe.text_semantic import set_route_context
+
+            set_route_context(txt)
         if isinstance(x, dict):  # for cases of training and validating while training.
             return self.loss(x, *args, **kwargs)
         return self.predict(x, *args, **kwargs)
@@ -1671,6 +1680,12 @@ class YOLOEModel(DetectionModel):
         self.pe = embeddings
         self.model[-1].nc = len(names)
         self.names = check_class_names(names)
+        # Publish class text embeddings to TSMoE's semantic router. BaseModel.forward
+        # only forwards `self.txt_feats` into set_route_context(); YOLOEModel used to
+        # leave it unset, so the router ran vision-only in both train and eval.
+        # Opt-in env keeps every legacy checkpoint's behaviour byte-for-byte intact.
+        if os.environ.get("YOLO_TSMOE_ROUTE_CONTEXT", "") == "1":
+            self.txt_feats = embeddings
 
     def get_cls_pe(self, tpe, vpe):
         """Get class positional embeddings.
@@ -2329,6 +2344,8 @@ def parse_model(d, ch, verbose=True):
             C2,
             C2f,
             C3k2,
+            C3k2MoE,
+            C3k2TSMoE,
             RepNCSPELAN4,
             ELAN1,
             ADown,
@@ -2355,6 +2372,8 @@ def parse_model(d, ch, verbose=True):
             C2,
             C2f,
             C3k2,
+            C3k2MoE,
+            C3k2TSMoE,
             C2fAttn,
             C3,
             C3TR,
@@ -2398,7 +2417,7 @@ def parse_model(d, ch, verbose=True):
             if m in repeat_modules:
                 args.insert(2, n)  # number of repeats
                 n = 1
-            if m is C3k2:  # for M/L/X sizes
+            if m in {C3k2, C3k2MoE, C3k2TSMoE}:  # for M/L/X sizes
                 legacy = False
                 if scale in "mlx":
                     args[3] = True
