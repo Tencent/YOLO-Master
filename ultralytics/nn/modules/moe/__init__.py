@@ -38,6 +38,7 @@ from .modules import (
     VisualEnhancedAdaptiveGateMoE,
     A2C2fMoE,
     ABlockMoE,
+    C3k2MoE,
 )
 
 from .experts import (
@@ -126,6 +127,7 @@ STABLE_MOE_CLASSES = frozenset(
 EXPERIMENTAL_MOE_CLASSES = frozenset(
     {
         "AdaptiveCapacityMoE",
+        "C3k2TSMoE",
         "OptimizedMOE",
         "OptimizedMOEImproved",
         "EfficientSpatialRouterMoE",
@@ -230,6 +232,7 @@ __all__ = [
     "VisualEnhancedAdaptiveGateMoE",
     "A2C2fMoE",
     "ABlockMoE",
+    "C3k2MoE",
     "SharedExpertMoE",  # Issue #54: Cross-Scale Expert Pool Sharing
     "_SHARED_EXPERT_POOLS",
     "OptimizedSimpleExpert",
@@ -302,3 +305,5 @@ __all__ = [
     "routing_metrics",
     "usage_gini",
 ]
+
+from .text_semantic import C3k2TSMoE, get_route_context, set_route_context  # noqa: E402,F401

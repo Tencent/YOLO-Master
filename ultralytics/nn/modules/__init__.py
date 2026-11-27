@@ -113,6 +113,8 @@ from .moa import C2fMoA, MoABlock, NeckMoAFusion, anneal_moa_temperature, collec
 from .moe import (
     A2C2fMoE,
     ABlockMoE,
+    C3k2MoE,
+    C3k2TSMoE,
     AdaptiveGateMoE,
     DetailAwareLowRankHybridAdaptiveGateMoE,
     DiversifiedExpertMoE,
@@ -229,6 +231,7 @@ __all__ = (
     "v10Detect",
     "A2C2fMoE",
     "ABlockMoE",
+    "C3k2MoE",
     "AdaptiveGateMoE",
     "C2fMoA",
     "C2fMoT",
