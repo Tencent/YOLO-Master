@@ -135,10 +135,12 @@ METRIC_COLUMNS = [
     "metrics/mAP50-95(B)",
     "train/box_loss",
     "train/cls_loss",
-    "train/moe_loss",
+    "train/dfl_loss",
+    "train/mixture_aux_loss",
     "val/box_loss",
     "val/cls_loss",
-    "val/moe_loss",
+    "val/dfl_loss",
+    "val/mixture_aux_loss",
 ]
 
 SUMMARY_COLUMNS = [
