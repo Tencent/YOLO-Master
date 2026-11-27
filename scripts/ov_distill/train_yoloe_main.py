@@ -235,7 +235,7 @@ def run(args: argparse.Namespace) -> Path:
         amp=not args.no_amp,
         seed=args.seed,
         deterministic=True,
-        optimizer="AdamW",
+        optimizer=args.optimizer,
         lr0=args.lr0,
         weight_decay=0.025,
         warmup_bias_lr=0.0,
@@ -273,7 +273,7 @@ def run(args: argparse.Namespace) -> Path:
         "imgsz": args.imgsz,
         "physical_batch": args.batch,
         "effective_batch": 128,
-        "optimizer": "AdamW",
+        "optimizer": args.optimizer,
         "lr0": args.lr0,
         "lrf": args.lrf,
         "fraction": args.fraction,
@@ -342,6 +342,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch", type=int, default=8, help="Physical batch per GPU; effective batch is 128 via accumulation.")
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--lr0", type=float, default=0.002, help="Peak optimizer LR (applied literally, not per-sample).")
+    parser.add_argument(
+        "--optimizer",
+        type=str,
+        default="AdamW",
+        choices=("AdamW", "SGD", "MuSGD", "Adam", "NAdam", "RAdam", "auto"),
+        help="Optimizer passed to Ultralytics trainer. Default AdamW keeps existing runs reproducible; "
+             "use MuSGD to match the official yoloe-26n-seg.pt recipe (lr0 0.00125, momentum 0.9).",
+    )
     parser.add_argument(
         "--no-amp",
         action="store_true",

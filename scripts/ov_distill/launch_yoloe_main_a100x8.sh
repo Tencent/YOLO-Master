@@ -61,6 +61,7 @@ SCRATCH_FLAG=""
 [ "$SCRATCH" = "1" ] && SCRATCH_FLAG="--scratch"
 INIT_FROM="${INIT_FROM:-$TASK_ROOT/weights/yoloe-26n-seg.pt}"
 LR0="${LR0:-0.002}"
+OPTIMIZER="${OPTIMIZER:-AdamW}"
 PRESERVE_COEFF="${PRESERVE_COEFF:-50.0}"
 # Ceiling on tanh(moe_scale). 1.0 reproduces the unconstrained behaviour; small
 # values stop the residual branch from overwriting the frozen core.
@@ -149,6 +150,7 @@ exec "$PYTHON_BIN" -m torch.distributed.run \
   --imgsz 640 \
   --seed "$SEED" \
   --lr0 "$LR0" \
+  --optimizer "$OPTIMIZER" \
   --preserve-coeff "$PRESERVE_COEFF" \
   --model-cfg "$MODEL_CFG" \
   --init-from "$INIT_FROM" \
